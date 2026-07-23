@@ -4,22 +4,22 @@
 // a filename + raw bytes (handed over by app.go) and leave as bytes again.
 // That keeps everything in this package unit-testable without a GUI.
 //
-// This file defines the Document model and the ingestion logic for the three
-// supported formats: .txt, .csv and .md (CLAUDE.md §5). Anything else is
-// rejected with an actionable error message.
+// This file defines the Document model and the ingestion logic for the
+// text-based formats: .txt, .csv and .md (CLAUDE.md §5). Binary Office/PDF
+// formats are handled by engine/convert/* and wired in via LoadAll.
+// Anything else is rejected with an actionable error message.
 package engine
 
 import (
-	"bytes"
-	"encoding/csv"
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
-// Format identifies which of the three supported input formats a Document
-// was loaded from. It drives both processing (CSV keeps its grid model) and
-// export (CSV round-trips back to CSV, see CLAUDE.md §5 "Process order").
+// Format identifies which supported input format a Document was loaded
+// from. It drives both processing (CSV keeps its grid model) and export
+// (CSV round-trips back to CSV, see CLAUDE.md §5 "Process order").
 type Format string
 
 const (
@@ -27,6 +27,11 @@ const (
 	FormatCSV Format = "csv"
 	FormatMD  Format = "md"
 )
+
+// LargeFileThreshold is the size above which a file gets a "very large"
+// warning (still processed — the warning just explains possible slowness).
+// 10 MB per BUILD.md Phase 1 activity 3.
+const LargeFileThreshold = 10 * 1024 * 1024
 
 // Document is the in-memory working form of one imported file.
 //
@@ -46,22 +51,48 @@ type Document struct {
 	// txt → same text (line endings normalised), md → passthrough,
 	// csv → rendered markdown table.
 	Markdown string
-	// Grid is the parsed cell model for CSV documents (rows × columns),
-	// kept so an anonymised CSV can be exported as CSV again. It is nil
-	// for txt and md documents.
+	// Grid is the parsed cell model for CSV documents (rows × columns,
+	// rectangular — ragged input is padded). It is kept so an anonymised
+	// CSV can be exported as CSV again. nil for txt and md documents.
 	Grid [][]string
+	// Warnings collects non-fatal ingestion notes shown to the user in
+	// the import list (ragged CSV repaired, empty file, very large file).
+	// A warning never blocks processing — that is what errors are for.
+	Warnings []string
 }
 
 // Load turns a filename plus raw bytes into a Document in markdown working
-// form. It is the single entry point for ingestion; app.go calls it after
-// the user picks files in the native dialog (or drops them on the window).
+// form. It is the single entry point for text-format ingestion; app.go
+// calls it after the user picks files in the native dialog (or drops them
+// on the window).
 //
 // Unsupported extensions are rejected here as well as in the file-dialog
 // filter, because drag-and-drop bypasses the dialog (CLAUDE.md §5).
 func Load(name string, raw []byte) (Document, error) {
 	// Detect the format from the file extension, case-insensitively, so
-	// "REPORT.TXT" from an old Windows share still works.
+	// "REPORT.TXT" from an old Windows share still works. Extension-only
+	// detection is a deliberate CLAUDE.md §5 / BUILD.md Phase 1 decision:
+	// no content sniffing.
 	ext := strings.ToLower(filepath.Ext(name))
+
+	// Every text format must be valid UTF-8 — the anonymisation regexes
+	// and the markdown working form assume it. Reject other encodings
+	// with a message that names the file and says how to fix it.
+	if !utf8.Valid(raw) {
+		return Document{}, fmt.Errorf(
+			"file %q is not valid UTF-8 text: it is probably saved in a legacy encoding such as Windows-1252 or Latin-1 — open it in a text editor (e.g. Notepad++ or VS Code) and re-save it with UTF-8 encoding, then import it again",
+			name)
+	}
+
+	// Size warnings are shared by all formats and never block processing.
+	var warnings []string
+	if len(raw) == 0 {
+		warnings = append(warnings, "the file is empty — nothing to anonymise")
+	} else if len(raw) > LargeFileThreshold {
+		warnings = append(warnings, fmt.Sprintf(
+			"very large file (%.1f MB) — processing may take a while; the preview may be truncated",
+			float64(len(raw))/(1024*1024)))
+	}
 
 	switch ext {
 	case ".txt":
@@ -70,21 +101,24 @@ func Load(name string, raw []byte) (Document, error) {
 			Format:   FormatTXT,
 			Raw:      raw,
 			Markdown: normaliseLineEndings(string(raw)),
+			Warnings: warnings,
 		}, nil
 
 	case ".md":
 		// Markdown is already our working form — pass it through with
 		// only line-ending normalisation so downstream regexes can
-		// assume "\n" everywhere.
+		// assume "\n" everywhere. Content inside code fences is treated
+		// like any other text in v1 (BUILD.md Phase 1 activity 4).
 		return Document{
 			Name:     name,
 			Format:   FormatMD,
 			Raw:      raw,
 			Markdown: normaliseLineEndings(string(raw)),
+			Warnings: warnings,
 		}, nil
 
 	case ".csv":
-		grid, err := parseCSV(raw)
+		grid, csvWarnings, err := ParseCSV(raw)
 		if err != nil {
 			// Wrap with context the owner can act on: which file,
 			// what we expected, what to try.
@@ -96,16 +130,17 @@ func Load(name string, raw []byte) (Document, error) {
 			Name:     name,
 			Format:   FormatCSV,
 			Raw:      raw,
-			Markdown: gridToMarkdownTable(grid),
+			Markdown: GridToMarkdownTable(grid),
 			Grid:     grid,
+			Warnings: append(warnings, csvWarnings...),
 		}, nil
 
 	default:
-		// Clear, actionable rejection for everything else (.docx, .pdf,
-		// .pptx, .xlsx, ...): conversion of those is deferred to v2
-		// (see BUILD.md "Deferred to v2").
+		// Clear, actionable rejection for everything else. The binary
+		// Office/PDF formats are accepted via LoadAll (Phase 1B); this
+		// text-only entry point lists what IT accepts.
 		return Document{}, fmt.Errorf(
-			"unsupported file type %q (file %q): doc-anonymiser accepts .txt, .csv and .md only — for Word/PDF/PowerPoint/Excel files, export or save them as one of those formats first",
+			"unsupported file type %q (file %q): doc-anonymiser accepts .txt, .csv, .md, .docx, .pptx, .xlsx and .pdf — rename or convert the file to one of those formats first",
 			ext, name)
 	}
 }
@@ -117,70 +152,4 @@ func normaliseLineEndings(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
 	return s
-}
-
-// parseCSV reads raw CSV bytes into a rows×columns grid using the standard
-// library parser. FieldsPerRecord = -1 tolerates ragged rows (common in
-// hand-edited CSVs) instead of failing the whole import.
-func parseCSV(raw []byte) ([][]string, error) {
-	r := csv.NewReader(bytes.NewReader(raw))
-	r.FieldsPerRecord = -1
-	grid, err := r.ReadAll()
-	if err != nil {
-		return nil, err
-	}
-	if len(grid) == 0 {
-		return nil, fmt.Errorf("the file is empty (no rows found)")
-	}
-	return grid, nil
-}
-
-// gridToMarkdownTable renders a CSV grid as a GitHub-style markdown table,
-// treating the first row as the header. Pipe characters inside cells are
-// escaped so they cannot break the table structure. The full CSV ⇄ markdown
-// round-trip logic will live in csvmd.go in a later phase; this renderer is
-// the "CSV → markdown" half needed for preview/processing.
-func gridToMarkdownTable(grid [][]string) string {
-	if len(grid) == 0 {
-		return ""
-	}
-
-	// escape makes a cell safe inside a markdown table: pipes would
-	// otherwise be read as column separators, and embedded newlines
-	// would break the row.
-	escape := func(cell string) string {
-		cell = strings.ReplaceAll(cell, "|", "\\|")
-		cell = strings.ReplaceAll(cell, "\r\n", " ")
-		cell = strings.ReplaceAll(cell, "\n", " ")
-		return cell
-	}
-
-	var b strings.Builder
-
-	// Header row (first CSV row by convention).
-	header := grid[0]
-	b.WriteString("|")
-	for _, cell := range header {
-		b.WriteString(" " + escape(cell) + " |")
-	}
-	b.WriteString("\n")
-
-	// Separator row required by markdown table syntax.
-	b.WriteString("|")
-	for range header {
-		b.WriteString(" --- |")
-	}
-	b.WriteString("\n")
-
-	// Data rows. Rows shorter than the header are padded implicitly by
-	// simply writing what exists; rows longer keep their extra cells.
-	for _, row := range grid[1:] {
-		b.WriteString("|")
-		for _, cell := range row {
-			b.WriteString(" " + escape(cell) + " |")
-		}
-		b.WriteString("\n")
-	}
-
-	return b.String()
 }
