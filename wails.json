@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "doc-anonymiser",
+  "outputfilename": "doc-anonymiser",
+  "assetdir": "static",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev:watcher": "",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Oscar Liber"
+  },
+  "info": {
+    "productName": "doc-anonymiser",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright (c) 2026 Oscar Liber",
+    "comments": "Local, offline anonymisation of .txt/.csv/.md documents."
+  }
+}
