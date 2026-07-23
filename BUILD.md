@@ -19,6 +19,8 @@
 | Wails CLI (CI only) | v2.10.x | bootstrap | build tooling; coupled with the library version — CI asserts the pair |
 | Go standard library (`encoding/csv`, `regexp`, `archive/zip`, `net/http`, `encoding/json`) | — | throughout | CSV parsing, PII regexes, zip export, Ollama client — zero third-party runtime dependencies |
 | Ollama (external, optional, user-installed) | HTTP API as of 2026 (`/api/tags`, `/api/chat` with `format:json`) | Phase 5 | optional LLM features; never bundled, never required |
+| github.com/xuri/excelize/v2 | v2.9.x | Phase 1B | XLSX parsing incl. merged-cell detection; pure Go, MIT |
+| github.com/ledongthuc/pdf | pinned at implementation (record in CLAUDE.md §7) | Phase 1B | pure-Go PDF text extraction; only permitted PDF dependency |
 
 No other dependency is authorised. If a phase appears to need one, stop and update this table + CLAUDE.md §7 first.
 
@@ -30,6 +32,7 @@ No other dependency is authorised. If a phase appears to need one, stop and upda
 | CSV import → markdown-table render, 10 000 rows × 20 cols | ≤ 2 s | Phase 2 |
 | UI responsiveness during pipeline | no frozen window: long operations run in goroutines with Wails event progress updates | Phase 8 |
 | LLM deep-scan per document | soft budget 30 s per 50 KB document with the default 3B model; surfaced in UI as per-file progress, cancellable | Phase 9 |
+| Binary-format conversion (docx/pptx/xlsx/pdf), typical office file ≤ 20 MB | ≤ 5 s per file | Phase 1B |
 
 If the deterministic budget is breached, profile before optimising; the usual culprit is per-call regex compilation — regexes are compiled once at package init (CLAUDE.md §6).
 
@@ -50,6 +53,58 @@ Solid, fully tested ingestion of `.txt`, `.csv`, `.md` into the `Document` model
 ### Definition of done
 - Build and tests pass.
 - Commit: `feat(engine): document model and txt/csv/md ingestion`
+
+## Phase 1B — Binary-format converters (docx, pptx, xlsx, pdf)
+
+### Goal
+Pure-Go, one-way conversion of the four Office/PDF formats into the Document
+model, replicating the nb1 notebook converters within the zero-CGo rule.
+
+### Activities
+1. engine/convert/docx.go — open with archive/zip; parse word/document.xml
+   with encoding/xml; map paragraph styles Heading1–6 to markdown headings;
+   runs with b/i properties to **bold**/*italic*; numPr lists to -/1. items
+   with indentation; tables (w:tbl) to markdown tables; hyperlinks resolved
+   via word/_rels/document.xml.rels; images replaced by *[image omitted]*.
+2. engine/convert/pptx.go — enumerate ppt/slides/slideN.xml in order; title
+   placeholder to "## Slide N — <title>"; body text frames with bullet
+   levels; a:tbl to markdown tables; notesSlide text under **Notes:**.
+3. engine/convert/xlsx.go — excelize v2.9.x; per-sheet flat detection
+   (merged-cell check via GetMergeCells, data-bounds trim, header-row
+   heuristic: first non-empty row all non-numeric strings); flat sheet →
+   Grid Document (identical downstream behaviour to CSV import); complex
+   sheet → JSON Document (cell map with addresses) in a fenced code block.
+   One Document per sheet, named <workbook>.xlsx#<sheet>.
+4. engine/convert/pdf.go — ledongthuc/pdf per-page plain-text extraction;
+   port the nb1 repair heuristic (collapse single-uppercase-char token runs;
+   collapse double spaces) as RepairPDFText with the nb1 examples as test
+   cases; empty-extraction detection returning the actionable scanned-PDF
+   error from CLAUDE.md §5.
+5. Wire the four converters into engine/document.go Load() dispatch; extend
+   the Document model so one imported file may yield multiple Documents
+   (xlsx sheets); collect per-file conversion warnings (dropped images,
+   complex-sheet routing, PDF repair applied).
+6. Test fixtures: generate minimal valid .docx and .pptx in a test helper by
+   assembling the OOXML zip structure directly (stdlib only); generate the
+   .xlsx fixture with excelize; hand-construct a minimal single-page text
+   .pdf fixture (raw PDF syntax) plus an image-only .pdf for the scanned
+   rejection path. Commit fixtures under testdata/. All fixture content
+   obviously fictional, English + French.
+7. Measure the ≤ 5 s conversion budget on the largest fixture; record the
+   measurement in a test comment.
+
+### Unit tests
+- Golden-file tests per converter (fixture → expected markdown).
+- xlsx routing: flat fixture becomes Grid; merged-cell fixture becomes JSON;
+  trailing empty rows/cols trimmed.
+- RepairPDFText table-driven cases including the nb1 'B R IDDING ULES' →
+  'BIDDING RULES' class of defect and a no-op lowercase case.
+- Scanned-PDF fixture returns the exact actionable error message.
+- Unsupported extension still rejected.
+
+### Definition of done
+- Build and tests pass; budget measured.
+- Commit: feat(convert): pure-Go docx/pptx/xlsx/pdf converters
 
 ## Phase 2 — Deterministic PII pass
 
@@ -138,7 +193,7 @@ The Wails frontend skeleton: wizard navigation, document import via native dialo
 ### Activities
 1. `state.js`: full state shape (documents, entities, allowlist, level, ollamaStatus, currentStep, results) with a subscribe/notify store; `api.js`: bound-method wrappers only.
 2. Wizard chrome in `index.html` + `views/`: step header (1 Import → 2 Configure → 3 Entities → 4 Run → 5 Export), navigation guards (cannot advance without documents).
-3. Import view: native multi-file dialog (Wails runtime `OpenMultipleFilesDialog` filtered to txt/csv/md) and drag-drop onto the window; imported list with per-file format badge, size, warnings, remove button; markdown preview pane (CSV shown as rendered table).
+3. Import view: native multi-file dialog (Wails runtime `OpenMultipleFilesDialog` filtered to txt/csv/md) and drag-drop onto the window; imported list with per-file format badge, size, warnings, remove button; markdown preview pane (CSV shown as rendered table). Extend the file dialog filter and drop validation to all seven extensions; per-file format badge covers the new formats; xlsx imports render one list entry per sheet Document; PDF entries carry an "experimental" badge; conversion warnings from Phase 1B surface in the per-file warnings display.
 4. Settings view: anonymisation level radio (default medium), Ollama port override (loopback locked), model dropdown populated from `ListModels()`, "re-probe" button.
 5. Greyed-state mechanics: a single `state.ollama.available` flag drives disabled attributes + tooltips on every LLM control.
 
@@ -194,7 +249,7 @@ Execute the pipeline from the UI with live progress, then let the user verify th
 The "several options to extract" requirement: every useful egress path, all via explicit user action.
 
 ### Activities
-1. Per-document save: native save dialog; md documents export as `.md`; CSV-origin documents offer `.csv` (round-trip through the anonymised Grid) or `.md`; txt-origin as `.txt` or `.md`.
+1. Per-document save: native save dialog; md documents export as `.md`; CSV-origin documents offer `.csv` (round-trip through the anonymised Grid) or `.md`; txt-origin as `.txt` or `.md`. Documents originating from docx/pptx/pdf export as `.md` (or `.txt`); flat xlsx-sheet Documents behave like CSV-origin documents (`.csv` or `.md`); complex-sheet Documents export as `.md` or `.json`. No export path produces a binary Office/PDF format.
 2. Export all: single zip via `archive/zip` + save dialog (`<n>_anonymised.zip`), preserving filenames with an `_anon` suffix.
 3. Copy to clipboard: per-document button (Wails clipboard runtime).
 4. Entity mapping export: CSV and JSON of the registry (original ↔ placeholder ↔ category ↔ count) behind a confirmation dialog warning it is the re-identification key.
@@ -240,6 +295,9 @@ Production feel: errors, edge cases, first-run experience.
 | 7 | Session round-trip | Save session, restart app, load session, import new file, run | Same placeholders as previous session for same entities | Windows 11 |
 | 8 | Linux sanity | Repeat scenario 2 | Same behaviour | Ubuntu 24.04 |
 | 9 | French document | Import French md with accented names and FR phone formats | Detection works; variants correct for particles | Windows 11 |
+| 10 | Real Office documents | Import a genuine PwC-style docx (headings, table, image) and pptx (titles, notes) | Faithful markdown; image placeholder present; notes captured | Windows 11 |
+| 11 | Workbook routing | Import an xlsx with one flat sheet and one merged-cell sheet | Two Documents: Grid + JSON; flat sheet exports back to valid CSV after anonymisation | Windows 11 |
+| 12 | PDF paths | Import a text-layer PDF and a scanned PDF | First converts with repair; second rejected with the scanned-PDF message; experimental badge visible | Windows 11 |
 
 ## Release phase
 
@@ -250,7 +308,10 @@ Production feel: errors, edge cases, first-run experience.
 
 ## Deferred to v2
 
-- DOCX / PDF / PPTX / XLSX input conversion (the nb1 converters — requires evaluating pure-Go document libraries against the zero-CGo rule; PDF extraction in pure Go is the hard one).
+- Scanned-PDF OCR.
+- Export back to original binary formats (docx/pptx/xlsx/pdf reconstruction).
+- DOCX/PPTX embedded-image content description (alt-text or vision-model based).
+- Per-workbook `_manifest.md` overview generation (nb1 feature; superseded in-app by the per-sheet Document list).
 - UI internationalisation (French UI).
 - ONNX NER model via ORT Web (the P4 fallback) if local-LLM NER quality is insufficient.
 - Batch profiles / saved level presets per engagement type.

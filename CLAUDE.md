@@ -37,6 +37,11 @@ doc-anonymiser/
 ├── engine/                    # ALL business logic lives here, UI-agnostic
 │   ├── document.go            # Document model, txt/csv/md ingestion
 │   ├── csvmd.go               # CSV ⇄ markdown-table conversion (round-trip)
+│   ├── convert/               # binary-format → markdown converters (pure Go, one-way)
+│   │   ├── docx.go            # zip + XML extraction of word/document.xml
+│   │   ├── pptx.go            # one H2 per slide; body, tables, speaker notes
+│   │   ├── xlsx.go            # excelize; smart per-sheet routing (flat → Grid, complex → JSON)
+│   │   └── pdf.go             # text extraction + spacing repair (EXPERIMENTAL)
 │   ├── pii.go                 # Pass 1: deterministic regex PII detection
 │   ├── entities.go            # Entity model, categories, variant expansion
 │   ├── registry.go            # Placeholder registry (consistent pseudonyms)
@@ -80,12 +85,40 @@ doc-anonymiser/
   disabled state with a tooltip ("Requires Ollama — not detected on
   127.0.0.1:11434") when unavailable. The deterministic pipeline must be
   fully usable without Ollama.
+- **Converters are pure Go and one-way:** `engine/convert/*` may use only the
+  Go standard library, excelize, and ledongthuc/pdf (pinned in §7). No CGo,
+  ever. Binary formats convert TO markdown on import; the app never exports
+  back to docx/pptx/xlsx/pdf. If pure-Go PDF extraction quality proves
+  unacceptable, the recorded fallback is a wazero-embedded WASM extractor
+  (P3 pattern) — not a CGo binding.
 
 ## 5. Domain rules
 
-- **Supported inputs:** `.txt`, `.csv`, `.md` only. Reject others in the file
-  dialog filter AND on drop, with a clear message. (DOCX/PDF/PPTX/XLSX
-  conversion is deferred — see BUILD.md "Deferred to v2".)
+- **Supported inputs:** `.txt`, `.csv`, `.md`, `.docx`, `.pptx`, `.xlsx`,
+  `.pdf`. Reject anything else in the file dialog filter AND on drop, with a
+  clear message. Conversion rules per format:
+  - `.txt` → markdown as-is (line-ending normalisation).
+  - `.md`  → passthrough.
+  - `.csv` → Grid model + markdown-table preview; round-trips to CSV on export.
+  - `.docx` → headings (paragraph styles Heading 1–6 → #..######), bold/italic
+    runs, ordered/unordered lists (numPr), tables → markdown tables,
+    hyperlinks → markdown links. Images dropped with an inline placeholder
+    `*[image omitted]*`. Headers/footers/footnotes dropped (pagination noise).
+  - `.pptx` → one `## Slide N — <title>` section per slide; body text with
+    bullet indentation; tables → markdown tables; speaker notes under a
+    `**Notes:**` sub-block. Slide-master/branding shapes skipped.
+  - `.xlsx` → one Document per sheet, named `<workbook>.xlsx#<sheet>`. Smart
+    routing per sheet (nb1 rules): FLAT (no merged cells, contiguous data
+    bounds, header-like first row) → Grid model, same behaviour as a CSV
+    import including CSV round-trip export; COMPLEX → structured JSON
+    rendered in a fenced code block, anonymised as text. Trailing empty
+    rows/columns trimmed via data-bounds detection.
+  - `.pdf` → per-page text extraction with the spacing-repair heuristic
+    (collapse runs of single uppercase characters split by kerning; collapse
+    doubled spaces). PDF support is EXPERIMENTAL and labelled as such in the
+    UI. A PDF yielding no extractable text is rejected with: "No text layer
+    found — this PDF is likely scanned. OCR is not supported; convert it
+    externally first."
 - **Process order (fixed):** 1) import → convert to markdown working form,
   2) anonymise, 3) export. CSV imports are converted to a markdown table for
   preview/processing but retain their grid model so they can round-trip back
@@ -141,6 +174,8 @@ doc-anonymiser/
 | Ollama HTTP API | as of 2026: `GET /api/tags`, `POST /api/chat` with `"format":"json"`, `"stream":false` | probed at startup; if `/api/tags` succeeds but `/api/chat` returns 404, show "Ollama too old — please update" |
 | Default Ollama model | `qwen2.5:3b-instruct` | user-selectable from `/api/tags` results; model name is a setting, never hardcoded outside settings defaults |
 | Frontend | vanilla JS (ES2020), embedded via go:embed | no npm, no bundler |
+| github.com/xuri/excelize/v2 | v2.9.x | XLSX reading; pure Go, MIT licence |
+| github.com/ledongthuc/pdf | pin the latest tagged/commit version at implementation time and record it here | pure-Go PDF text extraction (BSD-3); limited by design — see §5 PDF rules |
 
 ## 8. Validated constants
 

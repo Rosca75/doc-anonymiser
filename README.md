@@ -10,6 +10,15 @@ information and engagement-specific names from text-based documents:
 - `.txt` — plain text
 - `.csv` — spreadsheets exported as CSV (round-trips back to CSV on export)
 - `.md` — Markdown
+- `.docx` — Word documents
+- `.pptx` — PowerPoint presentations
+- `.xlsx` — Excel workbooks
+- `.pdf` — PDF documents (experimental)
+
+Office and PDF files are converted to Markdown on import and exported as text
+formats (`.md`, `.txt`, `.csv`, or `.json`) — the app never writes back a
+binary Office or PDF file. PDF support is experimental: it reads the text
+layer only and does not perform OCR, so scanned PDFs cannot be processed.
 
 It replaces emails, phone numbers, IBANs, national IDs, VAT numbers, person
 names, client names, project names and more with stable placeholders such as
