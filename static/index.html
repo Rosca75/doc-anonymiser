@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<!--
+  index.html — the single page of the doc-anonymiser frontend.
+
+  Frontend discipline (CLAUDE.md §4):
+    - No framework, no build step, no external fonts or CDNs — everything
+      referenced here is a local file embedded in the binary via go:embed.
+    - api.js is the ONLY module that calls Go bound methods.
+    - state.js is the ONLY holder of frontend state.
+    - views/* render from state and dispatch actions.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>doc-anonymiser</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- The home view renders itself into this container. -->
+  <div id="app"></div>
+
+  <!-- ES module entry point: boots the home view. -->
+  <script type="module">
+    import { renderHome } from "./views/home.js";
+    renderHome(document.getElementById("app"));
+  </script>
+</body>
+</html>

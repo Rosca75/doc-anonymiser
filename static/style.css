@@ -1,0 +1,89 @@
+/*
+  style.css — all styling for doc-anonymiser.
+  System font stack only: no external fonts or CDNs are allowed
+  (local-only guarantee, CLAUDE.md §4).
+*/
+
+:root {
+  /* A small palette so future views stay visually consistent. */
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --text: #1f2430;
+  --muted: #6b7280;
+  --accent: #b3542b;      /* warm accent for primary actions */
+  --ok: #1e7d3c;          /* green — Ollama detected */
+  --off: #9ca3af;         /* grey — feature unavailable */
+  --border: #d9dce3;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Centre the placeholder home screen in the window. */
+.home {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 2rem;
+  text-align: center;
+}
+
+.home h1 {
+  margin: 0;
+  font-size: 1.8rem;
+}
+
+.home .tagline {
+  color: var(--muted);
+  margin: 0;
+}
+
+/* Card showing bridge + Ollama status. */
+.status-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem 1.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: 22rem;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.status-label {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* Generic badge; colour is set by the modifier classes below. */
+.badge {
+  display: inline-block;
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #ffffff;
+  background: var(--off);
+}
+
+.badge.ok    { background: var(--ok); }   /* green: detected / working */
+.badge.off   { background: var(--off); }  /* grey: not detected / disabled */
+.badge.error { background: #b3261e; }     /* red: something actually broke */

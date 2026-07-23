@@ -1,0 +1,22 @@
+# --- Go / Wails build output ---
+/build/
+/build/bin/
+*.exe
+
+# Wails may generate a frontend dist folder on some setups
+/frontend/dist
+# Wails CLI auto-generates JS/TS bindings here on every build; we call
+# window.go.main.App directly from static/api.js, so these are never used.
+/frontend/wailsjs
+
+# --- Local session files (contain the re-identification key!) ---
+*.anonsession.json
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+
+# --- Editor folders ---
+.vscode/
+.idea/
+*.swp

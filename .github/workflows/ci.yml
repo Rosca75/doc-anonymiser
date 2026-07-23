@@ -1,0 +1,70 @@
+# ci.yml — build + test on every push and pull request.
+#
+# All compilation happens here on GitHub Actions, never on the developer
+# laptop (see CLAUDE.md). This workflow:
+#   1. checks out the code,
+#   2. installs the pinned Go toolchain (1.23.x),
+#   3. installs the pinned Wails CLI (v2.10.1) and FAILS with an actionable
+#      message if the CLI version diverges from the Wails library version
+#      required in go.mod (they are a coupled pair — see CLAUDE.md §7),
+#   4. runs `go vet` and `go test`,
+#   5. does a Linux `wails build` as a build-sanity check (the Ubuntu runner
+#      needs GTK + WebKit dev headers, installed below).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  # The single place the Wails CLI version is pinned for CI.
+  # Must match the github.com/wailsapp/wails/v2 version in go.mod.
+  WAILS_CLI_VERSION: v2.10.1
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.23.x
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+
+      # Wails on Linux compiles against GTK3 and WebKit2GTK. Ubuntu 24.04
+      # runners ship webkit2gtk 4.1, hence the -tags webkit2_41 build flag
+      # used further down.
+      - name: Install Linux WebView build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Install pinned Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_CLI_VERSION}
+
+      # The Wails CLI and the Wails Go library (go.mod) must be the same
+      # version — mixed versions cause confusing build/runtime errors.
+      # This step compares them and fails loudly with instructions.
+      - name: Verify Wails CLI version matches go.mod
+        run: |
+          GOMOD_VERSION=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2)
+          echo "go.mod Wails version:    ${GOMOD_VERSION}"
+          echo "Pinned CLI version (CI): ${WAILS_CLI_VERSION}"
+          if [ "${GOMOD_VERSION}" != "${WAILS_CLI_VERSION}" ]; then
+            echo "::error::Wails version mismatch: go.mod requires ${GOMOD_VERSION} but CI pins the CLI at ${WAILS_CLI_VERSION}."
+            echo "::error::Fix: update WAILS_CLI_VERSION in .github/workflows/ci.yml AND .github/workflows/release.yml to ${GOMOD_VERSION}, or run 'go get github.com/wailsapp/wails/v2@${WAILS_CLI_VERSION}' so both sides agree. Also update CLAUDE.md §7 if the minor version changes."
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      # Build sanity only — we do not ship the Linux CI binary from here
+      # (release.yml handles real artefacts on tags).
+      - name: wails build (Linux sanity check)
+        run: wails build -platform linux/amd64 -tags webkit2_41
