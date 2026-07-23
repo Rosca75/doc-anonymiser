@@ -48,6 +48,10 @@ type DocumentInfo struct {
 	// IsGrid is true for CSV-like documents (CSV, flat xlsx sheet) whose
 	// preview renders as a table and whose export offers CSV round-trip.
 	IsGrid bool `json:"isGrid"`
+	// PreviewTruncated is true when Markdown holds only the first
+	// engine.MaxPreviewLines lines of a very large document — the FULL
+	// content is still processed; only this preview copy is cut.
+	PreviewTruncated bool `json:"previewTruncated"`
 }
 
 // ImportResult reports one import action: what loaded and what failed.
@@ -214,14 +218,19 @@ func (a *App) ListDocuments() []DocumentInfo {
 func (a *App) documentInfosLocked() []DocumentInfo {
 	infos := make([]DocumentInfo, 0, len(a.docs))
 	for _, d := range a.docs {
+		// Very large documents are previewed truncated (first 5 000
+		// lines) so the WebView never chokes; the pipeline still sees
+		// the full a.docs content (BUILD.md Phase 10).
+		preview, truncated := engine.PreviewMarkdown(d.Markdown)
 		infos = append(infos, DocumentInfo{
-			Name:         d.Name,
-			Format:       string(d.Format),
-			SizeBytes:    len(d.Raw),
-			Warnings:     d.Warnings,
-			Markdown:     d.Markdown,
-			Experimental: d.Format == engine.FormatPDF,
-			IsGrid:       d.Grid != nil,
+			Name:             d.Name,
+			Format:           string(d.Format),
+			SizeBytes:        len(d.Raw),
+			Warnings:         d.Warnings,
+			Markdown:         preview,
+			Experimental:     d.Format == engine.FormatPDF,
+			IsGrid:           d.Grid != nil,
+			PreviewTruncated: truncated,
 		})
 	}
 	return infos

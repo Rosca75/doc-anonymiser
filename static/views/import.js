@@ -79,10 +79,15 @@ export function renderImport(container) {
  * All content is escaped — it comes from user documents.
  */
 function renderPreview(doc) {
+  // Very large documents preview truncated (first 5 000 lines) — the
+  // pipeline still processes the FULL content (Phase 10 hardening).
+  const notice = doc.previewTruncated
+    ? `<div class="banner warn">Preview truncated to the first 5 000 lines — the full document is still processed and exported.</div>`
+    : "";
   if (doc.isGrid) {
-    return `<div class="table-scroll">${markdownTableToHTML(doc.markdown)}</div>`;
+    return `${notice}<div class="table-scroll">${markdownTableToHTML(doc.markdown)}</div>`;
   }
-  return `<pre class="md-preview">${escapeHTML(doc.markdown)}</pre>`;
+  return `${notice}<pre class="md-preview">${escapeHTML(doc.markdown)}</pre>`;
 }
 
 /** markdownTableToHTML renders our own generated markdown table (and only

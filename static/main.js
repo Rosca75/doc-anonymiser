@@ -62,6 +62,20 @@ export function boot(root) {
   // Pipeline progress/done events are consumed by the Run view via state.
   onEvent("pipeline:progress", (ev) => setState({ progress: ev }));
   onEvent("pipeline:done", (results) => setState({ running: false, progress: null, results }));
+
+  // Keyboard shortcuts (Phase 10): Ctrl+O jumps to Import, Ctrl+E to
+  // Export (guards still apply — Export needs results). The browser's own
+  // Ctrl+O/Ctrl+E defaults are suppressed inside the app window.
+  document.addEventListener("keydown", (ev) => {
+    if (!(ev.ctrlKey || ev.metaKey)) return;
+    if (ev.key === "o" || ev.key === "O") {
+      ev.preventDefault();
+      goTo("import");
+    } else if (ev.key === "e" || ev.key === "E") {
+      ev.preventDefault();
+      goTo("export");
+    }
+  });
 }
 
 /** paint(root) renders the whole shell from the current state. */

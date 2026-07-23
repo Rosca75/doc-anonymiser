@@ -45,6 +45,27 @@ const (
 // 10 MB per BUILD.md Phase 1 activity 3.
 const LargeFileThreshold = 10 * 1024 * 1024
 
+// MaxPreviewLines caps how many lines of a document the UI preview shows
+// (BUILD.md Phase 10: render the first 5 000 lines; the FULL content is
+// still processed by the pipeline — only the preview is cut).
+const MaxPreviewLines = 5000
+
+// PreviewMarkdown returns the preview-safe version of a working form: the
+// first MaxPreviewLines lines, plus a flag telling the UI to show a
+// truncation notice. Small documents come back unchanged.
+func PreviewMarkdown(md string) (preview string, truncated bool) {
+	count := 0
+	for i := 0; i < len(md); i++ {
+		if md[i] == '\n' {
+			count++
+			if count == MaxPreviewLines {
+				return md[:i], true
+			}
+		}
+	}
+	return md, false
+}
+
 // Document is the in-memory working form of one imported file.
 //
 // The original bytes are kept verbatim in Raw and are never written back to
