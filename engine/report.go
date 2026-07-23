@@ -74,9 +74,15 @@ func (r *Report) ToMarkdown() string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString("## Per document\n\n| Document | Replacements | Warnings |\n| --- | --- | --- |\n")
+	// LLM per-file timing is surfaced here (soft budget: 30 s per 50 KB
+	// document, BUILD.md performance table); "—" when the pass was skipped.
+	b.WriteString("## Per document\n\n| Document | Replacements | Deep-scan | Warnings |\n| --- | --- | --- | --- |\n")
 	for _, d := range r.Documents {
-		fmt.Fprintf(&b, "| %s | %d | %s |\n", d.Name, d.Replacements, strings.Join(d.Warnings, "; "))
+		llm := "—"
+		if d.LLMDurationMS > 0 {
+			llm = fmt.Sprintf("%d ms", d.LLMDurationMS)
+		}
+		fmt.Fprintf(&b, "| %s | %d | %s | %s |\n", d.Name, d.Replacements, llm, strings.Join(d.Warnings, "; "))
 	}
 
 	if len(r.Warnings) > 0 {

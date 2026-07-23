@@ -120,6 +120,53 @@ export function getResults() {
   return bridge().GetResults();
 }
 
+// --- Export screen (Phase 9) -----------------------------------------------
+
+/** exportDocumentFormats(name) resolves to the offered extensions
+ *  (default first) for one result document. */
+export function exportDocumentFormats(name) {
+  return bridge().ExportDocumentFormats(name);
+}
+
+/** saveDocument(name, ext) opens a save dialog for one document. */
+export function saveDocument(name, ext) {
+  return bridge().SaveDocument(name, ext);
+}
+
+/** exportAllZip() saves every anonymised document into one zip. */
+export function exportAllZip() {
+  return bridge().ExportAllZip();
+}
+
+/** copyDocument(name) puts the anonymised text on the clipboard. */
+export function copyDocument(name) {
+  return bridge().CopyDocument(name);
+}
+
+/** exportMapping(format) saves the re-identification key ("csv"/"json").
+ *  Call ONLY after the user confirmed the sensitivity warning. */
+export function exportMapping(format) {
+  return bridge().ExportMapping(format);
+}
+
+/** exportReport(format) saves the run report ("json"/"md"). */
+export function exportReport(format) {
+  return bridge().ExportReport(format);
+}
+
+/** saveSession(request) persists the session (entities, allowlist,
+ *  patterns, rules, settings, registry). Warn the user first — the file
+ *  contains the re-identification key. */
+export function saveSession(request) {
+  return bridge().SaveSessionToFile(request);
+}
+
+/** loadSession() opens a session file; resolves to the Session object or
+ *  null when the user cancels the dialog. */
+export function loadSession() {
+  return bridge().LoadSessionFromFile();
+}
+
 // --- Events ------------------------------------------------------------
 
 /**
