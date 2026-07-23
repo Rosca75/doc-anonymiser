@@ -8,6 +8,9 @@
     - api.js is the ONLY module that calls Go bound methods.
     - state.js is the ONLY holder of frontend state.
     - views/* render from state and dispatch actions.
+
+  The wizard shell (main.js) renders the step header, the active view and
+  the navigation footer into #app.
 -->
 <html lang="en">
 <head>
@@ -17,13 +20,14 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <!-- The home view renders itself into this container. -->
-  <div id="app"></div>
+  <!-- The wizard shell renders itself into this container. The CSS drop
+       property below marks it as a Wails drag-and-drop target. -->
+  <div id="app" style="--wails-drop-target: drop"></div>
 
-  <!-- ES module entry point: boots the home view. -->
+  <!-- ES module entry point: boots the wizard shell. -->
   <script type="module">
-    import { renderHome } from "./views/home.js";
-    renderHome(document.getElementById("app"));
+    import { boot } from "./main.js";
+    boot(document.getElementById("app"));
   </script>
 </body>
 </html>
