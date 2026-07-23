@@ -147,3 +147,136 @@ export function applyImportResult(result) {
     previewDoc: previewStillValid ? state.previewDoc : (documents[0]?.name ?? null),
   });
 }
+
+// --- Entity review reducers (Phase 7) ----------------------------------------
+//
+// Entities are keyed by (category, canonical) — one row per real-world
+// entity. status "accepted" entities feed the pipeline; "denied" ones are
+// kept visible (struck through) so the user sees what discovery proposed.
+
+/** entityKey(category, canonical) — case-insensitive identity of a row. */
+export function entityKey(category, canonical) {
+  return `${category}|${canonical.trim().toLowerCase()}`;
+}
+
+/**
+ * addEntities(items) adds proposals or manual entries, skipping duplicates.
+ * items: [{category, canonical, variants?}] — variants (from Go expansion)
+ * may be attached later via setEntityVariants.
+ */
+export function addEntities(items) {
+  const existing = new Set(state.entities.map((e) => entityKey(e.category, e.canonical)));
+  const added = [];
+  for (const item of items) {
+    const canonical = (item.canonical ?? "").trim();
+    if (!canonical || existing.has(entityKey(item.category, canonical))) continue;
+    existing.add(entityKey(item.category, canonical));
+    added.push({
+      category: item.category,
+      canonical,
+      manualVariants: item.manualVariants ?? [],
+      variants: item.variants ?? [],
+      status: "accepted",
+    });
+  }
+  if (added.length) setState({ entities: [...state.entities, ...added] });
+  return added.length;
+}
+
+/** setEntityStatus(category, canonical, status) — accept or deny a row. */
+export function setEntityStatus(category, canonical, status) {
+  setState({
+    entities: state.entities.map((e) =>
+      entityKey(e.category, e.canonical) === entityKey(category, canonical)
+        ? { ...e, status }
+        : e),
+  });
+}
+
+/**
+ * editEntity(category, oldCanonical, newCanonical) renames a row (the
+ * "edit" action of the review table). A rename that would collide with an
+ * existing row is rejected (returns false).
+ */
+export function editEntity(category, oldCanonical, newCanonical) {
+  const next = (newCanonical ?? "").trim();
+  if (!next) return false;
+  const collision = state.entities.some((e) =>
+    entityKey(e.category, e.canonical) === entityKey(category, next) &&
+    entityKey(e.category, e.canonical) !== entityKey(category, oldCanonical));
+  if (collision) return false;
+  setState({
+    entities: state.entities.map((e) =>
+      entityKey(e.category, e.canonical) === entityKey(category, oldCanonical)
+        ? { ...e, canonical: next, variants: [] } // variants re-expanded by the view
+        : e),
+  });
+  return true;
+}
+
+/** removeEntity(category, canonical) deletes a row outright. */
+export function removeEntity(category, canonical) {
+  setState({
+    entities: state.entities.filter((e) =>
+      entityKey(e.category, e.canonical) !== entityKey(category, canonical)),
+  });
+}
+
+/** setEntityVariants stores the Go-expanded variant list on a row. */
+export function setEntityVariants(category, canonical, variants) {
+  setState({
+    entities: state.entities.map((e) =>
+      entityKey(e.category, e.canonical) === entityKey(category, canonical)
+        ? { ...e, variants }
+        : e),
+  });
+}
+
+/** addManualVariant appends a user-typed variant to a row (deduplicated). */
+export function addManualVariant(category, canonical, variant) {
+  const v = (variant ?? "").trim();
+  if (!v) return;
+  setState({
+    entities: state.entities.map((e) => {
+      if (entityKey(e.category, e.canonical) !== entityKey(category, canonical)) return e;
+      if (e.manualVariants.some((m) => m.toLowerCase() === v.toLowerCase())) return e;
+      return { ...e, manualVariants: [...e.manualVariants, v], variants: [] };
+    }),
+  });
+}
+
+/** acceptedEntities(s) — the pipeline-ready entity list. */
+export function acceptedEntities(s = state) {
+  return s.entities
+    .filter((e) => e.status === "accepted")
+    .map((e) => ({ category: e.category, canonical: e.canonical, manualVariants: e.manualVariants }));
+}
+
+// --- Allowlist / pattern reducers ---------------------------------------------
+
+/** addAllowTerm(term) — case-insensitive dedupe, keeps typed spelling. */
+export function addAllowTerm(term) {
+  const t = (term ?? "").trim();
+  if (!t || state.allowlist.some((x) => x.toLowerCase() === t.toLowerCase())) return;
+  setState({ allowlist: [...state.allowlist, t] });
+}
+
+export function removeAllowTerm(term) {
+  setState({ allowlist: state.allowlist.filter((x) => x.toLowerCase() !== term.toLowerCase()) });
+}
+
+/** addPattern(expr, error) stores a custom regex with its validation state. */
+export function addPattern(expr, error = null) {
+  const e = (expr ?? "").trim();
+  if (!e || state.patterns.some((p) => p.expr === e)) return;
+  setState({ patterns: [...state.patterns, { expr: e, error }] });
+}
+
+export function removePattern(expr) {
+  setState({ patterns: state.patterns.filter((p) => p.expr !== expr) });
+}
+
+/** validPatterns(s) — the pipeline-ready pattern list (compile-clean only). */
+export function validPatterns(s = state) {
+  return s.patterns.filter((p) => !p.error).map((p) => ({ expr: p.expr }));
+}

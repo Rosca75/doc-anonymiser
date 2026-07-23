@@ -71,6 +71,31 @@ export function listOllamaModels() {
   return bridge().ListOllamaModels();
 }
 
+// --- Entities screen (Phase 7) ------------------------------------------
+
+/** runDiscovery(fileNames, allowTerms) resolves to merged proposals
+ *  [{category, text}]. Rejects with an actionable message on failure. */
+export function runDiscovery(fileNames, allowTerms) {
+  return bridge().RunDiscovery(fileNames, allowTerms);
+}
+
+/** expandVariants(entity) resolves to the variant list of one entity
+ *  ({category, canonical, manualVariants}). */
+export function expandVariants(entity) {
+  return bridge().ExpandEntityVariants(entity);
+}
+
+/** validatePattern(expr) resolves to "" (valid) or the error message. */
+export function validatePattern(expr) {
+  return bridge().ValidatePattern(expr);
+}
+
+/** patternMatches(expr) resolves to up to 20 sample matches across the
+ *  loaded documents. */
+export function patternMatches(expr) {
+  return bridge().PatternMatches(expr);
+}
+
 // --- Events ------------------------------------------------------------
 
 /**

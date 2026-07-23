@@ -79,3 +79,87 @@ test("applyImportResult updates documents, errors and preview selection", () => 
   applyImportResult({ documents: [{ name: "c.md" }] });
   assert.equal(getState().previewDoc, "c.md");
 });
+
+// --- Phase 7: entity review reducers -----------------------------------------
+
+import {
+  addEntities, setEntityStatus, editEntity, removeEntity,
+  setEntityVariants, addManualVariant, acceptedEntities,
+  addAllowTerm, removeAllowTerm, addPattern, removePattern, validPatterns,
+} from "./state.js";
+
+test("addEntities dedupes case-insensitively and defaults to accepted", () => {
+  resetState();
+  const added = addEntities([
+    { category: "client_names", canonical: "Alpine Trust" },
+    { category: "client_names", canonical: "ALPINE TRUST" }, // dup
+    { category: "client_names", canonical: "  " },           // blank
+    { category: "person_names", canonical: "Marie Duval" },
+  ]);
+  assert.equal(added, 2);
+  const s = getState();
+  assert.equal(s.entities.length, 2);
+  assert.equal(s.entities[0].status, "accepted");
+});
+
+test("accept/deny reducers flip status; acceptedEntities filters", () => {
+  resetState();
+  addEntities([{ category: "client_names", canonical: "Alpine Trust" }]);
+  setEntityStatus("client_names", "Alpine Trust", "denied");
+  assert.equal(getState().entities[0].status, "denied");
+  assert.equal(acceptedEntities().length, 0, "denied entities never reach the pipeline");
+  setEntityStatus("client_names", "ALPINE trust", "accepted"); // case-insensitive key
+  assert.equal(acceptedEntities().length, 1);
+});
+
+test("editEntity renames, clears variants, and rejects collisions", () => {
+  resetState();
+  addEntities([
+    { category: "client_names", canonical: "Alpine", variants: ["Alpine"] },
+    { category: "client_names", canonical: "Borealis" },
+  ]);
+  assert.equal(editEntity("client_names", "Alpine", "Alpine Trust"), true);
+  const e = getState().entities[0];
+  assert.equal(e.canonical, "Alpine Trust");
+  assert.deepEqual(e.variants, [], "variants must be re-expanded after a rename");
+  assert.equal(editEntity("client_names", "Alpine Trust", "borealis"), false, "collision rejected");
+  assert.equal(editEntity("client_names", "Alpine Trust", "   "), false, "blank rejected");
+});
+
+test("manual variants dedupe and clear the expansion cache", () => {
+  resetState();
+  addEntities([{ category: "person_names", canonical: "Peter Stone", variants: ["Peter Stone"] }]);
+  addManualVariant("person_names", "Peter Stone", "Pete");
+  addManualVariant("person_names", "Peter Stone", "pete"); // dup, other case
+  const e = getState().entities[0];
+  assert.deepEqual(e.manualVariants, ["Pete"]);
+  assert.deepEqual(e.variants, [], "cache cleared so Go re-expands");
+  setEntityVariants("person_names", "Peter Stone", ["Peter Stone", "Pete"]);
+  assert.equal(getState().entities[0].variants.length, 2);
+});
+
+test("removeEntity deletes the row", () => {
+  resetState();
+  addEntities([{ category: "client_names", canonical: "Alpine" }]);
+  removeEntity("client_names", "ALPINE");
+  assert.equal(getState().entities.length, 0);
+});
+
+test("allowlist add/remove is case-insensitive on identity", () => {
+  resetState();
+  addAllowTerm("CSSF");
+  addAllowTerm("cssf"); // dup
+  assert.deepEqual(getState().allowlist, ["CSSF"]);
+  removeAllowTerm("Cssf");
+  assert.deepEqual(getState().allowlist, []);
+});
+
+test("patterns: only compile-clean ones feed the pipeline", () => {
+  resetState();
+  addPattern("PRJ-[0-9]+", null);
+  addPattern("[", "does not compile");
+  assert.equal(getState().patterns.length, 2);
+  assert.deepEqual(validPatterns(), [{ expr: "PRJ-[0-9]+" }]);
+  removePattern("[");
+  assert.equal(getState().patterns.length, 1);
+});
