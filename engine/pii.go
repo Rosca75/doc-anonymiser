@@ -37,6 +37,20 @@ type Span struct {
 	End      int    `json:"end"`
 	Category string `json:"category"`
 	Original string `json:"original"`
+	// Canonical is the entity's canonical name when the span came from a
+	// variant match ("M. Duval" → canonical "Marie Duval"), so every
+	// variant shares one placeholder. Empty for PII spans (the matched
+	// text IS the canonical value).
+	Canonical string `json:"canonical,omitempty"`
+}
+
+// CanonicalOrOriginal returns the registry key for this span: the
+// canonical entity name when set, the matched text otherwise.
+func (s Span) CanonicalOrOriginal() string {
+	if s.Canonical != "" {
+		return s.Canonical
+	}
+	return s.Original
 }
 
 // PII category identifiers, used as registry categories and report keys.
@@ -236,19 +250,30 @@ func ResolveOverlaps(spans []Span) []Span {
 }
 
 // ApplySpans replaces every span in text with the placeholder returned by
-// assign (typically Registry.Assign). Spans must already be non-overlapping
-// (run ResolveOverlaps first); they are applied back-to-front so earlier
-// offsets stay valid during replacement. It returns the rewritten text.
-func ApplySpans(text string, spans []Span, assign func(category, original string) string) string {
+// assign. Spans must already be non-overlapping (run ResolveOverlaps
+// first); they are applied back-to-front so earlier offsets stay valid
+// during replacement. It returns the rewritten text.
+func ApplySpans(text string, spans []Span, assign func(Span) string) string {
+	if len(spans) == 0 {
+		return text
+	}
 	ordered := make([]Span, len(spans))
 	copy(ordered, spans)
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Start > ordered[j].Start })
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Start < ordered[j].Start })
 
-	result := text
+	// Single forward pass over the text: copy the untouched stretches,
+	// splice placeholders in between. O(len(text) + placeholders), which
+	// keeps the 50-document budget comfortable even for PII-dense files.
+	var b strings.Builder
+	b.Grow(len(text))
+	last := 0
 	for _, s := range ordered {
-		result = result[:s.Start] + assign(s.Category, s.Original) + result[s.End:]
+		b.WriteString(text[last:s.Start])
+		b.WriteString(assign(s))
+		last = s.End
 	}
-	return result
+	b.WriteString(text[last:])
+	return b.String()
 }
 
 // validIBAN implements the ISO 13616 mod-97 check: move the first four

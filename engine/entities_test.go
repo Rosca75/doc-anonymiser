@@ -188,12 +188,11 @@ func TestEntityReplacementEndToEnd(t *testing.T) {
 	reg := NewRegistry()
 
 	spans := ResolveOverlaps(DetectEntities(text, entities, NewEmptyAllowlist()))
-	out := ApplySpans(text, spans, func(cat, original string) string {
-		// Every variant maps to the entity's CANONICAL placeholder — the
-		// registry is keyed on the canonical name, not the variant, so
-		// "M. Duval" and "Marie" share [PERSON_1]. The pipeline (Phase 4)
-		// wires this canonicalisation; the test inlines it.
-		return reg.Assign(cat, "Marie Duval")
+	// Every variant maps to the entity's CANONICAL placeholder — the
+	// registry is keyed on Span.Canonical, so "M. Duval" and "Marie"
+	// share [PERSON_1].
+	out := ApplySpans(text, spans, func(s Span) string {
+		return reg.Assign(s.Category, s.CanonicalOrOriginal())
 	})
 	want := "[PERSON_1] met [PERSON_1]'s team; [PERSON_1] signed."
 	if out != want {

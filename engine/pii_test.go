@@ -140,7 +140,9 @@ func TestApplySpans(t *testing.T) {
 	text := "mail marie.duval@example.com or peter.stone@example.org, mail marie.duval@example.com again"
 	reg := NewRegistry()
 	spans := ResolveOverlaps(DetectPII(text, LevelMedium))
-	out := ApplySpans(text, spans, reg.Assign)
+	out := ApplySpans(text, spans, func(s Span) string {
+		return reg.Assign(s.Category, s.CanonicalOrOriginal())
+	})
 	want := "mail [EMAIL_1] or [EMAIL_2], mail [EMAIL_1] again"
 	if out != want {
 		t.Errorf("got %q, want %q", out, want)

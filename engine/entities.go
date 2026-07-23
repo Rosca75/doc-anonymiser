@@ -209,6 +209,9 @@ func DetectEntities(text string, entities []Entity, allow *Allowlist) []Span {
 					End:      m[1],
 					Category: e.Category,
 					Original: original,
+					// Every variant maps back to the canonical name so
+					// "M. Duval" and "Marie" share one placeholder.
+					Canonical: e.Canonical,
 				})
 			}
 		}
