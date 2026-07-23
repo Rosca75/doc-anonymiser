@@ -175,7 +175,7 @@ doc-anonymiser/
 | Default Ollama model | `qwen2.5:3b-instruct` | user-selectable from `/api/tags` results; model name is a setting, never hardcoded outside settings defaults |
 | Frontend | vanilla JS (ES2020), embedded via go:embed | no npm, no bundler |
 | github.com/xuri/excelize/v2 | v2.9.x | XLSX reading; pure Go, MIT licence |
-| github.com/ledongthuc/pdf | pin the latest tagged/commit version at implementation time and record it here | pure-Go PDF text extraction (BSD-3); limited by design — see §5 PDF rules |
+| github.com/ledongthuc/pdf | v0.0.0-20240201131950-da5b75280b06 | pure-Go PDF text extraction (BSD-3); limited by design — see §5 PDF rules. Pinned to the 2024-02-01 commit: the later 2025 commit requires Go 1.24, which conflicts with the Go 1.23.x pin above |
 
 ## 8. Validated constants
 

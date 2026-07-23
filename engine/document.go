@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
+
+	"doc-anonymiser/engine/convert"
 )
 
 // Format identifies which supported input format a Document was loaded
@@ -26,6 +28,16 @@ const (
 	FormatTXT Format = "txt"
 	FormatCSV Format = "csv"
 	FormatMD  Format = "md"
+	// Binary formats converted one-way to markdown (engine/convert/*).
+	FormatDOCX Format = "docx"
+	FormatPPTX Format = "pptx"
+	// A flat xlsx sheet behaves like a CSV import (Grid set, CSV
+	// round-trip on export); a complex sheet becomes structured JSON in a
+	// fenced code block (JSON field set, export as .md or .json).
+	FormatXLSX     Format = "xlsx"
+	FormatXLSXJSON Format = "xlsx-json"
+	// PDF support is EXPERIMENTAL (CLAUDE.md §5) and labelled as such.
+	FormatPDF Format = "pdf"
 )
 
 // LargeFileThreshold is the size above which a file gets a "very large"
@@ -55,10 +67,123 @@ type Document struct {
 	// rectangular — ragged input is padded). It is kept so an anonymised
 	// CSV can be exported as CSV again. nil for txt and md documents.
 	Grid [][]string
+	// JSON holds the structured cell JSON of a COMPLEX xlsx sheet
+	// (FormatXLSXJSON) so it can be exported as .json after
+	// anonymisation. Empty for every other format.
+	JSON string
 	// Warnings collects non-fatal ingestion notes shown to the user in
-	// the import list (ragged CSV repaired, empty file, very large file).
+	// the import list (ragged CSV repaired, empty file, very large file,
+	// dropped images, complex-sheet routing, PDF repair applied).
 	// A warning never blocks processing — that is what errors are for.
 	Warnings []string
+}
+
+// LoadAll is the single ingestion entry point used by app.go: it accepts
+// every supported extension and returns one or MORE Documents — an xlsx
+// workbook yields one Document per sheet (CLAUDE.md §5), every other
+// format yields exactly one.
+func LoadAll(name string, raw []byte) ([]Document, error) {
+	ext := strings.ToLower(filepath.Ext(name))
+
+	// Shared size warnings (empty / very large) apply to every format.
+	var sizeWarnings []string
+	if len(raw) == 0 {
+		sizeWarnings = append(sizeWarnings, "the file is empty — nothing to anonymise")
+	} else if len(raw) > LargeFileThreshold {
+		sizeWarnings = append(sizeWarnings, fmt.Sprintf(
+			"very large file (%.1f MB) — processing may take a while; the preview may be truncated",
+			float64(len(raw))/(1024*1024)))
+	}
+
+	switch ext {
+	case ".txt", ".csv", ".md":
+		doc, err := Load(name, raw)
+		if err != nil {
+			return nil, err
+		}
+		return []Document{doc}, nil
+
+	case ".docx":
+		md, warns, err := convert.Docx(raw)
+		if err != nil {
+			return nil, fmt.Errorf("could not import %q: %w", name, err)
+		}
+		return []Document{{
+			Name:     name,
+			Format:   FormatDOCX,
+			Raw:      raw,
+			Markdown: md,
+			Warnings: append(sizeWarnings, warns...),
+		}}, nil
+
+	case ".pptx":
+		md, warns, err := convert.Pptx(raw)
+		if err != nil {
+			return nil, fmt.Errorf("could not import %q: %w", name, err)
+		}
+		return []Document{{
+			Name:     name,
+			Format:   FormatPPTX,
+			Raw:      raw,
+			Markdown: md,
+			Warnings: append(sizeWarnings, warns...),
+		}}, nil
+
+	case ".xlsx":
+		sheets, workbookWarns, err := convert.Xlsx(raw)
+		if err != nil {
+			return nil, fmt.Errorf("could not import %q: %w", name, err)
+		}
+		docs := make([]Document, 0, len(sheets))
+		for i, s := range sheets {
+			doc := Document{
+				// Per-sheet naming convention from CLAUDE.md §5:
+				// "<workbook>.xlsx#<sheet>".
+				Name:     name + "#" + s.Name,
+				Raw:      raw,
+				Warnings: s.Warnings,
+			}
+			// Workbook-level warnings (size, skipped empty sheets) are
+			// attached once, to the first sheet, not duplicated per sheet.
+			if i == 0 {
+				doc.Warnings = append(append([]string{}, sizeWarnings...),
+					append(workbookWarns, s.Warnings...)...)
+			}
+			if s.Flat {
+				// FLAT sheet: same downstream behaviour as a CSV import
+				// (markdown-table working form + Grid for round-trip).
+				doc.Format = FormatXLSX
+				doc.Grid = s.Grid
+				doc.Markdown = GridToMarkdownTable(s.Grid)
+			} else {
+				// COMPLEX sheet: structured JSON anonymised as text
+				// inside a fenced code block.
+				doc.Format = FormatXLSXJSON
+				doc.JSON = s.JSON
+				doc.Markdown = "```json\n" + s.JSON + "\n```\n"
+			}
+			docs = append(docs, doc)
+		}
+		return docs, nil
+
+	case ".pdf":
+		md, warns, err := convert.PDF(raw)
+		if err != nil {
+			return nil, fmt.Errorf("could not import %q: %w", name, err)
+		}
+		return []Document{{
+			Name:     name,
+			Format:   FormatPDF,
+			Raw:      raw,
+			Markdown: md,
+			Warnings: append(sizeWarnings, warns...),
+		}}, nil
+
+	default:
+		return nil, fmt.Errorf(
+			"unsupported file type %q (file %q): doc-anonymiser accepts .txt, .csv, .md, .docx, .pptx, .xlsx and .pdf — rename or convert the file to one of those formats first",
+			ext, name)
+	}
 }
 
 // Load turns a filename plus raw bytes into a Document in markdown working
