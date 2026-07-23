@@ -4,6 +4,7 @@
 package engine
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -46,8 +47,8 @@ func TestLoad(t *testing.T) {
 			wantGridRows:   2, // header + one data row
 		},
 		{
-			name:     "docx is rejected with an actionable message",
-			fileName: "contract.docx",
+			name:     "exe is rejected with an actionable message",
+			fileName: "malware.exe",
 			raw:      "irrelevant",
 			wantErr:  true,
 		},
@@ -92,5 +93,94 @@ func TestLoad(t *testing.T) {
 				t.Errorf("Grid should be nil for %s documents, got %v", doc.Format, doc.Grid)
 			}
 		})
+	}
+}
+
+// TestLoadUTF8Validation pins the actionable rejection of non-UTF-8 input
+// (BUILD.md Phase 1: "invalid UTF-8 fails with the expected error message
+// fragment"). The byte 0xE9 alone is 'é' in Latin-1 but invalid UTF-8.
+func TestLoadUTF8Validation(t *testing.T) {
+	_, err := Load("legacy.txt", []byte{'c', 'a', 'f', 0xE9})
+	if err == nil {
+		t.Fatal("Load accepted invalid UTF-8, want rejection")
+	}
+	for _, fragment := range []string{"legacy.txt", "UTF-8", "re-save"} {
+		if !strings.Contains(err.Error(), fragment) {
+			t.Errorf("error should contain %q for actionability, got: %v", fragment, err)
+		}
+	}
+}
+
+// TestLoadWarnings covers the non-fatal warning paths: empty file and
+// very large file (> LargeFileThreshold). Both must still produce a
+// usable Document.
+func TestLoadWarnings(t *testing.T) {
+	t.Run("empty file warns but loads", func(t *testing.T) {
+		doc, err := Load("empty.txt", nil)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if len(doc.Warnings) != 1 || !strings.Contains(doc.Warnings[0], "empty") {
+			t.Errorf("want a single 'empty' warning, got %v", doc.Warnings)
+		}
+	})
+	t.Run("very large file warns but loads", func(t *testing.T) {
+		big := strings.Repeat("all work and no play makes jack a dull boy\n", (LargeFileThreshold/43)+1)
+		doc, err := Load("big.txt", []byte(big))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if len(doc.Warnings) != 1 || !strings.Contains(doc.Warnings[0], "large") {
+			t.Errorf("want a single 'large' warning, got %v", doc.Warnings)
+		}
+	})
+	t.Run("ragged CSV warning reaches the Document", func(t *testing.T) {
+		doc, err := Load("ragged.csv", []byte("a,b,c\n1,2\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if len(doc.Warnings) != 1 || !strings.Contains(doc.Warnings[0], "padded") {
+			t.Errorf("want the ragged-row warning, got %v", doc.Warnings)
+		}
+	})
+}
+
+// TestFixtureCodeFences pins today's v1 behaviour for markdown code fences:
+// fence content is ordinary text (no special casing — BUILD.md Phase 1
+// activity 4). If a future change starts skipping fences, this test forces
+// that to be a conscious decision.
+func TestFixtureCodeFences(t *testing.T) {
+	raw, err := os.ReadFile("../testdata/code_fences.md")
+	if err != nil {
+		t.Fatalf("fixture missing: %v", err)
+	}
+	doc, err := Load("code_fences.md", raw)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// The fence markers AND the fence content are both present verbatim
+	// in the working form — nothing is stripped or skipped.
+	for _, want := range []string{"```python", "john.farwell@example.com", "Alpine Trust"} {
+		if !strings.Contains(doc.Markdown, want) {
+			t.Errorf("markdown working form lost %q", want)
+		}
+	}
+}
+
+// TestFixtureFrench proves accented UTF-8 text survives ingestion intact
+// (French fixtures are required by CLAUDE.md §6).
+func TestFixtureFrench(t *testing.T) {
+	raw, err := os.ReadFile("../testdata/french.md")
+	if err != nil {
+		t.Fatalf("fixture missing: %v", err)
+	}
+	doc, err := Load("french.md", raw)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, want := range []string{"Château d'Ambre", "Amélie Lefèvre", "jusqu'à"} {
+		if !strings.Contains(doc.Markdown, want) {
+			t.Errorf("accented text lost: %q missing", want)
+		}
 	}
 }

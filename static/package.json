@@ -1,0 +1,6 @@
+{
+  "//": "This file only marks static/ as an ES-module package scope so `node --test static/` can run the dev-time store tests. It declares ZERO dependencies — no npm install ever happens (CLAUDE.md §6: no npm, no bundler).",
+  "name": "doc-anonymiser-frontend",
+  "private": true,
+  "type": "module"
+}

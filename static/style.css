@@ -5,7 +5,7 @@
 */
 
 :root {
-  /* A small palette so future views stay visually consistent. */
+  /* A small palette so all views stay visually consistent. */
   --bg: #f5f6f8;
   --panel: #ffffff;
   --text: #1f2430;
@@ -13,77 +13,179 @@
   --accent: #b3542b;      /* warm accent for primary actions */
   --ok: #1e7d3c;          /* green — Ollama detected */
   --off: #9ca3af;         /* grey — feature unavailable */
+  --warn: #9a6b00;        /* amber — warnings, experimental */
   --border: #d9dce3;
+  --mark-pii: #ffe1b3;    /* highlight tints per category family */
+  --mark-entity: #cfe3ff;
+  --mark-custom: #e2d4f0;
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
+  height: 100vh;
+  overflow: hidden;
 }
 
-/* Centre the placeholder home screen in the window. */
-.home {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1rem;
-  padding: 2rem;
-  text-align: center;
+#app { display: flex; flex-direction: column; height: 100vh; }
+
+/* --- Shell: header, steps, footer ------------------------------------- */
+
+.topbar {
+  display: flex; align-items: center; gap: 1.25rem;
+  padding: 0.6rem 1rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
 }
 
-.home h1 {
-  margin: 0;
-  font-size: 1.8rem;
+.brand { font-weight: 700; }
+
+.steps { display: flex; gap: 0.4rem; flex: 1; }
+
+.chip {
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  border-radius: 999px; padding: 0.3rem 0.9rem; font-size: 0.85rem; cursor: pointer;
+}
+.chip.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.chip.disabled { opacity: 0.45; cursor: not-allowed; }
+
+.badges { display: flex; gap: 0.5rem; }
+
+main#view { flex: 1; overflow: auto; padding: 1rem; }
+
+.navbar {
+  display: flex; justify-content: space-between;
+  padding: 0.6rem 1rem;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
 }
 
-.home .tagline {
-  color: var(--muted);
-  margin: 0;
-}
+/* --- Generic building blocks ------------------------------------------ */
 
-/* Card showing bridge + Ollama status. */
-.status-card {
+.panel {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 1.25rem 1.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-  min-width: 22rem;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
 }
 
-.status-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  margin-bottom: 0.6rem;
+}
+.panel-head h2 { margin: 0; font-size: 1.05rem; }
+
+.hint { color: var(--muted); font-size: 0.85rem; }
+
+button {
+  font: inherit; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); color: var(--text);
+  padding: 0.35rem 0.8rem;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+input, select {
+  font: inherit; padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: #fff; color: var(--text);
 }
 
-.status-label {
-  color: var(--muted);
+.form-row { display: flex; align-items: center; gap: 0.6rem; margin: 0.5rem 0; }
+.form-row label { min-width: 4.5rem; color: var(--muted); font-size: 0.9rem; }
+
+.radio-row { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.3rem 0; cursor: pointer; }
+
+.badge {
+  display: inline-block; padding: 0.2rem 0.7rem; border-radius: 999px;
+  font-size: 0.8rem; font-weight: 600; color: #fff; background: var(--off);
+  white-space: nowrap;
+}
+.badge.ok { background: var(--ok); }
+.badge.off { background: var(--off); }
+.badge.error { background: #b3261e; }
+
+.tag {
+  display: inline-block; padding: 0.05rem 0.5rem; border-radius: 4px;
+  font-size: 0.75rem; font-weight: 600;
+  background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+  text-transform: uppercase;
+}
+.tag.warn { color: var(--warn); border-color: var(--warn); }
+
+.banner {
+  border-radius: 8px; padding: 0.6rem 0.9rem; margin-bottom: 0.75rem;
+  display: flex; justify-content: space-between; gap: 1rem; align-items: baseline;
   font-size: 0.9rem;
 }
+.banner.error { background: #fdecea; border: 1px solid #f5c6c0; color: #8a1f16; }
+.banner.warn  { background: #fff7e0; border: 1px solid #eadfa9; color: var(--warn); }
+.banner .dismiss { border: none; background: none; font-weight: 700; }
 
-/* Generic badge; colour is set by the modifier classes below. */
-.badge {
-  display: inline-block;
-  padding: 0.2rem 0.7rem;
-  border-radius: 999px;
+/* --- Import view -------------------------------------------------------- */
+
+.import-columns { display: grid; grid-template-columns: minmax(20rem, 2fr) 3fr; gap: 1rem; }
+
+.doc-list { list-style: none; margin: 0; padding: 0; }
+.doc-list .empty { color: var(--muted); padding: 0.75rem 0.25rem; }
+
+.doc-row {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.45rem 0.5rem; border-radius: 6px; cursor: pointer;
+}
+.doc-row:hover { background: var(--bg); }
+.doc-row.selected { background: #f3e5dd; }
+.doc-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-size { color: var(--muted); font-size: 0.8rem; }
+.doc-remove { border: none; background: none; color: var(--muted); }
+.doc-remove:hover { color: #b3261e; }
+
+.md-preview {
+  margin: 0; padding: 0.75rem;
+  background: var(--bg); border-radius: 8px;
+  white-space: pre-wrap; word-break: break-word;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: 0.85rem;
-  font-weight: 600;
-  color: #ffffff;
-  background: var(--off);
+  max-height: 60vh; overflow: auto;
 }
 
-.badge.ok    { background: var(--ok); }   /* green: detected / working */
-.badge.off   { background: var(--off); }  /* grey: not detected / disabled */
-.badge.error { background: #b3261e; }     /* red: something actually broke */
+.table-scroll { max-height: 60vh; overflow: auto; }
+
+.grid-table { border-collapse: collapse; font-size: 0.85rem; width: 100%; }
+.grid-table th, .grid-table td {
+  border: 1px solid var(--border); padding: 0.3rem 0.55rem; text-align: left;
+}
+.grid-table th { background: var(--bg); position: sticky; top: 0; }
+
+/* --- Entities view (Phase 7) ------------------------------------------- */
+
+.entity-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.entity-table th, .entity-table td { border-bottom: 1px solid var(--border); padding: 0.4rem 0.5rem; text-align: left; }
+.entity-table tr.denied td { opacity: 0.45; text-decoration: line-through; }
+.variant-list { color: var(--muted); font-size: 0.8rem; }
+
+.pill-list { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.pill {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.85rem;
+}
+.pill button { border: none; background: none; padding: 0; color: var(--muted); }
+
+/* --- Run view (Phase 8) -------------------------------------------------- */
+
+.progress-bar { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.progress-bar > div { height: 100%; background: var(--accent); transition: width 0.2s; }
+
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+
+mark { border-radius: 3px; padding: 0 2px; }
+mark.pii { background: var(--mark-pii); }
+mark.entity { background: var(--mark-entity); }
+mark.custom { background: var(--mark-custom); }

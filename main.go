@@ -32,6 +32,13 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
+		// Native file drag-and-drop: the OS hands us absolute paths and
+		// app.go routes them through the SAME validation as the dialog
+		// (CLAUDE.md §5 — rejection must also happen on drop).
+		DragAndDrop: &options.DragAndDrop{
+			EnableFileDrop:     true,
+			DisableWebViewDrop: true, // stop the WebView from navigating to dropped files
+		},
 		// OnStartup hands the runtime context to App so bound methods
 		// can later use Wails runtime features (dialogs, events).
 		OnStartup: app.startup,

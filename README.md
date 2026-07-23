@@ -26,15 +26,22 @@ names, client names, project names and more with stable placeholders such as
 A re-identification key (original → placeholder) can be exported so the
 process is reversible by you — and only by you.
 
-## The three-step flow
+## The wizard flow
 
 1. **Import** — open your documents through a native file dialog (or drag
-   and drop). CSV files are shown as a Markdown table for easy review.
-2. **Anonymise** — pick a level (`soft`, `medium` — the default, or
-   `advanced`), review what will be replaced, add or remove entities, and
-   maintain an allowlist of terms that must never be touched.
-3. **Export** — save the anonymised documents through a save dialog. CSV
-   files come back out as CSV. Your original files are never modified.
+   and drop). CSV files and flat Excel sheets are shown as a table for easy
+   review; each Excel sheet becomes its own document.
+2. **Configure** — pick a level (`soft`, `medium` — the default, or
+   `advanced`) and, optionally, the local AI model.
+3. **Entities** — declare (or let the AI discover) client, project, PwC
+   and person names to replace; maintain an allowlist of terms that must
+   never be touched; add custom regex patterns.
+4. **Run** — execute the pipeline with live progress, review the
+   side-by-side before/after with highlighted replacements, and fix
+   anything missed with a fast re-run.
+5. **Export** — save the anonymised documents through a save dialog
+   (single files, a zip of everything, or the clipboard). CSV files come
+   back out as CSV. Your original files are never modified.
 
 ## Optional: local AI assistance with Ollama
 
