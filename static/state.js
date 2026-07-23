@@ -280,3 +280,52 @@ export function removePattern(expr) {
 export function validPatterns(s = state) {
   return s.patterns.filter((p) => !p.error).map((p) => ({ expr: p.expr }));
 }
+
+// --- Simple-replace rule reducers (Phase 8) ----------------------------------
+//
+// Rules are ORDERED: rule 1 runs before rule 2 and later rules see earlier
+// output (engine/simplereplace.go). Hence the move reducer.
+
+/** addSimpleRule({find, replace, caseSensitive}) appends a rule. */
+export function addSimpleRule(rule) {
+  const find = (rule.find ?? "").trim();
+  if (!find) return false; // an empty needle is a no-op rule
+  setState({
+    simpleRules: [...state.simpleRules, {
+      find,
+      replace: rule.replace ?? "",
+      caseSensitive: !!rule.caseSensitive,
+    }],
+  });
+  return true;
+}
+
+/** removeSimpleRule(index) deletes the rule at the given position. */
+export function removeSimpleRule(index) {
+  setState({ simpleRules: state.simpleRules.filter((_, i) => i !== index) });
+}
+
+/** moveSimpleRule(index, delta) reorders a rule (delta ±1); returns
+ *  whether a move happened. */
+export function moveSimpleRule(index, delta) {
+  const to = index + delta;
+  if (index < 0 || index >= state.simpleRules.length || to < 0 || to >= state.simpleRules.length) {
+    return false;
+  }
+  const rules = [...state.simpleRules];
+  [rules[index], rules[to]] = [rules[to], rules[index]];
+  setState({ simpleRules: rules });
+  return true;
+}
+
+/** buildRunRequest(useDeepScan, s) assembles the Go RunRequest from the
+ *  current state — the single place the pipeline payload is shaped. */
+export function buildRunRequest(useDeepScan, s = state) {
+  return {
+    entities: acceptedEntities(s),
+    allowTerms: s.allowlist,
+    patterns: validPatterns(s),
+    simpleRules: s.simpleRules,
+    useDeepScan: !!useDeepScan,
+  };
+}

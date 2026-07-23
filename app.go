@@ -73,6 +73,16 @@ type App struct {
 	mu       sync.Mutex
 	docs     []engine.Document // loaded documents, in import order
 	settings Settings
+	// registry is the session placeholder registry — ONE per session so
+	// the same entity maps to the same placeholder across runs
+	// (CLAUDE.md §5); created lazily on the first run.
+	registry *engine.Registry
+	// results of the latest pipeline run (feeds the results view and the
+	// Phase 9 exports).
+	results *engine.Results
+	// running / cancelRun manage the in-flight pipeline goroutine.
+	running   bool
+	cancelRun context.CancelFunc
 }
 
 // NewApp constructs the bound struct. Kept trivial on purpose: anything

@@ -96,6 +96,30 @@ export function patternMatches(expr) {
   return bridge().PatternMatches(expr);
 }
 
+// --- Run screen (Phase 8) -------------------------------------------------
+
+/** runPipeline(request) starts the pipeline; resolves immediately (results
+ *  arrive on the "pipeline:done" event, progress on "pipeline:progress"). */
+export function runPipeline(request) {
+  return bridge().RunPipeline(request);
+}
+
+/** cancelPipeline() aborts the in-flight run. */
+export function cancelPipeline() {
+  return bridge().CancelPipeline();
+}
+
+/** fastRerun(request) re-runs the deterministic passes only (no LLM),
+ *  resolving directly to the fresh Results. */
+export function fastRerun(request) {
+  return bridge().FastRerun(request);
+}
+
+/** getResults() resolves to the latest Results (or null). */
+export function getResults() {
+  return bridge().GetResults();
+}
+
 // --- Events ------------------------------------------------------------
 
 /**

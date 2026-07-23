@@ -163,3 +163,43 @@ test("patterns: only compile-clean ones feed the pipeline", () => {
   removePattern("[");
   assert.equal(getState().patterns.length, 1);
 });
+
+// --- Phase 8: simple-replace rules + run request -----------------------------
+
+import { addSimpleRule, removeSimpleRule, moveSimpleRule, buildRunRequest } from "./state.js";
+
+test("simple rules: add validates, move reorders, remove deletes", () => {
+  resetState();
+  assert.equal(addSimpleRule({ find: "  " }), false, "empty needle rejected");
+  addSimpleRule({ find: "a", replace: "1" });
+  addSimpleRule({ find: "b", replace: "2", caseSensitive: true });
+  assert.equal(getState().simpleRules.length, 2);
+
+  assert.equal(moveSimpleRule(1, -1), true);
+  assert.equal(getState().simpleRules[0].find, "b");
+  assert.equal(moveSimpleRule(0, -1), false, "cannot move above the top");
+  assert.equal(moveSimpleRule(5, 1), false, "out of range rejected");
+
+  removeSimpleRule(0);
+  assert.deepEqual(getState().simpleRules.map((r) => r.find), ["a"]);
+});
+
+test("buildRunRequest assembles only pipeline-ready inputs", () => {
+  resetState();
+  addEntities([
+    { category: "client_names", canonical: "Alpine" },
+    { category: "person_names", canonical: "Denied Person" },
+  ]);
+  setEntityStatus("person_names", "Denied Person", "denied");
+  addAllowTerm("CSSF");
+  addPattern("PRJ-[0-9]+", null);
+  addPattern("[", "broken");
+  addSimpleRule({ find: "x", replace: "y" });
+
+  const req = buildRunRequest(true);
+  assert.equal(req.useDeepScan, true);
+  assert.deepEqual(req.entities, [{ category: "client_names", canonical: "Alpine", manualVariants: [] }]);
+  assert.deepEqual(req.allowTerms, ["CSSF"]);
+  assert.deepEqual(req.patterns, [{ expr: "PRJ-[0-9]+" }]);
+  assert.equal(req.simpleRules.length, 1);
+});
