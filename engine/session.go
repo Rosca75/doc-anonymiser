@@ -29,11 +29,16 @@ const SessionVersion = 1
 const SessionSchema = 2
 
 // SessionSettings mirrors the app settings worth persisting. The engine
-// does not interpret them — they round-trip for app.go.
+// does not interpret them — they round-trip for app.go. The BUILD-02
+// fields (categories, contextSize, useAI) are absent in v1 files; app.go
+// treats zero values as "keep the current defaults".
 type SessionSettings struct {
-	Level      string `json:"level"`
-	OllamaPort int    `json:"ollamaPort"`
-	Model      string `json:"model"`
+	Level       string            `json:"level"`
+	Categories  CategorySelection `json:"categories,omitempty"`
+	OllamaPort  int               `json:"ollamaPort"`
+	Model       string            `json:"model"`
+	ContextSize int               `json:"contextSize,omitempty"`
+	UseAI       bool              `json:"useAI,omitempty"`
 }
 
 // Session is the complete persistable session state.

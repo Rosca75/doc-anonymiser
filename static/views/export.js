@@ -13,7 +13,7 @@ import {
   exportDocumentFormats, saveDocument, exportAllZip, copyDocument,
   exportMapping, exportReport, saveSession, loadSession,
 } from "../api.js";
-import { getState, setState, buildRunRequest, addEntities } from "../state.js";
+import { getState, setState, buildRunRequest, addEntities, presetCategories } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { panel, wirePanels, button } from "../ui.js";
 
@@ -156,8 +156,13 @@ function wire(container) {
         simpleRules: session.simpleRules ?? [],
         settings: {
           level: session.settings?.level ?? "medium",
+          // v1 sessions predate these fields; fall back to the preset /
+          // current defaults rather than dropping them to zero values.
+          categories: session.settings?.categories ?? presetCategories(session.settings?.level ?? "medium"),
           ollamaPort: session.settings?.ollamaPort ?? 11434,
           model: session.settings?.model ?? "",
+          contextSize: session.settings?.contextSize || getState().settings.contextSize,
+          useAI: session.settings?.useAI ?? getState().settings.useAI,
         },
       });
       addEntities((session.entities ?? []).map((e) => ({

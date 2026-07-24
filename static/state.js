@@ -53,7 +53,11 @@ const initialState = {
   // the LAST CHOSEN PRESET; categories is the granular switch set the
   // pipeline obeys (BUILD-02 Phase 3). The categories map is filled below
   // after presetCategories is defined.
-  settings: { level: "medium", categories: null, ollamaPort: 11434, model: "" },
+  // useAI is the master "Use local AI" toggle (BUILD-02 Phase 6d):
+  // null = not yet decided (defaults to Ollama availability after the
+  // first probe), true/false = explicit user choice.
+  // contextSize is the Ollama num_ctx setting (Phase 5b), default 8192.
+  settings: { level: "medium", categories: null, ollamaPort: 11434, model: "", contextSize: 8192, useAI: null },
 
   // Entity review state (Phase 7): array of
   // {category, canonical, manualVariants, status: "accepted"|"denied"}.
@@ -182,6 +186,33 @@ export function selectionPresetName(categories) {
     if (ALL_CATEGORIES.every((c) => !!categories?.[c] === preset[c])) return level;
   }
   return "custom";
+}
+
+// --- Local-AI gating (BUILD-02 Phase 6d) --------------------------------------
+
+/**
+ * setUseAI(on) records the user's explicit "Use local AI" choice.
+ */
+export function setUseAI(on) {
+  setState({ settings: { ...state.settings, useAI: !!on } });
+}
+
+/**
+ * defaultUseAIFromProbe(available) fills the toggle's DEFAULT after the
+ * first Ollama probe: on when detected, off otherwise. A prior explicit
+ * user choice (true/false) is never overwritten.
+ */
+export function defaultUseAIFromProbe(available) {
+  if (state.settings.useAI !== null) return;
+  setState({ settings: { ...state.settings, useAI: !!available } });
+}
+
+/**
+ * llmEnabled(s) is THE gate for every AI-dependent control (discovery,
+ * deep-scan): the master toggle must be on AND Ollama must be reachable.
+ */
+export function llmEnabled(s = state) {
+  return !!(s.settings.useAI && s.ollama?.available);
 }
 
 // --- Screen navigation (BUILD-02 Phase 2a) -----------------------------------

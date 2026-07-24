@@ -44,6 +44,10 @@ type Settings struct {
 	// Default 8192; 0 keeps the model default. Higher values let the AI
 	// read longer documents at once but use more memory.
 	ContextSize int `json:"contextSize"`
+	// UseAI is the master "Use local AI (Ollama)" toggle (BUILD-02
+	// Phase 6d). Every AI-dependent control gates on UseAI AND the live
+	// Ollama availability; the choice persists in sessions.
+	UseAI bool `json:"useAI"`
 }
 
 // DocumentInfo is the frontend-facing summary of one loaded Document.

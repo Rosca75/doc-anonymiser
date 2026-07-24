@@ -11,25 +11,27 @@
 
 import { runPipeline, cancelPipeline, fastRerun } from "../api.js";
 import {
-  getState, setState,
+  getState, setState, llmEnabled,
   addEntities, buildRunRequest,
   addSimpleRule, removeSimpleRule, moveSimpleRule,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { renderHighlighted } from "../highlight.js";
 import { panel, wirePanels } from "../ui.js";
-import { LLM_DISABLED_TOOLTIP } from "./configure.js";
+import { llmGateTooltip } from "./configure.js";
 
 // Panels the user toggled away from their default state (BUILD-02 Phase 2f).
 const collapsedPanels = new Set();
 
 export function renderRun(container) {
   const s = getState();
-  const ollamaOK = !!s.ollama?.available;
+  // Deep-scan gates on the master AI toggle AND live availability
+  // (BUILD-02 Phase 6d).
+  const aiOK = llmEnabled(s);
 
   container.innerHTML = `
     <div class="run-view">
-      ${controlPanel(s, ollamaOK)}
+      ${controlPanel(s, aiOK)}
       ${rulesPanel(s)}
       ${s.results ? resultsPanel(s) : ""}
       <div id="run-error"></div>
@@ -44,8 +46,8 @@ export function renderRun(container) {
 
 // --- Run controls + progress ------------------------------------------------
 
-function controlPanel(s, ollamaOK) {
-  const gate = ollamaOK ? "" : `disabled title="${LLM_DISABLED_TOOLTIP}"`;
+function controlPanel(s, aiOK) {
+  const gate = aiOK ? "" : `disabled title="${escapeHTML(llmGateTooltip(s))}"`;
   const pct = s.progress && s.progress.docCount
     ? Math.round(((s.progress.docIndex + 1) / s.progress.docCount) * 100)
     : 0;
@@ -54,7 +56,7 @@ function controlPanel(s, ollamaOK) {
       <div class="panel-head">
         <h2>Run anonymisation</h2>
         <div>
-          <label title="${ollamaOK ? "Extra AI pass to catch residual entities" : LLM_DISABLED_TOOLTIP}">
+          <label title="${aiOK ? "Extra AI pass to catch residual entities" : escapeHTML(llmGateTooltip(s))}">
             <input type="checkbox" id="deep-scan" ${gate}/> deep-scan (AI)
           </label>
           <button id="btn-run" class="primary" ${s.running ? "disabled" : ""}>Run</button>

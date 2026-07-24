@@ -123,3 +123,41 @@ func TestRunPipelineRejectsEmptyAndConcurrent(t *testing.T) {
 		t.Error("fast rerun during a run must be rejected")
 	}
 }
+
+// TestApplySettingsRoundTrip (BUILD-02 Phase 6): ContextSize, UseAI and
+// Categories survive ApplySettings and reach the Ollama client / pipeline
+// configuration.
+func TestApplySettingsRoundTrip(t *testing.T) {
+	app := NewApp()
+	sel := engine.PresetSelection(engine.LevelSoft)
+	sel["email"] = false
+
+	// The probe will fail (no server on that port) but ApplySettings must
+	// still store the settings; availability is status, not an error.
+	_, err := app.ApplySettings(Settings{
+		Level:       "soft",
+		Categories:  sel,
+		OllamaPort:  18434,
+		Model:       "custom:3b",
+		ContextSize: 16384,
+		UseAI:       true,
+	})
+	if err != nil {
+		t.Fatalf("ApplySettings: %v", err)
+	}
+	got := app.GetSettings()
+	if got.ContextSize != 16384 || !got.UseAI || got.Model != "custom:3b" {
+		t.Errorf("settings not stored: %+v", got)
+	}
+	if got.Categories["email"] || !got.Categories["client_names"] {
+		t.Errorf("categories not stored: %+v", got.Categories)
+	}
+	if app.llm.ContextSize != 16384 {
+		t.Errorf("client ContextSize = %d, want 16384", app.llm.ContextSize)
+	}
+
+	// Invalid context size is rejected with an actionable message.
+	if _, err := app.ApplySettings(Settings{Level: "soft", OllamaPort: 11434, ContextSize: -1}); err == nil {
+		t.Error("negative context size must be rejected")
+	}
+}

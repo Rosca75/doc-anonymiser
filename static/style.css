@@ -169,6 +169,12 @@ input, select {
 .banner.warn  { background: var(--gray-6); border: 1px solid var(--warn); color: var(--text); }
 .banner .dismiss { border: none; background: none; font-weight: 700; }
 
+/* --- Configure sub-tabs (BUILD-02 Phase 6a) -------------------------------- */
+
+.subtabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+.preset-chip { cursor: pointer; }
+.preset-chip.active { border-bottom-color: var(--accent); background: var(--gray-6); font-weight: 700; }
+
 /* --- Home / documentation screens ---------------------------------------- */
 
 .home-view { max-width: 60rem; margin: 0 auto; padding-top: 2rem; }

@@ -60,3 +60,40 @@ export const HOME = {
 
 // Documentation placeholder page (BUILD-02 Phase 2c).
 export const DOCS_PLACEHOLDER = "Documentation is coming soon.";
+
+// Configure step copy (BUILD-02 Phase 6). Plain language: no "PII", no
+// abbreviations without an example, full sentences.
+export const CONFIGURE = {
+  tabWhat: "What to anonymise",
+  tabAI: "AI and advanced settings",
+  presetHint: "Start from a preset, then adjust the checkboxes if you need to. Changing any checkbox switches the preset to Custom.",
+  groupContact: "Contact and account details",
+  groupNames: "Names",
+  groupThorough: "Only for thorough anonymisation",
+  useAILabel: "Use local AI (Ollama)",
+  useAIHint: "When enabled, a language model running on this machine can suggest names to replace and double-check the result. Nothing leaves your computer.",
+  contextSizeHint: "Higher values let the AI read longer documents at once but use more memory.",
+  aiOffTooltip: "Local AI is turned off. Enable it under Configure, AI and advanced settings.",
+  allowTitle: "Never anonymise these terms",
+  allowHint: "Terms in this list survive every pass, even when they also appear as names to replace.",
+};
+
+// Per-category checkbox labels and one-line examples (BUILD-02 Phase 6b).
+// Keys match engine category identifiers.
+export const CATEGORY_LABELS = {
+  email: ["Email addresses", "For example jean.muller@example.com"],
+  phone: ["Phone numbers", "For example +352 621 123 456"],
+  iban: ["Bank account numbers", "IBAN codes such as LU28 0019 4006 4475 0000"],
+  vat: ["VAT numbers", "For example LU12345678"],
+  matricule: ["National identification numbers", "For example the Luxembourg 13 digit number"],
+  url: ["Web addresses", "For example https://example.com/report"],
+  client_names: ["Client names", "The client names you list in the Entities step"],
+  project_names: ["Project names", "The project names you list in the Entities step"],
+  internal_names: ["Internal names", "Internal staff, teams and systems"],
+  person_names: ["Person names", "For example Marie Duval, M. Duval or just Marie"],
+  custom_patterns: ["Custom patterns", "The regular expressions you add in the Entities step"],
+  date: ["Dates", "For example 15 January 2026 or 15/01/2026"],
+  organisation_names: ["Organisation names", "Organisations suggested by the AI review"],
+  location_names: ["Place names", "Cities and places suggested by the AI review"],
+  amount: ["Money amounts", "For example EUR 12,500"],
+};

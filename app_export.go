@@ -178,9 +178,12 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 		Patterns:    req.Patterns,
 		SimpleRules: req.SimpleRules,
 		Settings: engine.SessionSettings{
-			Level:      settings.Level,
-			OllamaPort: settings.OllamaPort,
-			Model:      settings.Model,
+			Level:       settings.Level,
+			Categories:  settings.Categories,
+			OllamaPort:  settings.OllamaPort,
+			Model:       settings.Model,
+			ContextSize: settings.ContextSize,
+			UseAI:       settings.UseAI,
 		},
 		Registry: registry,
 	})
@@ -215,15 +218,23 @@ func (a *App) LoadSessionFromFile() (*engine.Session, error) {
 
 	a.mu.Lock()
 	a.registry = engine.NewRegistryFromEntries(session.Registry)
-	a.settings = Settings{
-		Level:      session.Settings.Level,
-		OllamaPort: session.Settings.OllamaPort,
-		Model:      session.Settings.Model,
-		// Not yet persisted in the session file: keep the live values
-		// instead of silently resetting them.
-		Categories:  a.settings.Categories,
-		ContextSize: a.settings.ContextSize,
+	restored := Settings{
+		Level:       session.Settings.Level,
+		Categories:  session.Settings.Categories,
+		OllamaPort:  session.Settings.OllamaPort,
+		Model:       session.Settings.Model,
+		ContextSize: session.Settings.ContextSize,
+		UseAI:       session.Settings.UseAI,
 	}
+	// v1 sessions predate these fields: zero values mean "keep the
+	// current settings" instead of silently resetting them.
+	if restored.Categories == nil {
+		restored.Categories = a.settings.Categories
+	}
+	if restored.ContextSize == 0 {
+		restored.ContextSize = a.settings.ContextSize
+	}
+	a.settings = restored
 	a.mu.Unlock()
 	// Apply the (possibly different) Ollama port/model through the same
 	// validated path the settings screen uses.

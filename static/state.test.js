@@ -14,6 +14,7 @@ import {
   WIZARD_STEPS, canGoTo, goTo, nextStep, prevStep,
   goToScreen, setImportSplit,
   applyPreset, toggleCategory, selectionPresetName, presetCategories,
+  setUseAI, defaultUseAIFromProbe, llmEnabled,
   applyImportResult,
 } from "./state.js";
 
@@ -295,4 +296,31 @@ test("buildRunRequest carries the category selection", () => {
   assert.deepEqual(req.categories, presetCategories("soft"));
   toggleCategory("iban", false);
   assert.equal(buildRunRequest(false).categories.iban, false);
+});
+
+// --- Local-AI gating (BUILD-02 Phase 6) ---------------------------------------
+
+test("llmEnabled requires BOTH the toggle and a reachable Ollama", () => {
+  resetState();
+  setState({ ollama: { available: true, models: [], detail: "" } });
+  setUseAI(false);
+  assert.equal(llmEnabled(), false, "toggle off blocks AI even with Ollama up");
+  setUseAI(true);
+  assert.equal(llmEnabled(), true);
+  setState({ ollama: { available: false, models: [], detail: "" } });
+  assert.equal(llmEnabled(), false, "Ollama down blocks AI even with toggle on");
+});
+
+test("defaultUseAIFromProbe fills the default once, never overrides a choice", () => {
+  resetState();
+  assert.equal(getState().settings.useAI, null);
+  defaultUseAIFromProbe(true);
+  assert.equal(getState().settings.useAI, true, "default follows availability");
+  // A later probe result must not flip an established value.
+  defaultUseAIFromProbe(false);
+  assert.equal(getState().settings.useAI, true);
+  // An explicit user choice survives everything.
+  setUseAI(false);
+  defaultUseAIFromProbe(true);
+  assert.equal(getState().settings.useAI, false);
 });

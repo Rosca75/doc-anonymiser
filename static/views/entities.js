@@ -10,14 +10,15 @@ import {
   runDiscovery, expandVariants, validatePattern, patternMatches,
 } from "../api.js";
 import {
-  getState, setState,
+  getState, setState, llmEnabled,
   addEntities, setEntityStatus, editEntity, removeEntity,
   setEntityVariants, addManualVariant, entityKey,
-  addAllowTerm, removeAllowTerm, addPattern, removePattern,
+  addPattern, removePattern,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { panel, wirePanels } from "../ui.js";
-import { LLM_DISABLED_TOOLTIP } from "./configure.js";
+import { llmGateTooltip } from "./configure.js";
+import { renderAllowlistPanel, wireAllowlistPanel } from "./allowlist.js";
 
 // The reviewable entity categories (CLAUDE.md §5) with display labels.
 const CATEGORIES = [
@@ -37,13 +38,15 @@ const collapsedPanels = new Set();
 
 export function renderEntities(container) {
   const s = getState();
-  const ollamaOK = !!s.ollama?.available;
+  // Discovery gates on the master AI toggle AND live availability
+  // (BUILD-02 Phase 6d).
+  const aiOK = llmEnabled(s);
 
   container.innerHTML = `
     <div class="entities-view">
-      ${discoveryPanel(s, ollamaOK)}
+      ${discoveryPanel(s, aiOK)}
       ${CATEGORIES.map(([cat, label]) => categoryPanel(s, cat, label)).join("")}
-      ${allowlistPanel(s)}
+      ${renderAllowlistPanel(s, collapsedPanels)}
       ${patternsPanel(s)}
       <div id="entities-error"></div>
     </div>
@@ -52,19 +55,19 @@ export function renderEntities(container) {
   wirePanels(container, collapsedPanels, () => setState({}));
   wireDiscovery(container, s);
   wireCategoryPanels(container);
-  wireAllowlist(container);
+  wireAllowlistPanel(container);
   wirePatterns(container);
 }
 
 // --- Discovery ---------------------------------------------------------
 
-function discoveryPanel(s, ollamaOK) {
+function discoveryPanel(s, aiOK) {
   const fileOptions = s.documents.map((d) => `
     <label class="radio-row">
       <input type="checkbox" class="disc-file" value="${escapeHTML(d.name)}"/>
       <span>${escapeHTML(d.name)}</span>
     </label>`).join("");
-  const gate = ollamaOK ? "" : `disabled title="${LLM_DISABLED_TOOLTIP}"`;
+  const gate = aiOK ? "" : `disabled title="${escapeHTML(llmGateTooltip(s))}"`;
   const content = `
       <p class="hint">Pick one or more representative files; the local model proposes entities for review below.
         Without Ollama, add entities manually in the tables; that is a fully supported flow.</p>
@@ -213,33 +216,6 @@ async function refreshVariants() {
       // Expansion is display sugar; the pipeline expands server-side
       // anyway. Leave the list empty rather than surfacing an error.
     }
-  }
-}
-
-// --- Allowlist -----------------------------------------------------------
-
-function allowlistPanel(s) {
-  const pills = s.allowlist.map((t) => `
-    <span class="pill">${escapeHTML(t)}<button class="allow-del" data-term="${escapeHTML(t)}" title="Remove">✕</button></span>`).join("");
-  const content = `
-      <p class="hint">Terms here survive every pass, even when they are also listed as entities.</p>
-      <div class="pill-list">${pills || `<span class="hint">empty</span>`}</div>
-      <div class="form-row">
-        <input id="allow-input" placeholder="add a term, e.g. CSSF"/>
-        <button id="allow-add">Add</button>
-      </div>`;
-  return panel("allow-panel", "Allowlist (never anonymised)", content, {
-    collapsible: true, collapsedSet: collapsedPanels,
-  });
-}
-
-function wireAllowlist(container) {
-  const input = container.querySelector("#allow-input");
-  const add = () => addAllowTerm(input.value);
-  container.querySelector("#allow-add").addEventListener("click", add);
-  input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") add(); });
-  for (const btn of container.querySelectorAll(".allow-del")) {
-    btn.addEventListener("click", () => removeAllowTerm(btn.dataset.term));
   }
 }
 

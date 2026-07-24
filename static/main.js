@@ -10,7 +10,7 @@ import { ping, probeOllama, onEvent, defaultAllowlist } from "./api.js";
 import {
   getState, setState, subscribe,
   WIZARD_STEPS, canGoTo, goTo, goToScreen, nextStep, prevStep,
-  applyImportResult,
+  applyImportResult, defaultUseAIFromProbe,
 } from "./state.js";
 import { escapeHTML } from "./html.js";
 import { button, banner } from "./ui.js";
@@ -57,7 +57,13 @@ export function boot(root) {
   // Ollama probe: "not available" is a normal state (grey badge +
   // tooltip), never an error.
   probeOllama()
-    .then((status) => setState({ ollama: status }))
+    .then((status) => {
+      setState({ ollama: status });
+      // First probe fills the "Use local AI" default: on when detected,
+      // off otherwise. An explicit user choice is never overwritten
+      // (BUILD-02 Phase 6d).
+      defaultUseAIFromProbe(status?.available);
+    })
     .catch((err) => setState({
       ollama: { available: false, models: [], detail: `Probe failed unexpectedly: ${err.message ?? err}` },
     }));
