@@ -270,6 +270,31 @@ func (a *App) ExpandEntityVariants(e engine.Entity) []string {
 	return engine.ExpandVariants(e)
 }
 
+// TermMatchInfo is the live manual-entry preview payload (BUILD-02
+// Phase 9c): how often a term occurs, and in how many documents.
+type TermMatchInfo struct {
+	Count     int `json:"count"`
+	Documents int `json:"documents"`
+}
+
+// CountTermMatches counts case-insensitive word-boundary occurrences of
+// term across every loaded document, for the "Found N times in M
+// documents" preview under the manual add-entity inputs.
+func (a *App) CountTermMatches(term string) TermMatchInfo {
+	a.mu.Lock()
+	docs := a.docs
+	a.mu.Unlock()
+
+	info := TermMatchInfo{}
+	for _, doc := range docs {
+		if n := engine.CountTermMatches(doc.Markdown, term); n > 0 {
+			info.Count += n
+			info.Documents++
+		}
+	}
+	return info
+}
+
 // ValidatePattern compile-checks a user regex. It returns the error as a
 // STRING ("" = valid) instead of a Go error, because a validation failure
 // is expected feedback for the live checker, not a rejected promise.

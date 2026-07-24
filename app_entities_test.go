@@ -237,3 +237,84 @@ func TestDiscoveryProgressEvents(t *testing.T) {
 		t.Errorf("progress payloads wrong: %+v", events)
 	}
 }
+
+// --- BUILD-02 Phase 9 tests ------------------------------------------------
+
+// TestCountTermMatches: word-boundary counting for the live preview
+// ("Lux" must not match inside "Luxembourg").
+func TestCountTermMatches(t *testing.T) {
+	app := NewApp()
+	app.docs = []engine.Document{
+		{Name: "a.txt", Format: engine.FormatTXT, Markdown: "Lux is nice. Luxembourg is bigger. lux again."},
+		{Name: "b.txt", Format: engine.FormatTXT, Markdown: "No mention here."},
+		{Name: "c.txt", Format: engine.FormatTXT, Markdown: "Lux once more."},
+	}
+	cases := []struct {
+		term      string
+		count     int
+		documents int
+	}{
+		{"Lux", 3, 2},        // case-insensitive, boundary-anchored
+		{"Luxembourg", 1, 1}, // the long word matches itself only
+		{"absent", 0, 0},
+		{"", 0, 0},
+	}
+	for _, tc := range cases {
+		got := app.CountTermMatches(tc.term)
+		if got.Count != tc.count || got.Documents != tc.documents {
+			t.Errorf("CountTermMatches(%q) = %+v, want {%d %d}", tc.term, got, tc.count, tc.documents)
+		}
+	}
+}
+
+// TestExcludedVariants: an excluded spelling disappears from expansion,
+// so a moved variant matches exactly one entity afterwards.
+func TestExcludedVariants(t *testing.T) {
+	got := engine.ExpandVariants(engine.Entity{
+		Category:         "person_names",
+		Canonical:        "Jean Muller",
+		ExcludedVariants: []string{"J. Muller", "muller"},
+	})
+	for _, v := range got {
+		if strings.EqualFold(v, "J. Muller") || strings.EqualFold(v, "Muller") {
+			t.Errorf("excluded variant %q still expanded: %v", v, got)
+		}
+	}
+	found := false
+	for _, v := range got {
+		if v == "Jean Muller" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("canonical must survive exclusion of other variants: %v", got)
+	}
+}
+
+// TestRunSmartDetectionReturnsCandidatesNotEntities: the binding returns
+// candidates for review; the App holds no entity state to mutate, and the
+// result carries counts and the offline status.
+func TestRunSmartDetectionReturnsCandidatesNotEntities(t *testing.T) {
+	app := NewApp()
+	app.docs = []engine.Document{
+		{Name: "a.txt", Format: engine.FormatTXT,
+			Markdown: "Meeting with Marie Duval about Alpine Trust S.A. Later Marie Duval called again."},
+	}
+	res, err := app.RunSmartDetection([]string{"a.txt"}, []string{"CSSF"}, false)
+	if err != nil {
+		t.Fatalf("RunSmartDetection: %v", err)
+	}
+	if res.Cancelled || !strings.Contains(res.Status, "1 file(s)") {
+		t.Errorf("status = %+v", res)
+	}
+	byText := map[string]engine.Candidate{}
+	for _, c := range res.Candidates {
+		byText[c.Text] = c
+	}
+	if c, ok := byText["Marie Duval"]; !ok || c.Category != "person_names" || c.Count < 2 {
+		t.Errorf("Marie Duval candidate wrong: %+v", res.Candidates)
+	}
+	if c, ok := byText["Alpine Trust S.A."]; !ok || c.Category != "client_names" {
+		t.Errorf("suffix client candidate wrong: %+v", res.Candidates)
+	}
+}

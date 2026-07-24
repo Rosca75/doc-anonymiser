@@ -81,6 +81,12 @@ const initialState = {
   // Discovery run state (BUILD-02 Phase 7c):
   // {running, current, total, file} or null when idle.
   discovery: null,
+
+  // Unified candidate review list (BUILD-02 Phase 9b): candidates from
+  // any discovery method wait HERE until explicitly accepted; nothing
+  // flows into entities without user confirmation. Each row:
+  // {source: "smart"|"local-ai"|"cloud-ai", text, category, count, contexts}.
+  candidates: [],
 };
 
 // --- Category presets (BUILD-02 Phase 3, mirrors engine.PresetSelection) ----
@@ -332,6 +338,7 @@ export function addEntities(items) {
       // the BUILD-02 Phase 7a fix.
       variants: item.variants ?? null,
       variantError: null,
+      excludedVariants: item.excludedVariants ?? [],
       status: "accepted",
     });
   }
@@ -416,11 +423,163 @@ export function addManualVariant(category, canonical, variant) {
   });
 }
 
-/** acceptedEntities(s), the pipeline-ready entity list. */
+/** acceptedEntities(s), the pipeline-ready entity list (manual and
+ *  excluded variants travel to Go so expansion matches the UI). */
 export function acceptedEntities(s = state) {
   return s.entities
     .filter((e) => e.status === "accepted")
-    .map((e) => ({ category: e.category, canonical: e.canonical, manualVariants: e.manualVariants }));
+    .map((e) => ({
+      category: e.category,
+      canonical: e.canonical,
+      manualVariants: e.manualVariants,
+      excludedVariants: e.excludedVariants ?? [],
+    }));
+}
+
+// --- Candidate review reducers (BUILD-02 Phase 9b) ----------------------------
+//
+// The review gate: discovery methods ADD candidates; only an explicit
+// accept turns a candidate into an entity. Candidates are keyed by
+// lower-cased text (one row per distinct name across sources).
+
+/** candidateKey(text), case-insensitive identity of a candidate row. */
+export function candidateKey(text) {
+  return (text ?? "").trim().toLowerCase();
+}
+
+/**
+ * addCandidates(items, source) merges discovery output into the review
+ * list. Existing rows keep their spot (first source wins); names already
+ * present as entities are skipped. Returns how many rows were added.
+ */
+export function addCandidates(items, source) {
+  const existing = new Set(state.candidates.map((c) => candidateKey(c.text)));
+  const asEntities = new Set(state.entities.map((e) => e.canonical.trim().toLowerCase()));
+  const added = [];
+  for (const item of items ?? []) {
+    const text = (item.text ?? "").trim();
+    const key = candidateKey(text);
+    if (!text || existing.has(key) || asEntities.has(key)) continue;
+    existing.add(key);
+    added.push({
+      source,
+      text,
+      category: item.category ?? "person_names",
+      count: item.count ?? 0,
+      contexts: item.contexts ?? [],
+    });
+  }
+  if (added.length) setState({ candidates: [...state.candidates, ...added] });
+  return added.length;
+}
+
+/**
+ * acceptCandidate(text) promotes one candidate into the entity list
+ * (with its current category) and removes it from review. Returns
+ * whether an entity was added.
+ */
+export function acceptCandidate(text) {
+  const key = candidateKey(text);
+  const cand = state.candidates.find((c) => candidateKey(c.text) === key);
+  if (!cand) return false;
+  const added = addEntities([{ category: cand.category, canonical: cand.text }]);
+  setState({ candidates: state.candidates.filter((c) => candidateKey(c.text) !== key) });
+  return added > 0;
+}
+
+/** rejectCandidate(text) drops a candidate without a trace. */
+export function rejectCandidate(text) {
+  const key = candidateKey(text);
+  setState({ candidates: state.candidates.filter((c) => candidateKey(c.text) !== key) });
+}
+
+/**
+ * updateCandidate(text, patch) edits a candidate in place (inline text
+ * or category change before accepting). A text edit that collides with
+ * another row is rejected (returns false).
+ */
+export function updateCandidate(text, patch) {
+  const key = candidateKey(text);
+  const next = (patch.text ?? text).trim();
+  if (!next) return false;
+  if (candidateKey(next) !== key &&
+      state.candidates.some((c) => candidateKey(c.text) === candidateKey(next))) {
+    return false;
+  }
+  setState({
+    candidates: state.candidates.map((c) =>
+      candidateKey(c.text) === key ? { ...c, ...patch, text: next } : c),
+  });
+  return true;
+}
+
+/** acceptAllInCategory(category) bulk-accepts every candidate currently
+ *  assigned to the category; returns how many entities were added. */
+export function acceptAllInCategory(category) {
+  const batch = state.candidates.filter((c) => c.category === category);
+  if (!batch.length) return 0;
+  const added = addEntities(batch.map((c) => ({ category: c.category, canonical: c.text })));
+  setState({ candidates: state.candidates.filter((c) => c.category !== category) });
+  return added;
+}
+
+// --- Variant regrouping (BUILD-02 Phase 9d) -----------------------------------
+
+/**
+ * moveVariant(fromCategory, fromCanonical, toCategory, toCanonical,
+ * variant) moves one variant spelling between entities: the source
+ * excludes it (so its automatic expansion stops matching it) and the
+ * target gains it as a manual variant. Both rows re-expand (variants
+ * back to pending). Pure reducer; the drag-and-drop wiring only calls
+ * it. Returns false for self-drops, unknown rows, or a variant the
+ * source does not actually carry.
+ */
+export function moveVariant(fromCategory, fromCanonical, toCategory, toCanonical, variant) {
+  const v = (variant ?? "").trim();
+  if (!v) return false;
+  const fromKey = entityKey(fromCategory, fromCanonical);
+  const toKey = entityKey(toCategory, toCanonical);
+  if (fromKey === toKey) return false; // cannot drop onto self
+
+  const from = state.entities.find((e) => entityKey(e.category, e.canonical) === fromKey);
+  const to = state.entities.find((e) => entityKey(e.category, e.canonical) === toKey);
+  if (!from || !to) return false;
+
+  // The variant must actually belong to the source row (expanded list or
+  // manual additions); otherwise this is a stale drop.
+  const lower = v.toLowerCase();
+  const carried =
+    (from.variants ?? []).some((x) => x.toLowerCase() === lower) ||
+    (from.manualVariants ?? []).some((x) => x.toLowerCase() === lower);
+  if (!carried) return false;
+
+  setState({
+    entities: state.entities.map((e) => {
+      const key = entityKey(e.category, e.canonical);
+      if (key === fromKey) {
+        return {
+          ...e,
+          manualVariants: (e.manualVariants ?? []).filter((x) => x.toLowerCase() !== lower),
+          excludedVariants: [...(e.excludedVariants ?? []), v],
+          variants: null, // re-expand ONLY the touched rows
+          variantError: null,
+        };
+      }
+      if (key === toKey) {
+        const dup = (e.manualVariants ?? []).some((x) => x.toLowerCase() === lower);
+        return {
+          ...e,
+          manualVariants: dup ? e.manualVariants : [...(e.manualVariants ?? []), v],
+          // Un-exclude in case the variant is coming back home.
+          excludedVariants: (e.excludedVariants ?? []).filter((x) => x.toLowerCase() !== lower),
+          variants: null,
+          variantError: null,
+        };
+      }
+      return e;
+    }),
+  });
+  return true;
 }
 
 // --- Allowlist / pattern reducers ---------------------------------------------

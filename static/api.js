@@ -112,9 +112,22 @@ export function estimateDiscovery(fileNames) {
 }
 
 /** expandVariants(entity) resolves to the variant list of one entity
- *  ({category, canonical, manualVariants}). */
+ *  ({category, canonical, manualVariants, excludedVariants}). */
 export function expandVariants(entity) {
   return bridge().ExpandEntityVariants(entity);
+}
+
+/** runSmartDetection(fileNames, allowTerms, classify) resolves to a
+ *  SmartDetectionResult {candidates, status, cancelled}. Works fully
+ *  offline; classify=true refines categories via the local AI. */
+export function runSmartDetection(fileNames, allowTerms, classify) {
+  return bridge().RunSmartDetection(fileNames, allowTerms, !!classify);
+}
+
+/** countTermMatches(term) resolves to {count, documents} for the live
+ *  manual-entry preview. */
+export function countTermMatches(term) {
+  return bridge().CountTermMatches(term);
 }
 
 /** validatePattern(expr) resolves to "" (valid) or the error message. */

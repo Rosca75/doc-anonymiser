@@ -31,6 +31,12 @@ type Entity struct {
 	// ManualVariants are extra spellings added by the user in the review
 	// UI, on top of the automatic expansion.
 	ManualVariants []string `json:"manualVariants,omitempty"`
+	// ExcludedVariants are spellings this entity must NOT match, even
+	// when the automatic expansion would produce them. Written by the
+	// variant drag-and-drop regrouping (BUILD-02 Phase 9d): moving a
+	// variant to another entity excludes it here so exactly one entity
+	// matches it afterwards.
+	ExcludedVariants []string `json:"excludedVariants,omitempty"`
 }
 
 // personCategories lists the categories whose canonical names are people —
@@ -66,13 +72,20 @@ const minVariantLen = 3
 // ExpandVariants returns every spelling the entity should match, canonical
 // first, deduplicated, longest first (the order replacement wants).
 func ExpandVariants(e Entity) []string {
+	// Excluded spellings never make it into the list (drag-and-drop
+	// regrouping moved them to another entity, Phase 9d).
+	excluded := map[string]bool{}
+	for _, x := range e.ExcludedVariants {
+		excluded[strings.ToLower(strings.TrimSpace(x))] = true
+	}
+
 	seen := map[string]bool{}
 	var out []string
 	add := func(v string) {
 		v = strings.TrimSpace(v)
 		// Case-insensitive dedupe; keep the first spelling encountered.
 		key := strings.ToLower(v)
-		if v == "" || len([]rune(v)) < minVariantLen || seen[key] {
+		if v == "" || len([]rune(v)) < minVariantLen || seen[key] || excluded[key] {
 			return
 		}
 		seen[key] = true
@@ -93,7 +106,7 @@ func ExpandVariants(e Entity) []string {
 	for _, v := range e.ManualVariants {
 		v = strings.TrimSpace(v)
 		key := strings.ToLower(v)
-		if v != "" && !seen[key] {
+		if v != "" && !seen[key] && !excluded[key] {
 			seen[key] = true
 			out = append(out, v)
 		}
@@ -246,6 +259,29 @@ func lastRuneBefore(s string, i int) rune {
 func firstRuneAt(s string, i int) rune {
 	r, _ := utf8.DecodeRuneInString(s[i:])
 	return r
+}
+
+// CountTermMatches counts case-insensitive, word-boundary-anchored
+// occurrences of term in text (BUILD-02 Phase 9c: the live "Found N
+// times" preview for manual entries). Same boundary rule as the entity
+// pass, so the preview never promises a match the pipeline would reject
+// ("Lux" does not match inside "Luxembourg").
+func CountTermMatches(text, term string) int {
+	term = strings.TrimSpace(term)
+	if term == "" {
+		return 0
+	}
+	re, err := regexp.Compile(`(?i)` + regexp.QuoteMeta(term))
+	if err != nil {
+		return 0 // QuoteMeta makes this unreachable; stay safe
+	}
+	n := 0
+	for _, m := range re.FindAllStringIndex(text, -1) {
+		if isWordBoundary(text, m[0], m[1]) {
+			n++
+		}
+	}
+	return n
 }
 
 // CustomPattern is a user-supplied regex (category custom_patterns).

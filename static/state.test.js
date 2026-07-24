@@ -15,6 +15,8 @@ import {
   goToScreen, setImportSplit,
   applyPreset, toggleCategory, selectionPresetName, presetCategories,
   setUseAI, defaultUseAIFromProbe, llmEnabled,
+  addCandidates, acceptCandidate, rejectCandidate, updateCandidate, acceptAllInCategory,
+  moveVariant,
   applyImportResult,
 } from "./state.js";
 
@@ -201,7 +203,7 @@ test("buildRunRequest assembles only pipeline-ready inputs", () => {
 
   const req = buildRunRequest(true);
   assert.equal(req.useDeepScan, true);
-  assert.deepEqual(req.entities, [{ category: "client_names", canonical: "Alpine", manualVariants: [] }]);
+  assert.deepEqual(req.entities, [{ category: "client_names", canonical: "Alpine", manualVariants: [], excludedVariants: [] }]);
   assert.deepEqual(req.allowTerms, ["CSSF"]);
   assert.deepEqual(req.patterns, [{ expr: "PRJ-[0-9]+" }]);
   assert.equal(req.simpleRules.length, 1);
@@ -323,4 +325,116 @@ test("defaultUseAIFromProbe fills the default once, never overrides a choice", (
   setUseAI(false);
   defaultUseAIFromProbe(true);
   assert.equal(getState().settings.useAI, false);
+});
+
+// --- Candidate review gate (BUILD-02 Phase 9b) --------------------------------
+
+test("candidates wait for explicit accept; accept moves them to entities", () => {
+  resetState();
+  const added = addCandidates([
+    { text: "Alpine Trust", category: "client_names", count: 3 },
+    { text: "Marie Duval", category: "person_names" },
+  ], "smart");
+  assert.equal(added, 2);
+  assert.equal(getState().entities.length, 0, "nothing reaches entities without accept");
+
+  assert.equal(acceptCandidate("Alpine Trust"), true);
+  assert.equal(getState().entities.length, 1);
+  assert.equal(getState().entities[0].category, "client_names");
+  assert.equal(getState().candidates.length, 1, "accepted candidate leaves the review list");
+});
+
+test("reject removes, duplicates and existing entities are skipped", () => {
+  resetState();
+  addEntities([{ category: "client_names", canonical: "Known Corp" }]);
+  const added = addCandidates([
+    { text: "Known Corp", category: "client_names" }, // already an entity
+    { text: "Fresh Co", category: "client_names" },
+    { text: "fresh co", category: "client_names" },   // case-insensitive dup
+  ], "local-ai");
+  assert.equal(added, 1);
+  rejectCandidate("Fresh Co");
+  assert.equal(getState().candidates.length, 0);
+  assert.equal(getState().entities.length, 1, "reject never touches entities");
+});
+
+test("edit then accept uses the edited text and category", () => {
+  resetState();
+  addCandidates([{ text: "alpin trust", category: "person_names" }], "smart");
+  assert.equal(updateCandidate("alpin trust", { text: "Alpine Trust", category: "client_names" }), true);
+  // A collision with another candidate is rejected.
+  addCandidates([{ text: "Other Co", category: "client_names" }], "smart");
+  assert.equal(updateCandidate("Other Co", { text: "Alpine Trust" }), false);
+
+  acceptCandidate("Alpine Trust");
+  const e = getState().entities[0];
+  assert.equal(e.canonical, "Alpine Trust");
+  assert.equal(e.category, "client_names");
+});
+
+test("bulk accept drains one category only", () => {
+  resetState();
+  addCandidates([
+    { text: "C One", category: "client_names" },
+    { text: "C Two", category: "client_names" },
+    { text: "P One", category: "person_names" },
+  ], "smart");
+  assert.equal(acceptAllInCategory("client_names"), 2);
+  assert.equal(getState().entities.length, 2);
+  assert.equal(getState().candidates.length, 1);
+  assert.equal(getState().candidates[0].text, "P One");
+});
+
+// --- Variant regrouping (BUILD-02 Phase 9d) ------------------------------------
+
+test("moveVariant happy path: source excludes, target gains, both re-pend", () => {
+  resetState();
+  addEntities([
+    { category: "person_names", canonical: "Jean Muller" },
+    { category: "person_names", canonical: "J Muller Sr" },
+  ]);
+  setEntityVariants("person_names", "Jean Muller", ["Jean Muller", "J. Muller"]);
+  setEntityVariants("person_names", "J Muller Sr", ["J Muller Sr"]);
+
+  assert.equal(moveVariant("person_names", "Jean Muller", "person_names", "J Muller Sr", "J. Muller"), true);
+  const from = getState().entities.find((e) => e.canonical === "Jean Muller");
+  const to = getState().entities.find((e) => e.canonical === "J Muller Sr");
+  assert.deepEqual(from.excludedVariants, ["J. Muller"]);
+  assert.deepEqual(to.manualVariants, ["J. Muller"]);
+  assert.equal(from.variants, null, "source re-expands");
+  assert.equal(to.variants, null, "target re-expands");
+});
+
+test("moveVariant rejects self-drops, unknown rows and absent variants", () => {
+  resetState();
+  addEntities([
+    { category: "person_names", canonical: "Jean Muller" },
+    { category: "client_names", canonical: "Alpine" },
+  ]);
+  setEntityVariants("person_names", "Jean Muller", ["Jean Muller"]);
+  setEntityVariants("client_names", "Alpine", ["Alpine"]);
+
+  assert.equal(moveVariant("person_names", "Jean Muller", "person_names", "Jean Muller", "Jean Muller"), false, "self-drop");
+  assert.equal(moveVariant("person_names", "Ghost", "client_names", "Alpine", "x"), false, "unknown source");
+  assert.equal(moveVariant("person_names", "Jean Muller", "client_names", "Alpine", "Not A Variant"), false, "absent variant");
+  // No state damage from rejected moves.
+  assert.equal(getState().entities.find((e) => e.canonical === "Alpine").manualVariants.length, 0);
+});
+
+test("moveVariant across categories re-pends only the two touched rows", () => {
+  resetState();
+  addEntities([
+    { category: "person_names", canonical: "Jean Muller" },
+    { category: "client_names", canonical: "Alpine" },
+    { category: "client_names", canonical: "Borealis" },
+  ]);
+  setEntityVariants("person_names", "Jean Muller", ["Jean Muller", "Muller"]);
+  setEntityVariants("client_names", "Alpine", ["Alpine"]);
+  setEntityVariants("client_names", "Borealis", ["Borealis"]);
+
+  assert.equal(moveVariant("person_names", "Jean Muller", "client_names", "Alpine", "Muller"), true);
+  const untouched = getState().entities.find((e) => e.canonical === "Borealis");
+  assert.deepEqual(untouched.variants, ["Borealis"], "third row untouched");
+  const pendingNames = getState().entities.filter((e) => e.variants === null).map((e) => e.canonical).sort();
+  assert.deepEqual(pendingNames, ["Alpine", "Jean Muller"]);
 });

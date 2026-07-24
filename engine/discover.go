@@ -323,6 +323,25 @@ func extractRuns(text string) []smartRun {
 		// a bare legal form ("GmbH" discussed as a concept) is not a name.
 		if len([]rune(r.text)) >= 3 && !isBareSuffix(r.text) {
 			runs = append(runs, r)
+
+			// Sentence-start runs often glue a grammar-capitalised word
+			// onto a real name ("Later Marie Duval called"). Emit the
+			// sub-run without the first word too, so "Marie Duval" still
+			// counts; the frequency and sentence rules weed out whichever
+			// grouping is noise. Suffix runs are already whole company
+			// names and produce no sub-run.
+			if r.sentenceStart && !r.hasSuffix && !r.hasTitle && last > i {
+				sub := smartRun{
+					text:          text[tokens[i+1].start:r.end],
+					start:         tokens[i+1].start,
+					end:           r.end,
+					sentenceStart: false,
+					words:         significantWords(text[tokens[i+1].start:r.end]),
+				}
+				if len([]rune(sub.text)) >= 3 && !isBareSuffix(sub.text) {
+					runs = append(runs, sub)
+				}
+			}
 		}
 		i = j
 	}
