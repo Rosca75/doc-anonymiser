@@ -86,6 +86,17 @@ export function boot(root) {
   onEvent("pipeline:progress", (ev) => setState({ progress: ev }));
   onEvent("pipeline:done", (results) => setState({ running: false, progress: null, results }));
 
+  // Discovery progress (BUILD-02 Phase 7c): the Go side emits one event
+  // per scanned file; the entities view renders a determinate bar.
+  onEvent("discovery:progress", (ev) => setState({
+    discovery: {
+      running: true,
+      current: ev?.docIndex ?? 0,
+      total: ev?.docCount ?? 0,
+      file: ev?.docName ?? "",
+    },
+  }));
+
   // Keyboard shortcuts (Phase 10): Ctrl+O jumps to Import, Ctrl+E to
   // Export (guards still apply, Export needs results). The browser's own
   // Ctrl+O/Ctrl+E defaults are suppressed inside the app window.

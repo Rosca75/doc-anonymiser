@@ -384,7 +384,7 @@ func TestChunkCap(t *testing.T) {
 	if _, err := c.Chunks(huge); err == nil || !strings.Contains(err.Error(), "Smart detection") {
 		t.Errorf("oversize document must fail with the split/smart-detection advice, got %v", err)
 	}
-	if n := c.EstimateChunks(huge); n <= maxChunksPerDocument {
+	if n := c.EstimateChunks(huge); n <= MaxChunksPerDocument {
 		t.Errorf("EstimateChunks must report the real chunk count, got %d", n)
 	}
 }

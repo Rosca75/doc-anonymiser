@@ -124,7 +124,7 @@ test("editEntity renames, clears variants, and rejects collisions", () => {
   assert.equal(editEntity("client_names", "Alpine", "Alpine Trust"), true);
   const e = getState().entities[0];
   assert.equal(e.canonical, "Alpine Trust");
-  assert.deepEqual(e.variants, [], "variants must be re-expanded after a rename");
+  assert.equal(e.variants, null, "variants must be back to pending (null) after a rename");
   assert.equal(editEntity("client_names", "Alpine Trust", "borealis"), false, "collision rejected");
   assert.equal(editEntity("client_names", "Alpine Trust", "   "), false, "blank rejected");
 });
@@ -136,7 +136,7 @@ test("manual variants dedupe and clear the expansion cache", () => {
   addManualVariant("person_names", "Peter Stone", "pete"); // dup, other case
   const e = getState().entities[0];
   assert.deepEqual(e.manualVariants, ["Pete"]);
-  assert.deepEqual(e.variants, [], "cache cleared so Go re-expands");
+  assert.equal(e.variants, null, "cache back to pending (null) so Go re-expands");
   setEntityVariants("person_names", "Peter Stone", ["Peter Stone", "Pete"]);
   assert.equal(getState().entities[0].variants.length, 2);
 });

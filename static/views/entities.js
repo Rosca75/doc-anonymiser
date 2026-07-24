@@ -7,14 +7,16 @@
 // reducer; every Go call goes through api.js.
 
 import {
-  runDiscovery, expandVariants, validatePattern, patternMatches,
+  runDiscovery, cancelDiscovery, estimateDiscovery,
+  expandVariants, validatePattern, patternMatches,
 } from "../api.js";
 import {
   getState, setState, llmEnabled,
   addEntities, setEntityStatus, editEntity, removeEntity,
-  setEntityVariants, addManualVariant, entityKey,
+  setEntityVariants, setEntityVariantError, addManualVariant, entityKey,
   addPattern, removePattern,
 } from "../state.js";
+import { variantRows, pendingExpansions } from "../entitymodel.js";
 import { escapeHTML } from "../html.js";
 import { panel, wirePanels } from "../ui.js";
 import { llmGateTooltip } from "./configure.js";
@@ -68,39 +70,68 @@ function discoveryPanel(s, aiOK) {
       <span>${escapeHTML(d.name)}</span>
     </label>`).join("");
   const gate = aiOK ? "" : `disabled title="${escapeHTML(llmGateTooltip(s))}"`;
+
+  // Determinate per-file progress + Cancel while a run is live
+  // (BUILD-02 Phase 7c/7d); the bar reuses the run step's component.
+  const d = s.discovery;
+  const pct = d?.running && d.total ? Math.round(((d.current + 1) / d.total) * 100) : 0;
+  const progressHTML = d?.running ? `
+      <div class="progress-bar"><div style="width:${pct}%"></div></div>
+      <p class="hint">Scanning ${escapeHTML(d.file ?? "")} (${d.current + 1}/${d.total})
+        <button id="btn-disc-cancel">Cancel</button></p>` : "";
+
   const content = `
       <p class="hint">Pick one or more representative files; the local model proposes entities for review below.
         Without Ollama, add entities manually in the tables; that is a fully supported flow.</p>
       ${fileOptions || `<p class="hint">No documents imported.</p>`}
+      ${progressHTML}
       <div id="disc-progress" class="hint"></div>`;
   return panel("panel-discovery", "Entity discovery (AI)", content, {
     collapsible: true, collapsedSet: collapsedPanels,
-    headExtraHTML: `<button id="btn-discover" class="primary" ${gate}>Run discovery</button>`,
+    headExtraHTML: `<button id="btn-discover" class="primary" ${gate} ${d?.running ? "disabled" : ""}>Run discovery</button>`,
   });
 }
 
 function wireDiscovery(container, s) {
+  container.querySelector("#btn-disc-cancel")?.addEventListener("click", () => cancelDiscovery());
+
   const btn = container.querySelector("#btn-discover");
   if (!btn || btn.disabled) return;
   btn.addEventListener("click", async () => {
-    const files = [...container.querySelectorAll(".disc-file:checked")].map((c) => c.value);
+    let files = [...container.querySelectorAll(".disc-file:checked")].map((c) => c.value);
     const progress = container.querySelector("#disc-progress");
     if (files.length === 0) {
       progress.textContent = "Select at least one file first.";
       return;
     }
-    btn.disabled = true;
-    progress.textContent = "Scanning…";
+
+    // Pre-run size safeguard (BUILD-02 Phase 7e): oversized files are
+    // excluded with the actionable message, never a mid-run hard error.
     try {
-      const proposals = await runDiscovery(files, s.allowlist);
-      const added = addEntities((proposals ?? []).map((p) => ({ category: p.category, canonical: p.text })));
-      progress.textContent = `${proposals?.length ?? 0} proposal(s), ${added} new. Review them below.`;
+      const estimates = await estimateDiscovery(files);
+      const tooLarge = (estimates ?? []).filter((e) => e.tooLarge);
+      if (tooLarge.length) {
+        progress.textContent = tooLarge.map((e) => e.message).join(" ");
+        const excluded = new Set(tooLarge.map((e) => e.name));
+        files = files.filter((f) => !excluded.has(f));
+        if (files.length === 0) return;
+      }
+    } catch { /* estimation is advisory; the run still guards itself */ }
+
+    setState({ discovery: { running: true, current: 0, total: files.length, file: files[0] } });
+    try {
+      const res = await runDiscovery(files, s.allowlist);
+      const proposals = res?.proposals ?? [];
+      const added = addEntities(proposals.map((p) => ({ category: p.category, canonical: p.text })));
+      const status = res?.status ? `${res.status}. ` : "";
+      setState({ discovery: null });
+      getState(); // repaint happened; write the summary into the fresh DOM
+      const slot = document.querySelector("#disc-progress");
+      if (slot) slot.textContent = `${status}${proposals.length} proposal(s), ${added} new. Review them below.`;
       await refreshVariants();
     } catch (err) {
+      setState({ discovery: null });
       showError(container, err);
-      progress.textContent = "";
-    } finally {
-      btn.disabled = false;
     }
   });
 }
@@ -108,17 +139,49 @@ function wireDiscovery(container, s) {
 // --- Review tables ------------------------------------------------------
 
 function categoryPanel(s, category, label) {
+  // Variant row content comes from the TESTED pure view-model
+  // (entitymodel.js): pending / error / empty / list are explicit states,
+  // so the "expanding" placeholder can never stick forever (Phase 7a).
+  const vrowsByKey = new Map(
+    variantRows(s.entities, expanded).map((r) => [r.key, r]));
+
   const rows = s.entities.filter((e) => e.category === category).map((e) => {
     const key = entityKey(e.category, e.canonical);
-    const isOpen = expanded.has(key);
-    const variantCount = e.variants?.length ?? 0;
+    const vrow = vrowsByKey.get(key);
+    const isOpen = !!vrow;
+    const variantCount = e.variants?.length;
+    const countLabel = e.variants === null || e.variants === undefined
+      ? "…" : `${variantCount} variant${variantCount === 1 ? "" : "s"}`;
+
+    let variantBody = "";
+    if (vrow) {
+      const inner =
+        vrow.state === "pending" ? `<span class="hint">expanding…</span>` :
+        vrow.state === "error" ? `<span class="banner error">Variant expansion failed: ${escapeHTML(vrow.error)}</span>` :
+        vrow.state === "empty" ? `<span class="hint">No variants</span>` :
+        vrow.variants.map(escapeHTML).join(" · ");
+      // The variant row carries ITS OWN data attributes; the old
+      // previousElementSibling coupling broke silently on any markup
+      // change between the rows (the Phase 7a bug).
+      variantBody = `
+      <tr class="variant-row" data-key="${escapeHTML(key)}"
+          data-category="${escapeHTML(e.category)}" data-canonical="${escapeHTML(e.canonical)}">
+        <td colspan="3">
+        <div class="variant-list">${inner}</div>
+        <div class="form-row">
+          <input class="variant-input" placeholder="add a manual variant (e.g. a nickname)"/>
+          <button class="variant-add">Add variant</button>
+        </div>
+      </td></tr>`;
+    }
+
     return `
       <tr class="${e.status === "denied" ? "denied" : ""}" data-key="${escapeHTML(key)}"
           data-category="${escapeHTML(e.category)}" data-canonical="${escapeHTML(e.canonical)}">
         <td class="ent-name">${escapeHTML(e.canonical)}</td>
         <td>
           <button class="ent-variants" title="Show the name variants that will be replaced">
-            ${variantCount || "…"} variant${variantCount === 1 ? "" : "s"} ${isOpen ? "▾" : "▸"}
+            ${countLabel} ${isOpen ? "▾" : "▸"}
           </button>
         </td>
         <td class="ent-actions">
@@ -127,15 +190,7 @@ function categoryPanel(s, category, label) {
           <button class="ent-edit">edit</button>
           <button class="ent-delete">✕</button>
         </td>
-      </tr>
-      ${isOpen ? `
-      <tr class="variant-row"><td colspan="3">
-        <div class="variant-list">${(e.variants ?? []).map(escapeHTML).join(" · ") || "expanding…"}</div>
-        <div class="form-row">
-          <input class="variant-input" placeholder="add a manual variant (e.g. a nickname)"/>
-          <button class="variant-add">add variant</button>
-        </div>
-      </td></tr>` : ""}`;
+      </tr>${variantBody}`;
   }).join("");
 
   const content = `
@@ -185,9 +240,9 @@ function wireCategoryPanels(container) {
     }
 
     for (const vrow of panel.querySelectorAll(".variant-row")) {
-      // The variant row belongs to the entity row right above it.
-      const entRow = vrow.previousElementSibling;
-      const { category: cat, canonical } = entRow.dataset;
+      // Explicit data attributes ON the variant row itself (Phase 7a);
+      // no positional coupling to the entity row above.
+      const { category: cat, canonical } = vrow.dataset;
       const input = vrow.querySelector(".variant-input");
       vrow.querySelector(".variant-add").addEventListener("click", async () => {
         addManualVariant(cat, canonical, input.value);
@@ -198,23 +253,22 @@ function wireCategoryPanels(container) {
 }
 
 /**
- * refreshVariants() asks Go to expand every entity whose variant list is
- * missing (new, edited, or variant-added rows). Sequential on purpose:
- * the lists are tiny and ordering keeps the UI deterministic. Each
- * setEntityVariants triggers a state notification, so the view re-renders
- * with the counts filled in.
+ * refreshVariants() asks Go to expand every entity whose variants are
+ * PENDING (variants === null: just added, edited, or variant-amended).
+ * Settled rows, including "expanded, none found" ([]), are never
+ * re-expanded (Phase 7a). Failures surface as a visible inline message
+ * with the Go error text instead of being swallowed. Sequential on
+ * purpose: the lists are tiny and ordering keeps the UI deterministic.
  */
 async function refreshVariants() {
-  for (const e of getState().entities) {
-    if ((e.variants?.length ?? 0) > 0) continue;
+  for (const e of pendingExpansions(getState().entities)) {
     try {
       const variants = await expandVariants({
         category: e.category, canonical: e.canonical, manualVariants: e.manualVariants,
       });
       setEntityVariants(e.category, e.canonical, variants ?? []);
-    } catch {
-      // Expansion is display sugar; the pipeline expands server-side
-      // anyway. Leave the list empty rather than surfacing an error.
+    } catch (err) {
+      setEntityVariantError(e.category, e.canonical, String(err?.message ?? err));
     }
   }
 }

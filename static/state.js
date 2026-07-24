@@ -77,6 +77,10 @@ const initialState = {
   running: false,
   progress: null, // {stage, docIndex, docCount, docName} or null
   results: null,  // engine.Results mirror or null
+
+  // Discovery run state (BUILD-02 Phase 7c):
+  // {running, current, total, file} or null when idle.
+  discovery: null,
 };
 
 // --- Category presets (BUILD-02 Phase 3, mirrors engine.PresetSelection) ----
@@ -322,7 +326,12 @@ export function addEntities(items) {
       category: item.category,
       canonical,
       manualVariants: item.manualVariants ?? [],
-      variants: item.variants ?? [],
+      // variants: null = "not yet expanded" (the view shows a pending
+      // placeholder and triggers expansion); [] = "expanded, none found"
+      // (explicit empty state). Distinguishing the two is the heart of
+      // the BUILD-02 Phase 7a fix.
+      variants: item.variants ?? null,
+      variantError: null,
       status: "accepted",
     });
   }
@@ -355,7 +364,8 @@ export function editEntity(category, oldCanonical, newCanonical) {
   setState({
     entities: state.entities.map((e) =>
       entityKey(e.category, e.canonical) === entityKey(category, oldCanonical)
-        ? { ...e, canonical: next, variants: [] } // variants re-expanded by the view
+        // variants: null = pending; ONLY this row re-expands (Phase 7a).
+        ? { ...e, canonical: next, variants: null, variantError: null }
         : e),
   });
   return true;
@@ -369,12 +379,24 @@ export function removeEntity(category, canonical) {
   });
 }
 
-/** setEntityVariants stores the Go-expanded variant list on a row. */
+/** setEntityVariants stores the Go-expanded variant list on a row
+ *  ([] is a valid "no variants" answer, distinct from pending null). */
 export function setEntityVariants(category, canonical, variants) {
   setState({
     entities: state.entities.map((e) =>
       entityKey(e.category, e.canonical) === entityKey(category, canonical)
-        ? { ...e, variants }
+        ? { ...e, variants: variants ?? [], variantError: null }
+        : e),
+  });
+}
+
+/** setEntityVariantError records a failed expansion so the row shows the
+ *  Go error text instead of a forever-pending placeholder (Phase 7a). */
+export function setEntityVariantError(category, canonical, message) {
+  setState({
+    entities: state.entities.map((e) =>
+      entityKey(e.category, e.canonical) === entityKey(category, canonical)
+        ? { ...e, variantError: message ?? "expansion failed" }
         : e),
   });
 }
@@ -387,7 +409,9 @@ export function addManualVariant(category, canonical, variant) {
     entities: state.entities.map((e) => {
       if (entityKey(e.category, e.canonical) !== entityKey(category, canonical)) return e;
       if (e.manualVariants.some((m) => m.toLowerCase() === v.toLowerCase())) return e;
-      return { ...e, manualVariants: [...e.manualVariants, v], variants: [] };
+      // Adding a variant re-expands ONLY this row (variants back to
+      // pending null, Phase 7a).
+      return { ...e, manualVariants: [...e.manualVariants, v], variants: null, variantError: null };
     }),
   });
 }

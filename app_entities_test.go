@@ -4,10 +4,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"doc-anonymiser/engine"
@@ -77,15 +79,19 @@ func TestRunDiscoveryMergesAndDedupes(t *testing.T) {
 		{Name: "two.txt", Format: engine.FormatTXT, Markdown: "doc two: ALPINE TRUST with Peter Stone"},
 	}
 
-	got, err := app.RunDiscovery([]string{"one.txt", "two.txt"}, nil)
+	res, err := app.RunDiscovery([]string{"one.txt", "two.txt"}, nil)
 	if err != nil {
 		t.Fatalf("RunDiscovery: %v", err)
 	}
+	got := res.Proposals
 	if len(got) != 3 {
 		t.Fatalf("want 3 merged proposals (client deduped), got %+v", got)
 	}
 	if got[0].Text != "Alpine Trust" {
 		t.Errorf("first-seen spelling must win, got %q", got[0].Text)
+	}
+	if res.Cancelled || !strings.Contains(res.Status, "2 file(s)") {
+		t.Errorf("status = %+v, want a completed 2-file status", res)
 	}
 }
 
@@ -95,12 +101,12 @@ func TestRunDiscoveryRespectsAllowlist(t *testing.T) {
 	})
 	app.docs = []engine.Document{{Name: "a.txt", Format: engine.FormatTXT, Markdown: "CSSF and Alpine Trust"}}
 
-	got, err := app.RunDiscovery([]string{"a.txt"}, []string{"CSSF"})
+	res, err := app.RunDiscovery([]string{"a.txt"}, []string{"CSSF"})
 	if err != nil {
 		t.Fatalf("RunDiscovery: %v", err)
 	}
-	if len(got) != 1 || got[0].Text != "Alpine Trust" {
-		t.Errorf("allowlisted proposal must be vetoed, got %+v", got)
+	if len(res.Proposals) != 1 || res.Proposals[0].Text != "Alpine Trust" {
+		t.Errorf("allowlisted proposal must be vetoed, got %+v", res.Proposals)
 	}
 }
 
@@ -132,5 +138,102 @@ func TestValidateAndTestPattern(t *testing.T) {
 	}
 	if _, err := app.PatternMatches("["); err == nil {
 		t.Error("PatternMatches must reject an invalid pattern")
+	}
+}
+
+// --- BUILD-02 Phase 7 tests ------------------------------------------------
+
+// TestRunDiscoveryCancellation: cancelling after the first file returns
+// partial proposals, no error, and the documented status line.
+func TestRunDiscoveryCancellation(t *testing.T) {
+	var calls atomic.Int32
+	app := newTestApp(t, func(user string) string {
+		calls.Add(1)
+		return `{"client_names":["Alpine Trust"],"project_names":[],"internal_names":[],"person_names":[]}`
+	})
+	app.docs = []engine.Document{
+		{Name: "one.txt", Format: engine.FormatTXT, Markdown: "Alpine Trust one"},
+		{Name: "two.txt", Format: engine.FormatTXT, Markdown: "Alpine Trust two"},
+		{Name: "three.txt", Format: engine.FormatTXT, Markdown: "Alpine Trust three"},
+	}
+
+	// Cancel as soon as the first progress event fires: the run stops
+	// after the in-flight file, keeping its proposals.
+	old := runtimeEventsEmit
+	runtimeEventsEmit = func(a *App, name string, payload interface{}) {
+		if name == "discovery:progress" {
+			if idx, _ := payload.(map[string]interface{})["docIndex"].(int); idx == 1 {
+				a.CancelDiscovery()
+			}
+		}
+	}
+	defer func() { runtimeEventsEmit = old }()
+	app.ctx = context.Background() // any non-nil ctx routes emit() to our stub
+
+	res, err := app.RunDiscovery([]string{"one.txt", "two.txt", "three.txt"}, nil)
+	if err != nil {
+		t.Fatalf("a cancelled discovery must not be an error: %v", err)
+	}
+	if !res.Cancelled || !strings.Contains(res.Status, "of 3 files") {
+		t.Errorf("status = %+v, want cancelled after N of 3 files", res)
+	}
+	if len(res.Proposals) == 0 {
+		t.Error("partial proposals must survive cancellation")
+	}
+	if calls.Load() > 2 {
+		t.Errorf("scan must stop after the cancelled file, made %d chat calls", calls.Load())
+	}
+}
+
+// TestEstimateDiscoveryOversize: a file beyond the chunk cap is flagged
+// TooLarge with the documented advice; a small file is not.
+func TestEstimateDiscoveryOversize(t *testing.T) {
+	app := NewApp()
+	app.llm.ContextSize = 512 // 1152-byte chunks
+	app.docs = []engine.Document{
+		{Name: "small.txt", Format: engine.FormatTXT, Markdown: "tiny"},
+		{Name: "huge.txt", Format: engine.FormatTXT, Markdown: strings.Repeat("line of text\n", 20000)},
+	}
+	ests := app.EstimateDiscovery([]string{"small.txt", "huge.txt"})
+	if len(ests) != 2 {
+		t.Fatalf("want 2 estimates, got %+v", ests)
+	}
+	if ests[0].TooLarge || ests[0].Chunks != 1 {
+		t.Errorf("small file flagged: %+v", ests[0])
+	}
+	if !ests[1].TooLarge || !strings.Contains(ests[1].Message, "Smart detection") {
+		t.Errorf("huge file must be flagged with the smart-detection advice: %+v", ests[1])
+	}
+}
+
+// TestDiscoveryProgressEvents: exactly one progress event per file, with
+// the file name in the payload.
+func TestDiscoveryProgressEvents(t *testing.T) {
+	app := newTestApp(t, func(string) string {
+		return `{"client_names":[],"project_names":[],"internal_names":[],"person_names":[]}`
+	})
+	app.docs = []engine.Document{
+		{Name: "one.txt", Format: engine.FormatTXT, Markdown: "text one"},
+		{Name: "two.txt", Format: engine.FormatTXT, Markdown: "text two"},
+	}
+
+	var events []map[string]interface{}
+	old := runtimeEventsEmit
+	runtimeEventsEmit = func(a *App, name string, payload interface{}) {
+		if name == "discovery:progress" {
+			events = append(events, payload.(map[string]interface{}))
+		}
+	}
+	defer func() { runtimeEventsEmit = old }()
+	app.ctx = context.Background()
+
+	if _, err := app.RunDiscovery([]string{"one.txt", "two.txt"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("want one progress event per file, got %d", len(events))
+	}
+	if events[0]["docName"] != "one.txt" || events[1]["docName"] != "two.txt" {
+		t.Errorf("progress payloads wrong: %+v", events)
 	}
 }

@@ -92,10 +92,23 @@ export function saveAllowlistTemplate() {
 
 // --- Entities screen (Phase 7) ------------------------------------------
 
-/** runDiscovery(fileNames, allowTerms) resolves to merged proposals
- *  [{category, text}]. Rejects with an actionable message on failure. */
+/** runDiscovery(fileNames, allowTerms) resolves to a DiscoveryResult
+ *  {proposals: [{category, text}], status, cancelled}. A cancelled run
+ *  resolves with partial proposals; only real failures reject. */
 export function runDiscovery(fileNames, allowTerms) {
   return bridge().RunDiscovery(fileNames, allowTerms);
+}
+
+/** cancelDiscovery() aborts the in-flight discovery run (no-op if idle). */
+export function cancelDiscovery() {
+  return bridge().CancelDiscovery();
+}
+
+/** estimateDiscovery(fileNames) resolves to per-file size estimates
+ *  [{name, chunks, tooLarge, message}] so oversized files can be
+ *  excluded BEFORE the run starts. */
+export function estimateDiscovery(fileNames) {
+  return bridge().EstimateDiscovery(fileNames);
 }
 
 /** expandVariants(entity) resolves to the variant list of one entity

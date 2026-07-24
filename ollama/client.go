@@ -55,10 +55,10 @@ const DefaultContextSize = 8192
 // least one chunk (BUILD-02 Phase 5c).
 const chunkOverlapBytes = 512
 
-// maxChunksPerDocument caps how many chunks one document may produce.
+// MaxChunksPerDocument caps how many chunks one document may produce.
 // Beyond this the scan would take unreasonably long on a small local
 // model; the caller gets an actionable error instead (BUILD-02 Phase 5d).
-const maxChunksPerDocument = 64
+const MaxChunksPerDocument = 64
 
 // OllamaStatus is the result of probing the local Ollama server. It is sent
 // to the frontend as-is (via app.go), so field names are chosen to read well
@@ -517,11 +517,11 @@ func (c *Client) promptBudgetBytes() int {
 }
 
 // Chunks splits a document into prompt-sized chunks, enforcing the
-// maxChunksPerDocument cap with an actionable error (BUILD-02 Phase 5d).
+// MaxChunksPerDocument cap with an actionable error (BUILD-02 Phase 5d).
 func (c *Client) Chunks(text string) ([]string, error) {
 	budget := c.promptBudgetBytes()
 	chunks := chunkText(text, budget, chunkOverlapBytes)
-	if len(chunks) > maxChunksPerDocument {
+	if len(chunks) > MaxChunksPerDocument {
 		return nil, fmt.Errorf(
 			"this document is very large (%d chunks of %d KB); split it into smaller files or run Smart detection instead",
 			len(chunks), budget/1024)

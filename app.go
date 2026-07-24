@@ -104,6 +104,9 @@ type App struct {
 	// running / cancelRun manage the in-flight pipeline goroutine.
 	running   bool
 	cancelRun context.CancelFunc
+	// cancelDiscovery manages the in-flight discovery run (BUILD-02
+	// Phase 7d); nil when idle.
+	cancelDiscovery context.CancelFunc
 }
 
 // NewApp constructs the bound struct. Kept trivial on purpose: anything
