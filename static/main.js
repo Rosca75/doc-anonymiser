@@ -6,7 +6,7 @@
 // The shell owns NO business state, it renders from state.js and defers
 // every screen to its view module (one per screen, CLAUDE.md §3).
 
-import { ping, probeOllama, onEvent } from "./api.js";
+import { ping, probeOllama, onEvent, defaultAllowlist } from "./api.js";
 import {
   getState, setState, subscribe,
   WIZARD_STEPS, canGoTo, goTo, goToScreen, nextStep, prevStep,
@@ -61,6 +61,17 @@ export function boot(root) {
     .catch((err) => setState({
       ollama: { available: false, models: [], detail: `Probe failed unexpectedly: ${err.message ?? err}` },
     }));
+
+  // Seed the allowlist with the engine defaults so the user SEES them and
+  // can remove any (BUILD-02 Phase 4b: nothing silent). Only on a fresh
+  // state; a loaded session's list is never overwritten.
+  defaultAllowlist()
+    .then((terms) => {
+      if (getState().allowlist.length === 0 && terms?.length) {
+        setState({ allowlist: terms });
+      }
+    })
+    .catch(() => { /* bridge missing (plain browser): keep the empty list */ });
 
   // Drag-and-drop imports arrive as events from Go (app.go OnFileDrop).
   onEvent("documents:changed", (result) => applyImportResult(result));

@@ -71,6 +71,25 @@ export function listOllamaModels() {
   return bridge().ListOllamaModels();
 }
 
+// --- Allowlist (BUILD-02 Phase 4) -----------------------------------------
+
+/** defaultAllowlist() resolves to the seeded never-anonymise terms shown
+ *  in the UI at startup (removable like any other term). */
+export function defaultAllowlist() {
+  return bridge().DefaultAllowlist();
+}
+
+/** importAllowlistCSV() opens a native dialog for a CSV of terms;
+ *  resolves to the parsed terms (null when the user cancels). */
+export function importAllowlistCSV() {
+  return bridge().ImportAllowlistCSV();
+}
+
+/** saveAllowlistTemplate() saves the downloadable CSV template. */
+export function saveAllowlistTemplate() {
+  return bridge().SaveAllowlistTemplate();
+}
+
 // --- Entities screen (Phase 7) ------------------------------------------
 
 /** runDiscovery(fileNames, allowTerms) resolves to merged proposals

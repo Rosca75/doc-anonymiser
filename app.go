@@ -285,3 +285,40 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 func (a *App) ListOllamaModels() ([]string, error) {
 	return a.llm.ListModels()
 }
+
+// --- Allowlist (BUILD-02 Phase 4) -------------------------------------------
+
+// DefaultAllowlist returns the seeded never-anonymise terms so the
+// frontend can show them in state.allowlist at startup. The user can
+// remove any of them; the UI list is the only runtime source.
+func (a *App) DefaultAllowlist() []string {
+	return engine.DefaultAllowlistTerms()
+}
+
+// ImportAllowlistCSV opens a native open dialog for a CSV of terms and
+// returns the parsed list. The frontend merges the terms into
+// state.allowlist with its usual dedupe semantics; a cancelled dialog
+// returns nil, nil (a no-op, matching the save-dialog convention).
+func (a *App) ImportAllowlistCSV() ([]string, error) {
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:   "Import allowlist CSV",
+		Filters: []runtime.FileFilter{{DisplayName: "CSV files", Pattern: "*.csv"}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("the file dialog could not be opened (%v), try again; if it keeps failing, restart the application", err)
+	}
+	if path == "" {
+		return nil, nil // user cancelled
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("could not read %q: %v, check that the file still exists and is readable", path, err)
+	}
+	return engine.ParseAllowlistCSV(raw)
+}
+
+// SaveAllowlistTemplate writes the downloadable allowlist template behind
+// a native save dialog (cancel is a silent no-op).
+func (a *App) SaveAllowlistTemplate() error {
+	return a.saveWithDialog("allowlist_template.csv", "CSV", "*.csv", engine.AllowlistTemplateCSV())
+}
