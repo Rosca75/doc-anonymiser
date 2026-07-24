@@ -13,6 +13,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -121,6 +122,8 @@ func AllowlistTemplateCSV() []byte {
 	return []byte(`# Allowlist template for doc-anonymiser.
 # One term per row in the "term" column. These terms are never anonymised.
 # Lines starting with # are ignored.
+# A term prefixed with "regex:" is compiled as a case-insensitive pattern
+# (e.g. "regex:^CVE-\d{4}-\d+$" keeps every CVE identifier untouched).
 term
 CSSF
 IFRS 17
@@ -128,18 +131,31 @@ Luxembourg
 `)
 }
 
-// Allowlist is a case-insensitive term set, safe for concurrent use (the
-// pipeline goroutine reads it while the UI may edit it).
+// AllowlistRegexPrefix marks a regex allowlist entry (BUILD-03 Phase D):
+// a term starting with "regex:" is compiled and matched with (?i) prepended
+// so authors do not have to remember to add it. Compiling is done once at
+// Add time; broken patterns are dropped with a note kept in RegexErrors.
+const AllowlistRegexPrefix = "regex:"
+
+// Allowlist is a case-insensitive term set (plus optional regex entries),
+// safe for concurrent use (the pipeline goroutine reads it while the UI
+// may edit it).
 type Allowlist struct {
 	mu sync.RWMutex
 	// terms maps the lower-cased term to its display spelling, so the UI
 	// lists "CSSF" (as seeded/typed) rather than "cssf".
 	terms map[string]string
+	// regexes carries compiled regex entries (BUILD-03 Phase D). Keyed by
+	// the original "regex:..." display spelling so Terms() can re-emit it.
+	regexes map[string]*regexp.Regexp
+	// RegexErrors reports the display spelling of every regex entry that
+	// failed to compile — surfaced in the UI so the user can fix it.
+	RegexErrors []string
 }
 
 // NewAllowlist returns an allowlist pre-seeded with the defaults.
 func NewAllowlist() *Allowlist {
-	a := &Allowlist{terms: map[string]string{}}
+	a := NewEmptyAllowlist()
 	for _, t := range defaultAllowlist {
 		a.Add(t)
 	}
@@ -149,11 +165,13 @@ func NewAllowlist() *Allowlist {
 // NewEmptyAllowlist returns an allowlist with no terms (used by tests and
 // by session loading, which restores the user's exact term set).
 func NewEmptyAllowlist() *Allowlist {
-	return &Allowlist{terms: map[string]string{}}
+	return &Allowlist{terms: map[string]string{}, regexes: map[string]*regexp.Regexp{}}
 }
 
 // Add inserts a term (case-insensitive; re-adding updates the display
-// spelling). Empty strings are ignored.
+// spelling). Empty strings are ignored. A term beginning with
+// AllowlistRegexPrefix ("regex:") is compiled as a case-insensitive regex
+// and stored separately; compilation errors are collected in RegexErrors.
 func (a *Allowlist) Add(term string) {
 	term = strings.TrimSpace(term)
 	if term == "" {
@@ -161,37 +179,69 @@ func (a *Allowlist) Add(term string) {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if rest, ok := strings.CutPrefix(term, AllowlistRegexPrefix); ok {
+		pattern := strings.TrimSpace(rest)
+		if pattern == "" {
+			a.RegexErrors = append(a.RegexErrors,
+				fmt.Sprintf("allowlist regex is empty (%q), remove it or supply a pattern", term))
+			return
+		}
+		re, err := regexp.Compile(`(?i)` + pattern)
+		if err != nil {
+			a.RegexErrors = append(a.RegexErrors,
+				fmt.Sprintf("allowlist regex %q did not compile (%v), fix the pattern or remove it", term, err))
+			return
+		}
+		a.regexes[term] = re
+		return
+	}
 	a.terms[strings.ToLower(term)] = term
 }
 
-// Remove deletes a term (case-insensitive). Removing an unknown term is a
-// no-op — the end state is what the user asked for either way.
+// Remove deletes a term (case-insensitive; regex entries match on display
+// spelling since two spellings compile to different regexes). Removing an
+// unknown term is a no-op.
 func (a *Allowlist) Remove(term string) {
+	term = strings.TrimSpace(term)
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	delete(a.terms, strings.ToLower(strings.TrimSpace(term)))
+	if strings.HasPrefix(term, AllowlistRegexPrefix) {
+		delete(a.regexes, term)
+		return
+	}
+	delete(a.terms, strings.ToLower(term))
 }
 
-// Contains reports whether the term is allowlisted, ignoring case and
-// surrounding whitespace. A nil allowlist contains nothing, so passes can
-// call it without nil checks.
+// Contains reports whether the term is allowlisted (literal OR regex),
+// ignoring case and surrounding whitespace. A nil allowlist contains
+// nothing.
 func (a *Allowlist) Contains(term string) bool {
 	if a == nil {
 		return false
 	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	_, ok := a.terms[strings.ToLower(strings.TrimSpace(term))]
-	return ok
+	if _, ok := a.terms[strings.ToLower(strings.TrimSpace(term))]; ok {
+		return true
+	}
+	for _, re := range a.regexes {
+		if re.MatchString(term) {
+			return true
+		}
+	}
+	return false
 }
 
-// Terms returns the display spellings, alphabetically sorted (stable UI
-// listing and deterministic session files).
+// Terms returns the display spellings (literal + "regex:..." entries),
+// alphabetically sorted — stable UI listing and deterministic session files.
 func (a *Allowlist) Terms() []string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	out := make([]string, 0, len(a.terms))
+	out := make([]string, 0, len(a.terms)+len(a.regexes))
 	for _, display := range a.terms {
+		out = append(out, display)
+	}
+	for display := range a.regexes {
 		out = append(out, display)
 	}
 	sort.Strings(out)

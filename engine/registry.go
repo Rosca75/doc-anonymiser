@@ -40,6 +40,15 @@ var placeholderLabels = map[string]string{
 	CatURL:       "URL",
 	CatAmount:    "AMOUNT",
 	CatDate:      "DATE",
+	// BUILD-03 Phase B — extended recognizers.
+	CatCreditCard:  "CREDIT_CARD",
+	CatNHS:         "NHS",
+	CatIPAddress:   "IP",
+	CatMACAddress:  "MAC",
+	CatCrypto:      "CRYPTO",
+	CatDatabaseURI: "DB_URI",
+	CatDESteuerID:  "DE_TAX_ID",
+	CatESNIF:       "ES_NIF",
 }
 
 // MappingEntry is one row of the exported re-identification key.

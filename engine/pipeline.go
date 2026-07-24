@@ -79,6 +79,22 @@ type PipelineInput struct {
 	SimpleRules []SimpleRule
 	// Progress, when set, receives per-document stage events.
 	Progress func(ProgressEvent)
+	// OnTrace, when set, receives the final resolved spans (post-filter,
+	// post-overlap resolution) that WERE about to be replaced in each
+	// document. One SpanTrace per anonymisation call — for grid or JSON
+	// documents that means one trace per cell / json region, tagged via
+	// SpanTrace.Region. nil disables tracing entirely (zero cost: no
+	// collection, no callback dispatch). BUILD-03 Phase E.
+	OnTrace func(docName string, traces []SpanTrace)
+}
+
+// SpanTrace is one snapshot of the spans a single anonymiseText call was
+// about to replace, keyed by the region of the document they came from
+// (empty for the document body, "row R col C" for grid cells, "json" for
+// complex xlsx sheets). BUILD-03 Phase E.
+type SpanTrace struct {
+	Region string `json:"region,omitempty"`
+	Spans  []Span `json:"spans"`
 }
 
 // ResultDocument is one anonymised document plus its statistics.
@@ -118,8 +134,16 @@ type Results struct {
 type CategorySelection map[string]bool
 
 // AllPIICategories lists the pass-1 categories in a stable order (used by
-// presets, tests and the configure UI documentation).
-var AllPIICategories = []string{CatEmail, CatURL, CatIBAN, CatVAT, CatMatricule, CatPhone, CatAmount, CatDate}
+// presets, tests and the configure UI documentation). BUILD-03 Phase B
+// added the extended recognizers after the v1 group so v1 UI ordering is
+// preserved and any UI that iterates this list sees new categories at the
+// tail.
+var AllPIICategories = []string{
+	CatEmail, CatURL, CatIBAN, CatVAT, CatMatricule, CatPhone, CatAmount, CatDate,
+	// Extended (BUILD-03 Phase B) — hard PII, enabled at every preset.
+	CatCreditCard, CatNHS, CatIPAddress, CatMACAddress, CatCrypto,
+	CatDatabaseURI, CatDESteuerID, CatESNIF,
+}
 
 // AllEntityCategories lists the entity categories in a stable order.
 // organisation_names and location_names have no manual-entry UI, but LLM
@@ -139,6 +163,11 @@ func PresetSelection(level Level) CategorySelection {
 	sel := CategorySelection{
 		CatEmail: true, CatURL: true, CatIBAN: true, CatVAT: true,
 		CatMatricule: true, CatPhone: true,
+		// BUILD-03 Phase B: extended recognizers are all hard PII and
+		// fire at every level, same as the v1 hard-PII group.
+		CatCreditCard: true, CatNHS: true, CatIPAddress: true,
+		CatMACAddress: true, CatCrypto: true, CatDatabaseURI: true,
+		CatDESteuerID: true, CatESNIF: true,
 		"client_names": true, "project_names": true, "internal_names": true,
 		"custom_patterns": true,
 	}
@@ -226,7 +255,10 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 			llmDurations[i] = llmMS
 		}
 
-		rd := anonymiseDocument(doc, docEntities, in.Patterns, sel, in.Allowlist, reg)
+		rd, traces := anonymiseDocument(doc, docEntities, in.Patterns, sel, in.Allowlist, reg, in.OnTrace != nil)
+		if in.OnTrace != nil {
+			in.OnTrace(doc.Name, traces)
+		}
 		res.Documents = append(res.Documents, rd)
 	}
 
@@ -322,8 +354,9 @@ func acceptProposals(proposals []ProposedEntity, sourceText string, allow *Allow
 
 // anonymiseDocument runs passes 1+2 (and the already-merged pass-3
 // entities) over one document, routing grid documents through per-cell
-// processing.
-func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern, sel CategorySelection, allow *Allowlist, reg *Registry) ResultDocument {
+// processing. When traceEnabled is true it collects the resolved spans of
+// every anonymiseText call and returns them for the caller's OnTrace hook.
+func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern, sel CategorySelection, allow *Allowlist, reg *Registry, traceEnabled bool) (ResultDocument, []SpanTrace) {
 	rd := ResultDocument{
 		Name:       doc.Name,
 		Format:     doc.Format,
@@ -337,6 +370,22 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 		return reg.Assign(s.Category, s.CanonicalOrOriginal())
 	}
 
+	// tracer captures the resolved spans of each anonymiseText call when
+	// tracing is on, tagging them by region so grid/json documents can be
+	// walked cell-by-cell in the trace output.
+	var traces []SpanTrace
+	makeTraceFn := func(region string) func([]Span) {
+		if !traceEnabled {
+			return nil
+		}
+		return func(spans []Span) {
+			if len(spans) == 0 {
+				return
+			}
+			traces = append(traces, SpanTrace{Region: region, Spans: spans})
+		}
+	}
+
 	if doc.Grid != nil {
 		// Grid documents: anonymise cell by cell, then re-render the
 		// markdown from the anonymised grid so preview == export.
@@ -344,37 +393,46 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 		for r, row := range doc.Grid {
 			grid[r] = make([]string, len(row))
 			for c, cell := range row {
-				grid[r][c] = anonymiseText(cell, entities, patterns, sel, allow, assign)
+				var region string
+				if traceEnabled {
+					region = fmt.Sprintf("row %d col %d", r, c)
+				}
+				grid[r][c] = anonymiseText(cell, entities, patterns, sel, allow, assign, makeTraceFn(region))
 			}
 		}
 		rd.Grid = grid
 		rd.Anonymised = GridToMarkdownTable(grid)
-		return rd
+		return rd, traces
 	}
 
 	if doc.Format == FormatXLSXJSON {
 		// Complex sheets: anonymise the raw JSON text, keep both the JSON
 		// (for .json export) and the fenced markdown rendering in sync.
-		rd.JSON = anonymiseText(doc.JSON, entities, patterns, sel, allow, assign)
+		rd.JSON = anonymiseText(doc.JSON, entities, patterns, sel, allow, assign, makeTraceFn("json"))
 		rd.Anonymised = "```json\n" + rd.JSON + "\n```\n"
-		return rd
+		return rd, traces
 	}
 
-	rd.Anonymised = anonymiseText(doc.Markdown, entities, patterns, sel, allow, assign)
-	return rd
+	rd.Anonymised = anonymiseText(doc.Markdown, entities, patterns, sel, allow, assign, makeTraceFn(""))
+	return rd, traces
 }
 
 // anonymiseText is the shared passes-1+2 core over one piece of text.
 // The CategorySelection gates BOTH the PII categories (pass 1) and the
 // custom-pattern pass; entity categories were already filtered by the
-// caller (filterEntities).
-func anonymiseText(text string, entities []Entity, patterns []CustomPattern, sel CategorySelection, allow *Allowlist, assign func(Span) string) string {
+// caller (filterEntities). traceFn, when non-nil, receives the resolved
+// spans (post overlap resolution) before replacement — BUILD-03 Phase E.
+func anonymiseText(text string, entities []Entity, patterns []CustomPattern, sel CategorySelection, allow *Allowlist, assign func(Span) string, traceFn func([]Span)) string {
 	spans := FilterAllowed(DetectPIISelected(text, sel), allow)
 	spans = append(spans, DetectEntities(text, entities, allow)...)
 	if sel["custom_patterns"] {
 		spans = append(spans, DetectCustomPatterns(text, patterns, allow)...)
 	}
-	return ApplySpans(text, ResolveOverlaps(spans), assign)
+	resolved := ResolveOverlaps(spans)
+	if traceFn != nil {
+		traceFn(resolved)
+	}
+	return ApplySpans(text, resolved, assign)
 }
 
 // placeholderRe recognises placeholders already inserted by earlier passes
