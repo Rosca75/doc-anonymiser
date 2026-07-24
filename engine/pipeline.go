@@ -118,8 +118,16 @@ type Results struct {
 type CategorySelection map[string]bool
 
 // AllPIICategories lists the pass-1 categories in a stable order (used by
-// presets, tests and the configure UI documentation).
-var AllPIICategories = []string{CatEmail, CatURL, CatIBAN, CatVAT, CatMatricule, CatPhone, CatAmount, CatDate}
+// presets, tests and the configure UI documentation). BUILD-03 Phase B
+// added the extended recognizers after the v1 group so v1 UI ordering is
+// preserved and any UI that iterates this list sees new categories at the
+// tail.
+var AllPIICategories = []string{
+	CatEmail, CatURL, CatIBAN, CatVAT, CatMatricule, CatPhone, CatAmount, CatDate,
+	// Extended (BUILD-03 Phase B) — hard PII, enabled at every preset.
+	CatCreditCard, CatNHS, CatIPAddress, CatMACAddress, CatCrypto,
+	CatDatabaseURI, CatDESteuerID, CatESNIF,
+}
 
 // AllEntityCategories lists the entity categories in a stable order.
 // organisation_names and location_names have no manual-entry UI, but LLM
@@ -139,6 +147,11 @@ func PresetSelection(level Level) CategorySelection {
 	sel := CategorySelection{
 		CatEmail: true, CatURL: true, CatIBAN: true, CatVAT: true,
 		CatMatricule: true, CatPhone: true,
+		// BUILD-03 Phase B: extended recognizers are all hard PII and
+		// fire at every level, same as the v1 hard-PII group.
+		CatCreditCard: true, CatNHS: true, CatIPAddress: true,
+		CatMACAddress: true, CatCrypto: true, CatDatabaseURI: true,
+		CatDESteuerID: true, CatESNIF: true,
 		"client_names": true, "project_names": true, "internal_names": true,
 		"custom_patterns": true,
 	}

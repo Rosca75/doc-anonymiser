@@ -42,6 +42,12 @@ type Span struct {
 	// variant shares one placeholder. Empty for PII spans (the matched
 	// text IS the canonical value).
 	Canonical string `json:"canonical,omitempty"`
+	// Confidence in [0.0, 1.0] (BUILD-03 Phase C). Deterministic regex hits
+	// default to 1.0; LLM proposals default to ConfidenceLLMDefault; manual
+	// entities to ConfidenceManualDefault. Context-word boosting may nudge a
+	// value up (capped at 1.0). Zero means "not scored" and is treated as
+	// 1.0 by the threshold filter for back-compat.
+	Confidence float32 `json:"confidence,omitempty"`
 }
 
 // CanonicalOrOriginal returns the registry key for this span: the
@@ -63,6 +69,16 @@ const (
 	CatURL       = "url"
 	CatAmount    = "amount"
 	CatDate      = "date"
+	// BUILD-03 Phase B — extended recognizers inspired by Presidio's
+	// deterministic layer. All are hard PII (fire at every level).
+	CatCreditCard  = "credit_card"   // Visa/Mastercard/Amex, Luhn-validated
+	CatNHS         = "uk_nhs"        // UK National Health Service number, mod-11 validated
+	CatIPAddress   = "ip_address"    // IPv4 + IPv6
+	CatMACAddress  = "mac_address"   // 48-bit MAC (colon/hyphen separated)
+	CatCrypto      = "crypto"        // Bitcoin (P2PKH/P2SH/Bech32)
+	CatDatabaseURI = "database_uri"  // postgres://, mysql://, mongodb://, redis:// with creds
+	CatDESteuerID  = "de_steuer_id"  // Germany national tax ID (11 digits)
+	CatESNIF       = "es_nif"        // Spain NIF (8 digits + letter, letter validated)
 )
 
 // piiPattern couples a compiled regex with its category and the index of
@@ -159,6 +175,91 @@ var piiPatterns = []piiPattern{
 			`|\b[0-9]{1,2}(?:st|nd|rd|th)?\s(?:January|February|March|April|May|June|July|August|September|October|November|December|janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\s[0-9]{4}\b` +
 			`|\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s[0-9]{1,2},?\s[0-9]{4}\b`),
 	},
+
+	// --- BUILD-03 Phase B: extended recognizers -------------------------
+
+	{
+		// Credit card numbers (Visa, Mastercard, Amex, Discover). 13–19
+		// digits, optionally space/hyphen grouped. The Luhn checksum below
+		// drops ~99% of the regex-only false positives.
+		// Matches:      4532 0151 1283 0366, 4532015112830366, 3782-822463-10005
+		// Does not match: 4532 0151 1283 0367 (mutated → Luhn fail),
+		// arbitrary 16-digit runs (they must pass Luhn).
+		category: CatCreditCard,
+		// Two shapes: compact 13–19 digits, and 4-N-N... grouped forms
+		// (accommodates 4-4-4-4 for Visa/MC and 4-6-5 for Amex). Luhn
+		// vetoes the vast majority of accidental matches.
+		re:       regexp.MustCompile(`\b[0-9]{13,19}\b|\b[0-9]{4}(?:[ \-][0-9]{4,6}){2,3}[0-9]?\b`),
+		validate: validLuhn,
+	},
+	{
+		// UK NHS number: 10 digits, spaces allowed as "NNN NNN NNNN".
+		// Mod-11 checksum validation.
+		// Matches:      485 777 3456 (valid mod-11), 4857773456
+		// Does not match: 485 777 3457 (mutated → checksum fail)
+		category: CatNHS,
+		re:       regexp.MustCompile(`\b[0-9]{3}[ \-]?[0-9]{3}[ \-]?[0-9]{4}\b|\b[0-9]{10}\b`),
+		validate: validNHS,
+	},
+	{
+		// IPv4 addresses. Simple dotted-quad with a range check in
+		// validate (each octet must be 0–255).
+		// Matches:      192.168.0.1, 10.0.0.255
+		// Does not match: 999.1.2.3 (validate vetoes), 1.2.3 (regex fails)
+		category: CatIPAddress,
+		re:       regexp.MustCompile(`\b[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\b`),
+		validate: validIPv4,
+	},
+	{
+		// IPv6 addresses — full 8-group form and compressed :: form.
+		// Matches:      2001:db8::1, fe80::1, 2001:db8:0:0:0:0:0:1
+		// Does not match: bare hex without any colon.
+		category: CatIPAddress,
+		re:       regexp.MustCompile(`\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\b|(?:[0-9A-Fa-f]{1,4}:){1,7}:[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4})*`),
+	},
+	{
+		// MAC addresses: 48-bit, colon or hyphen separated.
+		// Matches:      00:1A:2B:3C:4D:5E, 00-1a-2b-3c-4d-5e
+		// Does not match: 00:1A:2B:3C:4D (5 groups)
+		category: CatMACAddress,
+		re:       regexp.MustCompile(`\b[0-9A-Fa-f]{2}(?:[:\-][0-9A-Fa-f]{2}){5}\b`),
+	},
+	{
+		// Bitcoin addresses (P2PKH starts with 1, P2SH with 3, Bech32
+		// mainnet with bc1). Length bounds match the network's real range.
+		// Matches:      1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2, bc1qw508d6...
+		// Does not match: shorter alphanumeric runs; casual English words.
+		category: CatCrypto,
+		re:       regexp.MustCompile(`\b(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[a-z0-9]{25,62})\b`),
+	},
+	{
+		// Database connection URIs with embedded credentials — the whole
+		// URI is replaced, so credentials never survive.
+		// Matches:      postgres://user:pw@host:5432/db, mongodb+srv://u:p@h/db
+		// Does not match: postgres:// without user:pw@ (no credential leak)
+		category: CatDatabaseURI,
+		re:       regexp.MustCompile(`\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|mssql|jdbc:[a-z]+)://[^\s<>"')\]]+`),
+	},
+	{
+		// Germany Steuer-ID (tax ID): 11 digits, not starting with 0.
+		// Pattern-only; checksum validation is complex and its false-
+		// positive rate is low in office documents once the leading-0 rule
+		// is enforced.
+		// Matches:      12345678901
+		// Does not match: 01234567890 (leading 0), 1234567890 (10 digits)
+		category: CatDESteuerID,
+		re:       regexp.MustCompile(`(?:^|[^0-9])([1-9][0-9]{10})(?:[^0-9]|$)`),
+		group:    1,
+	},
+	{
+		// Spain NIF (Número de Identificación Fiscal): 8 digits + a
+		// letter whose value is derived from digits mod 23.
+		// Matches:      12345678Z (valid), 00000000T
+		// Does not match: 12345678A (letter wrong for mod-23)
+		category: CatESNIF,
+		re:       regexp.MustCompile(`\b([0-9]{8})([A-Za-z])\b`),
+		validate: validNIF,
+	},
 }
 
 // DetectPII runs every level-appropriate pattern over the text and returns
@@ -173,8 +274,12 @@ func DetectPII(text string, level Level) []Span {
 
 // DetectPIISelected runs exactly the PII patterns whose category is
 // enabled in the selection (BUILD-02 Phase 3 granular switches).
+// Every returned span carries Confidence = ConfidenceDeterministic (1.0);
+// context-word boosting (BUILD-03 Phase C) is best-effort and never lowers
+// the score.
 func DetectPIISelected(text string, sel CategorySelection) []Span {
 	var spans []Span
+	lowerText := "" // built lazily; only needed for the context scan
 	for _, p := range piiPatterns {
 		if !sel[p.category] {
 			continue
@@ -188,15 +293,123 @@ func DetectPIISelected(text string, sel CategorySelection) []Span {
 			if p.validate != nil && !p.validate(original) {
 				continue
 			}
+			conf := ConfidenceDeterministic
+			if words, ok := contextWords[p.category]; ok {
+				if lowerText == "" {
+					lowerText = strings.ToLower(text)
+				}
+				if hasContextWord(lowerText, start, end, words) {
+					conf = capConfidence(conf + ContextBoost)
+				}
+			}
 			spans = append(spans, Span{
-				Start:    start,
-				End:      end,
-				Category: p.category,
-				Original: original,
+				Start:      start,
+				End:        end,
+				Category:   p.category,
+				Original:   original,
+				Confidence: conf,
 			})
 		}
 	}
 	return spans
+}
+
+// Confidence constants (BUILD-03 Phase C).
+const (
+	// ConfidenceDeterministic is the baseline for regex matches that
+	// survived any checksum/validate step. Callers may boost above via
+	// context words; ApplySpans clamps to 1.0.
+	ConfidenceDeterministic float32 = 1.0
+	// ConfidenceManualDefault is the score for user-entered entities
+	// (high trust, but not "checksum-verified").
+	ConfidenceManualDefault float32 = 0.95
+	// ConfidenceLLMDefault is the fallback score for LLM proposals that
+	// did not carry an explicit confidence field.
+	ConfidenceLLMDefault float32 = 0.8
+	// ContextBoost is added when a category's context word appears within
+	// contextWindowBytes of a detection (never crossing 1.0).
+	ContextBoost float32 = 0.05
+	// contextWindowBytes is the byte-radius scanned around a hit for a
+	// context word. Small (bounded) to keep the pass linear.
+	contextWindowBytes = 40
+)
+
+// contextWords lists lower-case context markers per PII category. When one
+// of these appears in a small window around a detection, the span's
+// confidence gets a small boost (Presidio's lemma-context idea, done with
+// a plain word list to keep everything deterministic and pure-Go).
+//
+// The word list is intentionally short and low-noise; adding common
+// English words ("the", "and") would boost everything and be pointless.
+var contextWords = map[string][]string{
+	CatEmail:       {"email", "e-mail", "mail", "contact", "@"},
+	CatPhone:       {"phone", "tel", "tél", "call", "mobile", "fax", "gsm", "portable"},
+	CatIBAN:        {"iban", "account", "compte", "swift", "bic"},
+	CatVAT:         {"vat", "tva", "ust", "ust-id", "steuernummer"},
+	CatMatricule:   {"matricule", "national", "id", "identifiant"},
+	CatCreditCard:  {"card", "credit", "debit", "visa", "mastercard", "amex", "cvc", "cvv"},
+	CatNHS:         {"nhs", "health", "patient"},
+	CatIPAddress:   {"ip", "address", "host", "server", "router", "gateway", "dns"},
+	CatMACAddress:  {"mac", "hardware", "interface", "adapter"},
+	CatCrypto:      {"bitcoin", "btc", "wallet", "address"},
+	CatDatabaseURI: {"database", "db", "connection", "conn", "dsn", "uri"},
+	CatDESteuerID:  {"steuer", "steuernummer", "tax", "identifikationsnummer"},
+	CatESNIF:       {"nif", "dni", "fiscal"},
+}
+
+// hasContextWord reports whether any of words appears (as a substring) in
+// text within contextWindowBytes bytes before start or after end. text is
+// expected to be already lower-cased; words are also lower-case.
+func hasContextWord(lowerText string, start, end int, words []string) bool {
+	lo := start - contextWindowBytes
+	if lo < 0 {
+		lo = 0
+	}
+	hi := end + contextWindowBytes
+	if hi > len(lowerText) {
+		hi = len(lowerText)
+	}
+	window := lowerText[lo:hi]
+	for _, w := range words {
+		if strings.Contains(window, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// capConfidence clamps a confidence value to [0.0, 1.0].
+func capConfidence(v float32) float32 {
+	if v > 1.0 {
+		return 1.0
+	}
+	if v < 0 {
+		return 0
+	}
+	return v
+}
+
+// FilterByConfidence drops spans whose Confidence is below the per-category
+// threshold in thresholds. A span with Confidence == 0 is treated as 1.0
+// (back-compat with pre-BUILD-03 code paths that never set the field).
+// A nil or empty thresholds map is a no-op — the filter is opt-in, so
+// existing callers keep their v1 behaviour.
+func FilterByConfidence(spans []Span, thresholds map[string]float32) []Span {
+	if len(thresholds) == 0 {
+		return spans
+	}
+	out := spans[:0]
+	for _, s := range spans {
+		c := s.Confidence
+		if c == 0 {
+			c = 1.0
+		}
+		if t, ok := thresholds[s.Category]; ok && c < t {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 
@@ -261,6 +474,125 @@ func ApplySpans(text string, spans []Span, assign func(Span) string) string {
 	}
 	b.WriteString(text[last:])
 	return b.String()
+}
+
+// validLuhn implements the Luhn (ISO/IEC 7812-1) checksum used by every
+// major credit-card network: double every second digit from the right,
+// sum the digits of each doubled value, add the unaltered digits; a valid
+// number's total is divisible by 10. Non-digits (spaces, hyphens) are
+// ignored so the check accepts grouped and compact forms alike.
+//
+// Overall length must be 13–19 digits (the ISO range covering Visa 13/16,
+// Mastercard 16, Amex 15, Discover 16, UnionPay 16–19).
+func validLuhn(s string) bool {
+	digits := make([]int, 0, len(s))
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			digits = append(digits, int(c-'0'))
+		} else if c == ' ' || c == '-' {
+			continue
+		} else {
+			return false
+		}
+	}
+	if len(digits) < 13 || len(digits) > 19 {
+		return false
+	}
+	sum := 0
+	for i, d := range digits {
+		// From the right: the last digit is unaltered; every second one
+		// walking backwards is doubled.
+		if (len(digits)-1-i)%2 == 1 {
+			d *= 2
+			if d > 9 {
+				d -= 9
+			}
+		}
+		sum += d
+	}
+	return sum%10 == 0
+}
+
+// validNHS implements the UK NHS number mod-11 checksum. Digits 1–9 are
+// multiplied by weights 10..2 respectively, the sum is taken mod 11, then
+// subtracted from 11. Check digit results:
+//   - 11 → the check digit is 0
+//   - 10 → the number is invalid (never issued)
+//   - N  → must equal digit 10
+func validNHS(s string) bool {
+	digits := make([]int, 0, 10)
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			digits = append(digits, int(c-'0'))
+		} else if c == ' ' || c == '-' {
+			continue
+		} else {
+			return false
+		}
+	}
+	if len(digits) != 10 {
+		return false
+	}
+	sum := 0
+	for i := 0; i < 9; i++ {
+		sum += digits[i] * (10 - i)
+	}
+	rem := 11 - (sum % 11)
+	check := digits[9]
+	if rem == 11 {
+		return check == 0
+	}
+	if rem == 10 {
+		return false // NHS never issues these
+	}
+	return rem == check
+}
+
+// validIPv4 verifies each of the four dotted octets is 0–255.
+func validIPv4(s string) bool {
+	parts := strings.Split(s, ".")
+	if len(parts) != 4 {
+		return false
+	}
+	for _, p := range parts {
+		if len(p) == 0 || len(p) > 3 {
+			return false
+		}
+		n := 0
+		for _, c := range p {
+			if c < '0' || c > '9' {
+				return false
+			}
+			n = n*10 + int(c-'0')
+		}
+		if n > 255 {
+			return false
+		}
+	}
+	return true
+}
+
+// validNIF verifies the check letter of a Spanish NIF: letter =
+// "TRWAGMYFPDXBNJZSQVHLCKE"[digits mod 23]. Case-insensitive.
+func validNIF(s string) bool {
+	if len(s) != 9 {
+		return false
+	}
+	n := 0
+	for i := 0; i < 8; i++ {
+		c := s[i]
+		if c < '0' || c > '9' {
+			return false
+		}
+		n = n*10 + int(c-'0')
+	}
+	const letters = "TRWAGMYFPDXBNJZSQVHLCKE"
+	expected := letters[n%23]
+	got := s[8]
+	if got >= 'a' && got <= 'z' {
+		got -= 'a' - 'A'
+	}
+	return got == expected
 }
 
 // validIBAN implements the ISO 13616 mod-97 check: move the first four

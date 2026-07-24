@@ -224,7 +224,8 @@ func DetectEntities(text string, entities []Entity, allow *Allowlist) []Span {
 					Original: original,
 					// Every variant maps back to the canonical name so
 					// "M. Duval" and "Marie" share one placeholder.
-					Canonical: e.Canonical,
+					Canonical:  e.Canonical,
+					Confidence: ConfidenceManualDefault,
 				})
 			}
 		}
@@ -321,10 +322,11 @@ func DetectCustomPatterns(text string, patterns []CustomPattern, allow *Allowlis
 				continue
 			}
 			spans = append(spans, Span{
-				Start:    m[0],
-				End:      m[1],
-				Category: "custom_patterns",
-				Original: original,
+				Start:      m[0],
+				End:        m[1],
+				Category:   "custom_patterns",
+				Original:   original,
+				Confidence: ConfidenceDeterministic,
 			})
 		}
 	}
