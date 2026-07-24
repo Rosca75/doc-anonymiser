@@ -63,8 +63,9 @@ doc-anonymiser/
 │   ├── ui.js                  # shared UI toolkit (button/banner/panel/icon)
 │   ├── icons.js               # vendored Material Symbols SVG map
 │   ├── copy.js                # user-visible strings (banners, step copy)
+│   ├── entitymodel.js         # pure variant view-model (regression-tested)
 │   ├── assets/icons/          # vendored Material Symbols SVGs + LICENSE
-│   └── views/                 # one JS module per screen (home, docs, wizard steps)
+│   └── views/                 # one JS module per screen (home, docs, wizard steps, shared allowlist panel)
 ├── .github/workflows/
 │   ├── ci.yml                 # build + test on push/PR
 │   └── release.yml            # on tag: build, zip, attach to Release
