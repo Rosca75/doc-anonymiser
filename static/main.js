@@ -84,7 +84,13 @@ export function boot(root) {
 
   // Pipeline progress/done events are consumed by the Run view via state.
   onEvent("pipeline:progress", (ev) => setState({ progress: ev }));
-  onEvent("pipeline:done", (results) => setState({ running: false, progress: null, results }));
+  onEvent("pipeline:done", (payload) => setState({
+    running: false, progress: null,
+    results: payload,
+    // The placeholder → original mapping rides in the same payload
+    // (BUILD-02 Phase 10a).
+    mapping: payload?.mapping ?? null,
+  }));
 
   // Discovery progress (BUILD-02 Phase 7c): the Go side emits one event
   // per scanned file; the entities view renders a determinate bar.

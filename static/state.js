@@ -87,6 +87,12 @@ const initialState = {
   // flows into entities without user confirmation. Each row:
   // {source: "smart"|"local-ai"|"cloud-ai", text, category, count, contexts}.
   candidates: [],
+
+  // Placeholder → {original, category} lookup from the last run
+  // (BUILD-02 Phase 10a). MEMORY NOTE: this is the re-identification
+  // key; it stays in the app process like the Go registry and is
+  // cleared with the results.
+  mapping: null,
 };
 
 // --- Category presets (BUILD-02 Phase 3, mirrors engine.PresetSelection) ----
@@ -579,6 +585,50 @@ export function moveVariant(fromCategory, fromCanonical, toCategory, toCanonical
       return e;
     }),
   });
+  return true;
+}
+
+// --- Reassignment helpers (BUILD-02 Phase 10d) --------------------------------
+
+/**
+ * entityAutocomplete(query, s) filters entity canonicals for the
+ * reassignment popover: case-insensitive, prefix matches rank before
+ * substring matches, each entry {category, canonical, label}.
+ */
+export function entityAutocomplete(query, s = state) {
+  const q = (query ?? "").trim().toLowerCase();
+  if (!q) return [];
+  const prefix = [];
+  const substring = [];
+  for (const e of s.entities) {
+    const lower = e.canonical.toLowerCase();
+    const item = { category: e.category, canonical: e.canonical };
+    if (lower.startsWith(q)) prefix.push(item);
+    else if (lower.includes(q)) substring.push(item);
+  }
+  return [...prefix, ...substring];
+}
+
+/**
+ * reassignOriginal(original, toCategory, toCanonical) makes `original`
+ * a manual variant of the target entity. If `original` currently exists
+ * as an entity of its own (it earned its own placeholder), that entity
+ * is removed so exactly one entity matches the text after the fast
+ * re-run. Returns false when the target does not exist.
+ */
+export function reassignOriginal(original, toCategory, toCanonical) {
+  const text = (original ?? "").trim();
+  if (!text) return false;
+  const target = state.entities.find((e) =>
+    entityKey(e.category, e.canonical) === entityKey(toCategory, toCanonical));
+  if (!target) return false;
+  if (entityKey(toCategory, toCanonical) === entityKey(toCategory, text)) return false;
+
+  // Drop a same-named standalone entity (any category) before rerouting.
+  const standalone = state.entities.find((e) => e.canonical.toLowerCase() === text.toLowerCase());
+  if (standalone) removeEntity(standalone.category, standalone.canonical);
+
+  addManualVariant(toCategory, toCanonical, text);
   return true;
 }
 

@@ -165,6 +165,12 @@ export function getResults() {
   return bridge().GetResults();
 }
 
+/** getMapping() resolves to the placeholder → {original, category}
+ *  lookup for tooltips and reassignment (empty before the first run). */
+export function getMapping() {
+  return bridge().GetMapping();
+}
+
 // --- Export screen (Phase 9) -----------------------------------------------
 
 /** exportDocumentFormats(name) resolves to the offered extensions

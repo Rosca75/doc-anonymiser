@@ -161,3 +161,47 @@ func TestApplySettingsRoundTrip(t *testing.T) {
 		t.Error("negative context size must be rejected")
 	}
 }
+
+// TestPipelineDonePayloadIncludesMapping (BUILD-02 Phase 10a): after a
+// run, GetMapping resolves placeholders to originals, and the
+// pipeline:done payload embeds the mapping next to the results fields.
+func TestPipelineDonePayloadIncludesMapping(t *testing.T) {
+	app := NewApp()
+	app.docs = []engine.Document{{Name: "a.txt", Format: engine.FormatTXT,
+		Markdown: "mail one@example.com from Alpine"}}
+
+	res, err := app.runPipelineBlocking(context.Background(), RunRequest{
+		Entities: []engine.Entity{{Category: "client_names", Canonical: "Alpine"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil || len(res.Documents) != 1 {
+		t.Fatal("run produced no results")
+	}
+
+	mapping := app.GetMapping()
+	if info, ok := mapping["[EMAIL_1]"]; !ok || info.Original != "one@example.com" {
+		t.Errorf("mapping missing the email entry: %+v", mapping)
+	}
+	if info, ok := mapping["[CLIENT_1]"]; !ok || info.Original != "Alpine" || info.Category != "client_names" {
+		t.Errorf("mapping missing the client entry: %+v", mapping)
+	}
+
+	// The payload embeds results fields AND the mapping side by side
+	// (what the frontend actually receives after JSON serialisation).
+	payload, err := json.Marshal(pipelineDonePayload{Results: res, Mapping: mapping})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := decoded["documents"]; !ok {
+		t.Error("payload must keep the results fields inline")
+	}
+	if _, ok := decoded["mapping"]; !ok {
+		t.Error("payload must carry the mapping")
+	}
+}

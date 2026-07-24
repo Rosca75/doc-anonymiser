@@ -9,11 +9,12 @@
 //     fast-rerun (passes 2+4, no LLM) to refresh the outputs,
 //   - ordered simple-replace rules editor (mirrors notebook Cell 8).
 
-import { runPipeline, cancelPipeline, fastRerun } from "../api.js";
+import { runPipeline, cancelPipeline, fastRerun, getMapping } from "../api.js";
 import {
   getState, setState, llmEnabled,
   addEntities, buildRunRequest,
   addSimpleRule, removeSimpleRule, moveSimpleRule,
+  entityAutocomplete, reassignOriginal,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { renderHighlighted } from "../highlight.js";
@@ -155,7 +156,7 @@ function resultsPanel(s) {
         </div>
         <div>
           <h3 class="hint">Anonymised</h3>
-          <pre class="md-preview">${doc ? renderHighlighted(doc.anonymised) : ""}</pre>
+          <pre class="md-preview" id="anonymised-pane">${doc ? renderHighlighted(doc.anonymised, s.mapping) : ""}</pre>
         </div>
       </div>`;
 
@@ -207,10 +208,99 @@ function wireResults(container, s) {
   container.querySelector("#btn-fast-rerun").addEventListener("click", async () => {
     try {
       const results = await fastRerun(buildRunRequest(false));
-      setState({ results });
+      // The mapping may have grown (new entities earned placeholders).
+      setState({ results, mapping: await getMapping() });
     } catch (err) {
       showError(container, err);
     }
+  });
+
+  wireReassignPopover(container);
+}
+
+// --- Click-to-reassign popover (BUILD-02 Phase 10d) --------------------------
+
+/**
+ * wireReassignPopover attaches one click handler to the anonymised pane:
+ * clicking a mark with a known original opens a small popover anchored to
+ * it, offering to make the original a variant of another entity. The
+ * autocomplete uses the tested entityAutocomplete filter; confirming
+ * calls reassignOriginal + fastRerun (deterministic passes only). Escape
+ * or click-away closes; only one popover exists at a time.
+ */
+function wireReassignPopover(container) {
+  const pane = container.querySelector("#anonymised-pane");
+  if (!pane) return;
+
+  const closePopover = () => container.querySelector("#reassign-popover")?.remove();
+
+  pane.addEventListener("click", (ev) => {
+    const mark = ev.target.closest("mark[data-ph]");
+    if (!mark) return;
+    closePopover();
+
+    const original = mark.dataset.original;
+    const placeholder = mark.dataset.ph;
+    const pop = document.createElement("div");
+    pop.id = "reassign-popover";
+    pop.className = "reassign-popover";
+    pop.innerHTML = `
+      <p><strong>${escapeHTML(placeholder)}</strong> replaces <strong>${escapeHTML(original)}</strong></p>
+      <div class="form-row">
+        <label>variant of</label>
+        <input id="reassign-input" placeholder="type an entity name" autocomplete="off"/>
+      </div>
+      <ul class="reassign-suggestions" id="reassign-suggestions"></ul>`;
+
+    // Anchor next to the clicked mark inside the scrollable pane.
+    const rect = mark.getBoundingClientRect();
+    const paneRect = pane.getBoundingClientRect();
+    pop.style.left = `${rect.left - paneRect.left}px`;
+    pop.style.top = `${rect.bottom - paneRect.top + 4}px`;
+    pane.style.position = "relative";
+    pane.appendChild(pop);
+
+    const input = pop.querySelector("#reassign-input");
+    const list = pop.querySelector("#reassign-suggestions");
+
+    const confirm = async (category, canonical) => {
+      closePopover();
+      if (!reassignOriginal(original, category, canonical)) return;
+      try {
+        const results = await fastRerun(buildRunRequest(false));
+        setState({ results, mapping: await getMapping() });
+      } catch (err) {
+        showError(container, err);
+      }
+    };
+
+    input.addEventListener("input", () => {
+      const matches = entityAutocomplete(input.value).slice(0, 8);
+      list.innerHTML = matches.map((m) => `
+        <li><button class="btn btn-ghost reassign-pick" data-category="${escapeHTML(m.category)}"
+             data-canonical="${escapeHTML(m.canonical)}">${escapeHTML(m.canonical)}
+             <span class="hint">${escapeHTML(m.category)}</span></button></li>`).join("");
+      for (const btn of list.querySelectorAll(".reassign-pick")) {
+        btn.addEventListener("click", () => confirm(btn.dataset.category, btn.dataset.canonical));
+      }
+    });
+    input.addEventListener("keydown", (ev2) => {
+      if (ev2.key === "Escape") closePopover();
+      if (ev2.key === "Enter") {
+        const first = list.querySelector(".reassign-pick");
+        if (first) confirm(first.dataset.category, first.dataset.canonical);
+      }
+    });
+    input.focus();
+    ev.stopPropagation();
+  });
+
+  // Click-away and Escape close the popover.
+  document.addEventListener("click", (ev) => {
+    if (!ev.target.closest("#reassign-popover") && !ev.target.closest("mark[data-ph]")) closePopover();
+  }, { once: false });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") closePopover();
   });
 }
 

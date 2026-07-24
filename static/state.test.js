@@ -16,7 +16,7 @@ import {
   applyPreset, toggleCategory, selectionPresetName, presetCategories,
   setUseAI, defaultUseAIFromProbe, llmEnabled,
   addCandidates, acceptCandidate, rejectCandidate, updateCandidate, acceptAllInCategory,
-  moveVariant,
+  moveVariant, entityAutocomplete, reassignOriginal,
   applyImportResult,
 } from "./state.js";
 
@@ -437,4 +437,35 @@ test("moveVariant across categories re-pends only the two touched rows", () => {
   assert.deepEqual(untouched.variants, ["Borealis"], "third row untouched");
   const pendingNames = getState().entities.filter((e) => e.variants === null).map((e) => e.canonical).sort();
   assert.deepEqual(pendingNames, ["Alpine", "Jean Muller"]);
+});
+
+// --- Reassignment helpers (BUILD-02 Phase 10d) --------------------------------
+
+test("entityAutocomplete ranks prefix matches before substring matches", () => {
+  resetState();
+  addEntities([
+    { category: "person_names", canonical: "Jean Muller" },
+    { category: "person_names", canonical: "Muller Freres" },
+    { category: "client_names", canonical: "Amullertech" },
+  ]);
+  const got = entityAutocomplete("muller");
+  assert.equal(got.length, 3);
+  assert.equal(got[0].canonical, "Muller Freres", "prefix match first");
+  assert.ok(got.slice(1).map((m) => m.canonical).includes("Jean Muller"));
+  assert.deepEqual(entityAutocomplete(""), []);
+});
+
+test("reassignOriginal removes a standalone entity and adds the variant", () => {
+  resetState();
+  addEntities([
+    { category: "person_names", canonical: "Jean Muller" },
+    { category: "person_names", canonical: "J. Muller" }, // earned its own placeholder
+  ]);
+  assert.equal(reassignOriginal("J. Muller", "person_names", "Jean Muller"), true);
+  const entities = getState().entities;
+  assert.equal(entities.length, 1, "the standalone entity is folded in");
+  assert.deepEqual(entities[0].manualVariants, ["J. Muller"]);
+  assert.equal(entities[0].variants, null, "target re-expands");
+  // Unknown target rejected, state untouched.
+  assert.equal(reassignOriginal("X", "person_names", "Ghost"), false);
 });

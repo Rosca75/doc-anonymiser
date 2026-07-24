@@ -36,3 +36,26 @@ test("markClass covers the three families", () => {
   assert.equal(markClass("CUSTOM"), "custom");
   assert.equal(markClass("FUTURE_LABEL"), "custom");
 });
+
+// --- BUILD-02 Phase 10b: mapping-aware marks ---------------------------------
+
+test("mapping adds data attributes and the original in the title", () => {
+  const html = renderHighlighted("see [CLIENT_1] here",
+    { "[CLIENT_1]": { original: "Acme S.A.", category: "client_names" } });
+  assert.ok(html.includes('data-ph="[CLIENT_1]"'));
+  assert.ok(html.includes('data-original="Acme S.A."'));
+  assert.ok(html.includes('title="Original: Acme S.A."'));
+});
+
+test("mapping miss falls back to the label-only title", () => {
+  const html = renderHighlighted("see [CLIENT_9] here", { "[CLIENT_1]": { original: "x" } });
+  assert.ok(html.includes('title="client"'));
+  assert.ok(!html.includes("data-ph"));
+});
+
+test("hostile originals are inert in the output", () => {
+  const html = renderHighlighted("x [PERSON_1] y",
+    { "[PERSON_1]": { original: `"><script>alert(1)</script>`, category: "person_names" } });
+  assert.ok(!html.includes("<script>"));
+  assert.ok(html.includes("&quot;&gt;&lt;script&gt;"));
+});
