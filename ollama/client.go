@@ -209,7 +209,7 @@ type chatRequest struct {
 	Stream   bool          `json:"stream"`
 	// Options carries model options; NumCtx sets the context window. A
 	// nil pointer omits the object entirely so the model default applies
-	// (a pointer because json "omitzero" needs Go 1.24 and we pin 1.23).
+	// (a pointer with omitempty gives an unambiguous "unset" state).
 	Options *chatOptions `json:"options,omitempty"`
 }
 

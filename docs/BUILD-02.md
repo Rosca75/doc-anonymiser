@@ -42,7 +42,7 @@ Source inputs for this plan:
    import.
 7. **New Go dependencies** must be added to the pinned-versions tables in
    this file AND CLAUDE.md §7 before `go get`, and must be pure Go (no CGo),
-   and must compile under the Go 1.23.x pin (verify the dependency's own
+   and must compile under the Go 1.26.x pin (verify the dependency's own
    go.mod before adopting; this bit us once with ledongthuc/pdf).
 
 ---

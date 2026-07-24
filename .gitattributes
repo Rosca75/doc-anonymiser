@@ -1,0 +1,41 @@
+# .gitattributes — normalise line endings and protect binary test fixtures.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# The repository stores text blobs with LF line endings, but Git's
+# core.autocrlf default on Windows rewrites line endings on checkout. Without
+# the rules below that quietly breaks two kinds of test fixtures:
+#
+#   1. Binary fixtures that contain no NUL bytes. Our simple .pdf fixtures are
+#      "text-ish" enough that Git classifies them as text and injects carriage
+#      returns on checkout. Those extra bytes shift the PDF's cross-reference
+#      (xref) byte offsets, so the pure-Go PDF parser then fails with
+#      "malformed PDF: cross-reference table not found". (The .docx/.pptx/.xlsx
+#      fixtures escape this only because ZIP archives contain NUL bytes and Git
+#      already treats them as binary; marking them here makes that explicit.)
+#   2. Text fixtures whose exact bytes are asserted by round-trip / golden
+#      tests (for example the CSV round-trip), which break when committed LF
+#      line endings become CRLF on a Windows checkout.
+#
+# Result: every checkout matches the LF blobs already committed, so builds and
+# tests behave identically on developer laptops and the Linux CI runners.
+
+# Default: let Git detect text files and normalise them to LF in the repository.
+* text=auto
+
+# Binary fixtures — never apply end-of-line conversion (it corrupts bytes).
+*.pdf  binary
+*.docx binary
+*.pptx binary
+*.xlsx binary
+*.png  binary
+*.ico  binary
+*.gif  binary
+*.jpg  binary
+*.jpeg binary
+
+# Text test fixtures whose exact bytes matter must be checked out with LF on
+# every platform (not just normalised to LF in the repo).
+testdata/*.csv text eol=lf
+testdata/*.md  text eol=lf
+testdata/*.txt text eol=lf
