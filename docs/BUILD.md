@@ -7,16 +7,16 @@
 - No dependency is added unless it appears in the dependency table below.
 - Only `ollama/client.go` talks to Ollama; `engine/*` consumes the `LLM` interface. Only `static/api.js` calls Go bound methods; `static/state.js` is the only frontend state holder.
 - The application performs no network I/O except loopback HTTP to Ollama. Re-verify this at every phase touching networking.
-- Wails **v2.10.x** — do not use Wails v3 idioms. Go **1.23.x** — standard library first.
+- Wails **v2.13.x** — do not use Wails v3 idioms. Go **1.26.x** — standard library first.
 - Engine functions never touch user-chosen filesystem paths; bytes in, bytes out.
 
 ## Dependency table
 
 | Dependency | Version (pinned) | Introduced in phase | Justification |
 |---|---|---|---|
-| Go toolchain | 1.23.x | bootstrap | language runtime |
-| github.com/wailsapp/wails/v2 | v2.10.x | bootstrap | desktop shell, JS↔Go bridge, native dialogs |
-| Wails CLI (CI only) | v2.10.x | bootstrap | build tooling; coupled with the library version — CI asserts the pair |
+| Go toolchain | 1.26.x | bootstrap | language runtime |
+| github.com/wailsapp/wails/v2 | v2.13.x | bootstrap | desktop shell, JS↔Go bridge, native dialogs |
+| Wails CLI (CI only) | v2.13.x | bootstrap | build tooling; coupled with the library version — CI asserts the pair |
 | Go standard library (`encoding/csv`, `regexp`, `archive/zip`, `net/http`, `encoding/json`) | — | throughout | CSV parsing, PII regexes, zip export, Ollama client — zero third-party runtime dependencies |
 | Ollama (external, optional, user-installed) | HTTP API as of 2026 (`/api/tags`, `/api/chat` with `format:json`) | Phase 5 | optional LLM features; never bundled, never required |
 | github.com/xuri/excelize/v2 | v2.9.x | Phase 1B | XLSX parsing incl. merged-cell detection; pure Go, MIT |

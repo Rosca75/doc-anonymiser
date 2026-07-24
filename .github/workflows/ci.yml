@@ -3,8 +3,8 @@
 # All compilation happens here on GitHub Actions, never on the developer
 # laptop (see CLAUDE.md). This workflow:
 #   1. checks out the code,
-#   2. installs the pinned Go toolchain (1.23.x),
-#   3. installs the pinned Wails CLI (v2.10.1) and FAILS with an actionable
+#   2. installs the pinned Go toolchain (1.26.x),
+#   3. installs the pinned Wails CLI (v2.13.0) and FAILS with an actionable
 #      message if the CLI version diverges from the Wails library version
 #      required in go.mod (they are a coupled pair — see CLAUDE.md §7),
 #   4. runs `go vet` and `go test`,
@@ -19,7 +19,7 @@ on:
 env:
   # The single place the Wails CLI version is pinned for CI.
   # Must match the github.com/wailsapp/wails/v2 version in go.mod.
-  WAILS_CLI_VERSION: v2.10.1
+  WAILS_CLI_VERSION: v2.13.0
 
 jobs:
   build-and-test:
@@ -28,10 +28,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Go 1.23.x
+      - name: Set up Go 1.26.x
         uses: actions/setup-go@v5
         with:
-          go-version: "1.23.x"
+          go-version: "1.26.x"
 
       # Wails on Linux compiles against GTK3 and WebKit2GTK. Ubuntu 24.04
       # runners ship webkit2gtk 4.1, hence the -tags webkit2_41 build flag
