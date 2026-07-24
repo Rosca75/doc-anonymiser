@@ -2,7 +2,7 @@
 // (CLAUDE.md §5), with the notebook's variant expansion.
 //
 // An Entity is a real-world name the user (or LLM discovery) declared:
-// a client, project, PwC-internal name or person. Each entity expands into
+// a client, project, internal name or person. Each entity expands into
 // name VARIANTS ("Marie Duval" → "M. Duval", "Duval", "Marie", …) so the
 // pass catches informal references, then all variants are matched
 // longest-first with word-boundary anchoring — "Alten" must never fire

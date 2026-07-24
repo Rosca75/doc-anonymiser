@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "purpose": "PwC colour palette for pwc-slide-builder. Use only these values; never invent colours or fetch them from the web.",
-    "source": "User-provided PwC Luxembourg colour specification.",
+    "purpose": "Brand colour palette. Use only these values; never invent colours or fetch them from the web.",
+    "source": "User-provided brand colour specification.",
     "structure_note": "theme_grid is a standard 10-column Office theme palette. Row 0 is the main (top) row; rows 1-6 are tints (light) to shades (dark) of each column. Columns 2 and 4 are intentionally identical in every row (both #000000 in the main row), so the duplicate black is by design, not an error."
   },
   "theme_grid": {

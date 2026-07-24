@@ -9,7 +9,7 @@
 //
 // Output: build/appicon.png, a 1024x1024 PNG that Wails v2 picks up as the
 // Windows executable icon. Design: white rounded square, a black document
-// glyph with three redaction bars, the middle bar in the PwC signature
+// glyph with three redaction bars, the middle bar in the brand signature
 // orange #FD5108 (docs/brand/color-palette.json). Pure Go stdlib (image,
 // image/png), no dependencies — consistent with the zero-CGo rule.
 package main
@@ -28,7 +28,7 @@ const size = 1024
 var (
 	white  = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
 	black  = color.NRGBA{0x00, 0x00, 0x00, 0xFF}
-	orange = color.NRGBA{0xFD, 0x51, 0x08, 0xFF} // PwC signature orange
+	orange = color.NRGBA{0xFD, 0x51, 0x08, 0xFF} // brand signature orange
 )
 
 func main() {

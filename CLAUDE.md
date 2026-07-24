@@ -56,7 +56,7 @@ doc-anonymiser/
 │   └── client.go              # THE ONLY FILE that talks to Ollama (net/http)
 ├── static/                    # vanilla-JS frontend, embedded via go:embed
 │   ├── index.html
-│   ├── brand.css              # PwC brand tokens (single source of truth)
+│   ├── brand.css              # brand tokens (single source of truth)
 │   ├── style.css              # consumes brand.css variables only
 │   ├── api.js                 # THE ONLY file that calls Go bound methods
 │   ├── state.js               # single source of truth for frontend state
@@ -69,7 +69,7 @@ doc-anonymiser/
 ├── .github/workflows/
 │   ├── ci.yml                 # build + test on push/PR
 │   └── release.yml            # on tag: build, zip, attach to Release
-├── docs/brand/color-palette.json  # vendored PwC brand palette (source for static/brand.css)
+├── docs/brand/color-palette.json  # vendored brand palette (source for static/brand.css)
 └── testdata/                  # fixture documents for unit tests
 ```
 
@@ -166,10 +166,7 @@ doc-anonymiser/
 - **Entity categories:** `client_names`, `project_names`,
   `internal_names`, `person_names`, `custom_patterns` (user regex),
   plus PII categories emitted by pass 1. The user-visible label for
-  `internal_names` is "Internal". The category was named
-  `pwc_internal_names` (placeholder label `PWC_INTERNAL`) in v1; session
-  files carrying the old key/label MUST load via an explicit migration
-  (`engine/session.go`) — never silently drop user data.
+  `internal_names` is "Internal".
 - **Sensitive state stays in memory** by default. Saving a session (registry
   + entities + settings) to disk is an explicit user action with a warning
   that the file contains the re-identification key.

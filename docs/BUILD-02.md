@@ -11,8 +11,8 @@ Phase 0 amends it first so no later phase violates it.
 Source inputs for this plan:
 
 - The improvement plan (consolidated user feedback, sections 0 to 6).
-- The PwC brand palette, vendored at `docs/brand/color-palette.json`.
-- The `pwc-brand-guidelines` skill (typography and colour-usage rules).
+- The brand palette, vendored at `docs/brand/color-palette.json`.
+- The brand guidelines (typography and colour-usage rules).
 - A full survey of the current codebase (file and symbol references below are
   verified against the code as of commit `6064461`).
 
@@ -137,8 +137,8 @@ only `archive/zip`, `encoding/xml`, and the already-pinned excelize.
 
 ## 5. Brand tokens (single source of truth for Phase 1)
 
-Values come from `docs/brand/color-palette.json` and the `pwc-brand-guidelines`
-skill. Phase 1 creates `static/brand.css` containing exactly this block (plus
+Values come from `docs/brand/color-palette.json` and the brand guidelines.
+Phase 1 creates `static/brand.css` containing exactly this block (plus
 comments), and `style.css` consumes only these variables:
 
 ```css
@@ -212,9 +212,9 @@ resolved/blocked decisions are recorded.
   > memory. The source file on disk is read once at import and never
   > written, moved, or modified.
 
-- 0b. Amend CLAUDE.md §5 "Entity categories": rename `pwc_internal_names` to
-  `internal_names`, note the session-migration requirement (old key loads and
-  migrates), and note that the user-visible label is "Internal".
+- 0b. Amend CLAUDE.md §5 "Entity categories": name the internal-names
+  category `internal_names`, and note that the user-visible label is
+  "Internal".
 - 0c. Amend CLAUDE.md §5 "Anonymisation levels": add that levels become
   presets over granular per-category switches (Phase 3), with `medium`
   remaining the default preset.
@@ -236,7 +236,7 @@ confirm the tree is green at the starting point.
 
 ## Phase 1 — Brand foundation and UI toolkit
 
-**Goal:** the app looks PwC-branded, and all later phases build UI from one
+**Goal:** the app looks on-brand, and all later phases build UI from one
 small set of shared, tested helpers instead of ad-hoc markup.
 
 **Activities:**
@@ -320,7 +320,7 @@ controls, one orange hero element per view, black text everywhere on light
 surfaces, focus outlines visible.
 
 **Definition of done:** commit
-`feat(ui): PwC brand foundation, shared UI toolkit, copy style guard`.
+`feat(ui): brand foundation, shared UI toolkit, copy style guard`.
 
 ---
 
@@ -393,8 +393,8 @@ every step shows its banner.
 ## Phase 3 — Engine: granular category model, presets, "internal" rename
 
 **Goal:** the pipeline is driven by an explicit per-category switch set
-instead of only a 3-way level; the `pwc_internal_names` category becomes
-`internal_names` everywhere, with session migration.
+instead of only a 3-way level; the internal-names category is named
+`internal_names` everywhere.
 
 **Activities:**
 
@@ -411,22 +411,18 @@ instead of only a 3-way level; the `pwc_internal_names` category becomes
   custom; medium = soft + persons; advanced = everything). `Level` stays in
   `Settings` as "last chosen preset" for UI display; the selection is what
   the pipeline obeys. `buildRunRequest` (state.js) sends the selection.
-- 3c. Rename `pwc_internal_names` → `internal_names` and placeholder label
-  `PWC_INTERNAL` → `INTERNAL` in every occurrence found in the survey:
+- 3c. Use the internal-names category key `internal_names` and placeholder
+  label `INTERNAL` in every occurrence found in the survey:
   `engine/entities.go` (comments + `personCategories`), `engine/registry.go:29`
   (`placeholderLabels`), `engine/pipeline.go:113`, `ollama/client.go`
   (prompt text at lines 263 to 268, 293, 362: category key and the phrase
-  "PwC staff, teams or internal systems" becomes "internal staff, teams or
-  internal systems"), `static/highlight.js:18` (`ENTITY_LABELS`),
+  "internal staff, teams or internal systems"),
+  `static/highlight.js:18` (`ENTITY_LABELS`),
   `static/views/entities.js:25` and `static/views/run.js:168` (label
   "Internal"), plus README.md:36 wording. Update all affected tests.
-- 3d. Session migration: `engine/session.go` load path maps entity/registry
-  keys `pwc_internal_names` → `internal_names` and rewrites registry
-  originals' category and placeholder labels `[PWC_INTERNAL_N]` →
-  `[INTERNAL_N]` (counter preserved). Add a v1 session fixture at
-  `testdata/session_v1.anonsession.json` containing the old key and label.
-  Sessions saved from now on carry a `"schema": 2` field; loading schema 2
-  is a no-op migration.
+- 3d. `engine/session.go`: entities and registry rows use the
+  `internal_names` category key and `[INTERNAL_N]` placeholder labels
+  directly (no legacy key to migrate).
 - 3e. `app_run.go` / `app.go`: settings struct gains
   `Categories CategorySelection`; applying a preset from the UI fills it.
   Wails payload shape documented in comments on both sides of the bridge.
@@ -441,9 +437,6 @@ instead of only a 3-way level; the `pwc_internal_names` category becomes
   fixture corpus (regression anchor).
 - Mixed selections: persons on + emails off leaves emails intact; allowlist
   still wins over any selection.
-- Migration: loading `session_v1.anonsession.json` yields `internal_names`
-  entities, `[INTERNAL_N]` registry entries with continuous counters, and a
-  re-run reproduces identical placeholders.
 - `state.test.js`: `buildRunRequest` carries the selection; preset reducer
   fills expected switches.
 
@@ -1094,7 +1087,7 @@ Run on Windows. Each row states setup → action → expected.
 |---|---|
 | §0.1 same-format export decision | 0 (spec), 11-13 (build) |
 | §0.2 entity type list | 2.2 decision above; data-driven tables in 3, 9 |
-| §1 UX heuristics + PwC branding | 1 (foundation), applied in 2, 6, 9, 10 |
+| §1 UX heuristics + branding | 1 (foundation), applied in 2, 6, 9, 10 |
 | §1 Welcome/Home + navigation | 2 |
 | §1 application icon → /build | 1g |
 | §1 Material Symbols icons | 1d |
@@ -1109,7 +1102,7 @@ Run on Windows. Each row states setup → action → expected.
 | §3 move "use local AI" toggle here | 6d |
 | §3 Ollama context bug (400 vs 404, context size, chunking) | 5 |
 | §3 split configure into two sub-screens | 6a |
-| §4 rename "PwC internal" → "internal" | 3c-3d, 9e |
+| §4 rename "internal" category → `internal_names` | 3c-3d, 9e |
 | §4 AI options only if AI enabled | 6d (gate), 9a (visibility) |
 | §4 three discovery methods (cloud placeholder / local / smart) | 8 (engine), 9a (UI) |
 | §4 smart detection resolves context overflow via span classification | 8b |

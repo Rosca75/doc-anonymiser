@@ -1,9 +1,9 @@
 /*
-  brand.css, the PwC brand tokens for doc-anonymiser.
+  brand.css, the brand tokens for doc-anonymiser.
 
   SINGLE SOURCE OF TRUTH for colours and typography (BUILD-02 section 5).
-  Values come from docs/brand/color-palette.json and the pwc-brand-guidelines
-  skill. style.css consumes ONLY these variables; no other file may define
+  Values come from docs/brand/color-palette.json and the brand guidelines.
+  style.css consumes ONLY these variables; no other file may define
   colour or font values.
 
   Usage rules (enforced in review):
