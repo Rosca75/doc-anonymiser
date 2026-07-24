@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "entities": [
+    { "category": "pwc_internal_names", "canonical": "Paul Stone" },
+    { "category": "client_names", "canonical": "Alpine Trust S.A." }
+  ],
+  "allowTerms": ["CSSF", "Luxembourg"],
+  "patterns": [{ "expr": "PRJ-[0-9]+" }],
+  "simpleRules": [{ "find": "confidential", "replace": "internal", "caseSensitive": false }],
+  "settings": { "level": "medium", "ollamaPort": 11434, "model": "qwen2.5:3b-instruct" },
+  "registry": [
+    { "original": "Paul Stone", "placeholder": "[PWC_INTERNAL_1]", "category": "pwc_internal_names", "count": 3 },
+    { "original": "Ana Weber", "placeholder": "[PWC_INTERNAL_2]", "category": "pwc_internal_names", "count": 1 },
+    { "original": "Alpine Trust S.A.", "placeholder": "[CLIENT_1]", "category": "client_names", "count": 2 }
+  ]
+}
