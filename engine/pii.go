@@ -400,11 +400,7 @@ func FilterByConfidence(spans []Span, thresholds map[string]float32) []Span {
 	}
 	out := spans[:0]
 	for _, s := range spans {
-		c := s.Confidence
-		if c == 0 {
-			c = 1.0
-		}
-		if t, ok := thresholds[s.Category]; ok && c < t {
+		if t, ok := thresholds[s.Category]; ok && effectiveConfidence(s) < t {
 			continue
 		}
 		out = append(out, s)
@@ -412,16 +408,37 @@ func FilterByConfidence(spans []Span, thresholds map[string]float32) []Span {
 	return out
 }
 
+// effectiveConfidence is the score used by comparators: the span's stored
+// Confidence, with 0 (never set) promoted to 1.0 so pre-BUILD-03 spans
+// order and filter the same way they did before the field existed.
+func effectiveConfidence(s Span) float32 {
+	if s.Confidence == 0 {
+		return 1.0
+	}
+	return s.Confidence
+}
 
-// ResolveOverlaps keeps a non-overlapping subset of spans, longest match
-// first (BUILD.md Phase 2: "an email inside a URL resolves
-// deterministically" — the URL is longer, so the URL wins). Ties on length
-// break by earlier start, then by category name, making the outcome fully
-// deterministic. The result is sorted by Start.
+
+// ResolveOverlaps keeps a non-overlapping subset of spans. Priority order
+// (BUILD-03 Phase F, extending the BUILD.md Phase 2 rule):
+//  1. Higher confidence wins — a checksum-verified card beats a raw pattern
+//     hit at the same offset. Zero-valued Confidence (pre-Phase-C spans)
+//     is treated as 1.0 so the ordering degrades to the v1 behaviour when
+//     no confidence data is present.
+//  2. Longer match wins — the classic "email inside a URL" case: the URL
+//     is longer, so the URL wins.
+//  3. Earlier start, then category name — tie-break for fully deterministic
+//     output the tests can pin against.
+//
+// The result is sorted by Start.
 func ResolveOverlaps(spans []Span) []Span {
 	ordered := make([]Span, len(spans))
 	copy(ordered, spans)
 	sort.Slice(ordered, func(i, j int) bool {
+		ci, cj := effectiveConfidence(ordered[i]), effectiveConfidence(ordered[j])
+		if ci != cj {
+			return ci > cj // higher confidence first
+		}
 		li, lj := ordered[i].End-ordered[i].Start, ordered[j].End-ordered[j].Start
 		if li != lj {
 			return li > lj // longest first
