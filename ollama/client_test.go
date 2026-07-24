@@ -468,3 +468,88 @@ func TestDiscoverCancelBetweenChunks(t *testing.T) {
 		t.Errorf("partial proposals must survive cancellation: %+v", got)
 	}
 }
+
+// --- BUILD-02 Phase 8b: candidate span classification ------------------------
+
+// TestClassifyCandidates: categories come back per candidate; a name the
+// server "invents" (not among the inputs) is dropped by the verbatim
+// filter; allowlisted texts are vetoed.
+func TestClassifyCandidates(t *testing.T) {
+	c := chatReplyServer(t, `{"client_names":["Alpine Trust","Fabricated Corp"],"project_names":[],"internal_names":[],"person_names":["Marie Duval","CSSF"]}`)
+	allow := engine.NewAllowlist() // seeds CSSF
+	c.Allow = allow.Contains
+
+	got, err := c.ClassifyCandidates(context.Background(), []engine.Candidate{
+		{Text: "Alpine Trust", Category: "person_names", Contexts: []string{"audit of Alpine Trust started"}},
+		{Text: "Marie Duval", Category: "client_names"},
+		{Text: "CSSF", Category: "client_names"},
+	})
+	if err != nil {
+		t.Fatalf("ClassifyCandidates: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 classified survivors, got %+v", got)
+	}
+	byText := map[string]string{}
+	for _, p := range got {
+		byText[p.Text] = p.Category
+	}
+	if byText["Alpine Trust"] != "client_names" || byText["Marie Duval"] != "person_names" {
+		t.Errorf("classification wrong: %v", byText)
+	}
+	if _, ok := byText["Fabricated Corp"]; ok {
+		t.Error("invented candidate must be dropped by the verbatim filter")
+	}
+	if _, ok := byText["CSSF"]; ok {
+		t.Error("allowlisted candidate must be vetoed")
+	}
+}
+
+// TestClassifyCandidatesBatching: 200 candidates with contexts stay under
+// the byte budget per request (several requests, each bounded).
+func TestClassifyCandidatesBatching(t *testing.T) {
+	var maxBody atomic.Int64
+	var calls atomic.Int32
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			w.Write([]byte(`{"models":[]}`))
+			return
+		}
+		calls.Add(1)
+		var req struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		for _, m := range req.Messages[1:] { // user message only
+			if int64(len(m.Content)) > maxBody.Load() {
+				maxBody.Store(int64(len(m.Content)))
+			}
+		}
+		resp, _ := json.Marshal(map[string]interface{}{
+			"message": map[string]string{"role": "assistant",
+				"content": `{"client_names":[],"project_names":[],"internal_names":[],"person_names":[]}`},
+		})
+		w.Write(resp)
+	})
+
+	c.ContextSize = 1024 // budget 2304 bytes per prompt
+	var candidates []engine.Candidate
+	for i := 0; i < 200; i++ {
+		candidates = append(candidates, engine.Candidate{
+			Text:     strings.Repeat("N", 20) + string(rune('A'+i%26)),
+			Contexts: []string{strings.Repeat("context words here ", 5)},
+		})
+	}
+	if _, err := c.ClassifyCandidates(context.Background(), candidates); err != nil {
+		t.Fatalf("ClassifyCandidates: %v", err)
+	}
+	budget := c.ContextSize * 3 * 3 / 4
+	if maxBody.Load() > int64(budget)+256 {
+		t.Errorf("a batch exceeded the byte budget: %d > %d", maxBody.Load(), budget)
+	}
+	if calls.Load() < 2 {
+		t.Errorf("200 padded candidates must need several batches, got %d call(s)", calls.Load())
+	}
+}

@@ -140,7 +140,8 @@ func (a *App) RunDiscovery(fileNames []string, allowTerms []string) (*DiscoveryR
 }
 
 // CancelDiscovery aborts an in-flight discovery run (between files, or
-// mid-chunk via HTTP context cancellation). A no-op when idle.
+// mid-chunk via HTTP context cancellation). A no-op when idle. Smart
+// detection runs share the same cancellation slot.
 func (a *App) CancelDiscovery() {
 	a.mu.Lock()
 	cancel := a.cancelDiscovery
@@ -148,6 +149,119 @@ func (a *App) CancelDiscovery() {
 	if cancel != nil {
 		cancel()
 	}
+}
+
+// SmartDetectionResult is what RunSmartDetection returns: candidates for
+// the review UI (NEVER auto-committed entities, BUILD-02 Phase 9b) plus
+// a status line mirroring DiscoveryResult.
+type SmartDetectionResult struct {
+	Candidates []engine.Candidate `json:"candidates"`
+	Status     string             `json:"status"`
+	Cancelled  bool               `json:"cancelled"`
+}
+
+// RunSmartDetection executes the offline Smart-detection tier over the
+// named files (BUILD-02 Phase 8c), mirroring RunDiscovery: per-file
+// progress events, cancellable, allowlist from the UI state. When
+// classify is true AND the local AI is reachable, candidate categories
+// are refined through ClassifyCandidates (span classification: only
+// candidate texts and snippets travel to the model, never documents).
+// Classification failures degrade to the heuristic categories with a
+// status note; they never fail the run (the deterministic tier is the
+// whole point of Smart detection).
+func (a *App) RunSmartDetection(fileNames []string, allowTerms []string, classify bool) (*SmartDetectionResult, error) {
+	docs := a.docsByName(fileNames)
+	if len(docs) == 0 {
+		return nil, fmt.Errorf("no matching imported files to scan, import documents first, then pick at least one for smart detection")
+	}
+
+	allow := engine.NewEmptyAllowlist()
+	for _, t := range allowTerms {
+		allow.Add(t)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	a.mu.Lock()
+	if a.cancelDiscovery != nil {
+		a.mu.Unlock()
+		cancel()
+		return nil, fmt.Errorf("a discovery run is already in progress, cancel it or wait for it to finish")
+	}
+	a.cancelDiscovery = cancel
+	llm := a.llm
+	a.mu.Unlock()
+	defer func() {
+		cancel()
+		a.mu.Lock()
+		a.cancelDiscovery = nil
+		a.mu.Unlock()
+	}()
+
+	// Per-file smart detection, merged case-sensitively by text: counts
+	// add up, contexts cap at 3, and a suffix/title-derived category
+	// (client/person) wins over the positional default.
+	merged := map[string]*engine.Candidate{}
+	var order []string
+	completed := 0
+	for i, doc := range docs {
+		if ctx.Err() != nil {
+			break
+		}
+		a.emit("discovery:progress", map[string]interface{}{
+			"docIndex": i, "docCount": len(docs), "docName": doc.Name,
+		})
+		for _, cand := range engine.SmartDetect(doc.Markdown, allow) {
+			m, ok := merged[cand.Text]
+			if !ok {
+				copyCand := cand
+				merged[cand.Text] = &copyCand
+				order = append(order, cand.Text)
+				continue
+			}
+			m.Count += cand.Count
+			for _, ctxSnippet := range cand.Contexts {
+				if len(m.Contexts) >= 3 {
+					break
+				}
+				m.Contexts = append(m.Contexts, ctxSnippet)
+			}
+		}
+		completed++
+	}
+
+	candidates := make([]engine.Candidate, 0, len(order))
+	for _, key := range order {
+		candidates = append(candidates, *merged[key])
+	}
+
+	res := &SmartDetectionResult{Candidates: candidates}
+	if ctx.Err() != nil && completed < len(docs) {
+		res.Cancelled = true
+		res.Status = fmt.Sprintf("cancelled after %d of %d files", completed, len(docs))
+		return res, nil
+	}
+	res.Status = fmt.Sprintf("scanned %d file(s)", completed)
+
+	// Optional AI category refinement (BUILD-02 Phase 8b).
+	if classify && len(candidates) > 0 {
+		llm.Allow = allow.Contains
+		proposals, err := llm.ClassifyCandidates(ctx, candidates)
+		if err != nil {
+			res.Status += "; AI classification unavailable, heuristic categories kept (" + err.Error() + ")"
+		} else {
+			refined := map[string]string{}
+			for _, p := range proposals {
+				refined[p.Text] = p.Category
+			}
+			for i := range res.Candidates {
+				if cat, ok := refined[res.Candidates[i].Text]; ok {
+					res.Candidates[i].Category = cat
+				}
+			}
+			res.Status += "; categories refined by the local AI"
+		}
+	}
+	return res, nil
 }
 
 // ExpandEntityVariants returns the automatic + manual variants of one

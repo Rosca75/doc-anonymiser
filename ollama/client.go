@@ -448,6 +448,94 @@ func MergeProposals(batches ...[]engine.ProposedEntity) []engine.ProposedEntity 
 	return out
 }
 
+// --- Candidate span classification (BUILD-02 Phase 8b) ----------------------
+
+// classifySystemPrompt asks for one category per candidate, strict JSON
+// with the exact category keys. Only candidate TEXTS and short context
+// snippets are sent, never whole documents, which structurally ends the
+// context-overflow class of bugs for this path.
+const classifySystemPrompt = `You are an entity classification engine for confidential business documents.
+The user sends a list of candidate names, each with short context snippets from the document.
+Assign every candidate to exactly ONE category and respond with ONLY a JSON object, no prose, using exactly these keys:
+{"client_names": [], "project_names": [], "internal_names": [], "person_names": []}
+Rules:
+- client_names: companies/organisations that are clients or counterparties.
+- project_names: engagement or project code names.
+- internal_names: internal staff, teams or internal systems.
+- person_names: natural persons not already in internal_names.
+- Copy every candidate VERBATIM into one list. Never invent, translate or reformat names.
+- Use [] for a category with no candidates.`
+
+// ClassifyCandidates refines Smart-detection candidates through the local
+// model: candidates travel in byte-budgeted batches, each reply is parsed
+// with the usual tolerant parser, and any returned text that is not one
+// of the INPUT candidates verbatim is dropped (hallucination filter), as
+// is anything the allowlist vetoes.
+func (c *Client) ClassifyCandidates(ctx context.Context, candidates []engine.Candidate) ([]engine.ProposedEntity, error) {
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+
+	// Verbatim-input filter set (the classification counterpart of the
+	// document hallucination filter).
+	valid := make(map[string]bool, len(candidates))
+	for _, cand := range candidates {
+		valid[cand.Text] = true
+	}
+
+	budget := c.promptBudgetBytes()
+	var batches [][]engine.ProposedEntity
+	batch := strings.Builder{}
+	flush := func() error {
+		if batch.Len() == 0 {
+			return nil
+		}
+		reply, err := c.Chat(ctx, c.Model, classifySystemPrompt, batch.String())
+		batch.Reset()
+		if err != nil {
+			return err
+		}
+		proposals, err := parseEntityJSON(reply)
+		if err != nil {
+			return err
+		}
+		batches = append(batches, proposals)
+		return nil
+	}
+
+	for _, cand := range candidates {
+		if err := ctx.Err(); err != nil {
+			return MergeProposals(batches...), err
+		}
+		line := "- " + cand.Text
+		if len(cand.Contexts) > 0 {
+			line += " | context: " + strings.Join(cand.Contexts, " ... ")
+		}
+		line += "\n"
+		if batch.Len() > 0 && batch.Len()+len(line) > budget {
+			if err := flush(); err != nil {
+				return MergeProposals(batches...), err
+			}
+		}
+		batch.WriteString(line)
+	}
+	if err := flush(); err != nil {
+		return MergeProposals(batches...), err
+	}
+
+	var out []engine.ProposedEntity
+	for _, p := range MergeProposals(batches...) {
+		if !valid[p.Text] {
+			continue // invented or reformatted: dropped
+		}
+		if c.Allow != nil && c.Allow(p.Text) {
+			continue // allowlist wins
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
 // --- JSON reply parsing ---------------------------------------------------
 
 // entityCategories are the exact keys the prompts demand (CLAUDE.md §5).
