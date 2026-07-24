@@ -10,8 +10,9 @@
 //     markdown tables already, rendered as a simple table).
 
 import { importFiles, removeDocument } from "../api.js";
-import { getState, setState, applyImportResult } from "../state.js";
+import { getState, setState, applyImportResult, setImportSplit } from "../state.js";
 import { escapeHTML, fmtSize } from "../html.js";
+import { button } from "../ui.js";
 
 export function renderImport(container) {
   const s = getState();
@@ -31,18 +32,25 @@ export function renderImport(container) {
 
   const preview = s.documents.find((d) => d.name === s.previewDoc);
 
+  // Resizable two-pane layout (BUILD-02 Phase 2g): the grid template comes
+  // from state.importSplit so the ratio survives re-renders.
+  const split = s.importSplit ?? 0.5;
+  const columns = `${(split * 100).toFixed(1)}fr 6px ${((1 - split) * 100).toFixed(1)}fr`;
+
   container.innerHTML = `
     <div class="import-view">
       ${errors}
-      <div class="import-columns">
+      <div class="import-columns" style="grid-template-columns: ${columns}">
         <section class="panel import-list">
           <div class="panel-head">
             <h2>Documents</h2>
-            <button id="btn-add" class="primary">+ Add files…</button>
+            ${button("Add files", { kind: "primary", id: "btn-add", icon: "add" })}
           </div>
           <p class="hint">or drop .txt / .csv / .md / .docx / .pptx / .xlsx / .pdf files anywhere in this window</p>
           <ul class="doc-list">${rows || `<li class="empty">Nothing imported yet.</li>`}</ul>
         </section>
+        <div class="import-divider" id="import-divider"
+             title="Drag to resize. Double-click to reset."></div>
         <section class="panel preview">
           <div class="panel-head"><h2>Preview${preview ? `: ${escapeHTML(preview.name)}` : ""}</h2></div>
           ${preview ? renderPreview(preview) : `<p class="hint">Select a document to preview its working form.</p>`}
@@ -70,6 +78,44 @@ export function renderImport(container) {
   for (const btn of container.querySelectorAll(".banner .dismiss")) {
     btn.addEventListener("click", () => setState({ importErrors: [] }));
   }
+
+  wireDivider(container);
+}
+
+/**
+ * wireDivider(container) makes the 6px divider draggable with pointer
+ * events: dragging updates the column template live (cheap) and commits
+ * the clamped ratio to state on release (setImportSplit) so it persists
+ * across re-renders. Double-click resets to 50/50.
+ */
+function wireDivider(container) {
+  const divider = container.querySelector("#import-divider");
+  const grid = container.querySelector(".import-columns");
+  if (!divider || !grid) return;
+
+  divider.addEventListener("pointerdown", (down) => {
+    down.preventDefault();
+    divider.setPointerCapture(down.pointerId);
+    divider.classList.add("dragging");
+    const rect = grid.getBoundingClientRect();
+
+    const onMove = (move) => {
+      const raw = (move.clientX - rect.left) / rect.width;
+      const ratio = Math.min(0.8, Math.max(0.2, raw));
+      grid.style.gridTemplateColumns = `${(ratio * 100).toFixed(1)}fr 6px ${((1 - ratio) * 100).toFixed(1)}fr`;
+    };
+    const onUp = (up) => {
+      divider.classList.remove("dragging");
+      divider.removeEventListener("pointermove", onMove);
+      divider.removeEventListener("pointerup", onUp);
+      // Commit the final ratio through the tested reducer (clamped there).
+      setImportSplit((up.clientX - rect.left) / rect.width);
+    };
+    divider.addEventListener("pointermove", onMove);
+    divider.addEventListener("pointerup", onUp);
+  });
+
+  divider.addEventListener("dblclick", () => setImportSplit(0.5));
 }
 
 /**

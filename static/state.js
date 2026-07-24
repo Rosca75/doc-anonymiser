@@ -16,6 +16,12 @@ export const WIZARD_STEPS = ["import", "configure", "entities", "run", "export"]
 // The initial application state. Every field is documented; grow it here,
 // never ad hoc in views.
 const initialState = {
+  // Top-level screen: "home" (landing page), "wizard" (the 5-step flow) or
+  // "docs" (documentation placeholder). Leaving the wizard NEVER clears
+  // wizard state, so documents and entities survive navigation
+  // (BUILD-02 Phase 2a).
+  screen: "home",
+
   // Bridge self-test: null = not yet run, "pong" = OK, anything else =
   // error message to display.
   bridge: null,
@@ -36,6 +42,11 @@ const initialState = {
 
   // Name of the document selected in the preview pane (or null).
   previewDoc: null,
+
+  // Import screen split ratio: fraction of width given to the document
+  // list pane (the preview takes the rest). User-draggable divider,
+  // clamped to keep both panes usable (BUILD-02 Phase 2g).
+  importSplit: 0.5,
 
   // Settings mirror (source of truth lives in Go; this copy renders the
   // Configure screen): {level, ollamaPort, model}.
@@ -95,6 +106,35 @@ export function subscribe(fn) {
 
 function notify() {
   for (const fn of listeners) fn(state);
+}
+
+// --- Screen navigation (BUILD-02 Phase 2a) -----------------------------------
+
+/** SCREENS: the valid top-level screens. */
+export const SCREENS = ["home", "wizard", "docs"];
+
+/**
+ * goToScreen(name) switches the top-level screen. Wizard state (documents,
+ * entities, step, ...) is deliberately untouched, so Home and back loses
+ * nothing. Unknown names are rejected (returns false).
+ */
+export function goToScreen(name) {
+  if (!SCREENS.includes(name)) return false;
+  setState({ screen: name });
+  return true;
+}
+
+/**
+ * setImportSplit(ratio) stores the import-screen divider position as a
+ * fraction of the width given to the list pane. Non-numbers are rejected;
+ * numbers are clamped to [0.2, 0.8] so neither pane can collapse.
+ * Returns the stored value (or null when rejected).
+ */
+export function setImportSplit(ratio) {
+  if (typeof ratio !== "number" || Number.isNaN(ratio)) return null;
+  const clamped = Math.min(0.8, Math.max(0.2, ratio));
+  setState({ importSplit: clamped });
+  return clamped;
 }
 
 // --- Navigation guards ------------------------------------------------------

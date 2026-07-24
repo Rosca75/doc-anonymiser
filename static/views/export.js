@@ -15,6 +15,10 @@ import {
 } from "../api.js";
 import { getState, setState, buildRunRequest, addEntities } from "../state.js";
 import { escapeHTML } from "../html.js";
+import { panel, wirePanels, button } from "../ui.js";
+
+// Panels the user toggled away from their default state (BUILD-02 Phase 2f).
+const collapsedPanels = new Set();
 
 // The wording of the sensitivity warning, shared by mapping export and
 // session save (CLAUDE.md §5).
@@ -42,44 +46,51 @@ export function renderExport(container) {
       </tr>`;
   }).join("");
 
-  container.innerHTML = `
-    <div class="export-view">
-      <section class="panel">
-        <div class="panel-head">
-          <h2>Export documents</h2>
-          <button id="btn-zip" class="primary">Export all as zip…</button>
-        </div>
+  const docsContent = `
         <p class="hint">Each file saves with an _anon suffix. Nothing is ever written back to the original files.</p>
-        <table class="entity-table"><tbody>${rows || `<tr><td class="hint">No results yet. Run the pipeline first.</td></tr>`}</tbody></table>
-      </section>
-      <section class="panel">
-        <div class="panel-head"><h2>Entity mapping (re-identification key)</h2></div>
+        <table class="entity-table"><tbody>${rows || `<tr><td class="hint">No results yet. Run the pipeline first.</td></tr>`}</tbody></table>`;
+
+  const mappingContent = `
         <p class="hint">Maps every placeholder back to the original value. Handle it like the originals themselves.</p>
         <div class="form-row">
-          <button id="map-csv">Export as CSV…</button>
-          <button id="map-json">Export as JSON…</button>
-        </div>
-      </section>
-      <section class="panel">
-        <div class="panel-head"><h2>Report</h2></div>
+          <button id="map-csv">Export as CSV</button>
+          <button id="map-json">Export as JSON</button>
+        </div>`;
+
+  const reportContent = `
         <div class="form-row">
-          <button id="rep-json">Export report as JSON…</button>
-          <button id="rep-md">Export report as Markdown…</button>
-        </div>
-      </section>
-      <section class="panel">
-        <div class="panel-head"><h2>Session</h2></div>
+          <button id="rep-json">Export report as JSON</button>
+          <button id="rep-md">Export report as Markdown</button>
+        </div>`;
+
+  const sessionContent = `
         <p class="hint">Saves entities, allowlist, patterns, rules, settings and the placeholder registry, so a
           follow-up batch reuses the same placeholders. The file contains the re-identification key.</p>
         <div class="form-row">
-          <button id="ses-save">Save session…</button>
-          <button id="ses-load">Load session…</button>
-        </div>
-      </section>
+          <button id="ses-save">Save session</button>
+          <button id="ses-load">Load session</button>
+        </div>`;
+
+  container.innerHTML = `
+    <div class="export-view">
+      ${panel("export-docs-panel", "Export documents", docsContent, {
+        collapsible: true, collapsedSet: collapsedPanels,
+        headExtraHTML: button("Export all as zip", { kind: "primary", id: "btn-zip", icon: "download" }),
+      })}
+      ${panel("export-mapping-panel", "Entity mapping (re-identification key)", mappingContent, {
+        collapsible: true, collapsedSet: collapsedPanels,
+      })}
+      ${panel("export-report-panel", "Report", reportContent, {
+        collapsible: true, startOpen: false, collapsedSet: collapsedPanels,
+      })}
+      ${panel("export-session-panel", "Session", sessionContent, {
+        collapsible: true, collapsedSet: collapsedPanels,
+      })}
       <div id="export-msg"></div>
     </div>
   `;
 
+  wirePanels(container, collapsedPanels, () => setState({}));
   ensureFormats(docs);
   wire(container);
 }

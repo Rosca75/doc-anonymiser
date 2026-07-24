@@ -10,12 +10,13 @@ import {
   runDiscovery, expandVariants, validatePattern, patternMatches,
 } from "../api.js";
 import {
-  getState,
+  getState, setState,
   addEntities, setEntityStatus, editEntity, removeEntity,
   setEntityVariants, addManualVariant, entityKey,
   addAllowTerm, removeAllowTerm, addPattern, removePattern,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
+import { panel, wirePanels } from "../ui.js";
 import { LLM_DISABLED_TOOLTIP } from "./configure.js";
 
 // The reviewable entity categories (CLAUDE.md §5) with display labels.
@@ -29,6 +30,10 @@ const CATEGORIES = [
 // Rows whose variant list is expanded, keyed by entityKey. View-local UI
 // state (not business state), so it lives here, not in the store.
 const expanded = new Set();
+
+// Panels the user toggled away from their default open/collapsed state
+// (BUILD-02 Phase 2f). View-local, same pattern as `expanded`.
+const collapsedPanels = new Set();
 
 export function renderEntities(container) {
   const s = getState();
@@ -44,6 +49,7 @@ export function renderEntities(container) {
     </div>
   `;
 
+  wirePanels(container, collapsedPanels, () => setState({}));
   wireDiscovery(container, s);
   wireCategoryPanels(container);
   wireAllowlist(container);
@@ -59,17 +65,15 @@ function discoveryPanel(s, ollamaOK) {
       <span>${escapeHTML(d.name)}</span>
     </label>`).join("");
   const gate = ollamaOK ? "" : `disabled title="${LLM_DISABLED_TOOLTIP}"`;
-  return `
-    <section class="panel">
-      <div class="panel-head">
-        <h2>Entity discovery (AI)</h2>
-        <button id="btn-discover" class="primary" ${gate}>Run discovery</button>
-      </div>
+  const content = `
       <p class="hint">Pick one or more representative files; the local model proposes entities for review below.
         Without Ollama, add entities manually in the tables; that is a fully supported flow.</p>
       ${fileOptions || `<p class="hint">No documents imported.</p>`}
-      <div id="disc-progress" class="hint"></div>
-    </section>`;
+      <div id="disc-progress" class="hint"></div>`;
+  return panel("panel-discovery", "Entity discovery (AI)", content, {
+    collapsible: true, collapsedSet: collapsedPanels,
+    headExtraHTML: `<button id="btn-discover" class="primary" ${gate}>Run discovery</button>`,
+  });
 }
 
 function wireDiscovery(container, s) {
@@ -131,19 +135,21 @@ function categoryPanel(s, category, label) {
       </td></tr>` : ""}`;
   }).join("");
 
-  return `
-    <section class="panel" data-panel="${category}">
-      <div class="panel-head"><h2>${label}</h2></div>
+  const content = `
+    <div data-panel="${category}">
       <table class="entity-table">
         <tbody>${rows}</tbody>
         <tfoot><tr>
           <td colspan="3" class="form-row">
-            <input class="ent-add-input" placeholder="add a ${label.toLowerCase()} entry…"/>
-            <button class="ent-add">+ add</button>
+            <input class="ent-add-input" placeholder="add a ${label.toLowerCase()} entry"/>
+            <button class="ent-add">Add</button>
           </td>
         </tr></tfoot>
       </table>
-    </section>`;
+    </div>`;
+  return panel(`panel-cat-${category}`, label, content, {
+    collapsible: true, collapsedSet: collapsedPanels,
+  });
 }
 
 function wireCategoryPanels(container) {
@@ -215,16 +221,16 @@ async function refreshVariants() {
 function allowlistPanel(s) {
   const pills = s.allowlist.map((t) => `
     <span class="pill">${escapeHTML(t)}<button class="allow-del" data-term="${escapeHTML(t)}" title="Remove">✕</button></span>`).join("");
-  return `
-    <section class="panel" id="allow-panel">
-      <div class="panel-head"><h2>Allowlist (never anonymised)</h2></div>
+  const content = `
       <p class="hint">Terms here survive every pass, even when they are also listed as entities.</p>
       <div class="pill-list">${pills || `<span class="hint">empty</span>`}</div>
       <div class="form-row">
         <input id="allow-input" placeholder="add a term, e.g. CSSF"/>
-        <button id="allow-add">+ add</button>
-      </div>
-    </section>`;
+        <button id="allow-add">Add</button>
+      </div>`;
+  return panel("allow-panel", "Allowlist (never anonymised)", content, {
+    collapsible: true, collapsedSet: collapsedPanels,
+  });
 }
 
 function wireAllowlist(container) {
@@ -245,19 +251,21 @@ function patternsPanel(s) {
       <code>${escapeHTML(p.expr)}</code>
       <button class="pattern-del" data-expr="${escapeHTML(p.expr)}" title="Remove">✕</button>
     </span>`).join("");
-  return `
-    <section class="panel" id="pattern-panel">
-      <div class="panel-head"><h2>Custom patterns (regex)</h2></div>
+  const content = `
       <p class="hint">User-defined regular expressions, replaced as [CUSTOM_N]. Validated as you type;
         the tester shows sample matches from the loaded documents.</p>
       <div class="pill-list">${rows || `<span class="hint">none</span>`}</div>
       <div class="form-row">
         <input id="pattern-input" placeholder="e.g. PRJ-[0-9]+" spellcheck="false"/>
         <button id="pattern-test">test</button>
-        <button id="pattern-add">+ add</button>
+        <button id="pattern-add">Add</button>
       </div>
-      <div id="pattern-feedback" class="hint"></div>
-    </section>`;
+      <div id="pattern-feedback" class="hint"></div>`;
+  // Custom patterns are an advanced feature: collapsed by default
+  // (BUILD-02 Phase 2f).
+  return panel("pattern-panel", "Custom patterns (regex)", content, {
+    collapsible: true, startOpen: false, collapsedSet: collapsedPanels,
+  });
 }
 
 function wirePatterns(container) {

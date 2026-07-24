@@ -118,6 +118,7 @@ input, select {
   margin-bottom: 0.6rem;
 }
 .panel-head h2 { margin: 0; font-size: 1.15rem; }
+.panel-head-right { display: flex; align-items: center; gap: 0.5rem; }
 
 /* Collapsible panels (ui.js panel helper): the header row toggles
    data-collapsed on the section; the body then hides. */

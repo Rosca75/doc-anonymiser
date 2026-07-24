@@ -17,7 +17,11 @@ import {
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { renderHighlighted } from "../highlight.js";
+import { panel, wirePanels } from "../ui.js";
 import { LLM_DISABLED_TOOLTIP } from "./configure.js";
+
+// Panels the user toggled away from their default state (BUILD-02 Phase 2f).
+const collapsedPanels = new Set();
 
 export function renderRun(container) {
   const s = getState();
@@ -32,6 +36,7 @@ export function renderRun(container) {
     </div>
   `;
 
+  wirePanels(container, collapsedPanels, () => setState({}));
   wireControls(container, s);
   wireRules(container);
   if (s.results) wireResults(container, s);
@@ -92,17 +97,18 @@ function rulesPanel(s) {
         <button class="rule-del">✕</button>
       </td>
     </tr>`).join("");
-  return `
-    <section class="panel" id="rules-panel">
-      <div class="panel-head"><h2>Manual find → replace (runs last, in order)</h2></div>
+  const content = `
       <table class="entity-table"><tbody>${rows}</tbody></table>
       <div class="form-row">
         <input id="rule-find" placeholder="find (literal text)"/>
         <input id="rule-replace" placeholder="replace with"/>
         <label><input type="checkbox" id="rule-case"/> case-sensitive</label>
-        <button id="rule-add">+ add rule</button>
-      </div>
-    </section>`;
+        <button id="rule-add">Add rule</button>
+      </div>`;
+  // Rules are an advanced feature: collapsed by default (BUILD-02 Phase 2f).
+  return panel("rules-panel", "Manual find and replace (runs last, in order)", content, {
+    collapsible: true, startOpen: false, collapsedSet: collapsedPanels,
+  });
 }
 
 function wireRules(container) {
@@ -138,12 +144,7 @@ function resultsPanel(s) {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([cat, n]) => `<tr><td>${escapeHTML(cat)}</td><td>${n}</td></tr>`).join("");
 
-  return `
-    <section class="panel">
-      <div class="panel-head">
-        <h2>Results</h2>
-        <select id="result-doc">${docOptions}</select>
-      </div>
+  const resultsContent = `
       <div class="pill-list">${counts || `<span class="hint">no replacements in this document</span>`}</div>
       <div class="compare">
         <div>
@@ -154,10 +155,9 @@ function resultsPanel(s) {
           <h3 class="hint">Anonymised</h3>
           <pre class="md-preview">${doc ? renderHighlighted(doc.anonymised) : ""}</pre>
         </div>
-      </div>
-    </section>
-    <section class="panel">
-      <div class="panel-head"><h2>Something missed?</h2></div>
+      </div>`;
+
+  const missedContent = `
       <p class="hint">Add it as an entity (or a rule above), then re-run the fast deterministic passes.
         There is no AI re-scan, and existing placeholders keep their numbers.</p>
       <div class="form-row">
@@ -168,12 +168,11 @@ function resultsPanel(s) {
           <option value="pwc_internal_names">PwC internal</option>
         </select>
         <input id="missed-name" placeholder="missed name, e.g. P. Stone"/>
-        <button id="missed-add">add entity</button>
+        <button id="missed-add">Add entity</button>
         <button id="btn-fast-rerun" class="primary">Fast re-run</button>
-      </div>
-    </section>
-    <section class="panel">
-      <div class="panel-head"><h2>Report</h2></div>
+      </div>`;
+
+  const reportContent = `
       <p class="hint">
         Level: <strong>${escapeHTML(r.report?.level ?? "")}</strong> ·
         LLM pass: ${escapeHTML(r.report?.llmPass ?? "")} ·
@@ -181,8 +180,16 @@ function resultsPanel(s) {
         ${r.report?.durationMs ?? 0} ms
       </p>
       <table class="entity-table"><tbody>${categories}</tbody></table>
-      ${(r.report?.warnings ?? []).map((w) => `<div class="banner warn">${escapeHTML(w)}</div>`).join("")}
-    </section>`;
+      ${(r.report?.warnings ?? []).map((w) => `<div class="banner warn">${escapeHTML(w)}</div>`).join("")}`;
+
+  return panel("results-panel", "Results", resultsContent, {
+    collapsible: true, collapsedSet: collapsedPanels,
+    headExtraHTML: `<select id="result-doc">${docOptions}</select>`,
+  }) + panel("missed-panel", "Something missed?", missedContent, {
+    collapsible: true, collapsedSet: collapsedPanels,
+  }) + panel("report-panel", "Report", reportContent, {
+    collapsible: true, startOpen: false, collapsedSet: collapsedPanels,
+  });
 }
 
 function wireResults(container, s) {

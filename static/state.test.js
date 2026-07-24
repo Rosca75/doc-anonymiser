@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import {
   getState, setState, resetState, subscribe,
   WIZARD_STEPS, canGoTo, goTo, nextStep, prevStep,
+  goToScreen, setImportSplit,
   applyImportResult,
 } from "./state.js";
 
@@ -202,4 +203,47 @@ test("buildRunRequest assembles only pipeline-ready inputs", () => {
   assert.deepEqual(req.allowTerms, ["CSSF"]);
   assert.deepEqual(req.patterns, [{ expr: "PRJ-[0-9]+" }]);
   assert.equal(req.simpleRules.length, 1);
+});
+
+// --- Screen navigation (BUILD-02 Phase 2) -----------------------------------
+
+test("goToScreen switches screens and rejects unknown names", () => {
+  resetState();
+  assert.equal(getState().screen, "home");
+  assert.equal(goToScreen("wizard"), true);
+  assert.equal(getState().screen, "wizard");
+  assert.equal(goToScreen("docs"), true);
+  assert.equal(getState().screen, "docs");
+  assert.equal(goToScreen("settings"), false);
+  assert.equal(getState().screen, "docs");
+});
+
+test("wizard state survives navigating to home and back", () => {
+  resetState();
+  setState({ documents: [{ name: "a.txt" }] });
+  goToScreen("wizard");
+  goTo("configure");
+  goToScreen("home");
+  goToScreen("wizard");
+  assert.equal(getState().step, "configure");
+  assert.equal(getState().documents.length, 1);
+});
+
+test("setImportSplit clamps and rejects non-numbers", () => {
+  resetState();
+  const cases = [
+    [0, 0.2],
+    [0.1, 0.2],
+    [0.5, 0.5],
+    [0.95, 0.8],
+  ];
+  for (const [input, want] of cases) {
+    assert.equal(setImportSplit(input), want, `split(${input})`);
+    assert.equal(getState().importSplit, want);
+  }
+  // NaN and non-numbers are rejected, leaving the stored value untouched.
+  setImportSplit(0.5);
+  assert.equal(setImportSplit(NaN), null);
+  assert.equal(setImportSplit("0.7"), null);
+  assert.equal(getState().importSplit, 0.5);
 });

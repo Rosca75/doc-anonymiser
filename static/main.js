@@ -1,17 +1,22 @@
-// main.js, the wizard shell: step header, active view, navigation footer,
-// and the startup checks (bridge ping, Ollama probe, event subscriptions).
+// main.js, the application shell: top navigation (Home / wizard / docs),
+// the wizard step header, per-step explainer banner, active view,
+// navigation footer, and the startup checks (bridge ping, Ollama probe,
+// event subscriptions).
 //
 // The shell owns NO business state, it renders from state.js and defers
-// every screen to its view module (one per wizard step, CLAUDE.md §3).
+// every screen to its view module (one per screen, CLAUDE.md §3).
 
 import { ping, probeOllama, onEvent } from "./api.js";
 import {
   getState, setState, subscribe,
-  WIZARD_STEPS, canGoTo, goTo, nextStep, prevStep,
+  WIZARD_STEPS, canGoTo, goTo, goToScreen, nextStep, prevStep,
   applyImportResult,
 } from "./state.js";
 import { escapeHTML } from "./html.js";
-import { button } from "./ui.js";
+import { button, banner } from "./ui.js";
+import { STEP_BANNERS } from "./copy.js";
+import { renderHome } from "./views/home.js";
+import { renderDocs } from "./views/docs.js";
 import { renderImport } from "./views/import.js";
 import { renderConfigure } from "./views/configure.js";
 import { renderEntities } from "./views/entities.js";
@@ -71,9 +76,11 @@ export function boot(root) {
     if (!(ev.ctrlKey || ev.metaKey)) return;
     if (ev.key === "o" || ev.key === "O") {
       ev.preventDefault();
+      goToScreen("wizard");
       goTo("import");
     } else if (ev.key === "e" || ev.key === "E") {
       ev.preventDefault();
+      goToScreen("wizard");
       goTo("export");
     }
   });
@@ -83,16 +90,28 @@ export function boot(root) {
 function paint(root) {
   const s = getState();
 
-  // Header: step chips + status badges.
-  const chips = WIZARD_STEPS.map((step) => {
+  // Persistent top navigation: Home, Anonymise documents (the wizard),
+  // Documentation (BUILD-02 Phase 2d). Ghost buttons; the active screen's
+  // entry is visually quiet, never a second orange element.
+  const topnav = `
+    <nav class="topnav">
+      ${button("Home", { kind: "ghost", id: "nav-home", icon: "home" })}
+      ${button("Anonymise documents", { kind: "ghost", id: "nav-wizard", icon: "description" })}
+      ${button("Documentation", { kind: "ghost", id: "nav-docs", icon: "menu_book" })}
+    </nav>`;
+
+  // Wizard chrome (step chips + footer) only appears on the wizard screen.
+  const isWizard = s.screen === "wizard";
+  const chips = isWizard ? WIZARD_STEPS.map((step) => {
     const active = s.step === step ? " active" : "";
     const enabled = canGoTo(step) ? "" : " disabled";
     return `<button class="chip${active}${enabled}" data-step="${step}" ${enabled ? "disabled" : ""}>${STEP_LABELS[step]}</button>`;
-  }).join("");
+  }).join("") : "";
 
   root.innerHTML = `
     <header class="topbar">
       <div class="brand">doc-anonymiser</div>
+      ${topnav}
       <nav class="steps">${chips}</nav>
       <div class="badges">
         ${bridgeBadge(s)}
@@ -100,21 +119,39 @@ function paint(root) {
       </div>
     </header>
     <main id="view"></main>
+    ${isWizard ? `
     <footer class="navbar">
       ${button("Back", { kind: "secondary", id: "nav-back", icon: "arrow_back", disabled: s.step === "import" })}
       ${button("Next", { kind: "primary", id: "nav-next", icon: "arrow_forward", disabled: !canAdvance(s) })}
-    </footer>
+    </footer>` : ""}
   `;
 
-  // Step chips navigate directly (guards enforced in goTo).
+  root.querySelector("#nav-home").addEventListener("click", () => goToScreen("home"));
+  root.querySelector("#nav-wizard").addEventListener("click", () => goToScreen("wizard"));
+  root.querySelector("#nav-docs").addEventListener("click", () => goToScreen("docs"));
+
+  const view = root.querySelector("#view");
+  if (s.screen === "home") {
+    renderHome(view);
+    return;
+  }
+  if (s.screen === "docs") {
+    renderDocs(view);
+    return;
+  }
+
+  // Wizard: step chips navigate directly (guards enforced in goTo).
   for (const btn of root.querySelectorAll(".chip")) {
     btn.addEventListener("click", () => goTo(btn.dataset.step));
   }
   root.querySelector("#nav-back").addEventListener("click", prevStep);
   root.querySelector("#nav-next").addEventListener("click", nextStep);
 
-  // Render the active view into the main container.
-  VIEWS[s.step](root.querySelector("#view"));
+  // Per-step explainer banner (BUILD-02 Phase 2e), then the active view
+  // below it in its own container.
+  const b = STEP_BANNERS[s.step];
+  view.innerHTML = `${b ? banner(b.title, b.body, { icon: b.icon }) : ""}<div id="step-view"></div>`;
+  VIEWS[s.step](view.querySelector("#step-view"));
 }
 
 /** canAdvance(s), is the linear "Next" allowed from the current step? */

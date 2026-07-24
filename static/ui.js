@@ -120,7 +120,7 @@ export function panel(id, title, contentHTML, opts = {}) {
 export function wirePanels(container, collapsedSet, rerender) {
   for (const head of container.querySelectorAll("[data-panel-toggle]")) {
     head.addEventListener("click", (ev) => {
-      if (ev.target.closest("button") && !ev.target.closest(".panel-toggle")) return;
+      if (ev.target.closest("button, select, input, label") && !ev.target.closest(".panel-toggle")) return;
       const id = head.dataset.panelToggle;
       if (collapsedSet.has(id)) collapsedSet.delete(id); else collapsedSet.add(id);
       rerender();
