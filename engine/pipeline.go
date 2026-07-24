@@ -450,6 +450,49 @@ func replaceKnownOriginal(text string, e MappingEntry, onHit func()) string {
 	return b.String()
 }
 
+// DetectKnownOriginals returns spans for every remaining occurrence of a
+// known registry original in text, word-boundary anchored and never
+// inside an existing placeholder. The span's Canonical is the registry
+// original, so Registry.Assign maps it back to the SAME placeholder.
+// Callers (the same-format export, BUILD-02 Phase 11) combine these with
+// the pass-1/2 spans and run ResolveOverlaps; pass entries longest-first
+// (Registry.Entries) so longer originals win ties.
+func DetectKnownOriginals(text string, entries []MappingEntry) []Span {
+	protected := placeholderRe.FindAllStringIndex(text, -1)
+	inProtected := func(start, end int) bool {
+		for _, p := range protected {
+			if start < p[1] && p[0] < end {
+				return true
+			}
+		}
+		return false
+	}
+
+	var spans []Span
+	for _, e := range entries {
+		if !strings.Contains(strings.ToLower(text), strings.ToLower(e.Original)) {
+			continue
+		}
+		re, err := regexp.Compile(`(?i)` + regexp.QuoteMeta(e.Original))
+		if err != nil {
+			continue
+		}
+		for _, m := range re.FindAllStringIndex(text, -1) {
+			if inProtected(m[0], m[1]) || !isWordBoundary(text, m[0], m[1]) {
+				continue
+			}
+			spans = append(spans, Span{
+				Start:     m[0],
+				End:       m[1],
+				Category:  e.Category,
+				Original:  text[m[0]:m[1]],
+				Canonical: e.Original,
+			})
+		}
+	}
+	return spans
+}
+
 // applySimpleRulesToResult runs the ordered manual rules over every
 // representation of the document and records counts under the
 // "simple_replace" category.

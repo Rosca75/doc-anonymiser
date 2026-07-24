@@ -14,6 +14,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"doc-anonymiser/engine"
+	"doc-anonymiser/engine/exportfmt"
 )
 
 // findResultDoc returns the anonymised document by name, or an actionable
@@ -63,17 +64,103 @@ func (a *App) ExportDocumentFormats(name string) ([]string, error) {
 }
 
 // SaveDocument exports one anonymised document in the chosen extension via
-// the native save dialog.
+// the native save dialog. Native Office extensions route through the
+// same-format rewriter (BUILD-02 Phase 11); text extensions through
+// ExportBytes as before.
 func (a *App) SaveDocument(name, ext string) error {
 	rd, err := a.findResultDoc(name)
 	if err != nil {
 		return err
+	}
+	if engine.SameFormatExtensions[ext] {
+		data, err := a.sameFormatBytes(name, ext)
+		if err != nil {
+			return err
+		}
+		return a.saveWithDialog(engine.ExportFileName(name, ext), "."+ext, "*."+ext, data)
 	}
 	data, err := engine.ExportBytes(rd, ext)
 	if err != nil {
 		return err
 	}
 	return a.saveWithDialog(engine.ExportFileName(name, ext), "."+ext, "*."+ext, data)
+}
+
+// sameFormatBytes produces the anonymised same-format copy for one
+// document from its ORIGINAL in-memory bytes (Document.Raw; the file on
+// disk is never read again, let alone written). Replacements reuse the
+// last run's inputs plus the session registry, so placeholders match the
+// text export exactly. Extra hits in parts the user never previewed
+// (docx headers/footers/footnotes) are appended to the report warnings.
+func (a *App) sameFormatBytes(name, ext string) ([]byte, error) {
+	a.mu.Lock()
+	var src *engine.Document
+	for i := range a.docs {
+		if a.docs[i].Name == name {
+			src = &a.docs[i]
+			break
+		}
+	}
+	req := a.lastReq
+	reg := a.registry
+	settings := a.settings
+	a.mu.Unlock()
+
+	if src == nil {
+		return nil, fmt.Errorf("document %q is no longer imported; re-import it and re-run the pipeline", name)
+	}
+	if req == nil || reg == nil {
+		return nil, fmt.Errorf("no run inputs available yet; run the pipeline first, then export the same-format copy")
+	}
+
+	allow := engine.NewEmptyAllowlist()
+	for _, t := range req.AllowTerms {
+		allow.Add(t)
+	}
+	categories := req.Categories
+	if categories == nil {
+		categories = settings.Categories
+	}
+	cfg := exportfmt.Config{
+		Entities:   req.Entities,
+		Patterns:   req.Patterns,
+		Categories: categories,
+		Level:      engine.Level(settings.Level),
+		Allowlist:  allow,
+		Registry:   reg,
+	}
+
+	switch ext {
+	case "docx":
+		data, extras, _, err := exportfmt.ExportDocx(src.Raw, cfg)
+		if err != nil {
+			return nil, err
+		}
+		if extras.Total() > 0 {
+			a.appendReportWarning(fmt.Sprintf(
+				"document_extras: %d replacement(s) were made in parts of %q that the preview does not show (headers, footers or footnotes)",
+				extras.Total(), name))
+		}
+		return data, nil
+	case "pptx":
+		data, _, err := exportfmt.ExportPptx(src.Raw, cfg)
+		return data, err
+	case "xlsx":
+		data, _, err := exportfmt.ExportXlsx(src.Raw, cfg)
+		return data, err
+	default:
+		return nil, fmt.Errorf("same-format export does not support .%s", ext)
+	}
+}
+
+// appendReportWarning adds a warning to the latest report (results view
+// and report export both show it).
+func (a *App) appendReportWarning(msg string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.results != nil {
+		a.results.Report.Warnings = append(a.results.Report.Warnings, msg)
+	}
 }
 
 // ExportAllZip packs every anonymised document (default format each) into

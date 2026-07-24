@@ -128,6 +128,10 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 		a.registry = engine.NewRegistry()
 	}
 	reg := a.registry
+	// Remember the run inputs: the same-format export (BUILD-02 Phase 11)
+	// re-runs the identical span machinery over the original bytes.
+	reqCopy := req
+	a.lastReq = &reqCopy
 	a.mu.Unlock()
 
 	allow := engine.NewEmptyAllowlist()

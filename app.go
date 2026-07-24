@@ -107,6 +107,9 @@ type App struct {
 	// cancelDiscovery manages the in-flight discovery run (BUILD-02
 	// Phase 7d); nil when idle.
 	cancelDiscovery context.CancelFunc
+	// lastReq remembers the latest pipeline inputs so the same-format
+	// export reproduces identical replacements (BUILD-02 Phase 11).
+	lastReq *RunRequest
 }
 
 // NewApp constructs the bound struct. Kept trivial on purpose: anything

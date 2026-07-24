@@ -34,10 +34,16 @@ export function renderExport(container) {
   const s = getState();
   const docs = s.results?.documents ?? [];
 
+  // Native Office extensions are the same-format copies (BUILD-02
+  // Phase 11): keep the layout, never touch the source file.
+  const NATIVE_EXTS = new Set(["docx", "pptx", "xlsx"]);
+  const NATIVE_CAPTION = "Keeps the original layout. Your source file is not changed.";
+
   const rows = docs.map((d) => {
     const formats = formatCache.get(d.name) ?? [];
-    const buttons = formats.map((ext) =>
-      `<button class="doc-save" data-name="${escapeHTML(d.name)}" data-ext="${ext}">.${ext}</button>`).join(" ");
+    const buttons = formats.map((ext) => NATIVE_EXTS.has(ext)
+      ? `<button class="doc-save" data-name="${escapeHTML(d.name)}" data-ext="${ext}" title="${NATIVE_CAPTION}">.${ext} (same format)</button>`
+      : `<button class="doc-save" data-name="${escapeHTML(d.name)}" data-ext="${ext}">.${ext}</button>`).join(" ");
     return `
       <tr>
         <td class="ent-name">${escapeHTML(d.name)}</td>
