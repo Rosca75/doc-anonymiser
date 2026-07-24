@@ -2,7 +2,7 @@
 //
 // Pure STRING-RENDERING helpers, same pattern as html.js: no DOM access,
 // fully testable under `node --test` (ui.test.js). Views compose these
-// instead of writing ad-hoc markup, so the PwC brand styling lives in one
+// instead of writing ad-hoc markup, so the brand styling lives in one
 // place (brand.css + style.css classes referenced here).
 //
 // Every user-supplied value is escaped before it reaches markup; the icon

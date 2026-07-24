@@ -173,7 +173,7 @@ The complete optional-LLM layer, fully tested against a mocked HTTP server — n
 
 ### Activities
 1. Complete `ollama/client.go`: `Probe()` (exists from bootstrap), `ListModels()`, `Chat(model, systemPrompt, userPrompt) (string, error)` using `POST /api/chat`, `"stream":false`, `"format":"json"`, generous timeout (120 s) with context cancellation.
-2. `Discover(doc)` — the Phase-A prompt: extract `client_names`, `project_names`, `pwc_internal_names`, `person_names` from a representative document; strict-JSON prompt with the exact keys; tolerant JSON parsing (strip accidental code fences) with actionable error on malformed output.
+2. `Discover(doc)` — the Phase-A prompt: extract `client_names`, `project_names`, `internal_names`, `person_names` from a representative document; strict-JSON prompt with the exact keys; tolerant JSON parsing (strip accidental code fences) with actionable error on malformed output.
 3. `DeepScan(doc, knownEntities, allowlist)` — the residual pass: propose missed entities; apply the **hallucination filter** (drop any proposal whose exact string is absent from the source text) and the allowlist before returning.
 4. Multi-file discovery: run per file, merge and deduplicate categories.
 5. Wire the LLM slot into `engine/pipeline.go` behind the `LLM` interface; nil interface = pass skipped, report notes "LLM pass: skipped (Ollama not available)".
@@ -295,7 +295,7 @@ Production feel: errors, edge cases, first-run experience.
 | 7 | Session round-trip | Save session, restart app, load session, import new file, run | Same placeholders as previous session for same entities | Windows 11 |
 | 8 | Linux sanity | Repeat scenario 2 | Same behaviour | Ubuntu 24.04 |
 | 9 | French document | Import French md with accented names and FR phone formats | Detection works; variants correct for particles | Windows 11 |
-| 10 | Real Office documents | Import a genuine PwC-style docx (headings, table, image) and pptx (titles, notes) | Faithful markdown; image placeholder present; notes captured | Windows 11 |
+| 10 | Real Office documents | Import a genuine real-world docx (headings, table, image) and pptx (titles, notes) | Faithful markdown; image placeholder present; notes captured | Windows 11 |
 | 11 | Workbook routing | Import an xlsx with one flat sheet and one merged-cell sheet | Two Documents: Grid + JSON; flat sheet exports back to valid CSV after anonymisation | Windows 11 |
 | 12 | PDF paths | Import a text-layer PDF and a scanned PDF | First converts with repair; second rejected with the scanned-PDF message; experimental badge visible | Windows 11 |
 

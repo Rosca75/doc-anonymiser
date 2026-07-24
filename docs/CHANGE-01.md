@@ -153,7 +153,7 @@ Documents originating from docx/pptx/pdf export as `.md` (or `.txt`); flat xlsx-
 ### 2f. Manual test matrix — add rows
 
 ```
-| 10 | Real Office documents | Import a genuine PwC-style docx (headings, table, image) and pptx (titles, notes) | Faithful markdown; image placeholder present; notes captured | Windows 11 |
+| 10 | Real Office documents | Import a genuine real-world docx (headings, table, image) and pptx (titles, notes) | Faithful markdown; image placeholder present; notes captured | Windows 11 |
 | 11 | Workbook routing | Import an xlsx with one flat sheet and one merged-cell sheet | Two Documents: Grid + JSON; flat sheet exports back to valid CSV after anonymisation | Windows 11 |
 | 12 | PDF paths | Import a text-layer PDF and a scanned PDF | First converts with repair; second rejected with the scanned-PDF message; experimental badge visible | Windows 11 |
 ```

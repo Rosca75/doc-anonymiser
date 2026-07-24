@@ -124,7 +124,7 @@ func TestChatTooOld(t *testing.T) {
 }
 
 func TestDiscoverHappyPath(t *testing.T) {
-	text := "Alpine Trust hired PwC for Project Borealis. Contact Marie Duval."
+	text := "Alpine Trust hired Meridian Consulting for Project Borealis. Contact Marie Duval."
 	c := chatReplyServer(t, `{"client_names":["Alpine Trust"],"project_names":["Project Borealis"],"internal_names":[],"person_names":["Marie Duval"]}`)
 
 	got, err := c.Discover(context.Background(), text)

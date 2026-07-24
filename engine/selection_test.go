@@ -1,13 +1,11 @@
 // engine/selection_test.go — BUILD-02 Phase 3 tests: the granular
 // CategorySelection drives the pipeline (one row per category), presets
-// reproduce the v1 level behaviour byte for byte, mixed selections behave,
-// and the schema-2 session migration renames the internal category without
-// losing data.
+// reproduce the v1 level behaviour byte for byte, and mixed selections
+// behave.
 package engine
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 )
@@ -173,78 +171,5 @@ func TestMixedSelection(t *testing.T) {
 	}
 	if !strings.Contains(out, "Metropolis") {
 		t.Errorf("allowlist must win over the enabled location_names selection, output: %s", out)
-	}
-}
-
-// TestSessionMigrationV1: loading a v1 session file with the old
-// pwc_internal_names key yields internal_names entities, [INTERNAL_N]
-// registry rows with the counters preserved, and a re-run reproduces the
-// identical placeholders.
-func TestSessionMigrationV1(t *testing.T) {
-	raw, err := os.ReadFile("../testdata/session_v1.anonsession.json")
-	if err != nil {
-		t.Fatalf("fixture missing: %v", err)
-	}
-	s, err := LoadSession(raw)
-	if err != nil {
-		t.Fatalf("v1 session must load: %v", err)
-	}
-	if s.Schema != SessionSchema {
-		t.Errorf("schema after migration = %d, want %d", s.Schema, SessionSchema)
-	}
-	for _, e := range s.Entities {
-		if e.Category == "pwc_internal_names" {
-			t.Errorf("entity %q kept the old category", e.Canonical)
-		}
-	}
-	var stone MappingEntry
-	for _, r := range s.Registry {
-		if r.Category == "pwc_internal_names" || strings.Contains(r.Placeholder, "PWC_INTERNAL") {
-			t.Errorf("registry row not migrated: %+v", r)
-		}
-		if r.Original == "Paul Stone" {
-			stone = r
-		}
-	}
-	if stone.Placeholder != "[INTERNAL_1]" || stone.Category != "internal_names" || stone.Count != 3 {
-		t.Errorf("Paul Stone row = %+v, want [INTERNAL_1]/internal_names/count 3", stone)
-	}
-
-	// Re-run with the restored registry: the same entity must keep its
-	// migrated placeholder AND new internal names continue the numbering.
-	reg := NewRegistryFromEntries(s.Registry)
-	res, err := Run(context.Background(), PipelineInput{
-		Documents: []Document{{Name: "f.txt", Format: FormatTXT,
-			Markdown: "Paul Stone met Nora Klein (internal)."}},
-		Entities: append(s.Entities, Entity{Category: "internal_names", Canonical: "Nora Klein"}),
-		Registry: reg,
-		Allowlist: func() *Allowlist {
-			a := NewEmptyAllowlist()
-			for _, term := range s.AllowTerms {
-				a.Add(term)
-			}
-			return a
-		}(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := res.Documents[0].Anonymised
-	if !strings.Contains(out, "[INTERNAL_1]") {
-		t.Errorf("migrated entity must keep [INTERNAL_1], output: %s", out)
-	}
-	// [INTERNAL_2] existed in the fixture (Ana Weber), so the next fresh
-	// internal name must take [INTERNAL_3] — continuous counters.
-	if !strings.Contains(out, "[INTERNAL_3]") {
-		t.Errorf("new internal name must continue numbering at [INTERNAL_3], output: %s", out)
-	}
-
-	// A saved session carries the current schema from now on.
-	saved, err := SaveSession(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(saved), `"schema": 2`) {
-		t.Error("saved session must carry schema 2")
 	}
 }

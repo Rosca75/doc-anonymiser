@@ -3,7 +3,7 @@
 
   Colours and fonts come EXCLUSIVELY from the brand tokens in brand.css
   (loaded first by index.html). No literal colour or font values may appear
-  in this file; that keeps the PwC palette swappable in one place.
+  in this file; that keeps the brand palette swappable in one place.
 
   Local-only guarantee: system fonts only, no external fonts or CDNs
   (CLAUDE.md section 4).
