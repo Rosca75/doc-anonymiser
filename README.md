@@ -15,10 +15,20 @@ information and engagement-specific names from text-based documents:
 - `.xlsx` — Excel workbooks
 - `.pdf` — PDF documents (experimental)
 
-Office and PDF files are converted to Markdown on import and exported as text
-formats (`.md`, `.txt`, `.csv`, or `.json`) — the app never writes back a
-binary Office or PDF file. PDF support is experimental: it reads the text
-layer only and does not perform OCR, so scanned PDFs cannot be processed.
+Office and PDF files are converted to Markdown on import for preview and
+processing, and export as text formats (`.md`, `.txt`, `.csv`, or `.json`).
+Word, PowerPoint and Excel files can ALSO export as a **same-format
+anonymised copy** (`.docx`, `.pptx`, `.xlsx`): the app rewrites a copy of
+the original bytes held in memory, so the layout, styles and images are
+preserved. One limitation: a replacement that spans differently formatted
+text runs (for example a name whose first half is bold) adopts the
+formatting of its first run. Document properties (title, author, company,
+custom fields) and the export filename go through the same anonymisation
+with an explicit review step; nothing is rewritten silently. The app never
+modifies your original files: when you choose a same-format export, it
+writes a new anonymised copy and your source file is left exactly as it
+was. PDF support is experimental: it reads the text layer only and does
+not perform OCR, so scanned PDFs cannot be processed.
 
 It replaces emails, phone numbers, IBANs, national IDs, VAT numbers, person
 names, client names, project names and more with stable placeholders such as
@@ -89,3 +99,10 @@ _Screenshots will be added here as the UI takes shape._
 - Sensitive state (the re-identification registry) stays in memory unless
   you explicitly save a session, in which case the app warns you that the
   saved file contains the re-identification key.
+- The app never modifies your original files. When you choose a
+  same-format export, it writes a new anonymised copy; your source file
+  is left exactly as it was.
+- Same-format exports also anonymise the document properties stored
+  inside Office files (title, author, company, custom fields) and propose
+  an anonymised export filename, each behind an explicit review panel so
+  you decide field by field.

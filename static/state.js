@@ -93,6 +93,12 @@ const initialState = {
   // key; it stays in the app process like the Go registry and is
   // cleared with the results.
   mapping: null,
+
+  // Same-format metadata review state per document (BUILD-02 Phase 12):
+  // {docName: {ext, filename, fields: [{part, name, value, proposed,
+  // changed, finalValue}]}}. Decisions persist for the session so the
+  // review only happens before the FIRST same-format export of a file.
+  metaReview: {},
 };
 
 // --- Category presets (BUILD-02 Phase 3, mirrors engine.PresetSelection) ----
@@ -630,6 +636,17 @@ export function reassignOriginal(original, toCategory, toCanonical) {
 
   addManualVariant(toCategory, toCanonical, text);
   return true;
+}
+
+// --- Same-format metadata review (BUILD-02 Phase 12c) --------------------------
+
+/** setMetaReview(docName, review) stores (or replaces) one document's
+ *  metadata review state; pass null to clear it. */
+export function setMetaReview(docName, review) {
+  const next = { ...state.metaReview };
+  if (review === null) delete next[docName];
+  else next[docName] = review;
+  setState({ metaReview: next });
 }
 
 // --- Allowlist / pattern reducers ---------------------------------------------

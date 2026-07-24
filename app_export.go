@@ -93,41 +93,9 @@ func (a *App) SaveDocument(name, ext string) error {
 // text export exactly. Extra hits in parts the user never previewed
 // (docx headers/footers/footnotes) are appended to the report warnings.
 func (a *App) sameFormatBytes(name, ext string) ([]byte, error) {
-	a.mu.Lock()
-	var src *engine.Document
-	for i := range a.docs {
-		if a.docs[i].Name == name {
-			src = &a.docs[i]
-			break
-		}
-	}
-	req := a.lastReq
-	reg := a.registry
-	settings := a.settings
-	a.mu.Unlock()
-
-	if src == nil {
-		return nil, fmt.Errorf("document %q is no longer imported; re-import it and re-run the pipeline", name)
-	}
-	if req == nil || reg == nil {
-		return nil, fmt.Errorf("no run inputs available yet; run the pipeline first, then export the same-format copy")
-	}
-
-	allow := engine.NewEmptyAllowlist()
-	for _, t := range req.AllowTerms {
-		allow.Add(t)
-	}
-	categories := req.Categories
-	if categories == nil {
-		categories = settings.Categories
-	}
-	cfg := exportfmt.Config{
-		Entities:   req.Entities,
-		Patterns:   req.Patterns,
-		Categories: categories,
-		Level:      engine.Level(settings.Level),
-		Allowlist:  allow,
-		Registry:   reg,
+	cfg, src, err := a.sameFormatConfig(name)
+	if err != nil {
+		return nil, err
 	}
 
 	switch ext {
@@ -151,6 +119,109 @@ func (a *App) sameFormatBytes(name, ext string) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("same-format export does not support .%s", ext)
 	}
+}
+
+// SameFormatMeta is the review payload for one document's same-format
+// export (BUILD-02 Phase 12): every document property with its proposed
+// replacement, plus the proposed anonymised filename.
+type SameFormatMeta struct {
+	Fields   []exportfmt.MetaProposal `json:"fields"`
+	Filename string                   `json:"filename"`
+}
+
+// GetSameFormatMetadata extracts the document properties of one imported
+// file and proposes replacements through the same pipeline path as body
+// text (allowlist wins; unchanged fields are marked). Nothing is
+// rewritten here; the user reviews first (improvement plan §6.1).
+func (a *App) GetSameFormatMetadata(name, ext string) (*SameFormatMeta, error) {
+	cfg, src, err := a.sameFormatConfig(name)
+	if err != nil {
+		return nil, err
+	}
+	fields, err := exportfmt.ExtractMetadata(src.Raw)
+	if err != nil {
+		return nil, err
+	}
+	a.mu.Lock()
+	reg := a.registry
+	docIndex := 0
+	for i := range a.docs {
+		if a.docs[i].Name == name {
+			docIndex = i + 1
+		}
+	}
+	a.mu.Unlock()
+	var entries []engine.MappingEntry
+	if reg != nil {
+		entries = reg.Entries()
+	}
+	return &SameFormatMeta{
+		Fields:   exportfmt.ProposeMetadata(fields, cfg),
+		Filename: engine.SameFormatFileName(name, ext, entries, docIndex),
+	}, nil
+}
+
+// SaveSameFormat writes the same-format copy with the REVIEWED metadata
+// values applied (reject = the original value comes back unchanged) and
+// the reviewed filename as the dialog default. The body rewrite is
+// identical to SaveDocument's native path.
+func (a *App) SaveSameFormat(name, ext string, reviewed []exportfmt.MetaField, filename string) error {
+	data, err := a.sameFormatBytes(name, ext)
+	if err != nil {
+		return err
+	}
+	// Apply only fields whose reviewed value differs from the current
+	// one; RewriteMetadata is a no-op for an empty list.
+	if len(reviewed) > 0 {
+		data, err = exportfmt.RewriteMetadata(data, reviewed)
+		if err != nil {
+			return err
+		}
+	}
+	if filename == "" {
+		filename = engine.ExportFileName(name, ext)
+	}
+	return a.saveWithDialog(filename, "."+ext, "*."+ext, data)
+}
+
+// sameFormatConfig assembles the exportfmt.Config from the last run's
+// inputs (shared by the body rewrite and the metadata proposals).
+func (a *App) sameFormatConfig(name string) (exportfmt.Config, *engine.Document, error) {
+	a.mu.Lock()
+	var src *engine.Document
+	for i := range a.docs {
+		if a.docs[i].Name == name {
+			src = &a.docs[i]
+			break
+		}
+	}
+	req := a.lastReq
+	reg := a.registry
+	settings := a.settings
+	a.mu.Unlock()
+
+	if src == nil {
+		return exportfmt.Config{}, nil, fmt.Errorf("document %q is no longer imported; re-import it and re-run the pipeline", name)
+	}
+	if req == nil || reg == nil {
+		return exportfmt.Config{}, nil, fmt.Errorf("no run inputs available yet; run the pipeline first, then export the same-format copy")
+	}
+	allow := engine.NewEmptyAllowlist()
+	for _, t := range req.AllowTerms {
+		allow.Add(t)
+	}
+	categories := req.Categories
+	if categories == nil {
+		categories = settings.Categories
+	}
+	return exportfmt.Config{
+		Entities:   req.Entities,
+		Patterns:   req.Patterns,
+		Categories: categories,
+		Level:      engine.Level(settings.Level),
+		Allowlist:  allow,
+		Registry:   reg,
+	}, src, nil
 }
 
 // appendReportWarning adds a warning to the latest report (results view

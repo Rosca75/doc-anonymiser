@@ -184,6 +184,19 @@ export function saveDocument(name, ext) {
   return bridge().SaveDocument(name, ext);
 }
 
+/** getSameFormatMetadata(name, ext) resolves to {fields, filename}: the
+ *  document properties with proposed replacements plus the proposed
+ *  anonymised filename, for the review panel (BUILD-02 Phase 12). */
+export function getSameFormatMetadata(name, ext) {
+  return bridge().GetSameFormatMetadata(name, ext);
+}
+
+/** saveSameFormat(name, ext, fields, filename) writes the same-format
+ *  copy with the REVIEWED metadata values and filename. */
+export function saveSameFormat(name, ext, fields, filename) {
+  return bridge().SaveSameFormat(name, ext, fields, filename);
+}
+
 /** exportAllZip() saves every anonymised document into one zip. */
 export function exportAllZip() {
   return bridge().ExportAllZip();

@@ -96,6 +96,38 @@ func ExportFileName(docName, ext string) string {
 	return name + "_anon." + ext
 }
 
+// SameFormatFileName proposes an anonymised export filename (BUILD-02
+// Phase 12d): the base name goes through the registry mapping
+// (case-insensitive, longest original first, same code as the
+// post-pass), the '#' of xlsx sheet names is sanitised as usual, and if
+// the result STILL contains a known original the proposal falls back to
+// "document_anon_N.<ext>" rather than leaking a name. The user can edit
+// the proposal in the review panel and again in the save dialog.
+func SameFormatFileName(docName, ext string, entries []MappingEntry, fallbackN int) string {
+	name := strings.ReplaceAll(docName, "#", "_")
+	if i := strings.LastIndex(name, "."); i > 0 {
+		suffix := name[i+1:]
+		if len(suffix) >= 1 && len(suffix) <= 4 && isAlnum(suffix) {
+			name = name[:i]
+		}
+	}
+	for _, e := range entries { // Entries() order: longest original first
+		name = replaceKnownOriginal(name, e, func() {})
+	}
+	// Leak check: if any known original survives (e.g. glued into a
+	// longer word so the boundary rule skipped it), use the generic name.
+	lower := strings.ToLower(name)
+	for _, e := range entries {
+		if strings.Contains(lower, strings.ToLower(e.Original)) {
+			return fmt.Sprintf("document_anon_%d.%s", fallbackN, ext)
+		}
+	}
+	// Placeholder brackets are legal in Windows filenames; underscores
+	// keep the result tidy anyway.
+	name = strings.ReplaceAll(strings.ReplaceAll(name, "[", ""), "]", "")
+	return name + "_anon." + ext
+}
+
 // isAlnum reports whether s is ASCII letters/digits only.
 func isAlnum(s string) bool {
 	for _, c := range s {
