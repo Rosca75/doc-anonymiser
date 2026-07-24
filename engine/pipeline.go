@@ -61,8 +61,14 @@ type PipelineInput struct {
 	Documents []Document
 	Entities  []Entity
 	Patterns  []CustomPattern
-	Level     Level
-	Allowlist *Allowlist
+	// Level is the preset shorthand; kept for reports and as the fallback
+	// when Categories is nil.
+	Level Level
+	// Categories is the granular switch set the pipeline obeys
+	// (BUILD-02 Phase 3). nil means "use PresetSelection(Level)", which
+	// reproduces the v1 behaviour byte for byte.
+	Categories CategorySelection
+	Allowlist  *Allowlist
 	// Registry is the session registry. Pass the same instance across
 	// runs to keep placeholders stable for the whole session; nil creates
 	// a fresh one (fresh numbering).
@@ -102,25 +108,50 @@ type Results struct {
 	Report    Report           `json:"report"`
 }
 
-// levelEntityCategories returns the entity categories active at the given
-// level (CLAUDE.md §5): engagement entities always; person names from
-// medium; organisations and locations only at advanced. custom_patterns
-// are always active — the user wrote them deliberately.
-func levelEntityCategories(level Level) map[string]bool {
-	cats := map[string]bool{
-		"client_names":       true,
-		"project_names":      true,
-		"pwc_internal_names": true,
-		"custom_patterns":    true,
+// CategorySelection is the granular per-category switch set the pipeline
+// obeys (BUILD-02 Phase 3): every PII category (email, url, iban, vat,
+// matricule, phone, amount, date) and every entity category (client_names,
+// project_names, internal_names, person_names, custom_patterns,
+// organisation_names, location_names) maps to on/off. Levels are PRESETS
+// that fill this map (PresetSelection); the UI may then flip individual
+// switches ("custom" mode).
+type CategorySelection map[string]bool
+
+// AllPIICategories lists the pass-1 categories in a stable order (used by
+// presets, tests and the configure UI documentation).
+var AllPIICategories = []string{CatEmail, CatURL, CatIBAN, CatVAT, CatMatricule, CatPhone, CatAmount, CatDate}
+
+// AllEntityCategories lists the entity categories in a stable order.
+// organisation_names and location_names have no manual-entry UI, but LLM
+// proposals use them, so they are selectable switches too.
+var AllEntityCategories = []string{
+	"client_names", "project_names", "internal_names", "person_names",
+	"custom_patterns", "organisation_names", "location_names",
+}
+
+// PresetSelection reproduces the exact v1 level semantics (CLAUDE.md §5)
+// as a CategorySelection:
+//
+//	soft     = hard PII + client/project/internal names + custom patterns
+//	medium   = soft + person names (the default)
+//	advanced = medium + amounts, dates, organisations, locations
+func PresetSelection(level Level) CategorySelection {
+	sel := CategorySelection{
+		CatEmail: true, CatURL: true, CatIBAN: true, CatVAT: true,
+		CatMatricule: true, CatPhone: true,
+		"client_names": true, "project_names": true, "internal_names": true,
+		"custom_patterns": true,
 	}
 	if level == LevelMedium || level == LevelAdvanced {
-		cats["person_names"] = true
+		sel["person_names"] = true
 	}
 	if level == LevelAdvanced {
-		cats["organisation_names"] = true
-		cats["location_names"] = true
+		sel[CatAmount] = true
+		sel[CatDate] = true
+		sel["organisation_names"] = true
+		sel["location_names"] = true
 	}
-	return cats
+	return sel
 }
 
 // Run executes the full pipeline over all documents. It returns partial
@@ -135,9 +166,13 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	if in.Level == "" {
 		in.Level = LevelMedium // the documented default
 	}
-
-	activeCats := levelEntityCategories(in.Level)
-	entities := filterEntities(in.Entities, activeCats)
+	// The granular selection is what the pipeline obeys; a nil selection
+	// falls back to the level preset (v1-equivalent behaviour).
+	sel := in.Categories
+	if sel == nil {
+		sel = PresetSelection(in.Level)
+	}
+	entities := filterEntities(in.Entities, sel)
 
 	res := &Results{
 		Report: Report{
@@ -184,14 +219,14 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 				// keep the batch going (CLAUDE.md §4 graceful degradation).
 				res.Report.LLMPass = fmt.Sprintf("degraded: %v", err)
 				res.Report.Warnings = append(res.Report.Warnings,
-					fmt.Sprintf("deep-scan failed on %q — deterministic passes still applied: %v", doc.Name, err))
+					fmt.Sprintf("deep-scan failed on %q, deterministic passes still applied: %v", doc.Name, err))
 			} else {
-				docEntities = append(docEntities, acceptProposals(proposals, doc.Markdown, in.Allowlist, activeCats)...)
+				docEntities = append(docEntities, acceptProposals(proposals, doc.Markdown, in.Allowlist, sel)...)
 			}
 			llmDurations[i] = llmMS
 		}
 
-		rd := anonymiseDocument(doc, docEntities, in.Patterns, in.Level, in.Allowlist, reg)
+		rd := anonymiseDocument(doc, docEntities, in.Patterns, sel, in.Allowlist, reg)
 		res.Documents = append(res.Documents, rd)
 	}
 
@@ -288,7 +323,7 @@ func acceptProposals(proposals []ProposedEntity, sourceText string, allow *Allow
 // anonymiseDocument runs passes 1+2 (and the already-merged pass-3
 // entities) over one document, routing grid documents through per-cell
 // processing.
-func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern, level Level, allow *Allowlist, reg *Registry) ResultDocument {
+func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern, sel CategorySelection, allow *Allowlist, reg *Registry) ResultDocument {
 	rd := ResultDocument{
 		Name:       doc.Name,
 		Format:     doc.Format,
@@ -309,7 +344,7 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 		for r, row := range doc.Grid {
 			grid[r] = make([]string, len(row))
 			for c, cell := range row {
-				grid[r][c] = anonymiseText(cell, entities, patterns, level, allow, assign)
+				grid[r][c] = anonymiseText(cell, entities, patterns, sel, allow, assign)
 			}
 		}
 		rd.Grid = grid
@@ -320,20 +355,25 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 	if doc.Format == FormatXLSXJSON {
 		// Complex sheets: anonymise the raw JSON text, keep both the JSON
 		// (for .json export) and the fenced markdown rendering in sync.
-		rd.JSON = anonymiseText(doc.JSON, entities, patterns, level, allow, assign)
+		rd.JSON = anonymiseText(doc.JSON, entities, patterns, sel, allow, assign)
 		rd.Anonymised = "```json\n" + rd.JSON + "\n```\n"
 		return rd
 	}
 
-	rd.Anonymised = anonymiseText(doc.Markdown, entities, patterns, level, allow, assign)
+	rd.Anonymised = anonymiseText(doc.Markdown, entities, patterns, sel, allow, assign)
 	return rd
 }
 
 // anonymiseText is the shared passes-1+2 core over one piece of text.
-func anonymiseText(text string, entities []Entity, patterns []CustomPattern, level Level, allow *Allowlist, assign func(Span) string) string {
-	spans := FilterAllowed(DetectPII(text, level), allow)
+// The CategorySelection gates BOTH the PII categories (pass 1) and the
+// custom-pattern pass; entity categories were already filtered by the
+// caller (filterEntities).
+func anonymiseText(text string, entities []Entity, patterns []CustomPattern, sel CategorySelection, allow *Allowlist, assign func(Span) string) string {
+	spans := FilterAllowed(DetectPIISelected(text, sel), allow)
 	spans = append(spans, DetectEntities(text, entities, allow)...)
-	spans = append(spans, DetectCustomPatterns(text, patterns, allow)...)
+	if sel["custom_patterns"] {
+		spans = append(spans, DetectCustomPatterns(text, patterns, allow)...)
+	}
 	return ApplySpans(text, ResolveOverlaps(spans), assign)
 }
 
@@ -408,6 +448,49 @@ func replaceKnownOriginal(text string, e MappingEntry, onHit func()) string {
 	}
 	b.WriteString(text[last:])
 	return b.String()
+}
+
+// DetectKnownOriginals returns spans for every remaining occurrence of a
+// known registry original in text, word-boundary anchored and never
+// inside an existing placeholder. The span's Canonical is the registry
+// original, so Registry.Assign maps it back to the SAME placeholder.
+// Callers (the same-format export, BUILD-02 Phase 11) combine these with
+// the pass-1/2 spans and run ResolveOverlaps; pass entries longest-first
+// (Registry.Entries) so longer originals win ties.
+func DetectKnownOriginals(text string, entries []MappingEntry) []Span {
+	protected := placeholderRe.FindAllStringIndex(text, -1)
+	inProtected := func(start, end int) bool {
+		for _, p := range protected {
+			if start < p[1] && p[0] < end {
+				return true
+			}
+		}
+		return false
+	}
+
+	var spans []Span
+	for _, e := range entries {
+		if !strings.Contains(strings.ToLower(text), strings.ToLower(e.Original)) {
+			continue
+		}
+		re, err := regexp.Compile(`(?i)` + regexp.QuoteMeta(e.Original))
+		if err != nil {
+			continue
+		}
+		for _, m := range re.FindAllStringIndex(text, -1) {
+			if inProtected(m[0], m[1]) || !isWordBoundary(text, m[0], m[1]) {
+				continue
+			}
+			spans = append(spans, Span{
+				Start:     m[0],
+				End:       m[1],
+				Category:  e.Category,
+				Original:  text[m[0]:m[1]],
+				Canonical: e.Original,
+			})
+		}
+	}
+	return spans
 }
 
 // applySimpleRulesToResult runs the ordered manual rules over every

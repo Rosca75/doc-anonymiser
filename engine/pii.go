@@ -77,16 +77,11 @@ type piiPattern struct {
 	// validate, when set, gets the matched text and may veto the span
 	// (used for the IBAN checksum).
 	validate func(string) bool
-	// levels lists the anonymisation levels at which this category fires.
-	levels []Level
 }
 
-// allLevels / advancedOnly express the level matrix from CLAUDE.md §5:
-// hard PII fires at every level; amounts and dates only at "advanced".
-var (
-	allLevels    = []Level{LevelSoft, LevelMedium, LevelAdvanced}
-	advancedOnly = []Level{LevelAdvanced}
-)
+// Which categories fire at which preset level lives in ONE place since
+// BUILD-02 Phase 3: PresetSelection (pipeline.go). The patterns below are
+// unconditional; DetectPIISelected gates them by the selection.
 
 // The deterministic PII patterns, compiled once at package init
 // (CLAUDE.md §6). Order matters only for readability; overlap resolution
@@ -98,7 +93,6 @@ var piiPatterns = []piiPattern{
 		// Does not match: "user@localhost" (no TLD), "@handle" (no local part).
 		category: CatEmail,
 		re:       regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`),
-		levels:   allLevels,
 	},
 	{
 		// URLs (including any that embed credentials — the whole URL is
@@ -108,7 +102,6 @@ var piiPatterns = []piiPattern{
 		// on ordinary "word.word" text), "ftp://host" (not http/https).
 		category: CatURL,
 		re:       regexp.MustCompile(`https?://[^\s<>"')\]]+`),
-		levels:   allLevels,
 	},
 	{
 		// IBAN candidates; the mod-97 checksum below is the real filter.
@@ -118,7 +111,6 @@ var piiPatterns = []piiPattern{
 		category: CatIBAN,
 		re:       regexp.MustCompile(`\b[A-Z]{2}[0-9]{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b`),
 		validate: validIBAN,
-		levels:   allLevels,
 	},
 	{
 		// EU VAT numbers — the formats relevant to the owner's market
@@ -128,7 +120,6 @@ var piiPatterns = []piiPattern{
 		// "LU1234" (too few digits).
 		category: CatVAT,
 		re:       regexp.MustCompile(`\b(?:LU[0-9]{8}|FR[0-9A-Z]{2}[0-9]{9}|DE[0-9]{9}|BE0?[0-9]{9,10}|NL[0-9]{9}B[0-9]{2}|ATU[0-9]{8})\b`),
-		levels:   allLevels,
 	},
 	{
 		// Luxembourg 13-digit matricule (national ID). RE2 has no
@@ -139,7 +130,6 @@ var piiPatterns = []piiPattern{
 		category: CatMatricule,
 		re:       regexp.MustCompile(`(?:^|[^0-9])([0-9]{13})(?:[^0-9]|$)`),
 		group:    1,
-		levels:   allLevels,
 	},
 	{
 		// Phone numbers: international (+352 621 000 111, 0033 6 12 34 56 78)
@@ -149,7 +139,6 @@ var piiPatterns = []piiPattern{
 		// plain years like 2026 (too short).
 		category: CatPhone,
 		re:       regexp.MustCompile(`(?:\+|00)[1-9][0-9]{0,2}(?:[ .\-/]?[0-9]{1,4}){2,5}|\b0[0-9](?:[ .\-/]?[0-9]{2,4}){3,5}\b`),
-		levels:   allLevels,
 	},
 	{
 		// Monetary amounts — ADVANCED level only (CLAUDE.md §5).
@@ -158,7 +147,6 @@ var piiPatterns = []piiPattern{
 		// too common in ordinary text to replace safely).
 		category: CatAmount,
 		re:       regexp.MustCompile(`(?:€|EUR|USD|GBP|CHF|\$|£)\s?[0-9]{1,3}(?:[.,' ][0-9]{3})*(?:[.,][0-9]{1,2})?|\b[0-9]{1,3}(?:[.,' ][0-9]{3})*(?:[.,][0-9]{1,2})?\s?(?:€|EUR|USD|GBP|CHF|\$|£)`),
-		levels:   advancedOnly,
 	},
 	{
 		// Dates — ADVANCED level only. Three shapes: ISO (2026-07-23),
@@ -170,17 +158,25 @@ var piiPatterns = []piiPattern{
 			`|\b[0-9]{1,2}[./][0-9]{1,2}[./][0-9]{2,4}\b` +
 			`|\b[0-9]{1,2}(?:st|nd|rd|th)?\s(?:January|February|March|April|May|June|July|August|September|October|November|December|janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\s[0-9]{4}\b` +
 			`|\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s[0-9]{1,2},?\s[0-9]{4}\b`),
-		levels: advancedOnly,
 	},
 }
 
 // DetectPII runs every level-appropriate pattern over the text and returns
 // the raw spans (possibly overlapping — e.g. an email inside a URL).
 // Callers resolve overlaps via ResolveOverlaps / ApplySpans.
+//
+// Since BUILD-02 Phase 3 this is a thin preset wrapper over
+// DetectPIISelected; the granular selection is what the pipeline uses.
 func DetectPII(text string, level Level) []Span {
+	return DetectPIISelected(text, PresetSelection(level))
+}
+
+// DetectPIISelected runs exactly the PII patterns whose category is
+// enabled in the selection (BUILD-02 Phase 3 granular switches).
+func DetectPIISelected(text string, sel CategorySelection) []Span {
 	var spans []Span
 	for _, p := range piiPatterns {
-		if !levelEnabled(p.levels, level) {
+		if !sel[p.category] {
 			continue
 		}
 		for _, m := range p.re.FindAllStringSubmatchIndex(text, -1) {
@@ -203,15 +199,6 @@ func DetectPII(text string, level Level) []Span {
 	return spans
 }
 
-// levelEnabled reports whether the given level is in the pattern's list.
-func levelEnabled(levels []Level, level Level) bool {
-	for _, l := range levels {
-		if l == level {
-			return true
-		}
-	}
-	return false
-}
 
 // ResolveOverlaps keeps a non-overlapping subset of spans, longest match
 // first (BUILD.md Phase 2: "an email inside a URL resolves

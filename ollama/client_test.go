@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"unicode/utf8"
 
 	"doc-anonymiser/engine"
 )
@@ -123,7 +125,7 @@ func TestChatTooOld(t *testing.T) {
 
 func TestDiscoverHappyPath(t *testing.T) {
 	text := "Alpine Trust hired PwC for Project Borealis. Contact Marie Duval."
-	c := chatReplyServer(t, `{"client_names":["Alpine Trust"],"project_names":["Project Borealis"],"pwc_internal_names":[],"person_names":["Marie Duval"]}`)
+	c := chatReplyServer(t, `{"client_names":["Alpine Trust"],"project_names":["Project Borealis"],"internal_names":[],"person_names":["Marie Duval"]}`)
 
 	got, err := c.Discover(context.Background(), text)
 	if err != nil {
@@ -146,7 +148,7 @@ func TestDiscoverHappyPath(t *testing.T) {
 
 func TestDiscoverStripsCodeFences(t *testing.T) {
 	text := "Alpine Trust appears here."
-	c := chatReplyServer(t, "```json\n{\"client_names\":[\"Alpine Trust\"],\"project_names\":[],\"pwc_internal_names\":[],\"person_names\":[]}\n```")
+	c := chatReplyServer(t, "```json\n{\"client_names\":[\"Alpine Trust\"],\"project_names\":[],\"internal_names\":[],\"person_names\":[]}\n```")
 	got, err := c.Discover(context.Background(), text)
 	if err != nil || len(got) != 1 || got[0].Text != "Alpine Trust" {
 		t.Errorf("fenced JSON not tolerated: %+v %v", got, err)
@@ -163,7 +165,7 @@ func TestDiscoverMalformedReply(t *testing.T) {
 
 func TestDeepScanHallucinationFilterAndAllowlist(t *testing.T) {
 	text := "Residual mention of Borealis Fund and the CSSF here."
-	c := chatReplyServer(t, `{"client_names":["Borealis Fund","Fabricated Corp","CSSF"],"project_names":[],"pwc_internal_names":[],"person_names":[]}`)
+	c := chatReplyServer(t, `{"client_names":["Borealis Fund","Fabricated Corp","CSSF"],"project_names":[],"internal_names":[],"person_names":[]}`)
 	// Wire the allowlist veto exactly as app.go does.
 	allow := engine.NewAllowlist() // seeds CSSF
 	c.Allow = allow.Contains
@@ -215,7 +217,7 @@ func TestMergeProposals(t *testing.T) {
 // server) into engine.Run, proving the LLM slot end to end headlessly.
 func TestPipelineWithOllamaClient(t *testing.T) {
 	text := "Final note about Zephyr Capital."
-	c := chatReplyServer(t, `{"client_names":["Zephyr Capital"],"project_names":[],"pwc_internal_names":[],"person_names":[]}`)
+	c := chatReplyServer(t, `{"client_names":["Zephyr Capital"],"project_names":[],"internal_names":[],"person_names":[]}`)
 
 	res, err := engine.Run(context.Background(), engine.PipelineInput{
 		Documents: []engine.Document{{Name: "z.txt", Format: engine.FormatTXT, Markdown: text}},
@@ -232,5 +234,322 @@ func TestPipelineWithOllamaClient(t *testing.T) {
 	}
 	if res.Report.LLMPass != "completed" {
 		t.Errorf("report LLM note = %q", res.Report.LLMPass)
+	}
+}
+
+// --- BUILD-02 Phase 5: error mapping, num_ctx, chunking ---------------------
+
+// TestChat400ContextOverflow: an HTTP 400 with a context-window error body
+// must surface the context problem and must NOT claim the model is not
+// installed (the reported bug this phase fixes).
+func TestChat400ContextOverflow(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat" {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error":"the prompt exceeds the maximum context length"}`))
+			return
+		}
+		w.Write([]byte(`{"models":[]}`))
+	})
+	_, err := c.Chat(context.Background(), "m", "sys", "user")
+	if err == nil {
+		t.Fatal("400 must be an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "context") {
+		t.Errorf("400 context overflow must mention the context window: %q", msg)
+	}
+	if strings.Contains(msg, "not installed") {
+		t.Errorf("400 must never be blamed on a missing model: %q", msg)
+	}
+}
+
+// TestChat404ModelNotFound: a 404 whose body names the model means "not
+// pulled", with the pull command in the message.
+func TestChat404ModelNotFound(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat" {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":"model 'missing:3b' not found, try pulling it first"}`))
+			return
+		}
+		w.Write([]byte(`{"models":[]}`))
+	})
+	_, err := c.Chat(context.Background(), "missing:3b", "sys", "user")
+	if err == nil || !strings.Contains(err.Error(), "not installed") ||
+		!strings.Contains(err.Error(), "missing:3b") {
+		t.Errorf("404 model-not-found must name the model and the fix, got %v", err)
+	}
+	if err != nil && err.Error() == ErrTooOld {
+		t.Error("a model-not-found 404 must not be mistaken for an old Ollama")
+	}
+}
+
+// TestChatNumCtx: num_ctx must travel in the request body when
+// ContextSize is set, and stay absent when 0.
+func TestChatNumCtx(t *testing.T) {
+	var lastBody map[string]interface{}
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat" {
+			// Decode into a FRESH map each call; decoding into an existing
+			// map would merge keys and hide a removed "options" field.
+			var body map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&body)
+			lastBody = body
+			resp, _ := json.Marshal(map[string]interface{}{
+				"message": map[string]string{"role": "assistant", "content": "{}"},
+			})
+			w.Write(resp)
+			return
+		}
+		w.Write([]byte(`{"models":[]}`))
+	})
+
+	c.ContextSize = 4096
+	if _, err := c.Chat(context.Background(), "m", "s", "u"); err != nil {
+		t.Fatal(err)
+	}
+	opts, ok := lastBody["options"].(map[string]interface{})
+	if !ok || opts["num_ctx"] != float64(4096) {
+		t.Errorf("num_ctx missing from request: %v", lastBody)
+	}
+
+	c.ContextSize = 0
+	if _, err := c.Chat(context.Background(), "m", "s", "u"); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := lastBody["options"]; present {
+		t.Errorf("options must be omitted when ContextSize is 0: %v", lastBody)
+	}
+}
+
+// TestChunkText: table-driven chunker behaviour.
+func TestChunkText(t *testing.T) {
+	t.Run("empty text is one empty chunk", func(t *testing.T) {
+		got := chunkText("", 100, 10)
+		if len(got) != 1 || got[0] != "" {
+			t.Errorf("got %q", got)
+		}
+	})
+	t.Run("text under budget is one chunk", func(t *testing.T) {
+		got := chunkText("short text", 100, 10)
+		if len(got) != 1 || got[0] != "short text" {
+			t.Errorf("got %q", got)
+		}
+	})
+	t.Run("paragraph boundary preferred over mid-word", func(t *testing.T) {
+		text := strings.Repeat("a", 60) + "\n\n" + strings.Repeat("b", 60)
+		got := chunkText(text, 100, 8)
+		if len(got) < 2 {
+			t.Fatalf("expected a split, got %d chunk(s)", len(got))
+		}
+		if !strings.HasSuffix(got[0], "\n\n") {
+			t.Errorf("first chunk must end at the paragraph break, got %q", got[0][len(got[0])-10:])
+		}
+	})
+	t.Run("consecutive chunks overlap", func(t *testing.T) {
+		words := strings.Repeat("word ", 100) // 500 bytes of words
+		got := chunkText(words, 100, 20)
+		if len(got) < 2 {
+			t.Fatalf("expected several chunks, got %d", len(got))
+		}
+		// The tail of chunk 1 must reappear at the head of chunk 2.
+		tail := got[0][len(got[0])-10:]
+		if !strings.Contains(got[1][:30], tail[:5]) {
+			t.Errorf("no overlap between chunks: %q ... %q", got[0], got[1])
+		}
+	})
+	t.Run("rune safety on multi-byte French text", func(t *testing.T) {
+		text := strings.Repeat("éàüöè ", 200) // 7 bytes per group
+		for _, chunk := range chunkText(text, 128, 16) {
+			if !utf8.ValidString(chunk) {
+				t.Fatalf("chunk splits a UTF-8 sequence: %q", chunk)
+			}
+		}
+	})
+	t.Run("giant unbroken token still terminates", func(t *testing.T) {
+		got := chunkText(strings.Repeat("x", 1000), 100, 10)
+		if len(got) < 10 {
+			t.Errorf("expected ~11 chunks, got %d", len(got))
+		}
+	})
+}
+
+// TestChunkCap: a document beyond the chunk cap fails with the actionable
+// size message instead of running for an hour.
+func TestChunkCap(t *testing.T) {
+	c := New("")
+	c.ContextSize = 512 // tiny budget: 512*3*3/4 = 1152 bytes per chunk
+	huge := strings.Repeat("line of text\n", 20000) // ~260 KB >> 64 chunks
+	if _, err := c.Chunks(huge); err == nil || !strings.Contains(err.Error(), "Smart detection") {
+		t.Errorf("oversize document must fail with the split/smart-detection advice, got %v", err)
+	}
+	if n := c.EstimateChunks(huge); n <= MaxChunksPerDocument {
+		t.Errorf("EstimateChunks must report the real chunk count, got %d", n)
+	}
+}
+
+// TestDiscoverAcrossChunks: a 3-chunk document merges and deduplicates
+// per-chunk proposals, and the hallucination filter runs against the FULL
+// text (an entity only present in chunk 3 survives a chunk-1 proposal
+// check).
+func TestDiscoverAcrossChunks(t *testing.T) {
+	var calls atomic.Int32
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			w.Write([]byte(`{"models":[]}`))
+			return
+		}
+		// Every chunk proposes the same client (dedupe) plus one unique
+		// name; "Zephyr Capital" is proposed by chunk 1 although it only
+		// occurs later in the document (full-text filter must keep it).
+		n := calls.Add(1)
+		content := `{"client_names":["Alpine Trust","Zephyr Capital"],"project_names":[],"internal_names":[],"person_names":[]}`
+		if n > 1 {
+			content = `{"client_names":["Alpine Trust"],"project_names":[],"internal_names":[],"person_names":[]}`
+		}
+		resp, _ := json.Marshal(map[string]interface{}{
+			"message": map[string]string{"role": "assistant", "content": content},
+		})
+		w.Write(resp)
+	})
+
+	c.ContextSize = 512 // 1152-byte chunks force several chunks
+	text := "Alpine Trust opening. " + strings.Repeat("filler words here. ", 150) +
+		" Zephyr Capital appears only at the end."
+	got, err := c.Discover(context.Background(), text)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if calls.Load() < 2 {
+		t.Fatalf("expected several chunk calls, got %d", calls.Load())
+	}
+	var names []string
+	for _, p := range got {
+		names = append(names, p.Text)
+	}
+	if len(got) != 2 || got[0].Text != "Alpine Trust" || got[1].Text != "Zephyr Capital" {
+		t.Errorf("merged proposals wrong: %v", names)
+	}
+}
+
+// TestDiscoverCancelBetweenChunks: chunk 2 answers normally but the user
+// cancels during it; the loop must stop BEFORE chunk 3 (the between-chunk
+// ctx check), returning the partial proposals with the context error.
+func TestDiscoverCancelBetweenChunks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var calls atomic.Int32
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			w.Write([]byte(`{"models":[]}`))
+			return
+		}
+		if calls.Add(1) == 2 {
+			cancel() // the user hits Cancel while chunk 2 is in flight
+		}
+		resp, _ := json.Marshal(map[string]interface{}{
+			"message": map[string]string{"role": "assistant",
+				"content": `{"client_names":["Alpine Trust"],"project_names":[],"internal_names":[],"person_names":[]}`},
+		})
+		w.Write(resp)
+	})
+
+	c.ContextSize = 512
+	// Enough text for at least 3 chunks at the 1152-byte budget.
+	text := "Alpine Trust opening. " + strings.Repeat("filler words here. ", 300)
+	got, err := c.Discover(ctx, text)
+	if err == nil {
+		t.Fatal("cancelled discovery must return the context error")
+	}
+	if n := calls.Load(); n != 2 {
+		t.Errorf("loop must stop after the cancelled chunk, made %d calls", n)
+	}
+	if len(got) != 1 || got[0].Text != "Alpine Trust" {
+		t.Errorf("partial proposals must survive cancellation: %+v", got)
+	}
+}
+
+// --- BUILD-02 Phase 8b: candidate span classification ------------------------
+
+// TestClassifyCandidates: categories come back per candidate; a name the
+// server "invents" (not among the inputs) is dropped by the verbatim
+// filter; allowlisted texts are vetoed.
+func TestClassifyCandidates(t *testing.T) {
+	c := chatReplyServer(t, `{"client_names":["Alpine Trust","Fabricated Corp"],"project_names":[],"internal_names":[],"person_names":["Marie Duval","CSSF"]}`)
+	allow := engine.NewAllowlist() // seeds CSSF
+	c.Allow = allow.Contains
+
+	got, err := c.ClassifyCandidates(context.Background(), []engine.Candidate{
+		{Text: "Alpine Trust", Category: "person_names", Contexts: []string{"audit of Alpine Trust started"}},
+		{Text: "Marie Duval", Category: "client_names"},
+		{Text: "CSSF", Category: "client_names"},
+	})
+	if err != nil {
+		t.Fatalf("ClassifyCandidates: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 classified survivors, got %+v", got)
+	}
+	byText := map[string]string{}
+	for _, p := range got {
+		byText[p.Text] = p.Category
+	}
+	if byText["Alpine Trust"] != "client_names" || byText["Marie Duval"] != "person_names" {
+		t.Errorf("classification wrong: %v", byText)
+	}
+	if _, ok := byText["Fabricated Corp"]; ok {
+		t.Error("invented candidate must be dropped by the verbatim filter")
+	}
+	if _, ok := byText["CSSF"]; ok {
+		t.Error("allowlisted candidate must be vetoed")
+	}
+}
+
+// TestClassifyCandidatesBatching: 200 candidates with contexts stay under
+// the byte budget per request (several requests, each bounded).
+func TestClassifyCandidatesBatching(t *testing.T) {
+	var maxBody atomic.Int64
+	var calls atomic.Int32
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			w.Write([]byte(`{"models":[]}`))
+			return
+		}
+		calls.Add(1)
+		var req struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		for _, m := range req.Messages[1:] { // user message only
+			if int64(len(m.Content)) > maxBody.Load() {
+				maxBody.Store(int64(len(m.Content)))
+			}
+		}
+		resp, _ := json.Marshal(map[string]interface{}{
+			"message": map[string]string{"role": "assistant",
+				"content": `{"client_names":[],"project_names":[],"internal_names":[],"person_names":[]}`},
+		})
+		w.Write(resp)
+	})
+
+	c.ContextSize = 1024 // budget 2304 bytes per prompt
+	var candidates []engine.Candidate
+	for i := 0; i < 200; i++ {
+		candidates = append(candidates, engine.Candidate{
+			Text:     strings.Repeat("N", 20) + string(rune('A'+i%26)),
+			Contexts: []string{strings.Repeat("context words here ", 5)},
+		})
+	}
+	if _, err := c.ClassifyCandidates(context.Background(), candidates); err != nil {
+		t.Fatalf("ClassifyCandidates: %v", err)
+	}
+	budget := c.ContextSize * 3 * 3 / 4
+	if maxBody.Load() > int64(budget)+256 {
+		t.Errorf("a batch exceeded the byte budget: %d > %d", maxBody.Load(), budget)
+	}
+	if calls.Load() < 2 {
+		t.Errorf("200 padded candidates must need several batches, got %d call(s)", calls.Load())
 	}
 }

@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <!--
-  index.html — the single page of the doc-anonymiser frontend.
+  index.html, the single page of the doc-anonymiser frontend.
 
   Frontend discipline (CLAUDE.md §4):
-    - No framework, no build step, no external fonts or CDNs — everything
+    - No framework, no build step, no external fonts or CDNs, everything
       referenced here is a local file embedded in the binary via go:embed.
     - api.js is the ONLY module that calls Go bound methods.
     - state.js is the ONLY holder of frontend state.
@@ -17,6 +17,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>doc-anonymiser</title>
+  <!-- brand.css first: it defines the tokens style.css consumes. -->
+  <link rel="stylesheet" href="brand.css" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>

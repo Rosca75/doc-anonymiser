@@ -24,13 +24,19 @@ import (
 // Entity is one known engagement entity.
 type Entity struct {
 	// Category is one of the CLAUDE.md §5 entity categories:
-	// client_names, project_names, pwc_internal_names, person_names.
+	// client_names, project_names, internal_names, person_names.
 	Category string `json:"category"`
 	// Canonical is the full name as entered/discovered.
 	Canonical string `json:"canonical"`
 	// ManualVariants are extra spellings added by the user in the review
 	// UI, on top of the automatic expansion.
 	ManualVariants []string `json:"manualVariants,omitempty"`
+	// ExcludedVariants are spellings this entity must NOT match, even
+	// when the automatic expansion would produce them. Written by the
+	// variant drag-and-drop regrouping (BUILD-02 Phase 9d): moving a
+	// variant to another entity excludes it here so exactly one entity
+	// matches it afterwards.
+	ExcludedVariants []string `json:"excludedVariants,omitempty"`
 }
 
 // personCategories lists the categories whose canonical names are people —
@@ -38,7 +44,7 @@ type Entity struct {
 // Everything else is treated as an organisation-style name.
 var personCategories = map[string]bool{
 	"person_names":       true,
-	"pwc_internal_names": true, // PwC-internal names are staff names
+	"internal_names": true, // internal names are staff names
 }
 
 // nameParticles are the lower-case surname particles that glue multi-word
@@ -66,13 +72,20 @@ const minVariantLen = 3
 // ExpandVariants returns every spelling the entity should match, canonical
 // first, deduplicated, longest first (the order replacement wants).
 func ExpandVariants(e Entity) []string {
+	// Excluded spellings never make it into the list (drag-and-drop
+	// regrouping moved them to another entity, Phase 9d).
+	excluded := map[string]bool{}
+	for _, x := range e.ExcludedVariants {
+		excluded[strings.ToLower(strings.TrimSpace(x))] = true
+	}
+
 	seen := map[string]bool{}
 	var out []string
 	add := func(v string) {
 		v = strings.TrimSpace(v)
 		// Case-insensitive dedupe; keep the first spelling encountered.
 		key := strings.ToLower(v)
-		if v == "" || len([]rune(v)) < minVariantLen || seen[key] {
+		if v == "" || len([]rune(v)) < minVariantLen || seen[key] || excluded[key] {
 			return
 		}
 		seen[key] = true
@@ -93,7 +106,7 @@ func ExpandVariants(e Entity) []string {
 	for _, v := range e.ManualVariants {
 		v = strings.TrimSpace(v)
 		key := strings.ToLower(v)
-		if v != "" && !seen[key] {
+		if v != "" && !seen[key] && !excluded[key] {
 			seen[key] = true
 			out = append(out, v)
 		}
@@ -248,6 +261,29 @@ func firstRuneAt(s string, i int) rune {
 	return r
 }
 
+// CountTermMatches counts case-insensitive, word-boundary-anchored
+// occurrences of term in text (BUILD-02 Phase 9c: the live "Found N
+// times" preview for manual entries). Same boundary rule as the entity
+// pass, so the preview never promises a match the pipeline would reject
+// ("Lux" does not match inside "Luxembourg").
+func CountTermMatches(text, term string) int {
+	term = strings.TrimSpace(term)
+	if term == "" {
+		return 0
+	}
+	re, err := regexp.Compile(`(?i)` + regexp.QuoteMeta(term))
+	if err != nil {
+		return 0 // QuoteMeta makes this unreachable; stay safe
+	}
+	n := 0
+	for _, m := range re.FindAllStringIndex(text, -1) {
+		if isWordBoundary(text, m[0], m[1]) {
+			n++
+		}
+	}
+	return n
+}
+
 // CustomPattern is a user-supplied regex (category custom_patterns).
 type CustomPattern struct {
 	// Expr is the regular expression as typed by the user.
@@ -258,10 +294,10 @@ type CustomPattern struct {
 // actionable error for the UI (BUILD.md Phase 3 activity 3).
 func ValidateCustomPattern(expr string) error {
 	if strings.TrimSpace(expr) == "" {
-		return fmt.Errorf("the pattern is empty — enter a regular expression, e.g. PRJ-[0-9]+ to match project codes")
+		return fmt.Errorf("the pattern is empty, enter a regular expression, e.g. PRJ-[0-9]+ to match project codes")
 	}
 	if _, err := regexp.Compile(expr); err != nil {
-		return fmt.Errorf("the pattern %q is not a valid regular expression (%v) — check for unbalanced brackets or a trailing backslash", expr, err)
+		return fmt.Errorf("the pattern %q is not a valid regular expression (%v), check for unbalanced brackets or a trailing backslash", expr, err)
 	}
 	return nil
 }

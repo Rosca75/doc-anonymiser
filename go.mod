@@ -5,6 +5,7 @@ module doc-anonymiser
 go 1.23.0
 
 require (
+	github.com/go-pdf/fpdf v0.9.0
 	github.com/ledongthuc/pdf v0.0.0-20240201131950-da5b75280b06
 	github.com/wailsapp/wails/v2 v2.10.1
 	github.com/xuri/excelize/v2 v2.9.1

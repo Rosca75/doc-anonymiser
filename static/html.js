@@ -1,7 +1,7 @@
-// html.js — tiny shared HTML helpers for the views.
+// html.js, tiny shared HTML helpers for the views.
 //
 // escapeHTML() lives in its own module (not in a view) because EVERY view
-// injects document-derived strings into innerHTML — escaping everything
+// injects document-derived strings into innerHTML, escaping everything
 // from day one prevents an entire class of injection bugs, and a shared
 // module keeps it testable with `node --test`.
 

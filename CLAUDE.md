@@ -27,7 +27,8 @@ what failed, what was expected, how to fix it.
 ```
 doc-anonymiser/
 ├── CLAUDE.md                  # this file — authoritative
-├── BUILD.md                   # phased implementation plan
+├── BUILD.md                   # phased implementation plan (v1, executed)
+├── BUILD-02.md                # functional-improvements build plan (v2)
 ├── README.md                  # user-facing documentation
 ├── LICENSE                    # MIT, Oscar Liber
 ├── .gitignore
@@ -49,18 +50,26 @@ doc-anonymiser/
 │   ├── allowlist.go           # Terms never anonymised
 │   ├── simplereplace.go       # Manual find-and-replace pass
 │   ├── report.go              # Per-file / per-category statistics
-│   └── session.go             # Save/load session state (JSON)
+│   ├── session.go             # Save/load session state (JSON, schema migrations)
+│   └── exportfmt/             # same-format export: rewrite of original bytes (docx/pptx/xlsx, pdf experimental)
 ├── ollama/
 │   └── client.go              # THE ONLY FILE that talks to Ollama (net/http)
 ├── static/                    # vanilla-JS frontend, embedded via go:embed
 │   ├── index.html
-│   ├── style.css
+│   ├── brand.css              # PwC brand tokens (single source of truth)
+│   ├── style.css              # consumes brand.css variables only
 │   ├── api.js                 # THE ONLY file that calls Go bound methods
 │   ├── state.js               # single source of truth for frontend state
-│   └── views/                 # one JS module per wizard screen
+│   ├── ui.js                  # shared UI toolkit (button/banner/panel/icon)
+│   ├── icons.js               # vendored Material Symbols SVG map
+│   ├── copy.js                # user-visible strings (banners, step copy)
+│   ├── entitymodel.js         # pure variant view-model (regression-tested)
+│   ├── assets/icons/          # vendored Material Symbols SVGs + LICENSE
+│   └── views/                 # one JS module per screen (home, docs, wizard steps, shared allowlist panel)
 ├── .github/workflows/
 │   ├── ci.yml                 # build + test on push/PR
 │   └── release.yml            # on tag: build, zip, attach to Release
+├── docs/brand/color-palette.json  # vendored PwC brand palette (source for static/brand.css)
 └── testdata/                  # fixture documents for unit tests
 ```
 
@@ -82,13 +91,18 @@ doc-anonymiser/
   back to their source path. All output goes through explicit save dialogs.
 - **Graceful degradation:** Ollama availability is probed at startup and on
   demand (`GET /api/tags`). Every LLM-dependent UI control renders in a
-  disabled state with a tooltip ("Requires Ollama — not detected on
-  127.0.0.1:11434") when unavailable. The deterministic pipeline must be
-  fully usable without Ollama.
+  disabled state with a tooltip ("Requires Ollama, which was not detected
+  on 127.0.0.1:11434") when unavailable. The deterministic pipeline must be
+  fully usable without Ollama. User-visible copy never contains em dashes
+  (enforced by copy_guard_test.go and static/copy.test.js).
 - **Converters are pure Go and one-way:** `engine/convert/*` may use only the
   Go standard library, excelize, and ledongthuc/pdf (pinned in §7). No CGo,
-  ever. Binary formats convert TO markdown on import; the app never exports
-  back to docx/pptx/xlsx/pdf. If pure-Go PDF extraction quality proves
+  ever. Binary formats convert TO markdown on import for preview and
+  processing. The app can additionally write a NEW anonymised copy in the
+  source format (docx/pptx/xlsx, and experimentally pdf) at export time; this
+  copy is produced by rewriting a copy of the original bytes held in memory
+  (`engine/exportfmt/`). The source file on disk is read once at import and
+  never written, moved, or modified. If pure-Go PDF extraction quality proves
   unacceptable, the recorded fallback is a wazero-embedded WASM extractor
   (P3 pattern) — not a CGo binding.
 
@@ -104,7 +118,7 @@ doc-anonymiser/
     runs, ordered/unordered lists (numPr), tables → markdown tables,
     hyperlinks → markdown links. Images dropped with an inline placeholder
     `*[image omitted]*`. Headers/footers/footnotes dropped (pagination noise).
-  - `.pptx` → one `## Slide N — <title>` section per slide; body text with
+  - `.pptx` → one `## Slide N: <title>` section per slide; body text with
     bullet indentation; tables → markdown tables; speaker notes under a
     `**Notes:**` sub-block. Slide-master/branding shapes skipped.
   - `.xlsx` → one Document per sheet, named `<workbook>.xlsx#<sheet>`. Smart
@@ -117,7 +131,7 @@ doc-anonymiser/
     (collapse runs of single uppercase characters split by kerning; collapse
     doubled spaces). PDF support is EXPERIMENTAL and labelled as such in the
     UI. A PDF yielding no extractable text is rejected with: "No text layer
-    found — this PDF is likely scanned. OCR is not supported; convert it
+    found, this PDF is likely scanned. OCR is not supported; convert it
     externally first."
 - **Process order (fixed):** 1) import → convert to markdown working form,
   2) anonymise, 3) export. CSV imports are converted to a markdown table for
@@ -125,11 +139,15 @@ doc-anonymiser/
   to CSV on export.
 - **Anonymisation levels** (mirror the notebook semantics):
   - `soft` — hard PII (emails, phones, IBANs, national IDs, VAT numbers,
-    URLs with credentials) + engagement entities (client/project/PwC-internal
+    URLs with credentials) + engagement entities (client/project/internal
     names).
   - `medium` (default) — soft + person names. Dates and locations kept.
   - `advanced` — medium + dates, locations, organisation names, monetary
     amounts.
+  - Levels are PRESETS over granular per-category switches
+    (`engine.CategorySelection`, BUILD-02 Phase 3): the pipeline obeys the
+    per-category selection; a level is the UI shorthand that fills it.
+    `medium` remains the default preset.
 - **Pipeline passes (fixed order):**
   1. Deterministic PII regex pass (`engine/pii.go`).
   2. Known-entity pass: discovery results + manual entities, expanded into
@@ -146,8 +164,12 @@ doc-anonymiser/
   placeholder and is exportable as a re-identification key (CSV/JSON).
 - **Allowlist wins:** an allowlisted term is never replaced, by any pass.
 - **Entity categories:** `client_names`, `project_names`,
-  `pwc_internal_names`, `person_names`, `custom_patterns` (user regex),
-  plus PII categories emitted by pass 1.
+  `internal_names`, `person_names`, `custom_patterns` (user regex),
+  plus PII categories emitted by pass 1. The user-visible label for
+  `internal_names` is "Internal". The category was named
+  `pwc_internal_names` (placeholder label `PWC_INTERNAL`) in v1; session
+  files carrying the old key/label MUST load via an explicit migration
+  (`engine/session.go`) — never silently drop user data.
 - **Sensitive state stays in memory** by default. Saving a session (registry
   + entities + settings) to disk is an explicit user action with a warning
   that the file contains the re-identification key.
@@ -171,11 +193,14 @@ doc-anonymiser/
 | Go | 1.23.x | toolchain in go.mod; CI uses the same |
 | Wails | v2.10.x | v2 API only — do NOT use Wails v3 idioms |
 | wails CLI (CI) | v2.10.x | pinned in ci.yml and release.yml — same row as the library: the CLI and go.mod versions are a coupled pair; CI must fail with an actionable message if they diverge |
-| Ollama HTTP API | as of 2026: `GET /api/tags`, `POST /api/chat` with `"format":"json"`, `"stream":false` | probed at startup; if `/api/tags` succeeds but `/api/chat` returns 404, show "Ollama too old — please update" |
+| Ollama HTTP API | as of 2026: `GET /api/tags`, `POST /api/chat` with `"format":"json"`, `"stream":false` | probed at startup; if `/api/tags` succeeds but `/api/chat` returns 404 without a model-not-found body, show "Ollama too old, please update" |
 | Default Ollama model | `qwen2.5:3b-instruct` | user-selectable from `/api/tags` results; model name is a setting, never hardcoded outside settings defaults |
 | Frontend | vanilla JS (ES2020), embedded via go:embed | no npm, no bundler |
 | github.com/xuri/excelize/v2 | v2.9.x | XLSX reading; pure Go, MIT licence |
 | github.com/ledongthuc/pdf | v0.0.0-20240201131950-da5b75280b06 | pure-Go PDF text extraction (BSD-3); limited by design — see §5 PDF rules. Pinned to the 2024-02-01 commit: the later 2025 commit requires Go 1.24, which conflicts with the Go 1.23.x pin above |
+| github.com/pdfcpu/pdfcpu | NOT ADDED (evaluated at BUILD-02 Phase 13, 2026-07-24) | in-place PDF rewriting was rejected (subset-font glyph availability), so pdfcpu's metadata role is covered by fpdf (new file's Info dict) + ledongthuc/pdf (reading the original's Info dict). Note: pdfcpu v0.13.0 requires Go 1.25, incompatible with the 1.23.x pin anyway |
+| github.com/go-pdf/fpdf | v0.9.0 | pure-Go PDF writer for the regenerated-PDF same-format fallback (BUILD-02 Phase 13); MIT; go.mod requires Go 1.20 (compatible) |
+| Material Symbols SVGs (assets, not a Go module) | snapshot at BUILD-02 Phase 1 | individual SVG files vendored into `static/assets/icons/`; Apache-2.0; licence text at `static/assets/icons/LICENSE` |
 
 ## 8. Validated constants
 

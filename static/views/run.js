@@ -1,4 +1,4 @@
-// views/run.js — wizard step 4: pipeline execution, live progress, and
+// views/run.js, wizard step 4: pipeline execution, live progress, and
 // results review (Phase 8).
 //
 //   - Run button (+ optional deep-scan checkbox, LLM-gated) and Cancel,
@@ -9,29 +9,37 @@
 //     fast-rerun (passes 2+4, no LLM) to refresh the outputs,
 //   - ordered simple-replace rules editor (mirrors notebook Cell 8).
 
-import { runPipeline, cancelPipeline, fastRerun } from "../api.js";
+import { runPipeline, cancelPipeline, fastRerun, getMapping } from "../api.js";
 import {
-  getState, setState,
+  getState, setState, llmEnabled,
   addEntities, buildRunRequest,
   addSimpleRule, removeSimpleRule, moveSimpleRule,
+  entityAutocomplete, reassignOriginal,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { renderHighlighted } from "../highlight.js";
-import { LLM_DISABLED_TOOLTIP } from "./configure.js";
+import { panel, wirePanels } from "../ui.js";
+import { llmGateTooltip } from "./configure.js";
+
+// Panels the user toggled away from their default state (BUILD-02 Phase 2f).
+const collapsedPanels = new Set();
 
 export function renderRun(container) {
   const s = getState();
-  const ollamaOK = !!s.ollama?.available;
+  // Deep-scan gates on the master AI toggle AND live availability
+  // (BUILD-02 Phase 6d).
+  const aiOK = llmEnabled(s);
 
   container.innerHTML = `
     <div class="run-view">
-      ${controlPanel(s, ollamaOK)}
+      ${controlPanel(s, aiOK)}
       ${rulesPanel(s)}
       ${s.results ? resultsPanel(s) : ""}
       <div id="run-error"></div>
     </div>
   `;
 
+  wirePanels(container, collapsedPanels, () => setState({}));
   wireControls(container, s);
   wireRules(container);
   if (s.results) wireResults(container, s);
@@ -39,8 +47,8 @@ export function renderRun(container) {
 
 // --- Run controls + progress ------------------------------------------------
 
-function controlPanel(s, ollamaOK) {
-  const gate = ollamaOK ? "" : `disabled title="${LLM_DISABLED_TOOLTIP}"`;
+function controlPanel(s, aiOK) {
+  const gate = aiOK ? "" : `disabled title="${escapeHTML(llmGateTooltip(s))}"`;
   const pct = s.progress && s.progress.docCount
     ? Math.round(((s.progress.docIndex + 1) / s.progress.docCount) * 100)
     : 0;
@@ -49,7 +57,7 @@ function controlPanel(s, ollamaOK) {
       <div class="panel-head">
         <h2>Run anonymisation</h2>
         <div>
-          <label title="${ollamaOK ? "Extra AI pass to catch residual entities" : LLM_DISABLED_TOOLTIP}">
+          <label title="${aiOK ? "Extra AI pass to catch residual entities" : escapeHTML(llmGateTooltip(s))}">
             <input type="checkbox" id="deep-scan" ${gate}/> deep-scan (AI)
           </label>
           <button id="btn-run" class="primary" ${s.running ? "disabled" : ""}>Run</button>
@@ -59,7 +67,7 @@ function controlPanel(s, ollamaOK) {
       ${s.running ? `
         <div class="progress-bar"><div style="width:${pct}%"></div></div>
         <p class="hint">${s.progress
-          ? `${escapeHTML(s.progress.stage)} — ${escapeHTML(s.progress.docName)} (${s.progress.docIndex + 1}/${s.progress.docCount})`
+          ? `${escapeHTML(s.progress.stage)}: ${escapeHTML(s.progress.docName)} (${s.progress.docIndex + 1}/${s.progress.docCount})`
           : "starting…"}</p>` : ""}
     </section>`;
 }
@@ -92,17 +100,18 @@ function rulesPanel(s) {
         <button class="rule-del">✕</button>
       </td>
     </tr>`).join("");
-  return `
-    <section class="panel" id="rules-panel">
-      <div class="panel-head"><h2>Manual find → replace (runs last, in order)</h2></div>
+  const content = `
       <table class="entity-table"><tbody>${rows}</tbody></table>
       <div class="form-row">
         <input id="rule-find" placeholder="find (literal text)"/>
         <input id="rule-replace" placeholder="replace with"/>
         <label><input type="checkbox" id="rule-case"/> case-sensitive</label>
-        <button id="rule-add">+ add rule</button>
-      </div>
-    </section>`;
+        <button id="rule-add">Add rule</button>
+      </div>`;
+  // Rules are an advanced feature: collapsed by default (BUILD-02 Phase 2f).
+  return panel("rules-panel", "Manual find and replace (runs last, in order)", content, {
+    collapsible: true, startOpen: false, collapsedSet: collapsedPanels,
+  });
 }
 
 function wireRules(container) {
@@ -138,12 +147,7 @@ function resultsPanel(s) {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([cat, n]) => `<tr><td>${escapeHTML(cat)}</td><td>${n}</td></tr>`).join("");
 
-  return `
-    <section class="panel">
-      <div class="panel-head">
-        <h2>Results</h2>
-        <select id="result-doc">${docOptions}</select>
-      </div>
+  const resultsContent = `
       <div class="pill-list">${counts || `<span class="hint">no replacements in this document</span>`}</div>
       <div class="compare">
         <div>
@@ -152,28 +156,26 @@ function resultsPanel(s) {
         </div>
         <div>
           <h3 class="hint">Anonymised</h3>
-          <pre class="md-preview">${doc ? renderHighlighted(doc.anonymised) : ""}</pre>
+          <pre class="md-preview" id="anonymised-pane">${doc ? renderHighlighted(doc.anonymised, s.mapping) : ""}</pre>
         </div>
-      </div>
-    </section>
-    <section class="panel">
-      <div class="panel-head"><h2>Something missed?</h2></div>
-      <p class="hint">Add it as an entity (or a rule above), then re-run the fast deterministic passes —
-        no AI re-scan, existing placeholders keep their numbers.</p>
+      </div>`;
+
+  const missedContent = `
+      <p class="hint">Add it as an entity (or a rule above), then re-run the fast deterministic passes.
+        There is no AI re-scan, and existing placeholders keep their numbers.</p>
       <div class="form-row">
         <select id="missed-category">
           <option value="person_names">person</option>
           <option value="client_names">client</option>
           <option value="project_names">project</option>
-          <option value="pwc_internal_names">PwC internal</option>
+          <option value="internal_names">Internal</option>
         </select>
         <input id="missed-name" placeholder="missed name, e.g. P. Stone"/>
-        <button id="missed-add">add entity</button>
+        <button id="missed-add">Add entity</button>
         <button id="btn-fast-rerun" class="primary">Fast re-run</button>
-      </div>
-    </section>
-    <section class="panel">
-      <div class="panel-head"><h2>Report</h2></div>
+      </div>`;
+
+  const reportContent = `
       <p class="hint">
         Level: <strong>${escapeHTML(r.report?.level ?? "")}</strong> ·
         LLM pass: ${escapeHTML(r.report?.llmPass ?? "")} ·
@@ -181,8 +183,16 @@ function resultsPanel(s) {
         ${r.report?.durationMs ?? 0} ms
       </p>
       <table class="entity-table"><tbody>${categories}</tbody></table>
-      ${(r.report?.warnings ?? []).map((w) => `<div class="banner warn">${escapeHTML(w)}</div>`).join("")}
-    </section>`;
+      ${(r.report?.warnings ?? []).map((w) => `<div class="banner warn">${escapeHTML(w)}</div>`).join("")}`;
+
+  return panel("results-panel", "Results", resultsContent, {
+    collapsible: true, collapsedSet: collapsedPanels,
+    headExtraHTML: `<select id="result-doc">${docOptions}</select>`,
+  }) + panel("missed-panel", "Something missed?", missedContent, {
+    collapsible: true, collapsedSet: collapsedPanels,
+  }) + panel("report-panel", "Report", reportContent, {
+    collapsible: true, startOpen: false, collapsedSet: collapsedPanels,
+  });
 }
 
 function wireResults(container, s) {
@@ -198,10 +208,99 @@ function wireResults(container, s) {
   container.querySelector("#btn-fast-rerun").addEventListener("click", async () => {
     try {
       const results = await fastRerun(buildRunRequest(false));
-      setState({ results });
+      // The mapping may have grown (new entities earned placeholders).
+      setState({ results, mapping: await getMapping() });
     } catch (err) {
       showError(container, err);
     }
+  });
+
+  wireReassignPopover(container);
+}
+
+// --- Click-to-reassign popover (BUILD-02 Phase 10d) --------------------------
+
+/**
+ * wireReassignPopover attaches one click handler to the anonymised pane:
+ * clicking a mark with a known original opens a small popover anchored to
+ * it, offering to make the original a variant of another entity. The
+ * autocomplete uses the tested entityAutocomplete filter; confirming
+ * calls reassignOriginal + fastRerun (deterministic passes only). Escape
+ * or click-away closes; only one popover exists at a time.
+ */
+function wireReassignPopover(container) {
+  const pane = container.querySelector("#anonymised-pane");
+  if (!pane) return;
+
+  const closePopover = () => container.querySelector("#reassign-popover")?.remove();
+
+  pane.addEventListener("click", (ev) => {
+    const mark = ev.target.closest("mark[data-ph]");
+    if (!mark) return;
+    closePopover();
+
+    const original = mark.dataset.original;
+    const placeholder = mark.dataset.ph;
+    const pop = document.createElement("div");
+    pop.id = "reassign-popover";
+    pop.className = "reassign-popover";
+    pop.innerHTML = `
+      <p><strong>${escapeHTML(placeholder)}</strong> replaces <strong>${escapeHTML(original)}</strong></p>
+      <div class="form-row">
+        <label>variant of</label>
+        <input id="reassign-input" placeholder="type an entity name" autocomplete="off"/>
+      </div>
+      <ul class="reassign-suggestions" id="reassign-suggestions"></ul>`;
+
+    // Anchor next to the clicked mark inside the scrollable pane.
+    const rect = mark.getBoundingClientRect();
+    const paneRect = pane.getBoundingClientRect();
+    pop.style.left = `${rect.left - paneRect.left}px`;
+    pop.style.top = `${rect.bottom - paneRect.top + 4}px`;
+    pane.style.position = "relative";
+    pane.appendChild(pop);
+
+    const input = pop.querySelector("#reassign-input");
+    const list = pop.querySelector("#reassign-suggestions");
+
+    const confirm = async (category, canonical) => {
+      closePopover();
+      if (!reassignOriginal(original, category, canonical)) return;
+      try {
+        const results = await fastRerun(buildRunRequest(false));
+        setState({ results, mapping: await getMapping() });
+      } catch (err) {
+        showError(container, err);
+      }
+    };
+
+    input.addEventListener("input", () => {
+      const matches = entityAutocomplete(input.value).slice(0, 8);
+      list.innerHTML = matches.map((m) => `
+        <li><button class="btn btn-ghost reassign-pick" data-category="${escapeHTML(m.category)}"
+             data-canonical="${escapeHTML(m.canonical)}">${escapeHTML(m.canonical)}
+             <span class="hint">${escapeHTML(m.category)}</span></button></li>`).join("");
+      for (const btn of list.querySelectorAll(".reassign-pick")) {
+        btn.addEventListener("click", () => confirm(btn.dataset.category, btn.dataset.canonical));
+      }
+    });
+    input.addEventListener("keydown", (ev2) => {
+      if (ev2.key === "Escape") closePopover();
+      if (ev2.key === "Enter") {
+        const first = list.querySelector(".reassign-pick");
+        if (first) confirm(first.dataset.category, first.dataset.canonical);
+      }
+    });
+    input.focus();
+    ev.stopPropagation();
+  });
+
+  // Click-away and Escape close the popover.
+  document.addEventListener("click", (ev) => {
+    if (!ev.target.closest("#reassign-popover") && !ev.target.closest("mark[data-ph]")) closePopover();
+  }, { once: false });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") closePopover();
   });
 }
 

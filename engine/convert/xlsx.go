@@ -51,19 +51,19 @@ func Xlsx(raw []byte) (sheets []Sheet, warnings []string, err error) {
 	f, err := excelize.OpenReader(bytes.NewReader(raw))
 	if err != nil {
 		return nil, nil, fmt.Errorf(
-			"the file is not a valid .xlsx (%v) — if it is an old binary .xls file, open it in Excel and save it as .xlsx first", err)
+			"the file is not a valid .xlsx (%v), if it is an old binary .xls file, open it in Excel and save it as .xlsx first", err)
 	}
 	defer f.Close()
 
 	for _, name := range f.GetSheetList() {
 		rows, err := f.GetRows(name)
 		if err != nil {
-			return nil, nil, fmt.Errorf("could not read sheet %q: %w — the workbook may be corrupted; try re-saving it in Excel", name, err)
+			return nil, nil, fmt.Errorf("could not read sheet %q: %w, the workbook may be corrupted; try re-saving it in Excel", name, err)
 		}
 
 		grid := trimDataBounds(rows)
 		if len(grid) == 0 {
-			warnings = append(warnings, fmt.Sprintf("sheet %q is empty — skipped", name))
+			warnings = append(warnings, fmt.Sprintf("sheet %q is empty, skipped", name))
 			continue
 		}
 
@@ -84,13 +84,13 @@ func Xlsx(raw []byte) (sheets []Sheet, warnings []string, err error) {
 				Flat: false,
 				JSON: js,
 				Warnings: []string{fmt.Sprintf(
-					"sheet %q has a complex layout (%s) — it was converted to structured JSON and will be anonymised as text; it cannot round-trip to CSV", name, reason)},
+					"sheet %q has a complex layout (%s), it was converted to structured JSON and will be anonymised as text; it cannot round-trip to CSV", name, reason)},
 			})
 		}
 	}
 	if len(sheets) == 0 {
 		return nil, nil, fmt.Errorf(
-			"the workbook contains no data (all sheets are empty) — nothing to anonymise")
+			"the workbook contains no data (all sheets are empty), nothing to anonymise")
 	}
 	return sheets, warnings, nil
 }

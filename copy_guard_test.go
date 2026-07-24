@@ -1,0 +1,68 @@
+// copy_guard_test.go — the Go-side copy-style guard (BUILD-02 Phase 1f).
+//
+// UI copy rule (BUILD-02 ground rule 4): no em dashes (U+2014) in any
+// user-visible string. Go user-visible strings are error messages, report
+// text and prompt/status strings, all of which live in string LITERALS in
+// app*.go, engine/ and ollama/. This test parses those files and fails
+// listing file:line for every string literal containing an em dash, so the
+// style rule is enforced by CI forever, not by reviewer memory.
+//
+// Comments are deliberately NOT scanned: they are developer-facing and em
+// dashes are fine prose there. Test files are skipped too (their literals
+// assert on content, they are never shown to users).
+//
+// The matching frontend guard is static/copy.test.js.
+package main
+
+import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// guardedDirs are the source trees whose string literals reach users.
+var guardedDirs = []string{".", "engine", "engine/convert", "engine/exportfmt", "ollama"}
+
+func TestNoEmDashInUserFacingStrings(t *testing.T) {
+	var hits []string
+	fset := token.NewFileSet()
+
+	for _, dir := range guardedDirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue // a guarded dir may not exist yet (exportfmt before Phase 11)
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			path := filepath.Join(dir, name)
+			file, err := parser.ParseFile(fset, path, nil, 0)
+			if err != nil {
+				t.Fatalf("could not parse %s: %v", path, err)
+			}
+			ast.Inspect(file, func(n ast.Node) bool {
+				lit, ok := n.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					return true
+				}
+				if strings.Contains(lit.Value, "—") {
+					pos := fset.Position(lit.Pos())
+					hits = append(hits, fmt.Sprintf("%s:%d: %s", pos.Filename, pos.Line, lit.Value))
+				}
+				return true
+			})
+		}
+	}
+
+	if len(hits) > 0 {
+		t.Errorf("em dashes found in Go string literals; replace them with commas, periods or parentheses:\n%s",
+			strings.Join(hits, "\n"))
+	}
+}

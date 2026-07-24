@@ -1016,6 +1016,25 @@ ignores → export errors, no file written).
 `feat(export): experimental same-format PDF export with metadata anonymisation`
 plus the dated evaluation note added to this section.
 
+**Evaluation note (2026-07-24, Phase 13b outcome):** in-place PDF body
+rewriting was NOT adopted. Placeholder strings need glyphs that subset
+fonts frequently lack, and the acceptance bar (replaced text renders
+correctly, non-replaced content pixel-stable, opens in Edge and Acrobat
+without warnings) cannot be met for general PDFs nor verified headlessly.
+The recorded fallback (13c, regenerated simplified-layout PDF) is what
+shipped, via go-pdf/fpdf v0.9.0 (pure Go, MIT, go.mod requires only Go
+1.20). Consequence for the §4 dependency table: **pdfcpu was evaluated
+and NOT added.** Its current release v0.13.0 requires Go 1.25 (our pin
+is 1.23.x; v0.11.0 would still fit), but with the in-place path
+rejected, pdfcpu's only remaining role (Info/XMP rewrite of the original
+bytes) is moot: the regenerated file's Info dictionary is written
+directly by fpdf from the reviewed metadata, and the ORIGINAL file's
+Info dictionary is extracted with the already-pinned ledongthuc/pdf
+reader. One fewer heavy dependency, same reviewed-metadata behaviour.
+The runtime leak self-check (13d) re-extracts the produced file with the
+ledongthuc reader and fails the export if any registry original
+survives, so a leaky file can never ship silently.
+
 ---
 
 ## Phase 14 — Hardening, manual test matrix, docs, release

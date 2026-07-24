@@ -1,75 +1,114 @@
 /*
-  style.css — all styling for doc-anonymiser.
-  System font stack only: no external fonts or CDNs are allowed
-  (local-only guarantee, CLAUDE.md §4).
-*/
+  style.css, all layout and component styling for doc-anonymiser.
 
-:root {
-  /* A small palette so all views stay visually consistent. */
-  --bg: #f5f6f8;
-  --panel: #ffffff;
-  --text: #1f2430;
-  --muted: #6b7280;
-  --accent: #b3542b;      /* warm accent for primary actions */
-  --ok: #1e7d3c;          /* green — Ollama detected */
-  --off: #9ca3af;         /* grey — feature unavailable */
-  --warn: #9a6b00;        /* amber — warnings, experimental */
-  --border: #d9dce3;
-  --mark-pii: #ffe1b3;    /* highlight tints per category family */
-  --mark-entity: #cfe3ff;
-  --mark-custom: #e2d4f0;
-}
+  Colours and fonts come EXCLUSIVELY from the brand tokens in brand.css
+  (loaded first by index.html). No literal colour or font values may appear
+  in this file; that keeps the PwC palette swappable in one place.
+
+  Local-only guarantee: system fonts only, no external fonts or CDNs
+  (CLAUDE.md section 4).
+*/
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-body);
   background: var(--bg);
   color: var(--text);
   height: 100vh;
   overflow: hidden;
 }
 
+/* Headings are Georgia at REGULAR weight; hierarchy comes from size and
+   space, never bold (brand rule). */
+h1, h2, h3, h4 {
+  font-family: var(--font-heading);
+  font-weight: 400;
+}
+
 #app { display: flex; flex-direction: column; height: 100vh; }
 
-/* --- Shell: header, steps, footer ------------------------------------- */
+/* --- Shell: header, top navigation, steps, footer ----------------------- */
 
 .topbar {
   display: flex; align-items: center; gap: 1.25rem;
   padding: 0.6rem 1rem;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  border-bottom: 1px solid var(--gray-4);
 }
 
-.brand { font-weight: 700; }
+.brand { font-family: var(--font-heading); font-size: 1.05rem; }
+
+/* Top navigation (Home / Anonymise documents / Documentation). */
+.topnav { display: flex; gap: 0.25rem; }
 
 .steps { display: flex; gap: 0.4rem; flex: 1; }
 
+/* Step chips: quiet grey fill; the ACTIVE chip is marked by an orange
+   underline, not an orange flood fill (one loud element per view rule). */
 .chip {
-  border: 1px solid var(--border); background: var(--bg); color: var(--text);
-  border-radius: 999px; padding: 0.3rem 0.9rem; font-size: 0.85rem; cursor: pointer;
+  border: 1px solid var(--gray-4); background: var(--gray-5); color: var(--text);
+  border-bottom: 3px solid transparent;
+  border-radius: 6px; padding: 0.3rem 0.9rem; font-size: 0.85rem; cursor: pointer;
 }
-.chip.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.chip.active { border-bottom-color: var(--accent); background: var(--gray-6); }
 .chip.disabled { opacity: 0.45; cursor: not-allowed; }
 
 .badges { display: flex; gap: 0.5rem; }
 
-main#view { flex: 1; overflow: auto; padding: 1rem; }
+main#view { flex: 1; overflow: auto; padding: 1rem; background: var(--gray-6); }
 
 .navbar {
   display: flex; justify-content: space-between;
   padding: 0.6rem 1rem;
-  background: var(--panel);
-  border-top: 1px solid var(--border);
+  background: var(--bg);
+  border-top: 1px solid var(--gray-4);
 }
 
-/* --- Generic building blocks ------------------------------------------ */
+/* --- Buttons (ui.js kinds) ---------------------------------------------- */
+
+button, .btn {
+  font: inherit; cursor: pointer;
+  border: 1px solid var(--gray-3); border-radius: 6px;
+  background: var(--gray-5); color: var(--text);
+  padding: 0.35rem 0.8rem;
+}
+/* Primary: the one hero element per view. White text on accent orange is
+   permitted as large bold Arial (brand contrast rule). */
+button.primary, .btn-primary {
+  background: var(--accent); border-color: var(--accent);
+  color: #FFFFFF; font-weight: 700;
+}
+.btn-secondary { background: var(--gray-5); border-color: var(--gray-3); color: var(--text); }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--text); }
+.btn-ghost:hover { background: var(--gray-5); }
+button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+button:focus-visible, .btn:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent-medium); outline-offset: 1px;
+}
+
+/* Inline icons inside buttons and banners follow the text colour. */
+.btn .icon, button .icon { display: inline-flex; vertical-align: -0.32em; }
+.icon svg { width: 1.1em; height: 1.1em; }
+
+input, select {
+  font: inherit; padding: 0.3rem 0.5rem;
+  border: 1px solid var(--gray-3); border-radius: 6px;
+  background: var(--bg); color: var(--text);
+}
+
+.form-row { display: flex; align-items: center; gap: 0.6rem; margin: 0.5rem 0; flex-wrap: wrap; }
+.form-row label { min-width: 4.5rem; color: var(--muted); font-size: 0.9rem; }
+
+.radio-row { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.3rem 0; cursor: pointer; }
+
+/* --- Generic building blocks -------------------------------------------- */
 
 .panel {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  background: var(--bg);
+  border: 1px solid var(--gray-4);
+  border-radius: 8px;
   padding: 1rem 1.25rem;
   margin-bottom: 1rem;
 }
@@ -78,59 +117,82 @@ main#view { flex: 1; overflow: auto; padding: 1rem; }
   display: flex; align-items: center; justify-content: space-between; gap: 1rem;
   margin-bottom: 0.6rem;
 }
-.panel-head h2 { margin: 0; font-size: 1.05rem; }
+.panel-head h2 { margin: 0; font-size: 1.15rem; }
+.panel-head-right { display: flex; align-items: center; gap: 0.5rem; }
+
+/* Collapsible panels (ui.js panel helper): the header row toggles
+   data-collapsed on the section; the body then hides. */
+.panel > .panel-head.collapsible { cursor: pointer; user-select: none; }
+.panel[data-collapsed="true"] > .panel-body { display: none; }
+.panel[data-collapsed="true"] { padding-bottom: 0.6rem; }
+.panel-toggle { border: none; background: none; padding: 0.1rem; color: var(--muted); }
 
 .hint { color: var(--muted); font-size: 0.85rem; }
+/* Muted hint text still sits on light surfaces; keep it readable. */
+.hint strong { color: var(--text); font-weight: 700; }
 
-button {
-  font: inherit; cursor: pointer;
-  border: 1px solid var(--border); border-radius: 6px;
-  background: var(--bg); color: var(--text);
-  padding: 0.35rem 0.8rem;
+/* Step banner: the per-step explainer strip (quiet grey, black text). */
+.step-banner {
+  display: flex; align-items: center; gap: 0.75rem;
+  background: var(--gray-6); border: 1px solid var(--gray-4);
+  border-radius: 8px; padding: 0.6rem 0.9rem; margin-bottom: 1rem;
+  font-size: 0.9rem; color: var(--text);
 }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
-
-input, select {
-  font: inherit; padding: 0.3rem 0.5rem;
-  border: 1px solid var(--border); border-radius: 6px;
-  background: #fff; color: var(--text);
-}
-
-.form-row { display: flex; align-items: center; gap: 0.6rem; margin: 0.5rem 0; }
-.form-row label { min-width: 4.5rem; color: var(--muted); font-size: 0.9rem; }
-
-.radio-row { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.3rem 0; cursor: pointer; }
+.step-banner .icon { color: var(--gray-1); }
+.step-banner .banner-title { font-family: var(--font-heading); margin-right: 0.5rem; }
 
 .badge {
   display: inline-block; padding: 0.2rem 0.7rem; border-radius: 999px;
-  font-size: 0.8rem; font-weight: 600; color: #fff; background: var(--off);
+  font-size: 0.8rem; font-weight: 700; color: #FFFFFF; background: var(--gray-1);
   white-space: nowrap;
 }
 .badge.ok { background: var(--ok); }
-.badge.off { background: var(--off); }
-.badge.error { background: #b3261e; }
+.badge.off { background: var(--gray-1); }
+.badge.error { background: var(--err); }
 
 .tag {
   display: inline-block; padding: 0.05rem 0.5rem; border-radius: 4px;
-  font-size: 0.75rem; font-weight: 600;
-  background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+  font-size: 0.75rem; font-weight: 700;
+  background: var(--gray-5); border: 1px solid var(--gray-3); color: var(--text);
   text-transform: uppercase;
 }
-.tag.warn { color: var(--warn); border-color: var(--warn); }
+.tag.warn { color: var(--text); border-color: var(--warn); background: var(--gray-6); }
 
 .banner {
   border-radius: 8px; padding: 0.6rem 0.9rem; margin-bottom: 0.75rem;
   display: flex; justify-content: space-between; gap: 1rem; align-items: baseline;
   font-size: 0.9rem;
 }
-.banner.error { background: #fdecea; border: 1px solid #f5c6c0; color: #8a1f16; }
-.banner.warn  { background: #fff7e0; border: 1px solid #eadfa9; color: var(--warn); }
+/* Status colours are functional (error/warning state), black text keeps
+   contrast on the light fills. */
+.banner.error { background: var(--gray-6); border: 1px solid var(--err); color: var(--text); }
+.banner.warn  { background: var(--gray-6); border: 1px solid var(--warn); color: var(--text); }
 .banner .dismiss { border: none; background: none; font-weight: 700; }
 
-/* --- Import view -------------------------------------------------------- */
+/* --- Configure sub-tabs (BUILD-02 Phase 6a) -------------------------------- */
 
-.import-columns { display: grid; grid-template-columns: minmax(20rem, 2fr) 3fr; gap: 1rem; }
+.subtabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+.preset-chip { cursor: pointer; }
+.preset-chip.active { border-bottom-color: var(--accent); background: var(--gray-6); font-weight: 700; }
+
+/* --- Home / documentation screens ---------------------------------------- */
+
+.home-view { max-width: 60rem; margin: 0 auto; padding-top: 2rem; }
+.home-view h1 { font-size: 2rem; margin: 0 0 0.5rem; }
+.home-lede { color: var(--text); max-width: 42rem; }
+.home-panels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 1.5rem 0; }
+.home-actions { display: flex; gap: 0.75rem; margin-top: 1rem; }
+
+/* --- Import view ---------------------------------------------------------- */
+
+/* Two resizable panes separated by a draggable divider (BUILD-02 2g).
+   The column template is set inline from state.importSplit. */
+.import-columns { display: grid; gap: 0; align-items: start; }
+.import-divider {
+  width: 6px; cursor: col-resize; align-self: stretch;
+  background: var(--gray-4); border-radius: 3px; margin: 0 0.35rem;
+}
+.import-divider:hover, .import-divider.dragging { background: var(--accent-light); }
 
 .doc-list { list-style: none; margin: 0; padding: 0; }
 .doc-list .empty { color: var(--muted); padding: 0.75rem 0.25rem; }
@@ -139,18 +201,18 @@ input, select {
   display: flex; align-items: center; gap: 0.5rem;
   padding: 0.45rem 0.5rem; border-radius: 6px; cursor: pointer;
 }
-.doc-row:hover { background: var(--bg); }
-.doc-row.selected { background: #f3e5dd; }
+.doc-row:hover { background: var(--gray-6); }
+.doc-row.selected { background: var(--tint-orange-3); }
 .doc-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .doc-size { color: var(--muted); font-size: 0.8rem; }
 .doc-remove { border: none; background: none; color: var(--muted); }
-.doc-remove:hover { color: #b3261e; }
+.doc-remove:hover { color: var(--err); }
 
 .md-preview {
   margin: 0; padding: 0.75rem;
-  background: var(--bg); border-radius: 8px;
+  background: var(--gray-6); border-radius: 8px;
   white-space: pre-wrap; word-break: break-word;
-  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.85rem;
   max-height: 60vh; overflow: auto;
 }
@@ -159,33 +221,61 @@ input, select {
 
 .grid-table { border-collapse: collapse; font-size: 0.85rem; width: 100%; }
 .grid-table th, .grid-table td {
-  border: 1px solid var(--border); padding: 0.3rem 0.55rem; text-align: left;
+  border: 1px solid var(--gray-4); padding: 0.3rem 0.55rem; text-align: left;
 }
-.grid-table th { background: var(--bg); position: sticky; top: 0; }
+.grid-table th { background: var(--gray-5); position: sticky; top: 0; }
 
-/* --- Entities view (Phase 7) ------------------------------------------- */
+/* --- Entities view --------------------------------------------------------- */
 
 .entity-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-.entity-table th, .entity-table td { border-bottom: 1px solid var(--border); padding: 0.4rem 0.5rem; text-align: left; }
+.entity-table th, .entity-table td { border-bottom: 1px solid var(--gray-4); padding: 0.4rem 0.5rem; text-align: left; }
 .entity-table tr.denied td { opacity: 0.45; text-decoration: line-through; }
 .variant-list { color: var(--muted); font-size: 0.8rem; }
 
 .pill-list { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .pill {
   display: inline-flex; align-items: center; gap: 0.35rem;
-  background: var(--bg); border: 1px solid var(--border);
+  background: var(--gray-5); border: 1px solid var(--gray-3);
   border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.85rem;
 }
 .pill button { border: none; background: none; padding: 0; color: var(--muted); }
 
-/* --- Run view (Phase 8) -------------------------------------------------- */
+/* --- Run view --------------------------------------------------------------- */
 
-.progress-bar { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.progress-bar { height: 8px; background: var(--gray-5); border-radius: 4px; overflow: hidden; }
 .progress-bar > div { height: 100%; background: var(--accent); transition: width 0.2s; }
 
 .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
 
-mark { border-radius: 3px; padding: 0 2px; }
-mark.pii { background: var(--mark-pii); }
-mark.entity { background: var(--mark-entity); }
-mark.custom { background: var(--mark-custom); }
+/* Highlight tints per category family: black text on every fill
+   (BUILD-02 section 5 remapping). */
+mark { border-radius: 3px; padding: 0 2px; color: var(--text); }
+mark.pii { background: var(--tint-orange-1); }
+mark.entity { background: var(--gray-4); }
+mark.custom { background: var(--tint-orange-3); }
+
+/* --- Run view: original-term tooltip + reassign popover (BUILD-02 10c/d) --- */
+
+/* Styled tooltip in pure CSS reading data-original; the native title
+   attribute stays as the accessibility fallback. */
+mark[data-original] { cursor: pointer; position: relative; }
+mark[data-original]:hover::after {
+  content: "Original: " attr(data-original);
+  position: absolute; left: 0; top: 100%; margin-top: 2px; z-index: 30;
+  background: var(--text); color: #FFFFFF;
+  padding: 0.2rem 0.5rem; border-radius: 4px;
+  font-size: 0.75rem; white-space: nowrap;
+  font-family: var(--font-body);
+}
+
+.reassign-popover {
+  position: absolute; z-index: 40;
+  background: var(--bg); border: 1px solid var(--gray-3); border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+  padding: 0.6rem 0.8rem; min-width: 18rem;
+  font-family: var(--font-body); font-size: 0.85rem;
+  white-space: normal;
+}
+.reassign-popover p { margin: 0 0 0.4rem; }
+.reassign-suggestions { list-style: none; margin: 0.3rem 0 0; padding: 0; }
+.reassign-suggestions li { margin: 0; }

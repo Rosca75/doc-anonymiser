@@ -78,7 +78,7 @@ func (r *Report) ToMarkdown() string {
 	// document, BUILD.md performance table); "—" when the pass was skipped.
 	b.WriteString("## Per document\n\n| Document | Replacements | Deep-scan | Warnings |\n| --- | --- | --- | --- |\n")
 	for _, d := range r.Documents {
-		llm := "—"
+		llm := "-"
 		if d.LLMDurationMS > 0 {
 			llm = fmt.Sprintf("%d ms", d.LLMDurationMS)
 		}

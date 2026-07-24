@@ -60,7 +60,7 @@ func TestPptxGolden(t *testing.T) {
 		t.Fatalf("Pptx: %v", err)
 	}
 
-	want := "## Slide 1 — Quarterly Review\n\n" +
+	want := "## Slide 1: Quarterly Review\n\n" +
 		"- Revenue grew\n" +
 		"  - Driven by Borealis Fund\n" +
 		"\n" +

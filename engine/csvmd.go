@@ -70,7 +70,7 @@ func ParseCSV(raw []byte) (grid [][]string, warnings []string, err error) {
 	}
 	if ragged > 0 {
 		warnings = append(warnings, fmt.Sprintf(
-			"%d row(s) had fewer columns than the widest row (%d columns) and were padded with empty cells — check the source file if columns look shifted",
+			"%d row(s) had fewer columns than the widest row (%d columns) and were padded with empty cells, check the source file if columns look shifted",
 			ragged, width))
 	}
 	return grid, warnings, nil

@@ -1,6 +1,9 @@
 # --- Go / Wails build output ---
-/build/
-/build/bin/
+# Everything under build/ is generated EXCEPT appicon.png, which is the
+# committed application icon Wails embeds into the Windows executable
+# (generated once by `go run scripts/genicon.go`, BUILD-02 Phase 1g).
+/build/*
+!/build/appicon.png
 *.exe
 
 # Wails may generate a frontend dist folder on some setups
@@ -10,7 +13,11 @@
 /frontend/wailsjs
 
 # --- Local session files (contain the re-identification key!) ---
+# The one exception is the committed MIGRATION FIXTURE: a hand-written v1
+# session with obviously fictional content (no real re-identification
+# key), required by TestSessionMigrationV1.
 *.anonsession.json
+!testdata/session_v1.anonsession.json
 
 # --- OS junk ---
 .DS_Store

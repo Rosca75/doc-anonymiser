@@ -3,7 +3,7 @@
 // A .pptx file is a zip archive with one XML file per slide
 // (ppt/slides/slide1.xml, slide2.xml, …, DrawingML). Mapping implemented
 // (CLAUDE.md §5, BUILD.md Phase 1B):
-//   - one "## Slide N — <title>" section per slide, in slide order
+//   - one "## Slide N: <title>" section per slide, in slide order
 //     ("## Slide N" when the slide has no title placeholder)
 //   - body text frames with bullet indentation (a:pPr lvl)
 //   - tables (a:tbl) → markdown tables
@@ -34,7 +34,7 @@ func Pptx(raw []byte) (markdown string, warnings []string, err error) {
 	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
 		return "", nil, fmt.Errorf(
-			"the file is not a valid .pptx (it is not a zip archive: %v) — if it is an old binary .ppt file, open it in PowerPoint and save it as .pptx first", err)
+			"the file is not a valid .pptx (it is not a zip archive: %v), if it is an old binary .ppt file, open it in PowerPoint and save it as .pptx first", err)
 	}
 
 	// Collect slide entries and sort them by slide number.
@@ -51,7 +51,7 @@ func Pptx(raw []byte) (markdown string, warnings []string, err error) {
 	}
 	if len(slides) == 0 {
 		return "", nil, fmt.Errorf(
-			"the file contains no slides (no ppt/slides/slideN.xml entries) — it may be corrupted or not a real PowerPoint file")
+			"the file contains no slides (no ppt/slides/slideN.xml entries), it may be corrupted or not a real PowerPoint file")
 	}
 	sort.Slice(slides, func(i, j int) bool { return slides[i].n < slides[j].n })
 
@@ -63,12 +63,12 @@ func Pptx(raw []byte) (markdown string, warnings []string, err error) {
 		}
 		title, body, err := parseSlide(data)
 		if err != nil {
-			return "", nil, fmt.Errorf("could not parse slide %d: %w — the file may be corrupted; try re-saving it in PowerPoint", s.n, err)
+			return "", nil, fmt.Errorf("could not parse slide %d: %w, the file may be corrupted; try re-saving it in PowerPoint", s.n, err)
 		}
 
-		// Section heading: "## Slide N — Title" (or just "## Slide N").
+		// Section heading: "## Slide N: Title" (or just "## Slide N").
 		if title != "" {
-			out.WriteString(fmt.Sprintf("## Slide %d — %s\n\n", s.n, title))
+			out.WriteString(fmt.Sprintf("## Slide %d: %s\n\n", s.n, title))
 		} else {
 			out.WriteString(fmt.Sprintf("## Slide %d\n\n", s.n))
 		}

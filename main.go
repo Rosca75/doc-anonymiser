@@ -52,6 +52,6 @@ func main() {
 	if err != nil {
 		// If the window cannot even be created there is no UI to show
 		// the error in, so log it for the terminal / event log.
-		log.Fatalf("doc-anonymiser failed to start: %v — on Windows check that WebView2 is installed (it ships with Windows 10/11); on Linux install libgtk-3 and libwebkit2gtk-4.1", err)
+		log.Fatalf("doc-anonymiser failed to start: %v, on Windows check that WebView2 is installed (it ships with Windows 10/11); on Linux install libgtk-3 and libwebkit2gtk-4.1", err)
 	}
 }

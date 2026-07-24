@@ -24,13 +24,30 @@ import (
 	"doc-anonymiser/ollama"
 )
 
-// Settings are the user-tweakable options (Configure screen). They are
-// deliberately tiny: level, Ollama port (host locked to loopback) and the
-// model name (never hardcoded outside this default — CLAUDE.md §7).
+// Settings are the user-tweakable options (Configure screen): level (the
+// last chosen preset), the granular category switches, Ollama port (host
+// locked to loopback) and the model name (never hardcoded outside this
+// default — CLAUDE.md §7).
+//
+// Wails bridge payload shape (matched by state.js settings):
+//
+//	{ "level": "medium", "categories": {"email": true, ...},
+//	  "ollamaPort": 11434, "model": "qwen2.5:3b-instruct" }
 type Settings struct {
-	Level      string `json:"level"`      // soft | medium | advanced
-	OllamaPort int    `json:"ollamaPort"` // loopback port only
-	Model      string `json:"model"`      // Ollama model name
+	Level string `json:"level"` // soft | medium | advanced (last chosen preset)
+	// Categories is the granular switch set the pipeline obeys
+	// (BUILD-02 Phase 3). nil/empty means "use the Level preset".
+	Categories engine.CategorySelection `json:"categories"`
+	OllamaPort int                      `json:"ollamaPort"` // loopback port only
+	Model      string                   `json:"model"`      // Ollama model name
+	// ContextSize is the Ollama num_ctx option (BUILD-02 Phase 5b).
+	// Default 8192; 0 keeps the model default. Higher values let the AI
+	// read longer documents at once but use more memory.
+	ContextSize int `json:"contextSize"`
+	// UseAI is the master "Use local AI (Ollama)" toggle (BUILD-02
+	// Phase 6d). Every AI-dependent control gates on UseAI AND the live
+	// Ollama availability; the choice persists in sessions.
+	UseAI bool `json:"useAI"`
 }
 
 // DocumentInfo is the frontend-facing summary of one loaded Document.
@@ -87,6 +104,12 @@ type App struct {
 	// running / cancelRun manage the in-flight pipeline goroutine.
 	running   bool
 	cancelRun context.CancelFunc
+	// cancelDiscovery manages the in-flight discovery run (BUILD-02
+	// Phase 7d); nil when idle.
+	cancelDiscovery context.CancelFunc
+	// lastReq remembers the latest pipeline inputs so the same-format
+	// export reproduces identical replacements (BUILD-02 Phase 11).
+	lastReq *RunRequest
 }
 
 // NewApp constructs the bound struct. Kept trivial on purpose: anything
@@ -95,9 +118,10 @@ func NewApp() *App {
 	return &App{
 		llm: ollama.New(""), // "" = default loopback base URL
 		settings: Settings{
-			Level:      string(engine.LevelMedium), // documented default
-			OllamaPort: 11434,
-			Model:      ollama.DefaultModel,
+			Level:       string(engine.LevelMedium), // documented default
+			OllamaPort:  11434,
+			Model:       ollama.DefaultModel,
+			ContextSize: ollama.DefaultContextSize,
 		},
 	}
 }
@@ -148,7 +172,7 @@ func (a *App) ImportFiles() (ImportResult, error) {
 	})
 	if err != nil {
 		return ImportResult{}, fmt.Errorf(
-			"the file dialog could not be opened (%v) — try again; if it keeps failing, restart the application", err)
+			"the file dialog could not be opened (%v), try again; if it keeps failing, restart the application", err)
 	}
 	return a.importPaths(paths), nil
 }
@@ -164,7 +188,7 @@ func (a *App) importPaths(paths []string) ImportResult {
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf(
-				"could not read %q: %v — check that the file still exists and you have permission to read it", path, err))
+				"could not read %q: %v, check that the file still exists and you have permission to read it", path, err))
 			continue
 		}
 		docs, err := engine.LoadAll(filepath.Base(path), raw)
@@ -254,11 +278,15 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 	case engine.LevelSoft, engine.LevelMedium, engine.LevelAdvanced:
 	default:
 		return ollama.OllamaStatus{}, fmt.Errorf(
-			"unknown anonymisation level %q — expected soft, medium or advanced", s.Level)
+			"unknown anonymisation level %q, expected soft, medium or advanced", s.Level)
 	}
 	if s.OllamaPort < 1 || s.OllamaPort > 65535 {
 		return ollama.OllamaStatus{}, fmt.Errorf(
-			"invalid Ollama port %d — expected a number between 1 and 65535 (default 11434)", s.OllamaPort)
+			"invalid Ollama port %d, expected a number between 1 and 65535 (default 11434)", s.OllamaPort)
+	}
+	if s.ContextSize < 0 || s.ContextSize > 1<<20 {
+		return ollama.OllamaStatus{}, fmt.Errorf(
+			"invalid context size %d, expected 0 (model default) or a positive number of tokens such as 8192", s.ContextSize)
 	}
 
 	a.mu.Lock()
@@ -267,6 +295,7 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 	if s.Model != "" {
 		a.llm.Model = s.Model
 	}
+	a.llm.ContextSize = s.ContextSize
 	a.mu.Unlock()
 	return a.llm.Probe(), nil
 }
@@ -275,4 +304,41 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 // (never hardcoded — CLAUDE.md §7). The error string is shown in the UI.
 func (a *App) ListOllamaModels() ([]string, error) {
 	return a.llm.ListModels()
+}
+
+// --- Allowlist (BUILD-02 Phase 4) -------------------------------------------
+
+// DefaultAllowlist returns the seeded never-anonymise terms so the
+// frontend can show them in state.allowlist at startup. The user can
+// remove any of them; the UI list is the only runtime source.
+func (a *App) DefaultAllowlist() []string {
+	return engine.DefaultAllowlistTerms()
+}
+
+// ImportAllowlistCSV opens a native open dialog for a CSV of terms and
+// returns the parsed list. The frontend merges the terms into
+// state.allowlist with its usual dedupe semantics; a cancelled dialog
+// returns nil, nil (a no-op, matching the save-dialog convention).
+func (a *App) ImportAllowlistCSV() ([]string, error) {
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:   "Import allowlist CSV",
+		Filters: []runtime.FileFilter{{DisplayName: "CSV files", Pattern: "*.csv"}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("the file dialog could not be opened (%v), try again; if it keeps failing, restart the application", err)
+	}
+	if path == "" {
+		return nil, nil // user cancelled
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("could not read %q: %v, check that the file still exists and is readable", path, err)
+	}
+	return engine.ParseAllowlistCSV(raw)
+}
+
+// SaveAllowlistTemplate writes the downloadable allowlist template behind
+// a native save dialog (cancel is a silent no-op).
+func (a *App) SaveAllowlistTemplate() error {
+	return a.saveWithDialog("allowlist_template.csv", "CSV", "*.csv", engine.AllowlistTemplateCSV())
 }

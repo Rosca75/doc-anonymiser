@@ -12,6 +12,11 @@ import assert from "node:assert/strict";
 import {
   getState, setState, resetState, subscribe,
   WIZARD_STEPS, canGoTo, goTo, nextStep, prevStep,
+  goToScreen, setImportSplit,
+  applyPreset, toggleCategory, selectionPresetName, presetCategories,
+  setUseAI, defaultUseAIFromProbe, llmEnabled,
+  addCandidates, acceptCandidate, rejectCandidate, updateCandidate, acceptAllInCategory,
+  moveVariant, entityAutocomplete, reassignOriginal,
   applyImportResult,
 } from "./state.js";
 
@@ -121,7 +126,7 @@ test("editEntity renames, clears variants, and rejects collisions", () => {
   assert.equal(editEntity("client_names", "Alpine", "Alpine Trust"), true);
   const e = getState().entities[0];
   assert.equal(e.canonical, "Alpine Trust");
-  assert.deepEqual(e.variants, [], "variants must be re-expanded after a rename");
+  assert.equal(e.variants, null, "variants must be back to pending (null) after a rename");
   assert.equal(editEntity("client_names", "Alpine Trust", "borealis"), false, "collision rejected");
   assert.equal(editEntity("client_names", "Alpine Trust", "   "), false, "blank rejected");
 });
@@ -133,7 +138,7 @@ test("manual variants dedupe and clear the expansion cache", () => {
   addManualVariant("person_names", "Peter Stone", "pete"); // dup, other case
   const e = getState().entities[0];
   assert.deepEqual(e.manualVariants, ["Pete"]);
-  assert.deepEqual(e.variants, [], "cache cleared so Go re-expands");
+  assert.equal(e.variants, null, "cache back to pending (null) so Go re-expands");
   setEntityVariants("person_names", "Peter Stone", ["Peter Stone", "Pete"]);
   assert.equal(getState().entities[0].variants.length, 2);
 });
@@ -198,8 +203,269 @@ test("buildRunRequest assembles only pipeline-ready inputs", () => {
 
   const req = buildRunRequest(true);
   assert.equal(req.useDeepScan, true);
-  assert.deepEqual(req.entities, [{ category: "client_names", canonical: "Alpine", manualVariants: [] }]);
+  assert.deepEqual(req.entities, [{ category: "client_names", canonical: "Alpine", manualVariants: [], excludedVariants: [] }]);
   assert.deepEqual(req.allowTerms, ["CSSF"]);
   assert.deepEqual(req.patterns, [{ expr: "PRJ-[0-9]+" }]);
   assert.equal(req.simpleRules.length, 1);
+});
+
+// --- Screen navigation (BUILD-02 Phase 2) -----------------------------------
+
+test("goToScreen switches screens and rejects unknown names", () => {
+  resetState();
+  assert.equal(getState().screen, "home");
+  assert.equal(goToScreen("wizard"), true);
+  assert.equal(getState().screen, "wizard");
+  assert.equal(goToScreen("docs"), true);
+  assert.equal(getState().screen, "docs");
+  assert.equal(goToScreen("settings"), false);
+  assert.equal(getState().screen, "docs");
+});
+
+test("wizard state survives navigating to home and back", () => {
+  resetState();
+  setState({ documents: [{ name: "a.txt" }] });
+  goToScreen("wizard");
+  goTo("configure");
+  goToScreen("home");
+  goToScreen("wizard");
+  assert.equal(getState().step, "configure");
+  assert.equal(getState().documents.length, 1);
+});
+
+test("setImportSplit clamps and rejects non-numbers", () => {
+  resetState();
+  const cases = [
+    [0, 0.2],
+    [0.1, 0.2],
+    [0.5, 0.5],
+    [0.95, 0.8],
+  ];
+  for (const [input, want] of cases) {
+    assert.equal(setImportSplit(input), want, `split(${input})`);
+    assert.equal(getState().importSplit, want);
+  }
+  // NaN and non-numbers are rejected, leaving the stored value untouched.
+  setImportSplit(0.5);
+  assert.equal(setImportSplit(NaN), null);
+  assert.equal(setImportSplit("0.7"), null);
+  assert.equal(getState().importSplit, 0.5);
+});
+
+// --- Category presets and granular switches (BUILD-02 Phase 3) ---------------
+
+test("applyPreset fills the expected switches per level", () => {
+  resetState();
+  applyPreset("soft");
+  let c = getState().settings.categories;
+  assert.equal(c.email, true);
+  assert.equal(c.person_names, false, "soft leaves persons off");
+  assert.equal(c.amount, false);
+  applyPreset("medium");
+  c = getState().settings.categories;
+  assert.equal(c.person_names, true);
+  assert.equal(c.date, false, "medium leaves dates off");
+  applyPreset("advanced");
+  c = getState().settings.categories;
+  assert.equal(c.date, true);
+  assert.equal(c.organisation_names, true);
+  assert.equal(getState().settings.level, "advanced");
+});
+
+test("toggleCategory flips one switch and flags the selection as custom", () => {
+  resetState();
+  applyPreset("medium");
+  assert.equal(selectionPresetName(getState().settings.categories), "medium");
+  assert.equal(toggleCategory("email", false), true);
+  const c = getState().settings.categories;
+  assert.equal(c.email, false);
+  assert.equal(c.phone, true, "other switches untouched");
+  assert.equal(selectionPresetName(c), "custom");
+  // Unknown keys are rejected.
+  assert.equal(toggleCategory("no_such_category", true), false);
+});
+
+test("selectionPresetName recognises each exact preset", () => {
+  for (const level of ["soft", "medium", "advanced"]) {
+    assert.equal(selectionPresetName(presetCategories(level)), level);
+  }
+});
+
+test("buildRunRequest carries the category selection", () => {
+  resetState();
+  applyPreset("soft");
+  const req = buildRunRequest(false);
+  assert.deepEqual(req.categories, presetCategories("soft"));
+  toggleCategory("iban", false);
+  assert.equal(buildRunRequest(false).categories.iban, false);
+});
+
+// --- Local-AI gating (BUILD-02 Phase 6) ---------------------------------------
+
+test("llmEnabled requires BOTH the toggle and a reachable Ollama", () => {
+  resetState();
+  setState({ ollama: { available: true, models: [], detail: "" } });
+  setUseAI(false);
+  assert.equal(llmEnabled(), false, "toggle off blocks AI even with Ollama up");
+  setUseAI(true);
+  assert.equal(llmEnabled(), true);
+  setState({ ollama: { available: false, models: [], detail: "" } });
+  assert.equal(llmEnabled(), false, "Ollama down blocks AI even with toggle on");
+});
+
+test("defaultUseAIFromProbe fills the default once, never overrides a choice", () => {
+  resetState();
+  assert.equal(getState().settings.useAI, null);
+  defaultUseAIFromProbe(true);
+  assert.equal(getState().settings.useAI, true, "default follows availability");
+  // A later probe result must not flip an established value.
+  defaultUseAIFromProbe(false);
+  assert.equal(getState().settings.useAI, true);
+  // An explicit user choice survives everything.
+  setUseAI(false);
+  defaultUseAIFromProbe(true);
+  assert.equal(getState().settings.useAI, false);
+});
+
+// --- Candidate review gate (BUILD-02 Phase 9b) --------------------------------
+
+test("candidates wait for explicit accept; accept moves them to entities", () => {
+  resetState();
+  const added = addCandidates([
+    { text: "Alpine Trust", category: "client_names", count: 3 },
+    { text: "Marie Duval", category: "person_names" },
+  ], "smart");
+  assert.equal(added, 2);
+  assert.equal(getState().entities.length, 0, "nothing reaches entities without accept");
+
+  assert.equal(acceptCandidate("Alpine Trust"), true);
+  assert.equal(getState().entities.length, 1);
+  assert.equal(getState().entities[0].category, "client_names");
+  assert.equal(getState().candidates.length, 1, "accepted candidate leaves the review list");
+});
+
+test("reject removes, duplicates and existing entities are skipped", () => {
+  resetState();
+  addEntities([{ category: "client_names", canonical: "Known Corp" }]);
+  const added = addCandidates([
+    { text: "Known Corp", category: "client_names" }, // already an entity
+    { text: "Fresh Co", category: "client_names" },
+    { text: "fresh co", category: "client_names" },   // case-insensitive dup
+  ], "local-ai");
+  assert.equal(added, 1);
+  rejectCandidate("Fresh Co");
+  assert.equal(getState().candidates.length, 0);
+  assert.equal(getState().entities.length, 1, "reject never touches entities");
+});
+
+test("edit then accept uses the edited text and category", () => {
+  resetState();
+  addCandidates([{ text: "alpin trust", category: "person_names" }], "smart");
+  assert.equal(updateCandidate("alpin trust", { text: "Alpine Trust", category: "client_names" }), true);
+  // A collision with another candidate is rejected.
+  addCandidates([{ text: "Other Co", category: "client_names" }], "smart");
+  assert.equal(updateCandidate("Other Co", { text: "Alpine Trust" }), false);
+
+  acceptCandidate("Alpine Trust");
+  const e = getState().entities[0];
+  assert.equal(e.canonical, "Alpine Trust");
+  assert.equal(e.category, "client_names");
+});
+
+test("bulk accept drains one category only", () => {
+  resetState();
+  addCandidates([
+    { text: "C One", category: "client_names" },
+    { text: "C Two", category: "client_names" },
+    { text: "P One", category: "person_names" },
+  ], "smart");
+  assert.equal(acceptAllInCategory("client_names"), 2);
+  assert.equal(getState().entities.length, 2);
+  assert.equal(getState().candidates.length, 1);
+  assert.equal(getState().candidates[0].text, "P One");
+});
+
+// --- Variant regrouping (BUILD-02 Phase 9d) ------------------------------------
+
+test("moveVariant happy path: source excludes, target gains, both re-pend", () => {
+  resetState();
+  addEntities([
+    { category: "person_names", canonical: "Jean Muller" },
+    { category: "person_names", canonical: "J Muller Sr" },
+  ]);
+  setEntityVariants("person_names", "Jean Muller", ["Jean Muller", "J. Muller"]);
+  setEntityVariants("person_names", "J Muller Sr", ["J Muller Sr"]);
+
+  assert.equal(moveVariant("person_names", "Jean Muller", "person_names", "J Muller Sr", "J. Muller"), true);
+  const from = getState().entities.find((e) => e.canonical === "Jean Muller");
+  const to = getState().entities.find((e) => e.canonical === "J Muller Sr");
+  assert.deepEqual(from.excludedVariants, ["J. Muller"]);
+  assert.deepEqual(to.manualVariants, ["J. Muller"]);
+  assert.equal(from.variants, null, "source re-expands");
+  assert.equal(to.variants, null, "target re-expands");
+});
+
+test("moveVariant rejects self-drops, unknown rows and absent variants", () => {
+  resetState();
+  addEntities([
+    { category: "person_names", canonical: "Jean Muller" },
+    { category: "client_names", canonical: "Alpine" },
+  ]);
+  setEntityVariants("person_names", "Jean Muller", ["Jean Muller"]);
+  setEntityVariants("client_names", "Alpine", ["Alpine"]);
+
+  assert.equal(moveVariant("person_names", "Jean Muller", "person_names", "Jean Muller", "Jean Muller"), false, "self-drop");
+  assert.equal(moveVariant("person_names", "Ghost", "client_names", "Alpine", "x"), false, "unknown source");
+  assert.equal(moveVariant("person_names", "Jean Muller", "client_names", "Alpine", "Not A Variant"), false, "absent variant");
+  // No state damage from rejected moves.
+  assert.equal(getState().entities.find((e) => e.canonical === "Alpine").manualVariants.length, 0);
+});
+
+test("moveVariant across categories re-pends only the two touched rows", () => {
+  resetState();
+  addEntities([
+    { category: "person_names", canonical: "Jean Muller" },
+    { category: "client_names", canonical: "Alpine" },
+    { category: "client_names", canonical: "Borealis" },
+  ]);
+  setEntityVariants("person_names", "Jean Muller", ["Jean Muller", "Muller"]);
+  setEntityVariants("client_names", "Alpine", ["Alpine"]);
+  setEntityVariants("client_names", "Borealis", ["Borealis"]);
+
+  assert.equal(moveVariant("person_names", "Jean Muller", "client_names", "Alpine", "Muller"), true);
+  const untouched = getState().entities.find((e) => e.canonical === "Borealis");
+  assert.deepEqual(untouched.variants, ["Borealis"], "third row untouched");
+  const pendingNames = getState().entities.filter((e) => e.variants === null).map((e) => e.canonical).sort();
+  assert.deepEqual(pendingNames, ["Alpine", "Jean Muller"]);
+});
+
+// --- Reassignment helpers (BUILD-02 Phase 10d) --------------------------------
+
+test("entityAutocomplete ranks prefix matches before substring matches", () => {
+  resetState();
+  addEntities([
+    { category: "person_names", canonical: "Jean Muller" },
+    { category: "person_names", canonical: "Muller Freres" },
+    { category: "client_names", canonical: "Amullertech" },
+  ]);
+  const got = entityAutocomplete("muller");
+  assert.equal(got.length, 3);
+  assert.equal(got[0].canonical, "Muller Freres", "prefix match first");
+  assert.ok(got.slice(1).map((m) => m.canonical).includes("Jean Muller"));
+  assert.deepEqual(entityAutocomplete(""), []);
+});
+
+test("reassignOriginal removes a standalone entity and adds the variant", () => {
+  resetState();
+  addEntities([
+    { category: "person_names", canonical: "Jean Muller" },
+    { category: "person_names", canonical: "J. Muller" }, // earned its own placeholder
+  ]);
+  assert.equal(reassignOriginal("J. Muller", "person_names", "Jean Muller"), true);
+  const entities = getState().entities;
+  assert.equal(entities.length, 1, "the standalone entity is folded in");
+  assert.deepEqual(entities[0].manualVariants, ["J. Muller"]);
+  assert.equal(entities[0].variants, null, "target re-expands");
+  // Unknown target rejected, state untouched.
+  assert.equal(reassignOriginal("X", "person_names", "Ghost"), false);
 });

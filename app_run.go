@@ -15,13 +15,51 @@ import (
 // entities, allowlist, patterns, rules and whether to use the LLM
 // deep-scan. Level/model/port come from the stored settings.
 type RunRequest struct {
-	Entities    []engine.Entity        `json:"entities"`
-	AllowTerms  []string               `json:"allowTerms"`
-	Patterns    []engine.CustomPattern `json:"patterns"`
-	SimpleRules []engine.SimpleRule    `json:"simpleRules"`
+	Entities   []engine.Entity        `json:"entities"`
+	AllowTerms []string               `json:"allowTerms"`
+	Patterns   []engine.CustomPattern `json:"patterns"`
+	// Categories is the granular per-category switch set from the
+	// Configure screen (BUILD-02 Phase 3). nil falls back to the stored
+	// settings, then to the level preset.
+	Categories  engine.CategorySelection `json:"categories"`
+	SimpleRules []engine.SimpleRule      `json:"simpleRules"`
 	// UseDeepScan enables pass 3. The UI only offers it when Ollama is
 	// available; the flag is also forced off server-side when it is not.
 	UseDeepScan bool `json:"useDeepScan"`
+}
+
+// MappingInfo is the per-placeholder lookup the results view uses for
+// hover tooltips and click-to-reassign (BUILD-02 Phase 10a). MEMORY NOTE:
+// this is the re-identification key; it lives in the app process exactly
+// like the Go-side registry and is never written anywhere by this path.
+type MappingInfo struct {
+	Original string `json:"original"`
+	Category string `json:"category"`
+}
+
+// pipelineDonePayload is the "pipeline:done" event body: the results
+// plus the placeholder → original mapping (embedded, so the frontend
+// keeps reading results fields as before and finds .mapping next to them).
+type pipelineDonePayload struct {
+	*engine.Results
+	Mapping map[string]MappingInfo `json:"mapping"`
+}
+
+// GetMapping returns the current placeholder → {original, category}
+// lookup from the session registry (empty before the first run). The
+// fast re-run path refreshes the frontend copy through this method.
+func (a *App) GetMapping() map[string]MappingInfo {
+	a.mu.Lock()
+	reg := a.registry
+	a.mu.Unlock()
+	out := map[string]MappingInfo{}
+	if reg == nil {
+		return out
+	}
+	for _, e := range reg.Export() {
+		out[e.Placeholder] = MappingInfo{Original: e.Original, Category: e.Category}
+	}
+	return out
 }
 
 // RunPipeline starts the pipeline in a goroutine and returns immediately.
@@ -32,11 +70,11 @@ func (a *App) RunPipeline(req RunRequest) error {
 	a.mu.Lock()
 	if a.running {
 		a.mu.Unlock()
-		return fmt.Errorf("a run is already in progress — cancel it or wait for it to finish")
+		return fmt.Errorf("a run is already in progress, cancel it or wait for it to finish")
 	}
 	if len(a.docs) == 0 {
 		a.mu.Unlock()
-		return fmt.Errorf("no documents to process — import files on the Import screen first")
+		return fmt.Errorf("no documents to process, import files on the Import screen first")
 	}
 	a.running = true
 	ctx, cancel := context.WithCancel(context.Background())
@@ -54,12 +92,17 @@ func (a *App) RunPipeline(req RunRequest) error {
 		if err != nil && results == nil {
 			// Only construction-level failures land here; a cancelled
 			// run still carries partial results.
-			a.emit("pipeline:done", engine.Results{Report: engine.Report{
-				Warnings: []string{err.Error()},
-			}})
+			a.emit("pipeline:done", pipelineDonePayload{
+				Results: &engine.Results{Report: engine.Report{
+					Warnings: []string{err.Error()},
+				}},
+				Mapping: a.GetMapping(),
+			})
 			return
 		}
-		a.emit("pipeline:done", results)
+		// The mapping rides along so the results view can show originals
+		// on hover without a second round-trip (BUILD-02 Phase 10a).
+		a.emit("pipeline:done", pipelineDonePayload{Results: results, Mapping: a.GetMapping()})
 	}()
 	return nil
 }
@@ -72,6 +115,12 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 	docs := make([]engine.Document, len(a.docs))
 	copy(docs, a.docs)
 	level := engine.Level(a.settings.Level)
+	// The request's selection wins; stored settings are the fallback so
+	// exports and re-runs behave like the last configured run.
+	categories := req.Categories
+	if categories == nil {
+		categories = a.settings.Categories
+	}
 	llm := a.llm
 	// The registry lives for the whole session so placeholders stay
 	// stable across runs and late-imported batches (CLAUDE.md §5).
@@ -79,6 +128,10 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 		a.registry = engine.NewRegistry()
 	}
 	reg := a.registry
+	// Remember the run inputs: the same-format export (BUILD-02 Phase 11)
+	// re-runs the identical span machinery over the original bytes.
+	reqCopy := req
+	a.lastReq = &reqCopy
 	a.mu.Unlock()
 
 	allow := engine.NewEmptyAllowlist()
@@ -91,6 +144,7 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 		Entities:    req.Entities,
 		Patterns:    req.Patterns,
 		Level:       level,
+		Categories:  categories,
 		Allowlist:   allow,
 		Registry:    reg,
 		SimpleRules: req.SimpleRules,
@@ -139,7 +193,7 @@ func (a *App) FastRerun(req RunRequest) (*engine.Results, error) {
 	a.mu.Lock()
 	if a.running {
 		a.mu.Unlock()
-		return nil, fmt.Errorf("a run is already in progress — wait for it to finish before re-running")
+		return nil, fmt.Errorf("a run is already in progress, wait for it to finish before re-running")
 	}
 	a.mu.Unlock()
 	return a.runPipelineBlocking(context.Background(), req)

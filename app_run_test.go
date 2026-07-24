@@ -51,7 +51,7 @@ func TestFastRerunAppliesEntityWithoutLLM(t *testing.T) {
 			chatCalls.Add(1)
 			resp, _ := json.Marshal(map[string]interface{}{
 				"message": map[string]string{"role": "assistant",
-					"content": `{"client_names":["Alpine Trust"],"project_names":[],"pwc_internal_names":[],"person_names":[]}`},
+					"content": `{"client_names":["Alpine Trust"],"project_names":[],"internal_names":[],"person_names":[]}`},
 			})
 			w.Write(resp)
 		default:
@@ -121,5 +121,87 @@ func TestRunPipelineRejectsEmptyAndConcurrent(t *testing.T) {
 	}
 	if _, err := app.FastRerun(RunRequest{}); err == nil {
 		t.Error("fast rerun during a run must be rejected")
+	}
+}
+
+// TestApplySettingsRoundTrip (BUILD-02 Phase 6): ContextSize, UseAI and
+// Categories survive ApplySettings and reach the Ollama client / pipeline
+// configuration.
+func TestApplySettingsRoundTrip(t *testing.T) {
+	app := NewApp()
+	sel := engine.PresetSelection(engine.LevelSoft)
+	sel["email"] = false
+
+	// The probe will fail (no server on that port) but ApplySettings must
+	// still store the settings; availability is status, not an error.
+	_, err := app.ApplySettings(Settings{
+		Level:       "soft",
+		Categories:  sel,
+		OllamaPort:  18434,
+		Model:       "custom:3b",
+		ContextSize: 16384,
+		UseAI:       true,
+	})
+	if err != nil {
+		t.Fatalf("ApplySettings: %v", err)
+	}
+	got := app.GetSettings()
+	if got.ContextSize != 16384 || !got.UseAI || got.Model != "custom:3b" {
+		t.Errorf("settings not stored: %+v", got)
+	}
+	if got.Categories["email"] || !got.Categories["client_names"] {
+		t.Errorf("categories not stored: %+v", got.Categories)
+	}
+	if app.llm.ContextSize != 16384 {
+		t.Errorf("client ContextSize = %d, want 16384", app.llm.ContextSize)
+	}
+
+	// Invalid context size is rejected with an actionable message.
+	if _, err := app.ApplySettings(Settings{Level: "soft", OllamaPort: 11434, ContextSize: -1}); err == nil {
+		t.Error("negative context size must be rejected")
+	}
+}
+
+// TestPipelineDonePayloadIncludesMapping (BUILD-02 Phase 10a): after a
+// run, GetMapping resolves placeholders to originals, and the
+// pipeline:done payload embeds the mapping next to the results fields.
+func TestPipelineDonePayloadIncludesMapping(t *testing.T) {
+	app := NewApp()
+	app.docs = []engine.Document{{Name: "a.txt", Format: engine.FormatTXT,
+		Markdown: "mail one@example.com from Alpine"}}
+
+	res, err := app.runPipelineBlocking(context.Background(), RunRequest{
+		Entities: []engine.Entity{{Category: "client_names", Canonical: "Alpine"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil || len(res.Documents) != 1 {
+		t.Fatal("run produced no results")
+	}
+
+	mapping := app.GetMapping()
+	if info, ok := mapping["[EMAIL_1]"]; !ok || info.Original != "one@example.com" {
+		t.Errorf("mapping missing the email entry: %+v", mapping)
+	}
+	if info, ok := mapping["[CLIENT_1]"]; !ok || info.Original != "Alpine" || info.Category != "client_names" {
+		t.Errorf("mapping missing the client entry: %+v", mapping)
+	}
+
+	// The payload embeds results fields AND the mapping side by side
+	// (what the frontend actually receives after JSON serialisation).
+	payload, err := json.Marshal(pipelineDonePayload{Results: res, Mapping: mapping})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := decoded["documents"]; !ok {
+		t.Error("payload must keep the results fields inline")
+	}
+	if _, ok := decoded["mapping"]; !ok {
+		t.Error("payload must carry the mapping")
 	}
 }

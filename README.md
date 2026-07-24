@@ -15,10 +15,20 @@ information and engagement-specific names from text-based documents:
 - `.xlsx` — Excel workbooks
 - `.pdf` — PDF documents (experimental)
 
-Office and PDF files are converted to Markdown on import and exported as text
-formats (`.md`, `.txt`, `.csv`, or `.json`) — the app never writes back a
-binary Office or PDF file. PDF support is experimental: it reads the text
-layer only and does not perform OCR, so scanned PDFs cannot be processed.
+Office and PDF files are converted to Markdown on import for preview and
+processing, and export as text formats (`.md`, `.txt`, `.csv`, or `.json`).
+Word, PowerPoint and Excel files can ALSO export as a **same-format
+anonymised copy** (`.docx`, `.pptx`, `.xlsx`): the app rewrites a copy of
+the original bytes held in memory, so the layout, styles and images are
+preserved. One limitation: a replacement that spans differently formatted
+text runs (for example a name whose first half is bold) adopts the
+formatting of its first run. Document properties (title, author, company,
+custom fields) and the export filename go through the same anonymisation
+with an explicit review step; nothing is rewritten silently. The app never
+modifies your original files: when you choose a same-format export, it
+writes a new anonymised copy and your source file is left exactly as it
+was. PDF support is experimental: it reads the text layer only and does
+not perform OCR, so scanned PDFs cannot be processed.
 
 It replaces emails, phone numbers, IBANs, national IDs, VAT numbers, person
 names, client names, project names and more with stable placeholders such as
@@ -26,22 +36,39 @@ names, client names, project names and more with stable placeholders such as
 A re-identification key (original → placeholder) can be exported so the
 process is reversible by you — and only by you.
 
+The app opens on a Home page; "Anonymise documents" starts the wizard,
+and your work survives navigating between Home and the wizard.
+
 ## The wizard flow
 
 1. **Import** — open your documents through a native file dialog (or drag
    and drop). CSV files and flat Excel sheets are shown as a table for easy
-   review; each Excel sheet becomes its own document.
-2. **Configure** — pick a level (`soft`, `medium` — the default, or
-   `advanced`) and, optionally, the local AI model.
-3. **Entities** — declare (or let the AI discover) client, project, PwC
-   and person names to replace; maintain an allowlist of terms that must
-   never be touched; add custom regex patterns.
+   review; each Excel sheet becomes its own document. The list and preview
+   panes are resizable.
+2. **Configure** — two focused screens. "What to anonymise" starts from a
+   preset (Soft, Standard — the default, or Thorough) over granular
+   per-category checkboxes (emails, phone numbers, bank accounts, names,
+   dates, amounts, ...), plus the allowlist with CSV import and a
+   downloadable template. "AI and advanced settings" holds the master
+   "Use local AI (Ollama)" toggle, port, model and context size.
+3. **Entities** — three discovery methods: auto-discovery with the local
+   AI (when enabled), always-available **Smart detection** (finds likely
+   names offline by how they are written, with a Luxembourg-aware
+   legal-form gazetteer), and a cloud placeholder for later. EVERY
+   suggestion lands in one review list; nothing is replaced until you
+   accept it. Manual entries show a live "Found N times in M documents"
+   preview, and variants can be regrouped between entities by
+   drag-and-drop.
 4. **Run** — execute the pipeline with live progress, review the
-   side-by-side before/after with highlighted replacements, and fix
-   anything missed with a fast re-run.
+   side-by-side before/after with highlighted replacements, hover a
+   placeholder to see the original, click it to reassign the value as a
+   variant of another entity, and fix anything missed with a fast re-run.
 5. **Export** — save the anonymised documents through a save dialog
    (single files, a zip of everything, or the clipboard). CSV files come
-   back out as CSV. Your original files are never modified.
+   back out as CSV; Word, PowerPoint and Excel files can export a
+   same-format copy with layout preserved (PDF experimentally, as a
+   simplified regenerated layout), each behind a document-properties
+   review. Your original files are never modified.
 
 ## Optional: local AI assistance with Ollama
 
@@ -89,3 +116,10 @@ _Screenshots will be added here as the UI takes shape._
 - Sensitive state (the re-identification registry) stays in memory unless
   you explicitly save a session, in which case the app warns you that the
   saved file contains the re-identification key.
+- The app never modifies your original files. When you choose a
+  same-format export, it writes a new anonymised copy; your source file
+  is left exactly as it was.
+- Same-format exports also anonymise the document properties stored
+  inside Office files (title, author, company, custom fields) and propose
+  an anonymised export filename, each behind an explicit review panel so
+  you decide field by field.
