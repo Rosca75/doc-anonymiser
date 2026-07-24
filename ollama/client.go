@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -37,14 +38,27 @@ const DefaultBaseURL = "http://127.0.0.1:11434"
 const DefaultModel = "qwen2.5:3b-instruct"
 
 // ErrTooOld is the pinned message for an Ollama old enough to miss
-// /api/chat (CLAUDE.md §7: probe succeeds but chat 404s).
+// /api/chat (CLAUDE.md §7: probe succeeds but chat 404s WITHOUT a
+// model-not-found body; a 404 naming the model means the model is simply
+// not pulled — see Chat).
 const ErrTooOld = "Ollama too old, please update"
 
-// maxPromptBytes caps how much document text is sent per LLM call. Small
-// local models have limited context windows; beyond this size the tail is
-// cut and the UI-visible behaviour stays correct (the deterministic passes
-// always see the FULL text — only the LLM suggestion pass is truncated).
-const maxPromptBytes = 24 * 1024
+// DefaultContextSize is the default num_ctx sent to Ollama (BUILD-02
+// Phase 5b). 8192 replaces the implicit model default (often 2048 for
+// small models), because whole document chunks are sent as prompts. The
+// user can change it in Configure; 0 means "let the model default apply"
+// (the option is omitted from the request).
+const DefaultContextSize = 8192
+
+// chunkOverlapBytes is how much consecutive chunks overlap so an entity
+// name sitting exactly on a chunk boundary is still seen whole by at
+// least one chunk (BUILD-02 Phase 5c).
+const chunkOverlapBytes = 512
+
+// maxChunksPerDocument caps how many chunks one document may produce.
+// Beyond this the scan would take unreasonably long on a small local
+// model; the caller gets an actionable error instead (BUILD-02 Phase 5d).
+const maxChunksPerDocument = 64
 
 // OllamaStatus is the result of probing the local Ollama server. It is sent
 // to the frontend as-is (via app.go), so field names are chosen to read well
@@ -74,6 +88,11 @@ type Client struct {
 	// again — belt and braces, because CLAUDE.md §5 says the allowlist
 	// wins in EVERY pass.
 	Allow func(string) bool
+	// ContextSize is the num_ctx option sent with every chat request
+	// (BUILD-02 Phase 5b). Defaults to DefaultContextSize in New; 0 omits
+	// the option so the model default applies. It also drives the
+	// document chunk budget (promptBudgetBytes).
+	ContextSize int
 
 	// probeClient carries a short timeout so a missing Ollama never hangs
 	// the UI; chatClient allows slow small-model generations (120 s,
@@ -100,6 +119,7 @@ func New(baseURL string) *Client {
 	return &Client{
 		BaseURL:     baseURL,
 		Model:       DefaultModel,
+		ContextSize: DefaultContextSize,
 		probeClient: &http.Client{Timeout: 2 * time.Second},
 		chatClient:  &http.Client{Timeout: 120 * time.Second},
 	}
@@ -187,6 +207,15 @@ type chatRequest struct {
 	Messages []chatMessage `json:"messages"`
 	Format   string        `json:"format"`
 	Stream   bool          `json:"stream"`
+	// Options carries model options; NumCtx sets the context window. A
+	// nil pointer omits the object entirely so the model default applies
+	// (a pointer because json "omitzero" needs Go 1.24 and we pin 1.23).
+	Options *chatOptions `json:"options,omitempty"`
+}
+
+// chatOptions mirrors the Ollama options object; only num_ctx is used.
+type chatOptions struct {
+	NumCtx int `json:"num_ctx,omitempty"`
 }
 
 type chatMessage struct {
@@ -206,7 +235,7 @@ func (c *Client) Chat(ctx context.Context, model, systemPrompt, userPrompt strin
 	if model == "" {
 		model = c.Model
 	}
-	body, err := json.Marshal(chatRequest{
+	reqBody := chatRequest{
 		Model: model,
 		Messages: []chatMessage{
 			{Role: "system", Content: systemPrompt},
@@ -214,7 +243,13 @@ func (c *Client) Chat(ctx context.Context, model, systemPrompt, userPrompt strin
 		},
 		Format: "json",
 		Stream: false,
-	})
+	}
+	if c.ContextSize > 0 {
+		// num_ctx only travels when explicitly configured; 0 keeps the
+		// model default (BUILD-02 Phase 5b).
+		reqBody.Options = &chatOptions{NumCtx: c.ContextSize}
+	}
+	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return "", fmt.Errorf("could not build the Ollama request: %w", err)
 	}
@@ -232,15 +267,46 @@ func (c *Client) Chat(ctx context.Context, model, systemPrompt, userPrompt strin
 	}
 	defer resp.Body.Close()
 
-	// A 404 on /api/chat while /api/tags works means a pre-chat-API
-	// Ollama — the pinned "too old" case (CLAUDE.md §7).
-	if resp.StatusCode == http.StatusNotFound {
-		return "", fmt.Errorf("%s", ErrTooOld)
-	}
+	// Distinct error surfaces per status (BUILD-02 Phase 5a). The old
+	// two-branch mapping wrongly blamed "model not installed" for ANY
+	// non-200, including HTTP 400 context overflows — never again.
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf(
-			"Ollama answered HTTP %d on /api/chat (expected 200), the model %q may not be installed; run 'ollama pull %s' or pick another model in settings",
-			resp.StatusCode, model, model)
+		// Ollama sends {"error":"..."} bodies; read a bounded excerpt.
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		var apiErr struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(bodyBytes, &apiErr)
+
+		switch resp.StatusCode {
+		case http.StatusNotFound:
+			// A 404 whose body names the model means "not pulled";
+			// a bare 404 means the /api/chat endpoint itself is missing,
+			// which is the pinned pre-chat-API "too old" case.
+			if strings.Contains(strings.ToLower(apiErr.Error), "model") {
+				return "", fmt.Errorf(
+					"model %q is not installed; run 'ollama pull %s' or pick another model in settings", model, model)
+			}
+			return "", fmt.Errorf("%s", ErrTooOld)
+		case http.StatusBadRequest:
+			msg := fmt.Sprintf("Ollama rejected the request (HTTP 400): %s", apiErr.Error)
+			low := strings.ToLower(apiErr.Error)
+			if strings.Contains(low, "context") || strings.Contains(low, "length") {
+				msg += " The document chunk was too large for the model's context window; lower the chunk size or raise the context size in Configure."
+			}
+			return "", fmt.Errorf("%s", msg)
+		default:
+			excerpt := apiErr.Error
+			if excerpt == "" {
+				excerpt = strings.TrimSpace(string(bodyBytes))
+				if len(excerpt) > 200 {
+					excerpt = excerpt[:200]
+				}
+			}
+			return "", fmt.Errorf(
+				"Ollama answered HTTP %d on /api/chat (expected 200): %s; check that the Ollama server is healthy, then re-probe in settings",
+				resp.StatusCode, excerpt)
+		}
 	}
 
 	var out chatResponse
@@ -270,20 +336,52 @@ Rules:
 - Use [] for a category with no findings.`
 
 // Discover runs the Phase-A prompt on one document's text and returns raw
-// category → names proposals for the review screen. The caller (app.go)
-// merges multi-file results with MergeProposals.
+// category → names proposals for the review screen. Long documents are
+// CHUNKED (BUILD-02 Phase 5c): each chunk is scanned in sequence, ctx
+// cancellation is honoured between chunks, per-chunk proposals merge
+// through MergeProposals, and the hallucination filter runs against the
+// FULL document text (an entity split across a boundary is covered by the
+// chunk overlap). The caller (app.go) merges multi-file results.
 func (c *Client) Discover(ctx context.Context, text string) ([]engine.ProposedEntity, error) {
-	reply, err := c.Chat(ctx, c.Model, discoverSystemPrompt, clipText(text))
+	return c.scanChunks(ctx, text, func(chunk string) (string, error) {
+		return c.Chat(ctx, c.Model, discoverSystemPrompt, chunk)
+	})
+}
+
+// scanChunks is the shared chunk loop for Discover and DeepScan: chunk,
+// chat per chunk via chat(), parse, merge, then hallucination-filter
+// against the whole document. On mid-loop cancellation the proposals
+// gathered so far are returned WITH the context error, so callers can
+// keep partial results (BUILD-02 Phase 7d).
+func (c *Client) scanChunks(ctx context.Context, text string, chat func(chunk string) (string, error)) ([]engine.ProposedEntity, error) {
+	chunks, err := c.Chunks(text)
 	if err != nil {
 		return nil, err
 	}
-	proposals, err := parseEntityJSON(reply)
-	if err != nil {
-		return nil, err
+	var batches [][]engine.ProposedEntity
+	for _, chunk := range chunks {
+		if err := ctx.Err(); err != nil {
+			return c.filterProposals(ollamaMerge(batches), text), err
+		}
+		reply, err := chat(chunk)
+		if err != nil {
+			return c.filterProposals(ollamaMerge(batches), text), err
+		}
+		proposals, err := parseEntityJSON(reply)
+		if err != nil {
+			return c.filterProposals(ollamaMerge(batches), text), err
+		}
+		batches = append(batches, proposals)
 	}
-	// Hallucination filter: exact-string occurrence in the source
-	// (CLAUDE.md §5) plus the allowlist veto.
-	return c.filterProposals(proposals, text), nil
+	// Hallucination filter (CLAUDE.md §5) against the FULL text plus the
+	// allowlist veto.
+	return c.filterProposals(ollamaMerge(batches), text), nil
+}
+
+// ollamaMerge is MergeProposals over a batch slice (tiny readability
+// helper for scanChunks).
+func ollamaMerge(batches [][]engine.ProposedEntity) []engine.ProposedEntity {
+	return MergeProposals(batches...)
 }
 
 // --- Deep-scan (residual pass) -------------------------------------------
@@ -309,15 +407,9 @@ func (c *Client) DeepScan(ctx context.Context, text string, known []engine.Entit
 		system += "\nKnown (do not report): " + strings.Join(names, "; ")
 	}
 
-	reply, err := c.Chat(ctx, c.Model, system, clipText(text))
-	if err != nil {
-		return nil, err
-	}
-	proposals, err := parseEntityJSON(reply)
-	if err != nil {
-		return nil, err
-	}
-	return c.filterProposals(proposals, text), nil
+	return c.scanChunks(ctx, text, func(chunk string) (string, error) {
+		return c.Chat(ctx, c.Model, system, chunk)
+	})
 }
 
 // filterProposals applies the hallucination filter (exact string must occur
@@ -411,15 +503,94 @@ func parseEntityJSON(reply string) ([]engine.ProposedEntity, error) {
 	return out, nil
 }
 
-// clipText truncates very long documents to the LLM prompt cap (see
-// maxPromptBytes), cutting at a rune boundary.
-func clipText(text string) string {
-	if len(text) <= maxPromptBytes {
-		return text
+// --- Document chunking (BUILD-02 Phase 5c/5d) ------------------------------
+
+// promptBudgetBytes derives the per-chunk byte budget from the configured
+// context size: roughly 3 bytes of typical text per token, with 25% of
+// the window reserved for the system prompt and the model's reply.
+func (c *Client) promptBudgetBytes() int {
+	ctxSize := c.ContextSize
+	if ctxSize <= 0 {
+		ctxSize = DefaultContextSize
 	}
-	cut := maxPromptBytes
-	for cut > 0 && (text[cut]&0xC0) == 0x80 {
-		cut-- // do not split a UTF-8 sequence
+	return ctxSize * 3 * 3 / 4
+}
+
+// Chunks splits a document into prompt-sized chunks, enforcing the
+// maxChunksPerDocument cap with an actionable error (BUILD-02 Phase 5d).
+func (c *Client) Chunks(text string) ([]string, error) {
+	budget := c.promptBudgetBytes()
+	chunks := chunkText(text, budget, chunkOverlapBytes)
+	if len(chunks) > maxChunksPerDocument {
+		return nil, fmt.Errorf(
+			"this document is very large (%d chunks of %d KB); split it into smaller files or run Smart detection instead",
+			len(chunks), budget/1024)
 	}
-	return text[:cut]
+	return chunks, nil
+}
+
+// EstimateChunks reports how many chunks a document would produce, so the
+// UI can warn BEFORE starting a discovery run (BUILD-02 Phase 5d/7e).
+func (c *Client) EstimateChunks(text string) int {
+	return len(chunkText(text, c.promptBudgetBytes(), chunkOverlapBytes))
+}
+
+// chunkText splits text into chunks of at most budgetBytes, preferring to
+// cut at a paragraph break, then a line break, then a space, and never
+// inside a UTF-8 sequence (rune-safe). Consecutive chunks overlap by
+// roughly overlapBytes so entities on a boundary are seen whole at least
+// once. The empty string yields a single empty chunk (callers treat the
+// document uniformly).
+func chunkText(text string, budgetBytes, overlapBytes int) []string {
+	if budgetBytes <= 0 {
+		budgetBytes = DefaultContextSize * 3 * 3 / 4
+	}
+	if len(text) <= budgetBytes {
+		return []string{text}
+	}
+	// Overlap must stay well under the budget or the loop cannot advance.
+	if overlapBytes >= budgetBytes/2 {
+		overlapBytes = budgetBytes / 4
+	}
+
+	var chunks []string
+	start := 0
+	for start < len(text) {
+		end := start + budgetBytes
+		if end >= len(text) {
+			chunks = append(chunks, text[start:])
+			break
+		}
+		// Prefer natural boundaries inside the second half of the window
+		// (searching the whole window could produce degenerate tiny
+		// chunks on paragraph-dense text).
+		windowStart := start + budgetBytes/2
+		cut := -1
+		for _, sep := range []string{"\n\n", "\n", " "} {
+			if idx := strings.LastIndex(text[windowStart:end], sep); idx >= 0 {
+				cut = windowStart + idx + len(sep)
+				break
+			}
+		}
+		if cut < 0 {
+			// No boundary at all (one enormous token): cut at a rune edge.
+			cut = end
+			for cut > start && (text[cut]&0xC0) == 0x80 {
+				cut--
+			}
+		}
+		chunks = append(chunks, text[start:cut])
+
+		// Next chunk starts overlapBytes BEFORE the cut, aligned forward
+		// to a rune boundary, and always past the previous start.
+		next := cut - overlapBytes
+		if next <= start {
+			next = cut
+		}
+		for next < len(text) && (text[next]&0xC0) == 0x80 {
+			next++
+		}
+		start = next
+	}
+	return chunks
 }

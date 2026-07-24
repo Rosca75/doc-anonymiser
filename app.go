@@ -40,6 +40,10 @@ type Settings struct {
 	Categories engine.CategorySelection `json:"categories"`
 	OllamaPort int                      `json:"ollamaPort"` // loopback port only
 	Model      string                   `json:"model"`      // Ollama model name
+	// ContextSize is the Ollama num_ctx option (BUILD-02 Phase 5b).
+	// Default 8192; 0 keeps the model default. Higher values let the AI
+	// read longer documents at once but use more memory.
+	ContextSize int `json:"contextSize"`
 }
 
 // DocumentInfo is the frontend-facing summary of one loaded Document.
@@ -104,9 +108,10 @@ func NewApp() *App {
 	return &App{
 		llm: ollama.New(""), // "" = default loopback base URL
 		settings: Settings{
-			Level:      string(engine.LevelMedium), // documented default
-			OllamaPort: 11434,
-			Model:      ollama.DefaultModel,
+			Level:       string(engine.LevelMedium), // documented default
+			OllamaPort:  11434,
+			Model:       ollama.DefaultModel,
+			ContextSize: ollama.DefaultContextSize,
 		},
 	}
 }
@@ -269,6 +274,10 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 		return ollama.OllamaStatus{}, fmt.Errorf(
 			"invalid Ollama port %d, expected a number between 1 and 65535 (default 11434)", s.OllamaPort)
 	}
+	if s.ContextSize < 0 || s.ContextSize > 1<<20 {
+		return ollama.OllamaStatus{}, fmt.Errorf(
+			"invalid context size %d, expected 0 (model default) or a positive number of tokens such as 8192", s.ContextSize)
+	}
 
 	a.mu.Lock()
 	a.settings = s
@@ -276,6 +285,7 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 	if s.Model != "" {
 		a.llm.Model = s.Model
 	}
+	a.llm.ContextSize = s.ContextSize
 	a.mu.Unlock()
 	return a.llm.Probe(), nil
 }

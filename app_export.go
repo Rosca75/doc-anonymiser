@@ -219,6 +219,10 @@ func (a *App) LoadSessionFromFile() (*engine.Session, error) {
 		Level:      session.Settings.Level,
 		OllamaPort: session.Settings.OllamaPort,
 		Model:      session.Settings.Model,
+		// Not yet persisted in the session file: keep the live values
+		// instead of silently resetting them.
+		Categories:  a.settings.Categories,
+		ContextSize: a.settings.ContextSize,
 	}
 	a.mu.Unlock()
 	// Apply the (possibly different) Ollama port/model through the same
