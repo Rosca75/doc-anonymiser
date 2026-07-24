@@ -1,0 +1,63 @@
+{
+  "_meta": {
+    "purpose": "PwC colour palette for pwc-slide-builder. Use only these values; never invent colours or fetch them from the web.",
+    "source": "User-provided PwC Luxembourg colour specification.",
+    "structure_note": "theme_grid is a standard 10-column Office theme palette. Row 0 is the main (top) row; rows 1-6 are tints (light) to shades (dark) of each column. Columns 2 and 4 are intentionally identical in every row (both #000000 in the main row), so the duplicate black is by design, not an error."
+  },
+  "theme_grid": {
+    "columns": 10,
+    "column_labels": [
+      "white",
+      "black",
+      "light_gray",
+      "black_2",
+      "orange",
+      "orange_2",
+      "peach",
+      "slate",
+      "blue_gray",
+      "light_blue_gray"
+    ],
+    "row_0_main": {
+      "names": [
+        "White",
+        "Black",
+        "Very light gray",
+        "Black",
+        "Bright orange",
+        "Orange",
+        "Light orange / peach",
+        "Slate gray",
+        "Blue-gray",
+        "Light blue-gray"
+      ],
+      "hex": ["#FFFFFF", "#000000", "#EBEBEB", "#000000", "#FD5108", "#FE7C39", "#FFAA72", "#A1A8B3", "#B5BCC4", "#CBD1D6"]
+    },
+    "secondary_rows": {
+      "row_1_lightest": ["#F2F2F2", "#7F7F7F", "#D3D3D3", "#7F7F7F", "#FEDCCD", "#FEE4D7", "#FFEEE2", "#ECEDEF", "#F0F1F3", "#B3BCC3"],
+      "row_2": ["#D8D8D8", "#595959", "#B0B0B0", "#595959", "#FEB99C", "#FECAAF", "#FFDDC6", "#D9DCE0", "#E1E4E7", "#909DA8"],
+      "row_3": ["#C6C6C6", "#464646", "#868686", "#464646", "#FDA078", "#FEB793", "#FFD1B2", "#CBCFD5", "#D6DADE", "#6A7883"],
+      "row_4": ["#BBBBBB", "#3B3B3B", "#6D6D6D", "#3B3B3B", "#F5895B", "#FBA275", "#FFBF95", "#BABFC7", "#C6CBD2", "#54616C"],
+      "row_5": ["#A5A5A5", "#262626", "#3A3A3A", "#262626", "#C23A01", "#E84F01", "#FF7215", "#717C8D", "#808C9A", "#2D343A"],
+      "row_6_darkest": ["#7F7F7F", "#0C0C0C", "#171717", "#0C0C0C", "#812701", "#9A3500", "#B84900", "#4B535E", "#535D68", "#121517"]
+    }
+  },
+  "custom_palette": {
+    "row_1_orange": [
+      { "name": "Bright orange", "hex": "#FD5108" },
+      { "name": "Orange", "hex": "#FE7C39" },
+      { "name": "Light orange", "hex": "#FFAA72" },
+      { "name": "Soft peach", "hex": "#FFCDA8" },
+      { "name": "Very light peach", "hex": "#FFE8D4" },
+      { "name": "Near-white peach", "hex": "#FFF5ED" }
+    ],
+    "row_2_gray_blue": [
+      { "name": "Slate gray", "hex": "#A1A8B3" },
+      { "name": "Blue-gray", "hex": "#B5BCC4" },
+      { "name": "Light blue-gray", "hex": "#CBD1D6" },
+      { "name": "Pale gray-blue", "hex": "#DFE3E6" },
+      { "name": "Very pale gray", "hex": "#EEEFF1" },
+      { "name": "Near-white gray", "hex": "#F5F7F8" }
+    ]
+  }
+}
