@@ -27,7 +27,8 @@ what failed, what was expected, how to fix it.
 ```
 doc-anonymiser/
 ├── CLAUDE.md                  # this file — authoritative
-├── BUILD.md                   # phased implementation plan
+├── BUILD.md                   # phased implementation plan (v1, executed)
+├── BUILD-02.md                # functional-improvements build plan (v2)
 ├── README.md                  # user-facing documentation
 ├── LICENSE                    # MIT, Oscar Liber
 ├── .gitignore
@@ -49,18 +50,25 @@ doc-anonymiser/
 │   ├── allowlist.go           # Terms never anonymised
 │   ├── simplereplace.go       # Manual find-and-replace pass
 │   ├── report.go              # Per-file / per-category statistics
-│   └── session.go             # Save/load session state (JSON)
+│   ├── session.go             # Save/load session state (JSON, schema migrations)
+│   └── exportfmt/             # same-format export: rewrite of original bytes (docx/pptx/xlsx, pdf experimental)
 ├── ollama/
 │   └── client.go              # THE ONLY FILE that talks to Ollama (net/http)
 ├── static/                    # vanilla-JS frontend, embedded via go:embed
 │   ├── index.html
-│   ├── style.css
+│   ├── brand.css              # PwC brand tokens (single source of truth)
+│   ├── style.css              # consumes brand.css variables only
 │   ├── api.js                 # THE ONLY file that calls Go bound methods
 │   ├── state.js               # single source of truth for frontend state
-│   └── views/                 # one JS module per wizard screen
+│   ├── ui.js                  # shared UI toolkit (button/banner/panel/icon)
+│   ├── icons.js               # vendored Material Symbols SVG map
+│   ├── copy.js                # user-visible strings (banners, step copy)
+│   ├── assets/icons/          # vendored Material Symbols SVGs + LICENSE
+│   └── views/                 # one JS module per screen (home, docs, wizard steps)
 ├── .github/workflows/
 │   ├── ci.yml                 # build + test on push/PR
 │   └── release.yml            # on tag: build, zip, attach to Release
+├── docs/brand/color-palette.json  # vendored PwC brand palette (source for static/brand.css)
 └── testdata/                  # fixture documents for unit tests
 ```
 
@@ -87,8 +95,12 @@ doc-anonymiser/
   fully usable without Ollama.
 - **Converters are pure Go and one-way:** `engine/convert/*` may use only the
   Go standard library, excelize, and ledongthuc/pdf (pinned in §7). No CGo,
-  ever. Binary formats convert TO markdown on import; the app never exports
-  back to docx/pptx/xlsx/pdf. If pure-Go PDF extraction quality proves
+  ever. Binary formats convert TO markdown on import for preview and
+  processing. The app can additionally write a NEW anonymised copy in the
+  source format (docx/pptx/xlsx, and experimentally pdf) at export time; this
+  copy is produced by rewriting a copy of the original bytes held in memory
+  (`engine/exportfmt/`). The source file on disk is read once at import and
+  never written, moved, or modified. If pure-Go PDF extraction quality proves
   unacceptable, the recorded fallback is a wazero-embedded WASM extractor
   (P3 pattern) — not a CGo binding.
 
@@ -125,11 +137,15 @@ doc-anonymiser/
   to CSV on export.
 - **Anonymisation levels** (mirror the notebook semantics):
   - `soft` — hard PII (emails, phones, IBANs, national IDs, VAT numbers,
-    URLs with credentials) + engagement entities (client/project/PwC-internal
+    URLs with credentials) + engagement entities (client/project/internal
     names).
   - `medium` (default) — soft + person names. Dates and locations kept.
   - `advanced` — medium + dates, locations, organisation names, monetary
     amounts.
+  - Levels are PRESETS over granular per-category switches
+    (`engine.CategorySelection`, BUILD-02 Phase 3): the pipeline obeys the
+    per-category selection; a level is the UI shorthand that fills it.
+    `medium` remains the default preset.
 - **Pipeline passes (fixed order):**
   1. Deterministic PII regex pass (`engine/pii.go`).
   2. Known-entity pass: discovery results + manual entities, expanded into
@@ -146,8 +162,12 @@ doc-anonymiser/
   placeholder and is exportable as a re-identification key (CSV/JSON).
 - **Allowlist wins:** an allowlisted term is never replaced, by any pass.
 - **Entity categories:** `client_names`, `project_names`,
-  `pwc_internal_names`, `person_names`, `custom_patterns` (user regex),
-  plus PII categories emitted by pass 1.
+  `internal_names`, `person_names`, `custom_patterns` (user regex),
+  plus PII categories emitted by pass 1. The user-visible label for
+  `internal_names` is "Internal". The category was named
+  `pwc_internal_names` (placeholder label `PWC_INTERNAL`) in v1; session
+  files carrying the old key/label MUST load via an explicit migration
+  (`engine/session.go`) — never silently drop user data.
 - **Sensitive state stays in memory** by default. Saving a session (registry
   + entities + settings) to disk is an explicit user action with a warning
   that the file contains the re-identification key.
@@ -176,6 +196,9 @@ doc-anonymiser/
 | Frontend | vanilla JS (ES2020), embedded via go:embed | no npm, no bundler |
 | github.com/xuri/excelize/v2 | v2.9.x | XLSX reading; pure Go, MIT licence |
 | github.com/ledongthuc/pdf | v0.0.0-20240201131950-da5b75280b06 | pure-Go PDF text extraction (BSD-3); limited by design — see §5 PDF rules. Pinned to the 2024-02-01 commit: the later 2025 commit requires Go 1.24, which conflicts with the Go 1.23.x pin above |
+| github.com/pdfcpu/pdfcpu | pin latest v0.x compatible with Go 1.23 at BUILD-02 Phase 13 start | PDF Info dictionary + XMP metadata rewrite for same-format export; Apache-2.0; pure Go. VERIFY its go.mod allows Go 1.23.x before adopting (precedent: ledongthuc/pdf) |
+| github.com/go-pdf/fpdf | v0.9.x | pure-Go PDF writer for the regenerated-PDF fallback (BUILD-02 Phase 13); MIT. Only added if the fallback path is taken |
+| Material Symbols SVGs (assets, not a Go module) | snapshot at BUILD-02 Phase 1 | individual SVG files vendored into `static/assets/icons/`; Apache-2.0; licence text at `static/assets/icons/LICENSE` |
 
 ## 8. Validated constants
 
