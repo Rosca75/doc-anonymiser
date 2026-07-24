@@ -260,12 +260,12 @@ func (c *Client) Chat(ctx context.Context, model, systemPrompt, userPrompt strin
 // anything not copied exactly from the text is dropped afterwards anyway.
 const discoverSystemPrompt = `You are an entity extraction engine for confidential business documents.
 Extract proper names from the user's document and respond with ONLY a JSON object, no prose, using exactly these keys:
-{"client_names": [], "project_names": [], "pwc_internal_names": [], "person_names": []}
+{"client_names": [], "project_names": [], "internal_names": [], "person_names": []}
 Rules:
 - client_names: companies/organisations that are clients or counterparties.
 - project_names: engagement or project code names.
-- pwc_internal_names: PwC staff, teams or internal systems.
-- person_names: natural persons not already in pwc_internal_names.
+- internal_names: internal staff, teams or internal systems.
+- person_names: natural persons not already in internal_names.
 - Copy every name VERBATIM from the document. Never invent, translate or reformat names.
 - Use [] for a category with no findings.`
 
@@ -290,7 +290,7 @@ func (c *Client) Discover(ctx context.Context, text string) ([]engine.ProposedEn
 
 const deepScanSystemPromptPrefix = `You are an entity extraction engine performing a FINAL review of a business document that was already partially anonymised (placeholders look like [CLIENT_1]).
 Find ONLY residual proper names that are still visible and were missed. Respond with ONLY a JSON object, no prose, using exactly these keys:
-{"client_names": [], "project_names": [], "pwc_internal_names": [], "person_names": []}
+{"client_names": [], "project_names": [], "internal_names": [], "person_names": []}
 Rules:
 - Copy every name VERBATIM from the document. Never invent names.
 - Do NOT report placeholders like [CLIENT_1] or names from the known list below.
@@ -359,7 +359,7 @@ func MergeProposals(batches ...[]engine.ProposedEntity) []engine.ProposedEntity 
 // --- JSON reply parsing ---------------------------------------------------
 
 // entityCategories are the exact keys the prompts demand (CLAUDE.md §5).
-var entityCategories = []string{"client_names", "project_names", "pwc_internal_names", "person_names"}
+var entityCategories = []string{"client_names", "project_names", "internal_names", "person_names"}
 
 // parseEntityJSON tolerantly parses the model's JSON reply: accidental
 // markdown code fences are stripped, unknown keys ignored, and each known

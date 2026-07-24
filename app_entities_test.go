@@ -68,9 +68,9 @@ func TestRunDiscoveryMergesAndDedupes(t *testing.T) {
 	// once (first spelling) and both persons.
 	app := newTestApp(t, func(user string) string {
 		if strings.Contains(user, "doc one") {
-			return `{"client_names":["Alpine Trust"],"project_names":[],"pwc_internal_names":[],"person_names":["Marie Duval"]}`
+			return `{"client_names":["Alpine Trust"],"project_names":[],"internal_names":[],"person_names":["Marie Duval"]}`
 		}
-		return `{"client_names":["ALPINE TRUST"],"project_names":[],"pwc_internal_names":[],"person_names":["Peter Stone"]}`
+		return `{"client_names":["ALPINE TRUST"],"project_names":[],"internal_names":[],"person_names":["Peter Stone"]}`
 	})
 	app.docs = []engine.Document{
 		{Name: "one.txt", Format: engine.FormatTXT, Markdown: "doc one: Alpine Trust with Marie Duval"},
@@ -91,7 +91,7 @@ func TestRunDiscoveryMergesAndDedupes(t *testing.T) {
 
 func TestRunDiscoveryRespectsAllowlist(t *testing.T) {
 	app := newTestApp(t, func(string) string {
-		return `{"client_names":["CSSF","Alpine Trust"],"project_names":[],"pwc_internal_names":[],"person_names":[]}`
+		return `{"client_names":["CSSF","Alpine Trust"],"project_names":[],"internal_names":[],"person_names":[]}`
 	})
 	app.docs = []engine.Document{{Name: "a.txt", Format: engine.FormatTXT, Markdown: "CSSF and Alpine Trust"}}
 

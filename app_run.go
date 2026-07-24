@@ -15,10 +15,14 @@ import (
 // entities, allowlist, patterns, rules and whether to use the LLM
 // deep-scan. Level/model/port come from the stored settings.
 type RunRequest struct {
-	Entities    []engine.Entity        `json:"entities"`
-	AllowTerms  []string               `json:"allowTerms"`
-	Patterns    []engine.CustomPattern `json:"patterns"`
-	SimpleRules []engine.SimpleRule    `json:"simpleRules"`
+	Entities   []engine.Entity        `json:"entities"`
+	AllowTerms []string               `json:"allowTerms"`
+	Patterns   []engine.CustomPattern `json:"patterns"`
+	// Categories is the granular per-category switch set from the
+	// Configure screen (BUILD-02 Phase 3). nil falls back to the stored
+	// settings, then to the level preset.
+	Categories  engine.CategorySelection `json:"categories"`
+	SimpleRules []engine.SimpleRule      `json:"simpleRules"`
 	// UseDeepScan enables pass 3. The UI only offers it when Ollama is
 	// available; the flag is also forced off server-side when it is not.
 	UseDeepScan bool `json:"useDeepScan"`
@@ -72,6 +76,12 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 	docs := make([]engine.Document, len(a.docs))
 	copy(docs, a.docs)
 	level := engine.Level(a.settings.Level)
+	// The request's selection wins; stored settings are the fallback so
+	// exports and re-runs behave like the last configured run.
+	categories := req.Categories
+	if categories == nil {
+		categories = a.settings.Categories
+	}
 	llm := a.llm
 	// The registry lives for the whole session so placeholders stay
 	// stable across runs and late-imported batches (CLAUDE.md §5).
@@ -91,6 +101,7 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 		Entities:    req.Entities,
 		Patterns:    req.Patterns,
 		Level:       level,
+		Categories:  categories,
 		Allowlist:   allow,
 		Registry:    reg,
 		SimpleRules: req.SimpleRules,

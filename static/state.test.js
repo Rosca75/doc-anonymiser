@@ -13,6 +13,7 @@ import {
   getState, setState, resetState, subscribe,
   WIZARD_STEPS, canGoTo, goTo, nextStep, prevStep,
   goToScreen, setImportSplit,
+  applyPreset, toggleCategory, selectionPresetName, presetCategories,
   applyImportResult,
 } from "./state.js";
 
@@ -246,4 +247,52 @@ test("setImportSplit clamps and rejects non-numbers", () => {
   assert.equal(setImportSplit(NaN), null);
   assert.equal(setImportSplit("0.7"), null);
   assert.equal(getState().importSplit, 0.5);
+});
+
+// --- Category presets and granular switches (BUILD-02 Phase 3) ---------------
+
+test("applyPreset fills the expected switches per level", () => {
+  resetState();
+  applyPreset("soft");
+  let c = getState().settings.categories;
+  assert.equal(c.email, true);
+  assert.equal(c.person_names, false, "soft leaves persons off");
+  assert.equal(c.amount, false);
+  applyPreset("medium");
+  c = getState().settings.categories;
+  assert.equal(c.person_names, true);
+  assert.equal(c.date, false, "medium leaves dates off");
+  applyPreset("advanced");
+  c = getState().settings.categories;
+  assert.equal(c.date, true);
+  assert.equal(c.organisation_names, true);
+  assert.equal(getState().settings.level, "advanced");
+});
+
+test("toggleCategory flips one switch and flags the selection as custom", () => {
+  resetState();
+  applyPreset("medium");
+  assert.equal(selectionPresetName(getState().settings.categories), "medium");
+  assert.equal(toggleCategory("email", false), true);
+  const c = getState().settings.categories;
+  assert.equal(c.email, false);
+  assert.equal(c.phone, true, "other switches untouched");
+  assert.equal(selectionPresetName(c), "custom");
+  // Unknown keys are rejected.
+  assert.equal(toggleCategory("no_such_category", true), false);
+});
+
+test("selectionPresetName recognises each exact preset", () => {
+  for (const level of ["soft", "medium", "advanced"]) {
+    assert.equal(selectionPresetName(presetCategories(level)), level);
+  }
+});
+
+test("buildRunRequest carries the category selection", () => {
+  resetState();
+  applyPreset("soft");
+  const req = buildRunRequest(false);
+  assert.deepEqual(req.categories, presetCategories("soft"));
+  toggleCategory("iban", false);
+  assert.equal(buildRunRequest(false).categories.iban, false);
 });

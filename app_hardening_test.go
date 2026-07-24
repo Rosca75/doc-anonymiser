@@ -113,7 +113,7 @@ func TestMidRunOllamaCrashDegrades(t *testing.T) {
 			}
 			resp, _ := json.Marshal(map[string]interface{}{
 				"message": map[string]string{"role": "assistant",
-					"content": `{"client_names":[],"project_names":[],"pwc_internal_names":[],"person_names":[]}`},
+					"content": `{"client_names":[],"project_names":[],"internal_names":[],"person_names":[]}`},
 			})
 			w.Write(resp)
 		}

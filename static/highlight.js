@@ -15,7 +15,7 @@ const PLACEHOLDER_RE = /\[([A-Z][A-Z0-9_]*)_(\d+)\]/g;
 // Label → colour family. PII labels share one tint, entity labels another,
 // custom patterns a third (see style.css mark.* classes).
 const PII_LABELS = new Set(["EMAIL", "PHONE", "IBAN", "VAT", "NATIONAL_ID", "URL", "AMOUNT", "DATE"]);
-const ENTITY_LABELS = new Set(["CLIENT", "PROJECT", "PWC_INTERNAL", "PERSON", "ORG", "LOCATION"]);
+const ENTITY_LABELS = new Set(["CLIENT", "PROJECT", "INTERNAL", "PERSON", "ORG", "LOCATION"]);
 
 /** markClass(label) picks the CSS class for one placeholder label. */
 export function markClass(label) {

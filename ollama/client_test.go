@@ -123,7 +123,7 @@ func TestChatTooOld(t *testing.T) {
 
 func TestDiscoverHappyPath(t *testing.T) {
 	text := "Alpine Trust hired PwC for Project Borealis. Contact Marie Duval."
-	c := chatReplyServer(t, `{"client_names":["Alpine Trust"],"project_names":["Project Borealis"],"pwc_internal_names":[],"person_names":["Marie Duval"]}`)
+	c := chatReplyServer(t, `{"client_names":["Alpine Trust"],"project_names":["Project Borealis"],"internal_names":[],"person_names":["Marie Duval"]}`)
 
 	got, err := c.Discover(context.Background(), text)
 	if err != nil {
@@ -146,7 +146,7 @@ func TestDiscoverHappyPath(t *testing.T) {
 
 func TestDiscoverStripsCodeFences(t *testing.T) {
 	text := "Alpine Trust appears here."
-	c := chatReplyServer(t, "```json\n{\"client_names\":[\"Alpine Trust\"],\"project_names\":[],\"pwc_internal_names\":[],\"person_names\":[]}\n```")
+	c := chatReplyServer(t, "```json\n{\"client_names\":[\"Alpine Trust\"],\"project_names\":[],\"internal_names\":[],\"person_names\":[]}\n```")
 	got, err := c.Discover(context.Background(), text)
 	if err != nil || len(got) != 1 || got[0].Text != "Alpine Trust" {
 		t.Errorf("fenced JSON not tolerated: %+v %v", got, err)
@@ -163,7 +163,7 @@ func TestDiscoverMalformedReply(t *testing.T) {
 
 func TestDeepScanHallucinationFilterAndAllowlist(t *testing.T) {
 	text := "Residual mention of Borealis Fund and the CSSF here."
-	c := chatReplyServer(t, `{"client_names":["Borealis Fund","Fabricated Corp","CSSF"],"project_names":[],"pwc_internal_names":[],"person_names":[]}`)
+	c := chatReplyServer(t, `{"client_names":["Borealis Fund","Fabricated Corp","CSSF"],"project_names":[],"internal_names":[],"person_names":[]}`)
 	// Wire the allowlist veto exactly as app.go does.
 	allow := engine.NewAllowlist() // seeds CSSF
 	c.Allow = allow.Contains
@@ -215,7 +215,7 @@ func TestMergeProposals(t *testing.T) {
 // server) into engine.Run, proving the LLM slot end to end headlessly.
 func TestPipelineWithOllamaClient(t *testing.T) {
 	text := "Final note about Zephyr Capital."
-	c := chatReplyServer(t, `{"client_names":["Zephyr Capital"],"project_names":[],"pwc_internal_names":[],"person_names":[]}`)
+	c := chatReplyServer(t, `{"client_names":["Zephyr Capital"],"project_names":[],"internal_names":[],"person_names":[]}`)
 
 	res, err := engine.Run(context.Background(), engine.PipelineInput{
 		Documents: []engine.Document{{Name: "z.txt", Format: engine.FormatTXT, Markdown: text}},

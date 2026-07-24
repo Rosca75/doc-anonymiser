@@ -165,7 +165,7 @@ function resultsPanel(s) {
           <option value="person_names">person</option>
           <option value="client_names">client</option>
           <option value="project_names">project</option>
-          <option value="pwc_internal_names">PwC internal</option>
+          <option value="internal_names">Internal</option>
         </select>
         <input id="missed-name" placeholder="missed name, e.g. P. Stone"/>
         <button id="missed-add">Add entity</button>

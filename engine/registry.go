@@ -26,7 +26,7 @@ var placeholderLabels = map[string]string{
 	// Entity categories (CLAUDE.md §5).
 	"client_names":       "CLIENT",
 	"project_names":      "PROJECT",
-	"pwc_internal_names": "PWC_INTERNAL",
+	"internal_names": "INTERNAL",
 	"person_names":       "PERSON",
 	"custom_patterns":    "CUSTOM",
 	"organisation_names": "ORG",

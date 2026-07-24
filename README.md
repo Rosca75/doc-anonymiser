@@ -33,9 +33,9 @@ process is reversible by you — and only by you.
    review; each Excel sheet becomes its own document.
 2. **Configure** — pick a level (`soft`, `medium` — the default, or
    `advanced`) and, optionally, the local AI model.
-3. **Entities** — declare (or let the AI discover) client, project, PwC
-   and person names to replace; maintain an allowlist of terms that must
-   never be touched; add custom regex patterns.
+3. **Entities** — declare (or let the AI discover) client, project,
+   internal and person names to replace; maintain an allowlist of terms
+   that must never be touched; add custom regex patterns.
 4. **Run** — execute the pipeline with live progress, review the
    side-by-side before/after with highlighted replacements, and fix
    anything missed with a fast re-run.

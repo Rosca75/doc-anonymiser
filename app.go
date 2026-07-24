@@ -24,13 +24,22 @@ import (
 	"doc-anonymiser/ollama"
 )
 
-// Settings are the user-tweakable options (Configure screen). They are
-// deliberately tiny: level, Ollama port (host locked to loopback) and the
-// model name (never hardcoded outside this default — CLAUDE.md §7).
+// Settings are the user-tweakable options (Configure screen): level (the
+// last chosen preset), the granular category switches, Ollama port (host
+// locked to loopback) and the model name (never hardcoded outside this
+// default — CLAUDE.md §7).
+//
+// Wails bridge payload shape (matched by state.js settings):
+//
+//	{ "level": "medium", "categories": {"email": true, ...},
+//	  "ollamaPort": 11434, "model": "qwen2.5:3b-instruct" }
 type Settings struct {
-	Level      string `json:"level"`      // soft | medium | advanced
-	OllamaPort int    `json:"ollamaPort"` // loopback port only
-	Model      string `json:"model"`      // Ollama model name
+	Level string `json:"level"` // soft | medium | advanced (last chosen preset)
+	// Categories is the granular switch set the pipeline obeys
+	// (BUILD-02 Phase 3). nil/empty means "use the Level preset".
+	Categories engine.CategorySelection `json:"categories"`
+	OllamaPort int                      `json:"ollamaPort"` // loopback port only
+	Model      string                   `json:"model"`      // Ollama model name
 }
 
 // DocumentInfo is the frontend-facing summary of one loaded Document.

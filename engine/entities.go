@@ -24,7 +24,7 @@ import (
 // Entity is one known engagement entity.
 type Entity struct {
 	// Category is one of the CLAUDE.md §5 entity categories:
-	// client_names, project_names, pwc_internal_names, person_names.
+	// client_names, project_names, internal_names, person_names.
 	Category string `json:"category"`
 	// Canonical is the full name as entered/discovered.
 	Canonical string `json:"canonical"`
@@ -38,7 +38,7 @@ type Entity struct {
 // Everything else is treated as an organisation-style name.
 var personCategories = map[string]bool{
 	"person_names":       true,
-	"pwc_internal_names": true, // PwC-internal names are staff names
+	"internal_names": true, // internal names are staff names
 }
 
 // nameParticles are the lower-case surname particles that glue multi-word

@@ -49,8 +49,11 @@ const initialState = {
   importSplit: 0.5,
 
   // Settings mirror (source of truth lives in Go; this copy renders the
-  // Configure screen): {level, ollamaPort, model}.
-  settings: { level: "medium", ollamaPort: 11434, model: "" },
+  // Configure screen): {level, categories, ollamaPort, model}. level is
+  // the LAST CHOSEN PRESET; categories is the granular switch set the
+  // pipeline obeys (BUILD-02 Phase 3). The categories map is filled below
+  // after presetCategories is defined.
+  settings: { level: "medium", categories: null, ollamaPort: 11434, model: "" },
 
   // Entity review state (Phase 7): array of
   // {category, canonical, manualVariants, status: "accepted"|"denied"}.
@@ -71,6 +74,39 @@ const initialState = {
   progress: null, // {stage, docIndex, docCount, docName} or null
   results: null,  // engine.Results mirror or null
 };
+
+// --- Category presets (BUILD-02 Phase 3, mirrors engine.PresetSelection) ----
+
+// Category keys, split by preset tier. Must stay in sync with the Go side
+// (engine/pipeline.go AllPIICategories / AllEntityCategories).
+export const HARD_PII_CATEGORIES = ["email", "url", "iban", "vat", "matricule", "phone"];
+export const ADVANCED_PII_CATEGORIES = ["amount", "date"];
+export const NAME_CATEGORIES = ["client_names", "project_names", "internal_names", "person_names"];
+export const ADVANCED_ENTITY_CATEGORIES = ["organisation_names", "location_names"];
+export const ALL_CATEGORIES = [
+  ...HARD_PII_CATEGORIES, ...ADVANCED_PII_CATEGORIES,
+  ...NAME_CATEGORIES, "custom_patterns", ...ADVANCED_ENTITY_CATEGORIES,
+];
+
+/**
+ * presetCategories(level) reproduces engine.PresetSelection exactly:
+ * soft = hard PII + client/project/internal + custom patterns;
+ * medium = soft + persons; advanced = everything.
+ */
+export function presetCategories(level) {
+  const sel = {};
+  for (const c of ALL_CATEGORIES) sel[c] = false;
+  for (const c of HARD_PII_CATEGORIES) sel[c] = true;
+  sel.client_names = sel.project_names = sel.internal_names = true;
+  sel.custom_patterns = true;
+  if (level === "medium" || level === "advanced") sel.person_names = true;
+  if (level === "advanced") {
+    for (const c of [...ADVANCED_PII_CATEGORIES, ...ADVANCED_ENTITY_CATEGORIES]) sel[c] = true;
+  }
+  return sel;
+}
+
+initialState.settings.categories = presetCategories("medium");
 
 // state is module-private; mutate only via setState/reducers.
 let state = structuredClone(initialState);
@@ -106,6 +142,46 @@ export function subscribe(fn) {
 
 function notify() {
   for (const fn of listeners) fn(state);
+}
+
+// --- Category selection reducers (BUILD-02 Phase 3) --------------------------
+
+/**
+ * applyPreset(level) sets the level AND fills the category switches from
+ * the preset (the "Soft/Standard/Thorough" chips of the configure screen).
+ */
+export function applyPreset(level) {
+  setState({
+    settings: { ...state.settings, level, categories: presetCategories(level) },
+  });
+}
+
+/**
+ * toggleCategory(key, on) flips one granular switch. The level is kept as
+ * the last chosen preset (the UI shows "Custom" when the selection
+ * diverges, see selectionPresetName).
+ */
+export function toggleCategory(key, on) {
+  if (!ALL_CATEGORIES.includes(key)) return false;
+  setState({
+    settings: {
+      ...state.settings,
+      categories: { ...state.settings.categories, [key]: !!on },
+    },
+  });
+  return true;
+}
+
+/**
+ * selectionPresetName(categories) returns "soft" | "medium" | "advanced"
+ * when the selection exactly matches that preset, else "custom".
+ */
+export function selectionPresetName(categories) {
+  for (const level of ["soft", "medium", "advanced"]) {
+    const preset = presetCategories(level);
+    if (ALL_CATEGORIES.every((c) => !!categories?.[c] === preset[c])) return level;
+  }
+  return "custom";
 }
 
 // --- Screen navigation (BUILD-02 Phase 2a) -----------------------------------
@@ -365,6 +441,9 @@ export function buildRunRequest(useDeepScan, s = state) {
     entities: acceptedEntities(s),
     allowTerms: s.allowlist,
     patterns: validPatterns(s),
+    // The granular selection travels with every run request so the Go
+    // pipeline always sees exactly what the configure screen shows.
+    categories: s.settings.categories ?? presetCategories(s.settings.level),
     simpleRules: s.simpleRules,
     useDeepScan: !!useDeepScan,
   };

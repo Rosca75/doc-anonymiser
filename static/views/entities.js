@@ -23,7 +23,7 @@ import { LLM_DISABLED_TOOLTIP } from "./configure.js";
 const CATEGORIES = [
   ["client_names", "Clients"],
   ["project_names", "Projects"],
-  ["pwc_internal_names", "PwC internal"],
+  ["internal_names", "Internal"],
   ["person_names", "Persons"],
 ];
 

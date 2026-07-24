@@ -51,7 +51,7 @@ func TestFastRerunAppliesEntityWithoutLLM(t *testing.T) {
 			chatCalls.Add(1)
 			resp, _ := json.Marshal(map[string]interface{}{
 				"message": map[string]string{"role": "assistant",
-					"content": `{"client_names":["Alpine Trust"],"project_names":[],"pwc_internal_names":[],"person_names":[]}`},
+					"content": `{"client_names":["Alpine Trust"],"project_names":[],"internal_names":[],"person_names":[]}`},
 			})
 			w.Write(resp)
 		default:
