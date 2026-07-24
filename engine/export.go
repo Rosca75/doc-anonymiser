@@ -35,14 +35,18 @@ func ExportExtensions(f Format) []string {
 		return []string{"md", "txt", "docx"}
 	case FormatPPTX:
 		return []string{"md", "txt", "pptx"}
-	default: // md, pdf → markdown (or plain text); PDF same-format is Phase 13
+	case FormatPDF:
+		// The PDF same-format copy is EXPERIMENTAL (BUILD-02 Phase 13):
+		// a regenerated simplified layout, never the original design.
+		return []string{"md", "txt", "pdf"}
+	default: // md → markdown (or plain text)
 		return []string{"md", "txt"}
 	}
 }
 
 // SameFormatExtensions lists the extensions served by the same-format
 // rewriter rather than ExportBytes.
-var SameFormatExtensions = map[string]bool{"docx": true, "pptx": true, "xlsx": true}
+var SameFormatExtensions = map[string]bool{"docx": true, "pptx": true, "xlsx": true, "pdf": true}
 
 // ExportBytes renders one anonymised document in the requested extension.
 // Same-format extensions are served by engine/exportfmt (they need the

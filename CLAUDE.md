@@ -197,8 +197,8 @@ doc-anonymiser/
 | Frontend | vanilla JS (ES2020), embedded via go:embed | no npm, no bundler |
 | github.com/xuri/excelize/v2 | v2.9.x | XLSX reading; pure Go, MIT licence |
 | github.com/ledongthuc/pdf | v0.0.0-20240201131950-da5b75280b06 | pure-Go PDF text extraction (BSD-3); limited by design — see §5 PDF rules. Pinned to the 2024-02-01 commit: the later 2025 commit requires Go 1.24, which conflicts with the Go 1.23.x pin above |
-| github.com/pdfcpu/pdfcpu | pin latest v0.x compatible with Go 1.23 at BUILD-02 Phase 13 start | PDF Info dictionary + XMP metadata rewrite for same-format export; Apache-2.0; pure Go. VERIFY its go.mod allows Go 1.23.x before adopting (precedent: ledongthuc/pdf) |
-| github.com/go-pdf/fpdf | v0.9.x | pure-Go PDF writer for the regenerated-PDF fallback (BUILD-02 Phase 13); MIT. Only added if the fallback path is taken |
+| github.com/pdfcpu/pdfcpu | NOT ADDED (evaluated at BUILD-02 Phase 13, 2026-07-24) | in-place PDF rewriting was rejected (subset-font glyph availability), so pdfcpu's metadata role is covered by fpdf (new file's Info dict) + ledongthuc/pdf (reading the original's Info dict). Note: pdfcpu v0.13.0 requires Go 1.25, incompatible with the 1.23.x pin anyway |
+| github.com/go-pdf/fpdf | v0.9.0 | pure-Go PDF writer for the regenerated-PDF same-format fallback (BUILD-02 Phase 13); MIT; go.mod requires Go 1.20 (compatible) |
 | Material Symbols SVGs (assets, not a Go module) | snapshot at BUILD-02 Phase 1 | individual SVG files vendored into `static/assets/icons/`; Apache-2.0; licence text at `static/assets/icons/LICENSE` |
 
 ## 8. Validated constants

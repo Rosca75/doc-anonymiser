@@ -73,11 +73,10 @@ func (a *App) SaveDocument(name, ext string) error {
 		return err
 	}
 	if engine.SameFormatExtensions[ext] {
-		data, err := a.sameFormatBytes(name, ext)
-		if err != nil {
-			return err
-		}
-		return a.saveWithDialog(engine.ExportFileName(name, ext), "."+ext, "*."+ext, data)
+		// Defensive route: the UI normally goes through the metadata
+		// review (SaveSameFormat); a direct call exports with the
+		// original properties untouched and the default filename.
+		return a.SaveSameFormat(name, ext, nil, "")
 	}
 	data, err := engine.ExportBytes(rd, ext)
 	if err != nil {
@@ -138,7 +137,12 @@ func (a *App) GetSameFormatMetadata(name, ext string) (*SameFormatMeta, error) {
 	if err != nil {
 		return nil, err
 	}
-	fields, err := exportfmt.ExtractMetadata(src.Raw)
+	var fields []exportfmt.MetaField
+	if ext == "pdf" {
+		fields, err = exportfmt.ExtractPDFMetadata(src.Raw)
+	} else {
+		fields, err = exportfmt.ExtractMetadata(src.Raw)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -166,17 +170,31 @@ func (a *App) GetSameFormatMetadata(name, ext string) (*SameFormatMeta, error) {
 // the reviewed filename as the dialog default. The body rewrite is
 // identical to SaveDocument's native path.
 func (a *App) SaveSameFormat(name, ext string, reviewed []exportfmt.MetaField, filename string) error {
-	data, err := a.sameFormatBytes(name, ext)
+	var data []byte
+	var err error
+	if ext == "pdf" {
+		// EXPERIMENTAL regenerated PDF (BUILD-02 Phase 13): built from
+		// the anonymised working text with the reviewed metadata; the
+		// exporter runs a leak self-check before returning bytes.
+		rd, ferr := a.findResultDoc(name)
+		if ferr != nil {
+			return ferr
+		}
+		cfg, _, cerr := a.sameFormatConfig(name)
+		if cerr != nil {
+			return cerr
+		}
+		data, err = exportfmt.ExportPDF(rd.Anonymised, reviewed, cfg)
+	} else {
+		data, err = a.sameFormatBytes(name, ext)
+		if err == nil && len(reviewed) > 0 {
+			// Apply the reviewed properties; RewriteMetadata leaves
+			// everything not listed byte-identical.
+			data, err = exportfmt.RewriteMetadata(data, reviewed)
+		}
+	}
 	if err != nil {
 		return err
-	}
-	// Apply only fields whose reviewed value differs from the current
-	// one; RewriteMetadata is a no-op for an empty list.
-	if len(reviewed) > 0 {
-		data, err = exportfmt.RewriteMetadata(data, reviewed)
-		if err != nil {
-			return err
-		}
 	}
 	if filename == "" {
 		filename = engine.ExportFileName(name, ext)
