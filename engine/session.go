@@ -56,11 +56,11 @@ func LoadSession(raw []byte) (Session, error) {
 	var s Session
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return Session{}, fmt.Errorf(
-			"the file is not a valid session file (%v) — pick a .anonsession.json file saved by this application", err)
+			"the file is not a valid session file (%v), pick a .anonsession.json file saved by this application", err)
 	}
 	if s.Version != SessionVersion {
 		return Session{}, fmt.Errorf(
-			"the session file has version %d but this application expects version %d — it was saved by a different application version; re-create the session or update the application", s.Version, SessionVersion)
+			"the session file has version %d but this application expects version %d, it was saved by a different application version; re-create the session or update the application", s.Version, SessionVersion)
 	}
 	return s, nil
 }

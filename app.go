@@ -148,7 +148,7 @@ func (a *App) ImportFiles() (ImportResult, error) {
 	})
 	if err != nil {
 		return ImportResult{}, fmt.Errorf(
-			"the file dialog could not be opened (%v) — try again; if it keeps failing, restart the application", err)
+			"the file dialog could not be opened (%v), try again; if it keeps failing, restart the application", err)
 	}
 	return a.importPaths(paths), nil
 }
@@ -164,7 +164,7 @@ func (a *App) importPaths(paths []string) ImportResult {
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf(
-				"could not read %q: %v — check that the file still exists and you have permission to read it", path, err))
+				"could not read %q: %v, check that the file still exists and you have permission to read it", path, err))
 			continue
 		}
 		docs, err := engine.LoadAll(filepath.Base(path), raw)
@@ -254,11 +254,11 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 	case engine.LevelSoft, engine.LevelMedium, engine.LevelAdvanced:
 	default:
 		return ollama.OllamaStatus{}, fmt.Errorf(
-			"unknown anonymisation level %q — expected soft, medium or advanced", s.Level)
+			"unknown anonymisation level %q, expected soft, medium or advanced", s.Level)
 	}
 	if s.OllamaPort < 1 || s.OllamaPort > 65535 {
 		return ollama.OllamaStatus{}, fmt.Errorf(
-			"invalid Ollama port %d — expected a number between 1 and 65535 (default 11434)", s.OllamaPort)
+			"invalid Ollama port %d, expected a number between 1 and 65535 (default 11434)", s.OllamaPort)
 	}
 
 	a.mu.Lock()

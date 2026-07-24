@@ -109,10 +109,10 @@ func LoadAll(name string, raw []byte) ([]Document, error) {
 	// Shared size warnings (empty / very large) apply to every format.
 	var sizeWarnings []string
 	if len(raw) == 0 {
-		sizeWarnings = append(sizeWarnings, "the file is empty — nothing to anonymise")
+		sizeWarnings = append(sizeWarnings, "the file is empty, nothing to anonymise")
 	} else if len(raw) > LargeFileThreshold {
 		sizeWarnings = append(sizeWarnings, fmt.Sprintf(
-			"very large file (%.1f MB) — processing may take a while; the preview may be truncated",
+			"very large file (%.1f MB), processing may take a while; the preview may be truncated",
 			float64(len(raw))/(1024*1024)))
 	}
 
@@ -202,7 +202,7 @@ func LoadAll(name string, raw []byte) ([]Document, error) {
 
 	default:
 		return nil, fmt.Errorf(
-			"unsupported file type %q (file %q): doc-anonymiser accepts .txt, .csv, .md, .docx, .pptx, .xlsx and .pdf — rename or convert the file to one of those formats first",
+			"unsupported file type %q (file %q): doc-anonymiser accepts .txt, .csv, .md, .docx, .pptx, .xlsx and .pdf, rename or convert the file to one of those formats first",
 			ext, name)
 	}
 }
@@ -226,17 +226,17 @@ func Load(name string, raw []byte) (Document, error) {
 	// with a message that names the file and says how to fix it.
 	if !utf8.Valid(raw) {
 		return Document{}, fmt.Errorf(
-			"file %q is not valid UTF-8 text: it is probably saved in a legacy encoding such as Windows-1252 or Latin-1 — open it in a text editor (e.g. Notepad++ or VS Code) and re-save it with UTF-8 encoding, then import it again",
+			"file %q is not valid UTF-8 text: it is probably saved in a legacy encoding such as Windows-1252 or Latin-1, open it in a text editor (e.g. Notepad++ or VS Code) and re-save it with UTF-8 encoding, then import it again",
 			name)
 	}
 
 	// Size warnings are shared by all formats and never block processing.
 	var warnings []string
 	if len(raw) == 0 {
-		warnings = append(warnings, "the file is empty — nothing to anonymise")
+		warnings = append(warnings, "the file is empty, nothing to anonymise")
 	} else if len(raw) > LargeFileThreshold {
 		warnings = append(warnings, fmt.Sprintf(
-			"very large file (%.1f MB) — processing may take a while; the preview may be truncated",
+			"very large file (%.1f MB), processing may take a while; the preview may be truncated",
 			float64(len(raw))/(1024*1024)))
 	}
 
@@ -269,7 +269,7 @@ func Load(name string, raw []byte) (Document, error) {
 			// Wrap with context the owner can act on: which file,
 			// what we expected, what to try.
 			return Document{}, fmt.Errorf(
-				"could not read %q as CSV: %w — check that the file is a plain comma-separated file (open it in a text editor to verify); if it is a semicolon-separated export, re-export it with commas",
+				"could not read %q as CSV: %w, check that the file is a plain comma-separated file (open it in a text editor to verify); if it is a semicolon-separated export, re-export it with commas",
 				name, err)
 		}
 		return Document{
@@ -286,7 +286,7 @@ func Load(name string, raw []byte) (Document, error) {
 		// Office/PDF formats are accepted via LoadAll (Phase 1B); this
 		// text-only entry point lists what IT accepts.
 		return Document{}, fmt.Errorf(
-			"unsupported file type %q (file %q): doc-anonymiser accepts .txt, .csv, .md, .docx, .pptx, .xlsx and .pdf — rename or convert the file to one of those formats first",
+			"unsupported file type %q (file %q): doc-anonymiser accepts .txt, .csv, .md, .docx, .pptx, .xlsx and .pdf, rename or convert the file to one of those formats first",
 			ext, name)
 	}
 }

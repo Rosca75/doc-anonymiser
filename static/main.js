@@ -1,7 +1,7 @@
-// main.js — the wizard shell: step header, active view, navigation footer,
+// main.js, the wizard shell: step header, active view, navigation footer,
 // and the startup checks (bridge ping, Ollama probe, event subscriptions).
 //
-// The shell owns NO business state — it renders from state.js and defers
+// The shell owns NO business state, it renders from state.js and defers
 // every screen to its view module (one per wizard step, CLAUDE.md §3).
 
 import { ping, probeOllama, onEvent } from "./api.js";
@@ -11,6 +11,7 @@ import {
   applyImportResult,
 } from "./state.js";
 import { escapeHTML } from "./html.js";
+import { button } from "./ui.js";
 import { renderImport } from "./views/import.js";
 import { renderConfigure } from "./views/configure.js";
 import { renderEntities } from "./views/entities.js";
@@ -64,7 +65,7 @@ export function boot(root) {
   onEvent("pipeline:done", (results) => setState({ running: false, progress: null, results }));
 
   // Keyboard shortcuts (Phase 10): Ctrl+O jumps to Import, Ctrl+E to
-  // Export (guards still apply — Export needs results). The browser's own
+  // Export (guards still apply, Export needs results). The browser's own
   // Ctrl+O/Ctrl+E defaults are suppressed inside the app window.
   document.addEventListener("keydown", (ev) => {
     if (!(ev.ctrlKey || ev.metaKey)) return;
@@ -100,8 +101,8 @@ function paint(root) {
     </header>
     <main id="view"></main>
     <footer class="navbar">
-      <button id="nav-back" ${s.step === "import" ? "disabled" : ""}>← Back</button>
-      <button id="nav-next" ${canAdvance(s) ? "" : "disabled"}>Next →</button>
+      ${button("Back", { kind: "secondary", id: "nav-back", icon: "arrow_back", disabled: s.step === "import" })}
+      ${button("Next", { kind: "primary", id: "nav-next", icon: "arrow_forward", disabled: !canAdvance(s) })}
     </footer>
   `;
 
@@ -116,7 +117,7 @@ function paint(root) {
   VIEWS[s.step](root.querySelector("#view"));
 }
 
-/** canAdvance(s) — is the linear "Next" allowed from the current step? */
+/** canAdvance(s), is the linear "Next" allowed from the current step? */
 function canAdvance(s) {
   const idx = WIZARD_STEPS.indexOf(s.step);
   return idx < WIZARD_STEPS.length - 1 && canGoTo(WIZARD_STEPS[idx + 1], s);

@@ -1,4 +1,4 @@
-// api.js — THE ONLY file allowed to call Go bound methods (CLAUDE.md §4).
+// api.js, THE ONLY file allowed to call Go bound methods (CLAUDE.md §4).
 //
 // Wails exposes bound Go methods as window.go.main.App.<Method>, each
 // returning a Promise, and runtime events on window.runtime. Every
@@ -14,7 +14,7 @@ function bridge() {
   const app = window.go?.main?.App;
   if (!app) {
     throw new Error(
-      "Wails bridge not available — this page must run inside the " +
+      "Wails bridge not available. This page must run inside the " +
       "doc-anonymiser application window, not a regular browser."
     );
   }
@@ -28,7 +28,7 @@ export function ping() {
 
 /**
  * probeOllama() asks Go whether a local Ollama server is running.
- * Never rejects for "Ollama missing" — that is a normal state inside the
+ * Never rejects for "Ollama missing", that is a normal state inside the
  * returned {available, models, detail} object (graceful degradation).
  */
 export function probeOllama() {
@@ -155,7 +155,7 @@ export function exportReport(format) {
 }
 
 /** saveSession(request) persists the session (entities, allowlist,
- *  patterns, rules, settings, registry). Warn the user first — the file
+ *  patterns, rules, settings, registry). Warn the user first, the file
  *  contains the re-identification key. */
 export function saveSession(request) {
   return bridge().SaveSessionToFile(request);

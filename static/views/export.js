@@ -1,4 +1,4 @@
-// views/export.js — wizard step 5: every egress path (Phase 9), all behind
+// views/export.js, wizard step 5: every egress path (Phase 9), all behind
 // explicit user actions:
 //   - per-document save with per-format buttons (CSV round-trip for
 //     grid-origin documents, .md/.txt/.json per the format rules),
@@ -50,11 +50,11 @@ export function renderExport(container) {
           <button id="btn-zip" class="primary">Export all as zip…</button>
         </div>
         <p class="hint">Each file saves with an _anon suffix. Nothing is ever written back to the original files.</p>
-        <table class="entity-table"><tbody>${rows || `<tr><td class="hint">No results — run the pipeline first.</td></tr>`}</tbody></table>
+        <table class="entity-table"><tbody>${rows || `<tr><td class="hint">No results yet. Run the pipeline first.</td></tr>`}</tbody></table>
       </section>
       <section class="panel">
         <div class="panel-head"><h2>Entity mapping (re-identification key)</h2></div>
-        <p class="hint">Maps every placeholder back to the original value — handle like the originals themselves.</p>
+        <p class="hint">Maps every placeholder back to the original value. Handle it like the originals themselves.</p>
         <div class="form-row">
           <button id="map-csv">Export as CSV…</button>
           <button id="map-json">Export as JSON…</button>
@@ -137,7 +137,7 @@ function wire(container) {
       if (!session) return; // user cancelled
       // Restore the frontend state from the session (Go already restored
       // registry + settings). Denied/accepted review states are not part
-      // of a session — loaded entities arrive accepted.
+      // of a session, loaded entities arrive accepted.
       setState({
         entities: [],
         allowlist: session.allowTerms ?? [],
@@ -152,7 +152,7 @@ function wire(container) {
       addEntities((session.entities ?? []).map((e) => ({
         category: e.category, canonical: e.canonical, manualVariants: e.manualVariants ?? [],
       })));
-      feedback("Session loaded — entities, allowlist, patterns, rules and settings restored.", false);
+      feedback("Session loaded. Entities, allowlist, patterns, rules and settings were restored.", false);
     } catch (err) {
       feedback(String(err?.message ?? err), true);
     }

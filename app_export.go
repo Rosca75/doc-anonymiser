@@ -22,14 +22,14 @@ func (a *App) findResultDoc(name string) (engine.ResultDocument, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.results == nil {
-		return engine.ResultDocument{}, fmt.Errorf("no results yet — run the pipeline on the Run screen first")
+		return engine.ResultDocument{}, fmt.Errorf("no results yet, run the pipeline on the Run screen first")
 	}
 	for _, rd := range a.results.Documents {
 		if rd.Name == name {
 			return rd, nil
 		}
 	}
-	return engine.ResultDocument{}, fmt.Errorf("document %q is not part of the last run — re-run the pipeline after changing the import list", name)
+	return engine.ResultDocument{}, fmt.Errorf("document %q is not part of the last run, re-run the pipeline after changing the import list", name)
 }
 
 // saveWithDialog opens the native save dialog and writes data. A cancelled
@@ -41,13 +41,13 @@ func (a *App) saveWithDialog(defaultName string, filterName, pattern string, dat
 		Filters:         []runtime.FileFilter{{DisplayName: filterName, Pattern: pattern}},
 	})
 	if err != nil {
-		return fmt.Errorf("the save dialog could not be opened (%v) — try again; if it keeps failing, restart the application", err)
+		return fmt.Errorf("the save dialog could not be opened (%v), try again; if it keeps failing, restart the application", err)
 	}
 	if path == "" {
 		return nil // user cancelled
 	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("could not write %q: %v — check that the folder exists and is writable (not a read-only network share)", path, err)
+		return fmt.Errorf("could not write %q: %v, check that the folder exists and is writable (not a read-only network share)", path, err)
 	}
 	return nil
 }
@@ -101,7 +101,7 @@ func (a *App) CopyDocument(name string) error {
 		return err
 	}
 	if err := runtime.ClipboardSetText(a.ctx, rd.Anonymised); err != nil {
-		return fmt.Errorf("could not write to the clipboard (%v) — try again", err)
+		return fmt.Errorf("could not write to the clipboard (%v), try again", err)
 	}
 	return nil
 }
@@ -114,7 +114,7 @@ func (a *App) ExportMapping(format string) error {
 	reg := a.registry
 	a.mu.Unlock()
 	if reg == nil {
-		return fmt.Errorf("no mapping yet — run the pipeline first")
+		return fmt.Errorf("no mapping yet, run the pipeline first")
 	}
 
 	switch format {
@@ -131,7 +131,7 @@ func (a *App) ExportMapping(format string) error {
 		}
 		return a.saveWithDialog("entity_mapping.json", "JSON", "*.json", rep)
 	default:
-		return fmt.Errorf("unknown mapping format %q — expected csv or json", format)
+		return fmt.Errorf("unknown mapping format %q, expected csv or json", format)
 	}
 }
 
@@ -141,7 +141,7 @@ func (a *App) ExportReport(format string) error {
 	results := a.results
 	a.mu.Unlock()
 	if results == nil {
-		return fmt.Errorf("no report yet — run the pipeline first")
+		return fmt.Errorf("no report yet, run the pipeline first")
 	}
 
 	switch format {
@@ -155,7 +155,7 @@ func (a *App) ExportReport(format string) error {
 		return a.saveWithDialog("anonymisation_report.md", "Markdown", "*.md",
 			[]byte(results.Report.ToMarkdown()))
 	default:
-		return fmt.Errorf("unknown report format %q — expected json or md", format)
+		return fmt.Errorf("unknown report format %q, expected json or md", format)
 	}
 }
 
@@ -199,14 +199,14 @@ func (a *App) LoadSessionFromFile() (*engine.Session, error) {
 		Filters: []runtime.FileFilter{{DisplayName: "Session files", Pattern: "*.anonsession.json;*.json"}},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("the file dialog could not be opened (%v) — try again", err)
+		return nil, fmt.Errorf("the file dialog could not be opened (%v), try again", err)
 	}
 	if path == "" {
 		return nil, nil // user cancelled — the UI treats nil as "nothing happened"
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("could not read %q: %v — check that the file still exists", path, err)
+		return nil, fmt.Errorf("could not read %q: %v, check that the file still exists", path, err)
 	}
 	session, err := engine.LoadSession(raw)
 	if err != nil {

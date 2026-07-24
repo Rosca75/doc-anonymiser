@@ -90,9 +90,10 @@ doc-anonymiser/
   back to their source path. All output goes through explicit save dialogs.
 - **Graceful degradation:** Ollama availability is probed at startup and on
   demand (`GET /api/tags`). Every LLM-dependent UI control renders in a
-  disabled state with a tooltip ("Requires Ollama — not detected on
-  127.0.0.1:11434") when unavailable. The deterministic pipeline must be
-  fully usable without Ollama.
+  disabled state with a tooltip ("Requires Ollama, which was not detected
+  on 127.0.0.1:11434") when unavailable. The deterministic pipeline must be
+  fully usable without Ollama. User-visible copy never contains em dashes
+  (enforced by copy_guard_test.go and static/copy.test.js).
 - **Converters are pure Go and one-way:** `engine/convert/*` may use only the
   Go standard library, excelize, and ledongthuc/pdf (pinned in §7). No CGo,
   ever. Binary formats convert TO markdown on import for preview and
@@ -116,7 +117,7 @@ doc-anonymiser/
     runs, ordered/unordered lists (numPr), tables → markdown tables,
     hyperlinks → markdown links. Images dropped with an inline placeholder
     `*[image omitted]*`. Headers/footers/footnotes dropped (pagination noise).
-  - `.pptx` → one `## Slide N — <title>` section per slide; body text with
+  - `.pptx` → one `## Slide N: <title>` section per slide; body text with
     bullet indentation; tables → markdown tables; speaker notes under a
     `**Notes:**` sub-block. Slide-master/branding shapes skipped.
   - `.xlsx` → one Document per sheet, named `<workbook>.xlsx#<sheet>`. Smart
@@ -129,7 +130,7 @@ doc-anonymiser/
     (collapse runs of single uppercase characters split by kerning; collapse
     doubled spaces). PDF support is EXPERIMENTAL and labelled as such in the
     UI. A PDF yielding no extractable text is rejected with: "No text layer
-    found — this PDF is likely scanned. OCR is not supported; convert it
+    found, this PDF is likely scanned. OCR is not supported; convert it
     externally first."
 - **Process order (fixed):** 1) import → convert to markdown working form,
   2) anonymise, 3) export. CSV imports are converted to a markdown table for
@@ -191,7 +192,7 @@ doc-anonymiser/
 | Go | 1.23.x | toolchain in go.mod; CI uses the same |
 | Wails | v2.10.x | v2 API only — do NOT use Wails v3 idioms |
 | wails CLI (CI) | v2.10.x | pinned in ci.yml and release.yml — same row as the library: the CLI and go.mod versions are a coupled pair; CI must fail with an actionable message if they diverge |
-| Ollama HTTP API | as of 2026: `GET /api/tags`, `POST /api/chat` with `"format":"json"`, `"stream":false` | probed at startup; if `/api/tags` succeeds but `/api/chat` returns 404, show "Ollama too old — please update" |
+| Ollama HTTP API | as of 2026: `GET /api/tags`, `POST /api/chat` with `"format":"json"`, `"stream":false` | probed at startup; if `/api/tags` succeeds but `/api/chat` returns 404 without a model-not-found body, show "Ollama too old, please update" |
 | Default Ollama model | `qwen2.5:3b-instruct` | user-selectable from `/api/tags` results; model name is a setting, never hardcoded outside settings defaults |
 | Frontend | vanilla JS (ES2020), embedded via go:embed | no npm, no bundler |
 | github.com/xuri/excelize/v2 | v2.9.x | XLSX reading; pure Go, MIT licence |

@@ -1,4 +1,4 @@
-// views/entities.js — wizard step 3: entity discovery, review, allowlist
+// views/entities.js, wizard step 3: entity discovery, review, allowlist
 // and custom patterns (Phase 7). This screen is the heart of the UX and is
 // FULLY usable without Ollama: the add-item rows are the whole flow in
 // manual mode; only the discovery trigger is LLM-gated.
@@ -66,7 +66,7 @@ function discoveryPanel(s, ollamaOK) {
         <button id="btn-discover" class="primary" ${gate}>Run discovery</button>
       </div>
       <p class="hint">Pick one or more representative files; the local model proposes entities for review below.
-        Without Ollama, add entities manually in the tables — that is a fully supported flow.</p>
+        Without Ollama, add entities manually in the tables; that is a fully supported flow.</p>
       ${fileOptions || `<p class="hint">No documents imported.</p>`}
       <div id="disc-progress" class="hint"></div>
     </section>`;
@@ -87,7 +87,7 @@ function wireDiscovery(container, s) {
     try {
       const proposals = await runDiscovery(files, s.allowlist);
       const added = addEntities((proposals ?? []).map((p) => ({ category: p.category, canonical: p.text })));
-      progress.textContent = `${proposals?.length ?? 0} proposal(s), ${added} new — review below.`;
+      progress.textContent = `${proposals?.length ?? 0} proposal(s), ${added} new. Review them below.`;
       await refreshVariants();
     } catch (err) {
       showError(container, err);
@@ -150,7 +150,7 @@ function wireCategoryPanels(container) {
   for (const panel of container.querySelectorAll("[data-panel]")) {
     const category = panel.dataset.panel;
 
-    // Manual add row — the whole flow in no-Ollama mode.
+    // Manual add row, the whole flow in no-Ollama mode.
     const addBtn = panel.querySelector(".ent-add");
     const addInput = panel.querySelector(".ent-add-input");
     const add = async () => {
@@ -217,7 +217,7 @@ function allowlistPanel(s) {
     <span class="pill">${escapeHTML(t)}<button class="allow-del" data-term="${escapeHTML(t)}" title="Remove">✕</button></span>`).join("");
   return `
     <section class="panel" id="allow-panel">
-      <div class="panel-head"><h2>Allowlist — never anonymised</h2></div>
+      <div class="panel-head"><h2>Allowlist (never anonymised)</h2></div>
       <p class="hint">Terms here survive every pass, even when they are also listed as entities.</p>
       <div class="pill-list">${pills || `<span class="hint">empty</span>`}</div>
       <div class="form-row">

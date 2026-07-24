@@ -31,7 +31,7 @@ var runtimeEventsEmit = func(a *App, name string, payload interface{}) {
 func (a *App) RunDiscovery(fileNames []string, allowTerms []string) ([]engine.ProposedEntity, error) {
 	docs := a.docsByName(fileNames)
 	if len(docs) == 0 {
-		return nil, fmt.Errorf("no matching imported files to scan — import documents first, then pick at least one for discovery")
+		return nil, fmt.Errorf("no matching imported files to scan, import documents first, then pick at least one for discovery")
 	}
 
 	// Wire the allowlist veto exactly once per call: the same allowlist

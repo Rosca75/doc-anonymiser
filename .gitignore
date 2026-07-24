@@ -1,6 +1,9 @@
 # --- Go / Wails build output ---
-/build/
-/build/bin/
+# Everything under build/ is generated EXCEPT appicon.png, which is the
+# committed application icon Wails embeds into the Windows executable
+# (generated once by `go run scripts/genicon.go`, BUILD-02 Phase 1g).
+/build/*
+!/build/appicon.png
 *.exe
 
 # Wails may generate a frontend dist folder on some setups

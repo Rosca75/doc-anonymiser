@@ -1,7 +1,7 @@
-// highlight.js — pure rendering helper for the results view: wraps the
+// highlight.js, pure rendering helper for the results view: wraps the
 // placeholders in anonymised text with category-coloured <mark> elements.
 //
-// Pure JavaScript, no DOM required — unit-tested with `node --test`
+// Pure JavaScript, no DOM required, unit-tested with `node --test`
 // (highlight.test.js), which is why it is not inlined in views/run.js.
 //
 // Everything that is NOT a placeholder is escaped: the surrounding text

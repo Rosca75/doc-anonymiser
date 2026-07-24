@@ -1,0 +1,56 @@
+/*
+  brand.css, the PwC brand tokens for doc-anonymiser.
+
+  SINGLE SOURCE OF TRUTH for colours and typography (BUILD-02 section 5).
+  Values come from docs/brand/color-palette.json and the pwc-brand-guidelines
+  skill. style.css consumes ONLY these variables; no other file may define
+  colour or font values.
+
+  Usage rules (enforced in review):
+  - Headings in Georgia at regular weight; hierarchy comes from size and
+    space, not bold. Functional UI text (labels, buttons, tables) in Arial.
+  - Black text on all light surfaces. White text only on black, or as large
+    bold type on the accent orange.
+  - ONE loud orange element per view. Greys carry everything contextual.
+  - Status colours are functional only, never decorative.
+
+  Local-only guarantee: Georgia, Arial and Consolas are Windows system
+  fonts. No font files, no CDNs (CLAUDE.md section 4).
+*/
+
+:root {
+  /* Core */
+  --bg: #FFFFFF;              /* white background is the default */
+  --bg-secondary: #EBEBEB;    /* quiet secondary surfaces, banding, dividers */
+  --text: #000000;            /* black text on light surfaces, always */
+  --muted: #A1A8B3;           /* slate gray, secondary text and followed links */
+
+  /* Signature accent: ONE hero element per view (primary button, key count).
+     Never body text, never a flood fill behind small text. */
+  --accent: #FD5108;
+  --accent-medium: #FE7C39;
+  --accent-light: #FFAA72;
+
+  /* Orange tint ramp (toward white) for highlight fills; black text on all */
+  --tint-orange-1: #FFCDA8;
+  --tint-orange-2: #FFE8D4;
+  --tint-orange-3: #FFF5ED;
+
+  /* Grey-blue ramp for neutral chrome */
+  --gray-1: #A1A8B3;
+  --gray-2: #B5BCC4;
+  --gray-3: #CBD1D6;
+  --gray-4: #DFE3E6;
+  --gray-5: #EEEFF1;
+  --gray-6: #F5F7F8;
+
+  /* Status (functional only, never decorative) */
+  --ok: #059669;
+  --warn: #E9B01F;
+  --err: #DC2626;
+
+  /* Typography: Windows system fonts only, no font files, no CDNs */
+  --font-heading: Georgia, 'Times New Roman', serif;   /* regular weight, never bold */
+  --font-body: Arial, Helvetica, sans-serif;
+  --font-mono: Consolas, 'Courier New', monospace;     /* previews, unchanged */
+}

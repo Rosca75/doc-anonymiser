@@ -32,11 +32,11 @@ func (a *App) RunPipeline(req RunRequest) error {
 	a.mu.Lock()
 	if a.running {
 		a.mu.Unlock()
-		return fmt.Errorf("a run is already in progress — cancel it or wait for it to finish")
+		return fmt.Errorf("a run is already in progress, cancel it or wait for it to finish")
 	}
 	if len(a.docs) == 0 {
 		a.mu.Unlock()
-		return fmt.Errorf("no documents to process — import files on the Import screen first")
+		return fmt.Errorf("no documents to process, import files on the Import screen first")
 	}
 	a.running = true
 	ctx, cancel := context.WithCancel(context.Background())
@@ -139,7 +139,7 @@ func (a *App) FastRerun(req RunRequest) (*engine.Results, error) {
 	a.mu.Lock()
 	if a.running {
 		a.mu.Unlock()
-		return nil, fmt.Errorf("a run is already in progress — wait for it to finish before re-running")
+		return nil, fmt.Errorf("a run is already in progress, wait for it to finish before re-running")
 	}
 	a.mu.Unlock()
 	return a.runPipelineBlocking(context.Background(), req)

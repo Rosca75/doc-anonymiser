@@ -258,10 +258,10 @@ type CustomPattern struct {
 // actionable error for the UI (BUILD.md Phase 3 activity 3).
 func ValidateCustomPattern(expr string) error {
 	if strings.TrimSpace(expr) == "" {
-		return fmt.Errorf("the pattern is empty — enter a regular expression, e.g. PRJ-[0-9]+ to match project codes")
+		return fmt.Errorf("the pattern is empty, enter a regular expression, e.g. PRJ-[0-9]+ to match project codes")
 	}
 	if _, err := regexp.Compile(expr); err != nil {
-		return fmt.Errorf("the pattern %q is not a valid regular expression (%v) — check for unbalanced brackets or a trailing backslash", expr, err)
+		return fmt.Errorf("the pattern %q is not a valid regular expression (%v), check for unbalanced brackets or a trailing backslash", expr, err)
 	}
 	return nil
 }

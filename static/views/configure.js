@@ -1,7 +1,7 @@
-// views/configure.js — wizard step 2: settings.
+// views/configure.js, wizard step 2: settings.
 //
 //   - anonymisation level radio (default medium),
-//   - Ollama port override (host locked to loopback — the input is the
+//   - Ollama port override (host locked to loopback, the input is the
 //     PORT only, by design; see CLAUDE.md §8),
 //   - model dropdown populated from ListModels(),
 //   - "re-probe" button,
@@ -13,7 +13,7 @@ import { getState, setState } from "../state.js";
 import { escapeHTML } from "../html.js";
 
 // The tooltip used by every disabled LLM control, verbatim from CLAUDE.md §4.
-export const LLM_DISABLED_TOOLTIP = "Requires Ollama — not detected on 127.0.0.1:11434";
+export const LLM_DISABLED_TOOLTIP = "Requires Ollama, which was not detected on 127.0.0.1:11434";
 
 export function renderConfigure(container) {
   const s = getState();
@@ -21,9 +21,9 @@ export function renderConfigure(container) {
   const llmDisabled = ollamaOK ? "" : `disabled title="${LLM_DISABLED_TOOLTIP}"`;
 
   const levels = [
-    ["soft", "Soft — hard PII (emails, phones, IBANs, IDs, VAT, URLs) + engagement entities"],
-    ["medium", "Medium (default) — soft + person names"],
-    ["advanced", "Advanced — medium + dates, locations, organisations, amounts"],
+    ["soft", "Soft: hard personal details (emails, phones, bank accounts, IDs, VAT numbers, web addresses) and engagement names"],
+    ["medium", "Medium (default): soft plus person names"],
+    ["advanced", "Advanced: medium plus dates, locations, organisations and amounts"],
   ];
   const radios = levels.map(([value, label]) => `
     <label class="radio-row">
@@ -46,7 +46,7 @@ export function renderConfigure(container) {
             ${ollamaOK ? "detected" : "not detected"}
           </span>
         </div>
-        <p class="hint">The AI features are optional — the deterministic pipeline works without them.
+        <p class="hint">The AI features are optional. The deterministic pipeline works without them.
         Host is locked to 127.0.0.1; only the port can be changed.</p>
         <div class="form-row">
           <label for="ollama-port">Port</label>

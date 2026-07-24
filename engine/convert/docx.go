@@ -34,13 +34,13 @@ func Docx(raw []byte) (markdown string, warnings []string, err error) {
 	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
 		return "", nil, fmt.Errorf(
-			"the file is not a valid .docx (it is not a zip archive: %v) — if it is an old binary .doc file, open it in Word and save it as .docx first", err)
+			"the file is not a valid .docx (it is not a zip archive: %v), if it is an old binary .doc file, open it in Word and save it as .docx first", err)
 	}
 
 	docXML, err := readZipEntry(zr, "word/document.xml")
 	if err != nil {
 		return "", nil, fmt.Errorf(
-			"the file is not a valid .docx (missing word/document.xml) — if it is an old binary .doc file, open it in Word and save it as .docx first")
+			"the file is not a valid .docx (missing word/document.xml), if it is an old binary .doc file, open it in Word and save it as .docx first")
 	}
 
 	// Relationships resolve hyperlink r:id values to real URLs. Missing
@@ -53,12 +53,12 @@ func Docx(raw []byte) (markdown string, warnings []string, err error) {
 
 	p := &docxParser{rels: rels, numFmts: numFmts}
 	if err := p.parseBody(docXML); err != nil {
-		return "", nil, fmt.Errorf("could not parse word/document.xml: %w — the file may be corrupted; try re-saving it in Word", err)
+		return "", nil, fmt.Errorf("could not parse word/document.xml: %w, the file may be corrupted; try re-saving it in Word", err)
 	}
 
 	if p.imagesDropped > 0 {
 		warnings = append(warnings, fmt.Sprintf(
-			"%d image(s) were dropped and replaced by an *[image omitted]* placeholder — images cannot be anonymised as text", p.imagesDropped))
+			"%d image(s) were dropped and replaced by an *[image omitted]* placeholder, images cannot be anonymised as text", p.imagesDropped))
 	}
 	return p.out.String(), warnings, nil
 }

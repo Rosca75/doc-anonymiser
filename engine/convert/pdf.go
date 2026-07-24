@@ -26,7 +26,7 @@ import (
 
 // ErrScannedPDF is the CLAUDE.md §5 rejection message for PDFs without a
 // text layer. Kept as a variable so the UI test can assert the exact text.
-const ErrScannedPDF = "No text layer found — this PDF is likely scanned. OCR is not supported; convert it externally first."
+const ErrScannedPDF = "No text layer found, this PDF is likely scanned. OCR is not supported; convert it externally first."
 
 // PDF converts raw .pdf bytes to repaired plain text (valid markdown by
 // construction — plain paragraphs). Pages are separated by blank lines.
@@ -38,14 +38,14 @@ func PDF(raw []byte) (markdown string, warnings []string, err error) {
 		if r := recover(); r != nil {
 			markdown, warnings = "", nil
 			err = fmt.Errorf(
-				"the PDF could not be parsed (internal reader error: %v) — the file may be damaged or use unsupported features; try re-printing it to PDF and importing again", r)
+				"the PDF could not be parsed (internal reader error: %v), the file may be damaged or use unsupported features; try re-printing it to PDF and importing again", r)
 		}
 	}()
 
 	reader, err := pdflib.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
 		return "", nil, fmt.Errorf(
-			"the file is not a readable PDF (%v) — if it is password-protected, remove the password first", err)
+			"the file is not a readable PDF (%v), if it is password-protected, remove the password first", err)
 	}
 
 	var (
@@ -62,7 +62,7 @@ func PDF(raw []byte) (markdown string, warnings []string, err error) {
 		if err != nil {
 			// One unreadable page degrades to a warning; the remaining
 			// pages are still worth anonymising.
-			warnings = append(warnings, fmt.Sprintf("page %d could not be extracted (%v) — its text is missing from the output", i, err))
+			warnings = append(warnings, fmt.Sprintf("page %d could not be extracted (%v), its text is missing from the output", i, err))
 			continue
 		}
 		fixed := RepairPDFText(text)
@@ -79,9 +79,9 @@ func PDF(raw []byte) (markdown string, warnings []string, err error) {
 		return "", nil, fmt.Errorf("%s", ErrScannedPDF)
 	}
 
-	warnings = append(warnings, "PDF text extraction is EXPERIMENTAL — always review the converted text before anonymising")
+	warnings = append(warnings, "PDF text extraction is EXPERIMENTAL, always review the converted text before anonymising")
 	if repaired {
-		warnings = append(warnings, "spacing repair was applied to fix kerning artefacts — verify that words were re-joined correctly")
+		warnings = append(warnings, "spacing repair was applied to fix kerning artefacts, verify that words were re-joined correctly")
 	}
 	return strings.Join(pages, "\n\n") + "\n", warnings, nil
 }

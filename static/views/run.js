@@ -1,4 +1,4 @@
-// views/run.js — wizard step 4: pipeline execution, live progress, and
+// views/run.js, wizard step 4: pipeline execution, live progress, and
 // results review (Phase 8).
 //
 //   - Run button (+ optional deep-scan checkbox, LLM-gated) and Cancel,
@@ -59,7 +59,7 @@ function controlPanel(s, ollamaOK) {
       ${s.running ? `
         <div class="progress-bar"><div style="width:${pct}%"></div></div>
         <p class="hint">${s.progress
-          ? `${escapeHTML(s.progress.stage)} — ${escapeHTML(s.progress.docName)} (${s.progress.docIndex + 1}/${s.progress.docCount})`
+          ? `${escapeHTML(s.progress.stage)}: ${escapeHTML(s.progress.docName)} (${s.progress.docIndex + 1}/${s.progress.docCount})`
           : "starting…"}</p>` : ""}
     </section>`;
 }
@@ -158,8 +158,8 @@ function resultsPanel(s) {
     </section>
     <section class="panel">
       <div class="panel-head"><h2>Something missed?</h2></div>
-      <p class="hint">Add it as an entity (or a rule above), then re-run the fast deterministic passes —
-        no AI re-scan, existing placeholders keep their numbers.</p>
+      <p class="hint">Add it as an entity (or a rule above), then re-run the fast deterministic passes.
+        There is no AI re-scan, and existing placeholders keep their numbers.</p>
       <div class="form-row">
         <select id="missed-category">
           <option value="person_names">person</option>

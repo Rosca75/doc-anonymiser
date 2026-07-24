@@ -1,6 +1,6 @@
-// views/import.js — wizard step 1: import documents.
+// views/import.js, wizard step 1: import documents.
 //
-// Responsibilities (render from state, dispatch via api.js — CLAUDE.md §4):
+// Responsibilities (render from state, dispatch via api.js, CLAUDE.md §4):
 //   - "Add files" button → native multi-file dialog (all 7 formats),
 //   - drag-drop hint (the drop itself is handled natively by Wails and
 //     arrives via the "documents:changed" event, see main.js),
@@ -20,7 +20,7 @@ export function renderImport(container) {
     <li class="doc-row ${s.previewDoc === d.name ? "selected" : ""}" data-name="${escapeHTML(d.name)}">
       <span class="doc-name" title="${escapeHTML(d.name)}">${escapeHTML(d.name)}</span>
       <span class="tag">${escapeHTML(d.format)}</span>
-      ${d.experimental ? `<span class="tag warn" title="PDF text extraction is experimental — review the preview carefully">EXPERIMENTAL</span>` : ""}
+      ${d.experimental ? `<span class="tag warn" title="PDF text extraction is experimental. Review the preview carefully.">EXPERIMENTAL</span>` : ""}
       <span class="doc-size">${fmtSize(d.sizeBytes)}</span>
       ${d.warnings?.length ? `<span class="tag warn" title="${escapeHTML(d.warnings.join("\n"))}">⚠ ${d.warnings.length}</span>` : ""}
       <button class="doc-remove" title="Remove from session">✕</button>
@@ -44,7 +44,7 @@ export function renderImport(container) {
           <ul class="doc-list">${rows || `<li class="empty">Nothing imported yet.</li>`}</ul>
         </section>
         <section class="panel preview">
-          <div class="panel-head"><h2>Preview${preview ? ` — ${escapeHTML(preview.name)}` : ""}</h2></div>
+          <div class="panel-head"><h2>Preview${preview ? `: ${escapeHTML(preview.name)}` : ""}</h2></div>
           ${preview ? renderPreview(preview) : `<p class="hint">Select a document to preview its working form.</p>`}
         </section>
       </div>
@@ -76,13 +76,13 @@ export function renderImport(container) {
  * renderPreview(doc) shows the markdown working form. Grid documents
  * (CSV / flat xlsx) get their markdown table rendered as an HTML table for
  * readability; everything else is shown as preformatted markdown.
- * All content is escaped — it comes from user documents.
+ * All content is escaped, it comes from user documents.
  */
 function renderPreview(doc) {
-  // Very large documents preview truncated (first 5 000 lines) — the
+  // Very large documents preview truncated (first 5 000 lines), the
   // pipeline still processes the FULL content (Phase 10 hardening).
   const notice = doc.previewTruncated
-    ? `<div class="banner warn">Preview truncated to the first 5 000 lines — the full document is still processed and exported.</div>`
+    ? `<div class="banner warn">Preview truncated to the first 5 000 lines. The full document is still processed and exported.</div>`
     : "";
   if (doc.isGrid) {
     return `${notice}<div class="table-scroll">${markdownTableToHTML(doc.markdown)}</div>`;

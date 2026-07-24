@@ -38,7 +38,7 @@ const DefaultModel = "qwen2.5:3b-instruct"
 
 // ErrTooOld is the pinned message for an Ollama old enough to miss
 // /api/chat (CLAUDE.md §7: probe succeeds but chat 404s).
-const ErrTooOld = "Ollama too old — please update"
+const ErrTooOld = "Ollama too old, please update"
 
 // maxPromptBytes caps how much document text is sent per LLM call. Small
 // local models have limited context windows; beyond this size the tail is
@@ -127,7 +127,7 @@ func (c *Client) Probe() OllamaStatus {
 		return OllamaStatus{
 			Available: false,
 			Detail: fmt.Sprintf(
-				"Ollama not detected on %s — install it from ollama.com and start it to enable the AI features (the app works fine without it). Technical detail: %v",
+				"Ollama not detected on %s, install it from ollama.com and start it to enable the AI features (the app works fine without it). Technical detail: %v",
 				c.BaseURL, err),
 		}
 	}
@@ -160,7 +160,7 @@ func (c *Client) Probe() OllamaStatus {
 	detail := fmt.Sprintf("Ollama detected on %s with %d model(s).", c.BaseURL, len(names))
 	if len(names) == 0 {
 		detail = fmt.Sprintf(
-			"Ollama detected on %s but no models are installed — run 'ollama pull %s' to enable the AI features.",
+			"Ollama detected on %s but no models are installed, run 'ollama pull %s' to enable the AI features.",
 			c.BaseURL, DefaultModel)
 	}
 	return OllamaStatus{Available: true, Models: names, Detail: detail}
@@ -228,7 +228,7 @@ func (c *Client) Chat(ctx context.Context, model, systemPrompt, userPrompt strin
 	resp, err := c.chatClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf(
-			"could not reach Ollama on %s (%v) — check that Ollama is still running, then re-probe in settings", c.BaseURL, err)
+			"could not reach Ollama on %s (%v), check that Ollama is still running, then re-probe in settings", c.BaseURL, err)
 	}
 	defer resp.Body.Close()
 
@@ -239,16 +239,16 @@ func (c *Client) Chat(ctx context.Context, model, systemPrompt, userPrompt strin
 	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf(
-			"Ollama answered HTTP %d on /api/chat (expected 200) — the model %q may not be installed; run 'ollama pull %s' or pick another model in settings",
+			"Ollama answered HTTP %d on /api/chat (expected 200), the model %q may not be installed; run 'ollama pull %s' or pick another model in settings",
 			resp.StatusCode, model, model)
 	}
 
 	var out chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", fmt.Errorf("Ollama's /api/chat reply could not be parsed (%v) — try updating Ollama", err)
+		return "", fmt.Errorf("Ollama's /api/chat reply could not be parsed (%v), try updating Ollama", err)
 	}
 	if out.Error != "" {
-		return "", fmt.Errorf("Ollama reported an error: %s — the model %q may not be installed; run 'ollama pull %s'", out.Error, model, model)
+		return "", fmt.Errorf("Ollama reported an error: %s, the model %q may not be installed; run 'ollama pull %s'", out.Error, model, model)
 	}
 	return out.Message.Content, nil
 }
@@ -379,7 +379,7 @@ func parseEntityJSON(reply string) ([]engine.ProposedEntity, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(cleaned), &raw); err != nil {
 		return nil, fmt.Errorf(
-			"the model's reply was not the expected JSON object (%v) — try a stronger model in settings (reply started with: %.80q)",
+			"the model's reply was not the expected JSON object (%v), try a stronger model in settings (reply started with: %.80q)",
 			err, cleaned)
 	}
 

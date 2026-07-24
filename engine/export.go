@@ -41,7 +41,7 @@ func ExportBytes(rd ResultDocument, ext string) ([]byte, error) {
 	}
 	if !allowed {
 		return nil, fmt.Errorf(
-			"documents imported as %s cannot be exported as .%s — offered formats: %s",
+			"documents imported as %s cannot be exported as .%s, offered formats: %s",
 			rd.Format, ext, strings.Join(ExportExtensions(rd.Format), ", "))
 	}
 	switch ext {
@@ -90,7 +90,7 @@ func isAlnum(s string) bool {
 // each document's DEFAULT export format (BUILD.md Phase 9 activity 2).
 func BuildExportZip(results *Results) ([]byte, error) {
 	if results == nil || len(results.Documents) == 0 {
-		return nil, fmt.Errorf("there are no results to export — run the pipeline first")
+		return nil, fmt.Errorf("there are no results to export, run the pipeline first")
 	}
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)

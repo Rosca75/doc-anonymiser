@@ -18,8 +18,10 @@ import (
 
 // TestErrorMessageFormat samples representative user-facing errors and
 // asserts each states BOTH what failed and how to fix it (CLAUDE.md §2:
-// error messages must be actionable). The em dash separates the failure
-// from the remedy in our message convention.
+// error messages must be actionable). Since BUILD-02 Phase 1 the failure
+// and the remedy are separated by ordinary punctuation (comma, semicolon
+// or period), never an em dash (see copy_guard_test.go), and the remedy
+// half must contain an imperative cue so the message stays actionable.
 func TestErrorMessageFormat(t *testing.T) {
 	app := NewApp()
 
@@ -38,8 +40,21 @@ func TestErrorMessageFormat(t *testing.T) {
 			continue
 		}
 		msg := err.Error()
-		if !strings.Contains(msg, "—") {
-			t.Errorf("case %d: message lacks the failure—remedy structure: %q", i, msg)
+		if !strings.ContainsAny(msg, ",;.") {
+			t.Errorf("case %d: message lacks the failure/remedy structure: %q", i, msg)
+		}
+		// Remedy cue: at least one actionable verb pointing the user at a fix.
+		cues := []string{"check", "run", "pick", "import", "expected", "re-create", "update", "try", "enter", "remove", "restart", "choose", "rename", "convert"}
+		hasCue := false
+		lower := strings.ToLower(msg)
+		for _, cue := range cues {
+			if strings.Contains(lower, cue) {
+				hasCue = true
+				break
+			}
+		}
+		if !hasCue {
+			t.Errorf("case %d: message has no actionable remedy cue: %q", i, msg)
 		}
 		if len(msg) < 30 {
 			t.Errorf("case %d: message too terse to be actionable: %q", i, msg)

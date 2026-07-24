@@ -184,7 +184,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 				// keep the batch going (CLAUDE.md §4 graceful degradation).
 				res.Report.LLMPass = fmt.Sprintf("degraded: %v", err)
 				res.Report.Warnings = append(res.Report.Warnings,
-					fmt.Sprintf("deep-scan failed on %q — deterministic passes still applied: %v", doc.Name, err))
+					fmt.Sprintf("deep-scan failed on %q, deterministic passes still applied: %v", doc.Name, err))
 			} else {
 				docEntities = append(docEntities, acceptProposals(proposals, doc.Markdown, in.Allowlist, activeCats)...)
 			}

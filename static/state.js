@@ -1,13 +1,13 @@
-// state.js — the single source of truth for frontend state (CLAUDE.md §4).
+// state.js, the single source of truth for frontend state (CLAUDE.md §4).
 //
 // Minimal store: a plain object plus subscribe/notify. Views never keep
-// their own copies of shared data — they read from getState() and
+// their own copies of shared data, they read from getState() and
 // re-render when notified. Mutations go through setState() (shallow merge)
 // or the exported reducer functions, so every state change is observable
 // in one place.
 //
 // This module is PURE JavaScript with no DOM and no Wails access, so it is
-// unit-testable with `node --test` (state.test.js) — the reason views must
+// unit-testable with `node --test` (state.test.js), the reason views must
 // stay logic-free (BUILD.md Phase 6).
 
 // WIZARD_STEPS defines the fixed wizard order (CLAUDE.md wizard flow).
@@ -150,18 +150,18 @@ export function applyImportResult(result) {
 
 // --- Entity review reducers (Phase 7) ----------------------------------------
 //
-// Entities are keyed by (category, canonical) — one row per real-world
+// Entities are keyed by (category, canonical), one row per real-world
 // entity. status "accepted" entities feed the pipeline; "denied" ones are
 // kept visible (struck through) so the user sees what discovery proposed.
 
-/** entityKey(category, canonical) — case-insensitive identity of a row. */
+/** entityKey(category, canonical), case-insensitive identity of a row. */
 export function entityKey(category, canonical) {
   return `${category}|${canonical.trim().toLowerCase()}`;
 }
 
 /**
  * addEntities(items) adds proposals or manual entries, skipping duplicates.
- * items: [{category, canonical, variants?}] — variants (from Go expansion)
+ * items: [{category, canonical, variants?}], variants (from Go expansion)
  * may be attached later via setEntityVariants.
  */
 export function addEntities(items) {
@@ -183,7 +183,7 @@ export function addEntities(items) {
   return added.length;
 }
 
-/** setEntityStatus(category, canonical, status) — accept or deny a row. */
+/** setEntityStatus(category, canonical, status), accept or deny a row. */
 export function setEntityStatus(category, canonical, status) {
   setState({
     entities: state.entities.map((e) =>
@@ -245,7 +245,7 @@ export function addManualVariant(category, canonical, variant) {
   });
 }
 
-/** acceptedEntities(s) — the pipeline-ready entity list. */
+/** acceptedEntities(s), the pipeline-ready entity list. */
 export function acceptedEntities(s = state) {
   return s.entities
     .filter((e) => e.status === "accepted")
@@ -254,7 +254,7 @@ export function acceptedEntities(s = state) {
 
 // --- Allowlist / pattern reducers ---------------------------------------------
 
-/** addAllowTerm(term) — case-insensitive dedupe, keeps typed spelling. */
+/** addAllowTerm(term), case-insensitive dedupe, keeps typed spelling. */
 export function addAllowTerm(term) {
   const t = (term ?? "").trim();
   if (!t || state.allowlist.some((x) => x.toLowerCase() === t.toLowerCase())) return;
@@ -276,7 +276,7 @@ export function removePattern(expr) {
   setState({ patterns: state.patterns.filter((p) => p.expr !== expr) });
 }
 
-/** validPatterns(s) — the pipeline-ready pattern list (compile-clean only). */
+/** validPatterns(s), the pipeline-ready pattern list (compile-clean only). */
 export function validPatterns(s = state) {
   return s.patterns.filter((p) => !p.error).map((p) => ({ expr: p.expr }));
 }
@@ -319,7 +319,7 @@ export function moveSimpleRule(index, delta) {
 }
 
 /** buildRunRequest(useDeepScan, s) assembles the Go RunRequest from the
- *  current state — the single place the pipeline payload is shaped. */
+ *  current state, the single place the pipeline payload is shaped. */
 export function buildRunRequest(useDeepScan, s = state) {
   return {
     entities: acceptedEntities(s),
