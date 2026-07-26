@@ -57,7 +57,7 @@ function controlPanel(s, aiOK) {
       <div class="panel-head">
         <h2>Run anonymisation</h2>
         <div>
-          <label title="${aiOK ? "Extra AI pass to catch residual entities" : escapeHTML(llmGateTooltip(s))}">
+          <label title="${aiOK ? "Extra AI pass to catch residual values" : escapeHTML(llmGateTooltip(s))}">
             <input type="checkbox" id="deep-scan" ${gate}/> deep-scan (AI)
           </label>
           <button id="btn-run" class="primary" ${s.running ? "disabled" : ""}>Run</button>
@@ -161,7 +161,7 @@ function resultsPanel(s) {
       </div>`;
 
   const missedContent = `
-      <p class="hint">Add it as an entity (or a rule above), then re-run the fast deterministic passes.
+      <p class="hint">Add it as a value (or a rule above), then re-run the fast deterministic passes.
         There is no AI re-scan, and existing placeholders keep their numbers.</p>
       <div class="form-row">
         <select id="missed-category">
@@ -171,7 +171,7 @@ function resultsPanel(s) {
           <option value="internal_names">Internal</option>
         </select>
         <input id="missed-name" placeholder="missed name, e.g. P. Stone"/>
-        <button id="missed-add">Add entity</button>
+        <button id="missed-add">Add value</button>
         <button id="btn-fast-rerun" class="primary">Fast re-run</button>
       </div>`;
 
@@ -248,7 +248,7 @@ function wireReassignPopover(container) {
       <p><strong>${escapeHTML(placeholder)}</strong> replaces <strong>${escapeHTML(original)}</strong></p>
       <div class="form-row">
         <label>variant of</label>
-        <input id="reassign-input" placeholder="type an entity name" autocomplete="off"/>
+        <input id="reassign-input" placeholder="type a value" autocomplete="off"/>
       </div>
       <ul class="reassign-suggestions" id="reassign-suggestions"></ul>`;
 

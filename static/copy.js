@@ -18,9 +18,11 @@ export const STEP_BANNERS = {
     body: "Choose what kinds of information to hide, and decide whether to use the optional local AI.",
     icon: "tune",
   },
-  entities: {
-    title: "Entities",
-    body: "Tell the app the names it should replace. You can add them yourself or let the app suggest candidates for your review.",
+  // BUILD-04 CR3: the step token and every user-visible word changed from
+  // "entities" to "values". Engine category identifiers are untouched.
+  values: {
+    title: "Values",
+    body: "Tell the app the values it should replace. You can add them yourself or let the app suggest candidates for your review.",
     icon: "badge",
   },
   run: {
@@ -35,26 +37,19 @@ export const STEP_BANNERS = {
   },
 };
 
-// Home page copy (BUILD-02 Phase 2b).
+// Home page copy (BUILD-02 Phase 2b, rewritten for BUILD-04 CR1).
+//
+// The body is an ARRAY of three paragraphs, rendered one <p> each by
+// views/home.js. The three cover, in order: who stays in control, the two
+// ways sensitive information is found, and where the processing happens.
+// They replace the former single lede plus three feature panels, which said
+// the same three things twice.
 export const HOME = {
-  headline: "Anonymise client documents on this machine",
-  lede: "doc-anonymiser replaces names, personal details and other sensitive values in your documents with consistent placeholders, so you can share or process them safely. Everything happens locally.",
-  panels: [
-    {
-      title: "Anonymise documents",
-      body: "Import text, Word, PowerPoint, Excel or PDF files, review what will be replaced, and export anonymised copies.",
-      icon: "description",
-    },
-    {
-      title: "Everything stays on this machine",
-      body: "No cloud services, no telemetry. Your files are read once and never modified.",
-      icon: "cloud_off",
-    },
-    {
-      title: "Optional local AI",
-      body: "If Ollama is installed, a local model can suggest names to replace. The app works fully without it.",
-      icon: "smart_toy",
-    },
+  headline: "Anonymise your documents safely",
+  body: [
+    "You stay in control from the first step to the last. The app shows you every value it proposes to replace, and nothing is replaced until you accept it. Your original files are only ever read, never changed, and the anonymised copies are written where you choose to save them.",
+    "Two ways of finding sensitive information work side by side. Predefined patterns catch everything that always looks the same, such as email addresses, phone numbers, bank account numbers and national identification numbers. AI powered discovery looks for the rest, the names of people, clients and projects that no pattern can predict, and puts each one on a review list for you to accept or reject.",
+    "Everything runs on this machine by default. The predefined patterns need no network connection at all. The optional AI features talk to a language model running on 127.0.0.1, the address of your own computer, so your documents never leave it. The app makes no other network connection: no cloud service, no telemetry, no update check.",
   ],
 };
 
@@ -87,11 +82,11 @@ export const CATEGORY_LABELS = {
   vat: ["VAT numbers", "For example LU12345678"],
   matricule: ["National identification numbers", "For example the Luxembourg 13 digit number"],
   url: ["Web addresses", "For example https://example.com/report"],
-  client_names: ["Client names", "The client names you list in the Entities step"],
-  project_names: ["Project names", "The project names you list in the Entities step"],
+  client_names: ["Client names", "The client names you list in the Values step"],
+  project_names: ["Project names", "The project names you list in the Values step"],
   internal_names: ["Internal names", "Internal staff, teams and systems"],
   person_names: ["Person names", "For example Marie Duval, M. Duval or just Marie"],
-  custom_patterns: ["Custom patterns", "The regular expressions you add in the Entities step"],
+  custom_patterns: ["Custom patterns", "The regular expressions you add in the Values step"],
   date: ["Dates", "For example 15 January 2026 or 15/01/2026"],
   organisation_names: ["Organisation names", "Organisations suggested by the AI review"],
   location_names: ["Place names", "Cities and places suggested by the AI review"],

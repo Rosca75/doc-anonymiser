@@ -1,5 +1,5 @@
 // views/allowlist.js, the SHARED allowlist editor panel (BUILD-02
-// Phase 6c). Both the Configure step and the Entities step render this
+// Phase 6c). Both the Configure step and the Values step render this
 // one component over the one state.allowlist list, so the user always
 // sees a single consistent allowlist.
 //

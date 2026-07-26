@@ -469,3 +469,44 @@ test("reassignOriginal removes a standalone entity and adds the variant", () => 
   // Unknown target rejected, state untouched.
   assert.equal(reassignOriginal("X", "person_names", "Ghost"), false);
 });
+
+// --- Step token rename and migration (BUILD-04 CR3) ------------------------
+
+import { migrateStep, LEGACY_STEP_TOKENS } from "./state.js";
+import { STEP_BANNERS } from "./copy.js";
+
+test("the wizard's third step token is values, not entities", () => {
+  assert.deepEqual(WIZARD_STEPS, ["import", "configure", "values", "run", "export"]);
+});
+
+test("migrateStep maps the legacy entities token onto values", () => {
+  assert.equal(migrateStep("entities"), "values");
+  assert.equal(LEGACY_STEP_TOKENS.entities, "values");
+});
+
+test("migrateStep passes current tokens through untouched", () => {
+  for (const step of WIZARD_STEPS) {
+    assert.equal(migrateStep(step), step);
+  }
+});
+
+test("migrateStep falls back to import for unknown or missing tokens", () => {
+  // A hand-edited or corrupted session must never strand the wizard on a
+  // step that does not exist; import is the only always-reachable step.
+  assert.equal(migrateStep("teleport"), "import");
+  assert.equal(migrateStep(undefined), "import");
+  assert.equal(migrateStep(""), "import");
+});
+
+test("every wizard step has a banner keyed by its current token", () => {
+  for (const step of WIZARD_STEPS) {
+    assert.ok(STEP_BANNERS[step], `no step banner for ${step}`);
+  }
+});
+
+test("no user-visible step wording still says Entities", () => {
+  for (const [step, banner] of Object.entries(STEP_BANNERS)) {
+    assert.doesNotMatch(banner.title, /entit/i, `${step} title`);
+    assert.doesNotMatch(banner.body, /entit/i, `${step} body`);
+  }
+});

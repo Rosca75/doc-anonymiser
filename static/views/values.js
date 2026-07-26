@@ -1,9 +1,15 @@
-// views/entities.js, wizard step 3 (BUILD-02 Phase 9): three discovery
+// views/values.js, wizard step 3 (BUILD-02 Phase 9): three discovery
 // methods (cloud placeholder / local AI / Smart detection), ONE unified
-// candidate review list (nothing reaches the entity tables without an
+// candidate review list (nothing reaches the value tables without an
 // explicit Accept), live match preview for manual entries, and variant
 // drag-and-drop regrouping. FULLY usable without Ollama: Smart detection
 // and the manual add rows carry the whole flow.
+//
+// Naming note (BUILD-04 CR3): the step is called "Values" everywhere the
+// user can see it. The ENGINE identifiers it manipulates (the category
+// keys client_names, person_names, ... and the state.entities array) keep
+// their original names on purpose, so a label change never ripples into
+// the pipeline or into saved sessions.
 //
 // Render-from-state discipline: every mutation goes through a state.js
 // reducer; every Go call goes through api.js.
@@ -42,20 +48,20 @@ const expanded = new Set();
 // (BUILD-02 Phase 2f). View-local, same pattern as `expanded`.
 const collapsedPanels = new Set();
 
-export function renderEntities(container) {
+export function renderValues(container) {
   const s = getState();
   // Discovery gates on the master AI toggle AND live availability
   // (BUILD-02 Phase 6d).
   const aiOK = llmEnabled(s);
 
   container.innerHTML = `
-    <div class="entities-view">
+    <div class="values-view">
       ${discoveryPanel(s, aiOK)}
       ${candidatesPanel(s)}
       ${CATEGORIES.map(([cat, label]) => categoryPanel(s, cat, label)).join("")}
       ${renderAllowlistPanel(s, collapsedPanels)}
       ${patternsPanel(s)}
-      <div id="entities-error"></div>
+      <div id="values-error"></div>
     </div>
   `;
 
@@ -274,9 +280,9 @@ function categoryPanel(s, category, label) {
       const chips = vrow.variants.map((v) => `
         <span class="pill variant-chip" draggable="true" data-variant="${escapeHTML(v)}"
               data-category="${escapeHTML(e.category)}" data-canonical="${escapeHTML(e.canonical)}"
-              title="Drag onto another entity to move this variant there.">
+              title="Drag onto another value to move this variant there.">
           <span class="icon drag-handle" aria-hidden="true">⠿</span>${escapeHTML(v)}
-          <button class="variant-move" title="Move this variant to another entity">move</button>
+          <button class="variant-move" title="Move this variant to another value">move</button>
         </span>`).join(" ");
       const inner =
         vrow.state === "pending" ? `<span class="hint">expanding…</span>` :
@@ -373,7 +379,7 @@ function wireCategoryPanels(container) {
       row.querySelector(".ent-deny").addEventListener("click", () => setEntityStatus(cat, canonical, "denied"));
       row.querySelector(".ent-delete").addEventListener("click", () => removeEntity(cat, canonical));
       row.querySelector(".ent-edit").addEventListener("click", async () => {
-        const next = prompt("Edit entity name:", canonical);
+        const next = prompt("Edit the value:", canonical);
         if (next !== null && editEntity(cat, canonical, next)) await refreshVariants();
       });
       row.querySelector(".ent-variants").addEventListener("click", async () => {
@@ -395,7 +401,7 @@ function wireCategoryPanels(container) {
     }
 
     // Variant drag-and-drop regrouping (BUILD-02 Phase 9d): chips are
-    // draggable; entity rows are drop targets. The tested moveVariant
+    // draggable; value rows are drop targets. The tested moveVariant
     // reducer does all the work; this is wiring only.
     for (const chip of panel.querySelectorAll(".variant-chip")) {
       chip.addEventListener("dragstart", (ev) => {
@@ -410,12 +416,12 @@ function wireCategoryPanels(container) {
       // "move" button prompting for the target entity name.
       chip.querySelector(".variant-move").addEventListener("click", async () => {
         const target = prompt(
-          "Move this variant to which entity? Type its exact name (any category):");
+          "Move this variant to which value? Type its exact name (any category):");
         if (!target) return;
         const to = getState().entities.find(
           (e) => e.canonical.toLowerCase() === target.trim().toLowerCase());
         if (!to) {
-          showError(container, new Error(`No entity named "${target.trim()}" exists. Add it first, then move the variant.`));
+          showError(container, new Error(`No value named "${target.trim()}" exists. Add it first, then move the variant.`));
           return;
         }
         if (moveVariant(chip.dataset.category, chip.dataset.canonical, to.category, to.canonical, chip.dataset.variant)) {
@@ -425,7 +431,7 @@ function wireCategoryPanels(container) {
     }
   }
 
-  // Drop targets: every entity row accepts a dragged variant chip.
+  // Drop targets: every value row accepts a dragged variant chip.
   for (const row of container.querySelectorAll("tr[data-key]:not(.variant-row)")) {
     row.addEventListener("dragover", (ev) => {
       if (ev.dataTransfer.types.includes("application/x-variant")) {
@@ -530,6 +536,6 @@ function wirePatterns(container) {
 }
 
 function showError(container, err) {
-  container.querySelector("#entities-error").innerHTML =
+  container.querySelector("#values-error").innerHTML =
     `<div class="banner error">${escapeHTML(String(err?.message ?? err))}</div>`;
 }

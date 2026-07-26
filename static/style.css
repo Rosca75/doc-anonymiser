@@ -20,8 +20,8 @@ body {
   overflow: hidden;
 }
 
-/* Headings are Georgia at REGULAR weight; hierarchy comes from size and
-   space, never bold (brand rule). */
+/* Headings are Helvetica at REGULAR weight; hierarchy comes from size and
+   space, never bold (brand rule, BUILD-04 CR2). */
 h1, h2, h3, h4 {
   font-family: var(--font-heading);
   font-weight: 400;
@@ -179,9 +179,10 @@ input, select {
 
 .home-view { max-width: 60rem; margin: 0 auto; padding-top: 2rem; }
 .home-view h1 { font-size: 2rem; margin: 0 0 0.5rem; }
-.home-lede { color: var(--text); max-width: 42rem; }
-.home-panels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 1.5rem 0; }
-.home-actions { display: flex; gap: 0.75rem; margin-top: 1rem; }
+/* The landing page body is three paragraphs (BUILD-04 CR1), each rendered
+   as .home-lede. A readable measure matters more than filling the width. */
+.home-lede { color: var(--text); max-width: 42rem; line-height: 1.5; margin: 0 0 1rem; }
+.home-actions { display: flex; gap: 0.75rem; margin-top: 1.5rem; }
 
 /* --- Import view ---------------------------------------------------------- */
 

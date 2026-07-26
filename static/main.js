@@ -19,7 +19,7 @@ import { renderHome } from "./views/home.js";
 import { renderDocs } from "./views/docs.js";
 import { renderImport } from "./views/import.js";
 import { renderConfigure } from "./views/configure.js";
-import { renderEntities } from "./views/entities.js";
+import { renderValues } from "./views/values.js";
 import { renderRun } from "./views/run.js";
 import { renderExport } from "./views/export.js";
 
@@ -27,7 +27,7 @@ import { renderExport } from "./views/export.js";
 const STEP_LABELS = {
   import: "1 · Import",
   configure: "2 · Configure",
-  entities: "3 · Entities",
+  values: "3 · Values",
   run: "4 · Run",
   export: "5 · Export",
 };
@@ -36,7 +36,7 @@ const STEP_LABELS = {
 const VIEWS = {
   import: renderImport,
   configure: renderConfigure,
-  entities: renderEntities,
+  values: renderValues,
   run: renderRun,
   export: renderExport,
 };

@@ -11,7 +11,11 @@
 // stay logic-free (BUILD.md Phase 6).
 
 // WIZARD_STEPS defines the fixed wizard order (CLAUDE.md wizard flow).
-export const WIZARD_STEPS = ["import", "configure", "entities", "run", "export"];
+// BUILD-04 CR3 renamed the third step's token from "entities" to
+// "values". Saved sessions written before that rename are migrated by
+// migrateStep() below, so an older file never lands the wizard on a step
+// that no longer exists.
+export const WIZARD_STEPS = ["import", "configure", "values", "run", "export"];
 
 // The initial application state. Every field is documented; grow it here,
 // never ad hoc in views.
@@ -288,6 +292,28 @@ export function goTo(step) {
   if (!canGoTo(step)) return false;
   setState({ step });
   return true;
+}
+
+// LEGACY_STEP_TOKENS maps wizard step tokens written by OLDER versions of
+// the application onto their current names (BUILD-04 CR3). Session files
+// and any other persisted step reference pass through migrateStep() so a
+// rename in the UI can never strand a user on a step that no longer
+// exists. Grow this table on every future token rename; never remove an
+// entry, old files keep existing forever.
+export const LEGACY_STEP_TOKENS = {
+  entities: "values",
+};
+
+/**
+ * migrateStep(step) returns the CURRENT token for a possibly legacy step
+ * name. Unknown tokens (a corrupted or hand-edited file) fall back to
+ * "import", the only step that is always reachable.
+ * @param {string} step token read from a persisted session
+ * @returns {string} a token guaranteed to be in WIZARD_STEPS
+ */
+export function migrateStep(step) {
+  const migrated = LEGACY_STEP_TOKENS[step] ?? step;
+  return WIZARD_STEPS.includes(migrated) ? migrated : "import";
 }
 
 /** nextStep()/prevStep() move linearly through the wizard. */
