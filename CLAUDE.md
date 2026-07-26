@@ -63,14 +63,17 @@ doc-anonymiser/
 │   ├── style.css              # consumes brand.css variables only
 │   ├── api.js                 # THE ONLY file that calls Go bound methods
 │   ├── state.js               # single source of truth for frontend state
+│   ├── shell.js               # pure header/workflow-banner markup + docs action
 │   ├── ui.js                  # shared UI toolkit (button/banner/panel/icon)
 │   ├── icons.js               # vendored Material Symbols SVG map
 │   ├── copy.js                # user-visible strings (banners, step copy)
+│   ├── scroll.js              # scroll preservation across re-renders
 │   ├── docs/                  # bundled offline user documentation, opened in
 │   │                          # a SECOND window (embedded assets only)
 │   ├── entitymodel.js         # pure variant view-model (regression-tested)
+│   ├── candidatemodel.js      # pure suggestions filter/sort view-model
 │   ├── assets/icons/          # vendored Material Symbols SVGs + LICENSE
-│   └── views/                 # one JS module per screen (home, docs, wizard steps, shared allowlist panel)
+│   └── views/                 # one JS module per screen (home, wizard steps, shared allowlist panel)
 ├── .github/workflows/
 │   ├── ci.yml                 # build + test on push/PR
 │   └── release.yml            # on tag: build, zip, attach to Release
@@ -95,10 +98,18 @@ doc-anonymiser/
 - **Documentation opens in a second window (BUILD-04 CR6):** the "Documentation"
   menu entry opens a SEPARATE application window whose content comes from
   `static/docs/*`, embedded in the binary by the same `go:embed` directive as
-  the rest of `static/`. The window is created from Go (`app.go` bound method,
-  Wails v2 runtime only, no v3 idioms) and may load NOTHING but embedded
-  assets: no `http(s)://` URL, no CDN, no system browser hand-off. There is no
-  in-app documentation screen any more; the top menu keeps its entry.
+  the rest of `static/`. It may load NOTHING but embedded assets: no
+  `http(s)://` URL, no CDN, no system browser hand-off. There is no in-app
+  documentation screen any more; the top menu keeps its entry.
+
+  Mechanism, verified against the pin: **Wails v2 drives exactly one native
+  window per process** and exposes no API to create a second one (multi-window
+  is a v3 feature, and v3 idioms are forbidden). So Go owns the PATH
+  (`app.go DocumentationURL`, since Go is what embeds the page) and the
+  frontend opens it with a named `window.open` on the application's own asset
+  server (`api.js openDocumentation`). Do NOT "fix" this into
+  `runtime.BrowserOpenURL`: the system browser cannot reach the embedded
+  assets, and handing it a real URL would break the local-only guarantee.
 - **Originals are immutable:** imported files are read once and never written
   back to their source path. All output goes through explicit save dialogs.
 - **Graceful degradation:** Ollama availability is probed at startup and on
