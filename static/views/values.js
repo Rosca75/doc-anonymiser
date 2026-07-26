@@ -49,7 +49,33 @@ const CATEGORIES = [
 
 // Rows whose variant list is expanded, keyed by entityKey. View-local UI
 // state (not business state), so it lives here, not in the store.
+//
+// The key is (category, canonical), so ANY change to a value's name
+// changes its key. Renaming used to orphan the key and silently collapse
+// the row the user was working in (BUILD-04 CR17), which is why every
+// rename now goes through renameExpanded below.
 const expanded = new Set();
+
+/**
+ * renameExpanded(category, oldCanonical, newCanonical) carries a row's
+ * expanded state across a rename, so editing a value does not fold away
+ * the variant list the user just opened (BUILD-04 CR17).
+ */
+function renameExpanded(category, oldCanonical, newCanonical) {
+  const oldKey = entityKey(category, oldCanonical);
+  if (!expanded.has(oldKey)) return;
+  expanded.delete(oldKey);
+  expanded.add(entityKey(category, newCanonical));
+}
+
+/**
+ * openExpanded(category, canonical) makes sure a row is expanded. Called
+ * whenever the user does something to a row's variants, because acting on
+ * a list and having it fold shut is the opposite of what they asked for.
+ */
+function openExpanded(category, canonical) {
+  expanded.add(entityKey(category, canonical));
+}
 
 // Panels the user toggled away from their default open/collapsed state
 // (BUILD-02 Phase 2f). View-local, same pattern as `expanded`.
@@ -97,9 +123,12 @@ function discoveryPanel(s, aiOK) {
 
   // Determinate per-file progress + Cancel while a run is live
   // (BUILD-02 Phase 7c/7d).
+  // The discovery gate is deliberately `=== true` and nothing else
+  // (BUILD-04 CR17): the Smart button must depend on a run being in
+  // flight, never on a pending variant expansion or a leftover object.
   const d = s.discovery;
-  const pct = d?.running && d.total ? Math.round(((d.current + 1) / d.total) * 100) : 0;
-  const progressHTML = d?.running ? `
+  const pct = d?.running === true && d.total ? Math.round(((d.current + 1) / d.total) * 100) : 0;
+  const progressHTML = d?.running === true ? `
       <div class="progress-bar"><div style="width:${pct}%"></div></div>
       <p class="hint">Scanning ${escapeHTML(d.file ?? "")} (${d.current + 1}/${d.total})
         <button id="btn-disc-cancel">Cancel</button></p>` : "";
@@ -123,7 +152,7 @@ function discoveryPanel(s, aiOK) {
       </div>
       ${localAIButton}
       <div class="form-row">
-        <button id="btn-smart" ${d?.running ? "disabled" : ""}>Smart detection</button>
+        <button id="btn-smart" ${d?.running === true ? "disabled" : ""}>Smart detection</button>
         <span class="hint">Works without any AI. Finds likely names by how they are written.</span>
       </div>
       ${smartSettingsHTML(s)}
@@ -215,11 +244,11 @@ function wireDiscovery(container, s) {
         const res = await runDiscovery(files, s.allowlist);
         const added = addCandidates(
           (res?.proposals ?? []).map((p) => ({ text: p.text, category: p.category })), "local-ai");
-        setState({ discovery: null });
         feedback(`${res?.status ?? "done"}. ${added} new candidate(s) for review below.`);
       } catch (err) {
-        setState({ discovery: null });
         showError(container, err);
+      } finally {
+        setState({ discovery: null }); // see the Smart path (BUILD-04 CR17)
       }
     });
   }
@@ -240,11 +269,15 @@ function wireDiscovery(container, s) {
       const res = await runSmartDetection(
         files, s.allowlist, llmEnabled(s), smartDetectOptions(getState()));
       const added = addCandidates(res?.candidates ?? [], "smart");
-      setState({ discovery: null });
       feedback(`${res?.status ?? "done"}. ${added} new candidate(s) for review below.`);
     } catch (err) {
-      setState({ discovery: null });
       showError(container, err);
+    } finally {
+      // ALWAYS clear the running flag (BUILD-04 CR17). Clearing it only on
+      // the two happy-ish paths meant any escape in between, an exception
+      // from a reducer for instance, left the button disabled forever with
+      // no way back except leaving and re-entering the step.
+      setState({ discovery: null });
     }
   });
 }
@@ -411,7 +444,9 @@ function wireCandidates(container) {
     catSelect.addEventListener("change", () => keepScrollPosition(
       () => updateCandidate(original, { category: catSelect.value })));
     row.querySelector(".cand-accept").addEventListener("click", async () => {
-      if (acceptCandidate(row.dataset.ctext)) await refreshVariants();
+      if (!acceptCandidate(row.dataset.ctext)) return;
+      await refreshVariants();
+      repaintValues();
     });
     row.querySelector(".cand-reject").addEventListener("click", () => rejectCandidate(row.dataset.ctext));
   }
@@ -462,7 +497,9 @@ function wireCandidates(container) {
   for (const btn of container.querySelectorAll(".cand-accept-all")) {
     btn.addEventListener("click", async () => {
       const category = btn.dataset.category;
-      if (acceptAllInCategory(category, visibleTexts(category)) > 0) await refreshVariants();
+      if (acceptAllInCategory(category, visibleTexts(category)) === 0) return;
+      await refreshVariants();
+      repaintValues();
     });
   }
   for (const btn of container.querySelectorAll(".cand-deny-all")) {
@@ -495,12 +532,17 @@ function categoryPanel(s, category, label) {
 
     let variantBody = "";
     if (vrow) {
+      // draggable="true" on the chip, and draggable="false" on the button
+      // inside it: a draggable child would otherwise swallow the drag that
+      // starts on the button, which is most of the chip's width
+      // (BUILD-04 CR17, "chips undraggable").
       const chips = vrow.variants.map((v) => `
         <span class="pill variant-chip" draggable="true" data-variant="${escapeHTML(v)}"
               data-category="${escapeHTML(e.category)}" data-canonical="${escapeHTML(e.canonical)}"
               title="Drag onto another value to move this variant there.">
-          <span class="icon drag-handle" aria-hidden="true">⠿</span>${escapeHTML(v)}
-          <button class="variant-move" title="Move this variant to another value">move</button>
+          <span class="icon drag-handle" aria-hidden="true">\u283F</span>${escapeHTML(v)}
+          <button class="variant-move" draggable="false"
+                  title="Move this variant to another value">move</button>
         </span>`).join(" ");
       const inner =
         vrow.state === "pending" ? `<span class="hint">expanding…</span>` :
@@ -516,9 +558,10 @@ function categoryPanel(s, category, label) {
         <td colspan="3">
         <div class="variant-list">${inner}</div>
         <div class="form-row">
-          <input class="variant-input" placeholder="add a manual variant (e.g. a nickname)"/>
+          <input class="variant-input" placeholder="add a spelling, for example a nickname"/>
           <button class="variant-add">Add variant</button>
         </div>
+        <div class="variant-note hint"></div>
       </td></tr>`;
     }
 
@@ -568,7 +611,15 @@ function wireCategoryPanels(container) {
     const addBtn = panel.querySelector(".ent-add");
     const addInput = panel.querySelector(".ent-add-input");
     const add = async () => {
-      if (addEntities([{ category, canonical: addInput.value }]) > 0) await refreshVariants();
+      const typed = addInput.value.trim();
+      if (!typed) return;
+      if (addEntities([{ category, canonical: typed }]) === 0) return;
+      // Open the new row straight away: its variants are what the user
+      // needs to check, and hiding them behind a second click was half of
+      // the "add works only once" report (BUILD-04 CR17).
+      openExpanded(category, typed);
+      await refreshVariants();
+      repaintValues();
     };
     addBtn.addEventListener("click", add);
     addInput.addEventListener("keydown", (ev) => { if (ev.key === "Enter") add(); });
@@ -595,15 +646,34 @@ function wireCategoryPanels(container) {
       const { category: cat, canonical } = row.dataset;
       row.querySelector(".ent-accept").addEventListener("click", () => setEntityStatus(cat, canonical, "accepted"));
       row.querySelector(".ent-deny").addEventListener("click", () => setEntityStatus(cat, canonical, "denied"));
-      row.querySelector(".ent-delete").addEventListener("click", () => removeEntity(cat, canonical));
+      row.querySelector(".ent-delete").addEventListener("click", () => {
+        expanded.delete(entityKey(cat, canonical)); // no orphan keys behind a deleted row
+        removeEntity(cat, canonical);
+      });
       row.querySelector(".ent-edit").addEventListener("click", async () => {
         const next = prompt("Edit the value:", canonical);
-        if (next !== null && editEntity(cat, canonical, next)) await refreshVariants();
+        if (next === null) return;
+        if (!editEntity(cat, canonical, next)) {
+          showError(container, new Error(
+            `"${next.trim()}" cannot be used: it is empty, or another value in this list already has that name.`));
+          return;
+        }
+        // The key changed, so the open row has to follow it (CR17).
+        renameExpanded(cat, canonical, next.trim());
+        await refreshVariants();
+        repaintValues();
       });
       row.querySelector(".ent-variants").addEventListener("click", async () => {
         const key = row.dataset.key;
         if (expanded.has(key)) expanded.delete(key); else expanded.add(key);
-        await refreshVariants(); // ensures lists exist, re-renders via state
+        // Repaint UNCONDITIONALLY. `expanded` is view-local, so opening a
+        // row whose variants are already known changes nothing the store
+        // would notify about, and the row used to open invisibly until
+        // some unrelated action repainted the step (BUILD-04 CR17).
+        repaintValues();
+        // Then fill in anything still missing; each expansion repaints
+        // again as it settles.
+        await refreshVariants();
       });
     }
 
@@ -612,10 +682,29 @@ function wireCategoryPanels(container) {
       // no positional coupling to the entity row above.
       const { category: cat, canonical } = vrow.dataset;
       const input = vrow.querySelector(".variant-input");
-      vrow.querySelector(".variant-add").addEventListener("click", async () => {
-        addManualVariant(cat, canonical, input.value);
+      const note = vrow.querySelector(".variant-note");
+      const addVariant = async () => {
+        const typed = input.value.trim();
+        // Say what happened. Adding a blank or a duplicate used to change
+        // no state, so nothing repainted and the button looked broken
+        // (BUILD-04 CR17).
+        if (!typed) {
+          if (note) note.textContent = "Type a spelling first, for example a nickname or an abbreviation.";
+          return;
+        }
+        const before = currentVariantCount(cat, canonical);
+        addManualVariant(cat, canonical, typed);
+        if (currentVariantCount(cat, canonical) === before) {
+          if (note) note.textContent = `"${typed}" is already one of this value's variants.`;
+          return;
+        }
+        // Keep the row open across the re-expansion (CR17).
+        openExpanded(cat, canonical);
         await refreshVariants();
-      });
+        repaintValues();
+      };
+      vrow.querySelector(".variant-add").addEventListener("click", addVariant);
+      input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") addVariant(); });
     }
 
     // Variant drag-and-drop regrouping (BUILD-02 Phase 9d): chips are
@@ -643,7 +732,12 @@ function wireCategoryPanels(container) {
           return;
         }
         if (moveVariant(chip.dataset.category, chip.dataset.canonical, to.category, to.canonical, chip.dataset.variant)) {
+          // Both rows re-expand, so keep both open and show the result at
+          // once rather than after the next unrelated repaint (CR17).
+          openExpanded(chip.dataset.category, chip.dataset.canonical);
+          openExpanded(to.category, to.canonical);
           await refreshVariants();
+          repaintValues();
         }
       });
     }
@@ -655,16 +749,24 @@ function wireCategoryPanels(container) {
       if (ev.dataTransfer.types.includes("application/x-variant")) {
         ev.preventDefault();
         ev.dataTransfer.dropEffect = "move";
+        // Visible drop feedback: without it the user cannot tell which row
+        // will receive the chip (BUILD-04 CR17).
+        row.classList.add("drop-target");
       }
     });
+    row.addEventListener("dragleave", () => row.classList.remove("drop-target"));
     row.addEventListener("drop", async (ev) => {
+      row.classList.remove("drop-target");
       const raw = ev.dataTransfer.getData("application/x-variant");
       if (!raw) return;
       ev.preventDefault();
       const { variant, fromCategory, fromCanonical } = JSON.parse(raw);
       const { category: toCategory, canonical: toCanonical } = row.dataset;
       if (moveVariant(fromCategory, fromCanonical, toCategory, toCanonical, variant)) {
+        openExpanded(fromCategory, fromCanonical);
+        openExpanded(toCategory, toCanonical);
         await refreshVariants();
+        repaintValues();
       }
     });
   }
@@ -679,16 +781,54 @@ function wireCategoryPanels(container) {
  * purpose: the lists are tiny and ordering keeps the UI deterministic.
  */
 async function refreshVariants() {
-  for (const e of pendingExpansions(getState().entities)) {
+  // The snapshot is taken ONCE, before any await. Every expansion below
+  // writes to the store and therefore repaints, and re-reading the list
+  // mid-loop would mean expanding rows that a repaint had already
+  // settled (BUILD-04 CR17).
+  const pending = pendingExpansions(getState().entities);
+  for (const e of pending) {
     try {
       const variants = await expandVariants({
-        category: e.category, canonical: e.canonical, manualVariants: e.manualVariants,
+        category: e.category, canonical: e.canonical,
+        manualVariants: e.manualVariants, excludedVariants: e.excludedVariants ?? [],
       });
       setEntityVariants(e.category, e.canonical, variants ?? []);
     } catch (err) {
+      // A failure becomes a VISIBLE error on the row, and settles it, so
+      // the placeholder cannot spin forever and the row is not retried on
+      // every repaint (BUILD-02 Phase 7a, re-pinned by CR17).
       setEntityVariantError(e.category, e.canonical, String(err?.message ?? err));
     }
   }
+  return pending.length;
+}
+
+/**
+ * currentVariantCount(category, canonical) is how many spellings a value
+ * carries right now, automatic and manual together. The variant-add flow
+ * compares it before and after to tell "added" from "already there", so
+ * a duplicate gets an explanation instead of silence (BUILD-04 CR17).
+ */
+function currentVariantCount(category, canonical) {
+  const e = getState().entities.find(
+    (x) => entityKey(x.category, x.canonical) === entityKey(category, canonical));
+  if (!e) return 0;
+  return (e.variants?.length ?? 0) + (e.manualVariants?.length ?? 0);
+}
+
+/**
+ * repaintValues() forces one re-render of the Values step.
+ *
+ * This is the fix for the headline CR17 symptom, "variants only appear
+ * after leaving and coming back to the step". Expanding a row changes the
+ * view-local `expanded` set, which the store knows nothing about, so
+ * nothing repainted unless the click ALSO happened to make an expansion
+ * pending. A row whose variants were already known therefore opened
+ * invisibly, and only showed up on the next repaint from an unrelated
+ * action, which usually meant switching steps.
+ */
+function repaintValues() {
+  setState({});
 }
 
 // --- Custom patterns -------------------------------------------------------

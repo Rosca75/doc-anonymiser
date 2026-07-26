@@ -774,3 +774,143 @@ test("smartDetectOptions fills defaults for a session without the block (CR13)",
   setState({ settings: { ...getState().settings, smartDetect: { minLength: 9 } } });
   assert.deepEqual(smartDetectOptions(), { ...SMART_DETECT_DEFAULTS, minLength: 9 });
 });
+
+// --- BUILD-04 Phase 6: per-step reset (CR16) -------------------------------
+
+import { resetStep, isBackward, STEP_RESETS } from "./state.js";
+
+/** fullSession() fills every step's state so a reset is visible. */
+function fullSession() {
+  resetState();
+  setState({
+    documents: [{ name: "a.txt" }, { name: "b.csv" }],
+    previewDoc: "a.txt",
+    importErrors: ["something failed"],
+    allowlist: ["CSSF"],
+    results: { documents: [{ name: "a.txt" }] },
+    mapping: { "[PERSON_1]": { original: "Marie Duval" } },
+    metaReview: { "a.txt": { ext: "docx" } },
+    running: true,
+    progress: { stage: "deterministic" },
+    discovery: { running: true },
+  });
+  addEntities([{ category: "person_names", canonical: "Marie Duval" }]);
+  addCandidates([{ text: "Alpine Trust", category: "client_names" }], "smart");
+  addPattern("PRJ-[0-9]+", null);
+  setMinConfidence(0.9);
+  setCategoryGroup(["email"], false);
+}
+
+test("isBackward only reports moves toward the start of the wizard", () => {
+  assert.equal(isBackward("values", "configure"), true);
+  assert.equal(isBackward("export", "import"), true);
+  assert.equal(isBackward("configure", "values"), false);
+  assert.equal(isBackward("run", "run"), false);
+  assert.equal(isBackward("run", "nowhere"), false, "an unknown step is not a backward move");
+});
+
+test("resetStep rejects an unknown step instead of silently doing nothing", () => {
+  resetState();
+  assert.equal(resetStep("teleport"), false);
+  assert.equal(resetStep("values"), true);
+});
+
+test("every wizard step has a reset entry (CR16)", () => {
+  for (const step of WIZARD_STEPS) {
+    assert.ok(STEP_RESETS[step], `no reset defined for ${step}`);
+  }
+});
+
+test("NO reset ever clears the imported documents (CR16)", () => {
+  // The one non-negotiable rule of BUILD-04 section 4.2.
+  for (const step of WIZARD_STEPS) {
+    fullSession();
+    resetStep(step);
+    assert.equal(getState().documents.length, 2, `${step} reset dropped the documents`);
+    assert.equal(getState().previewDoc, "a.txt", `${step} reset lost the preview selection`);
+  }
+});
+
+test("NO reset ever clears the allowlist (CR16)", () => {
+  // It is shared by two steps and curated across the session, so it
+  // belongs to neither.
+  for (const step of WIZARD_STEPS) {
+    fullSession();
+    resetStep(step);
+    assert.deepEqual(getState().allowlist, ["CSSF"], `${step} reset dropped the allowlist`);
+  }
+});
+
+test("resetStep(configure) restores the preset and the detection defaults", () => {
+  fullSession();
+  assert.equal(getState().settings.categories.email, false);
+  assert.equal(getState().settings.minConfidence, 0.9);
+
+  assert.equal(resetStep("configure"), true);
+  const s = getState();
+  assert.deepEqual(s.settings.categories, presetCategories(s.settings.level));
+  assert.equal(s.settings.minConfidence, 0);
+  assert.deepEqual(s.settings.smartDetect, SMART_DETECT_DEFAULTS);
+  // The values step is untouched by a configure reset.
+  assert.equal(s.entities.length, 1);
+});
+
+test("resetStep(configure) keeps the machine's connection settings", () => {
+  // Port, model and the AI toggle describe the machine, not this batch of
+  // documents, so stepping back must not make the user reconfigure Ollama.
+  fullSession();
+  setState({ settings: { ...getState().settings, ollamaPort: 12345, model: "custom:7b", useAI: true } });
+  resetStep("configure");
+  const s = getState();
+  assert.equal(s.settings.ollamaPort, 12345);
+  assert.equal(s.settings.model, "custom:7b");
+  assert.equal(s.settings.useAI, true);
+});
+
+test("resetStep(values) clears values, suggestions, patterns and discovery", () => {
+  fullSession();
+  assert.equal(resetStep("values"), true);
+  const s = getState();
+  assert.deepEqual(s.entities, []);
+  assert.deepEqual(s.candidates, []);
+  assert.deepEqual(s.patterns, []);
+  assert.equal(s.discovery, null);
+  // Configure and Run are untouched.
+  assert.equal(s.settings.minConfidence, 0.9);
+  assert.ok(s.results);
+});
+
+test("resetStep(run) clears the run and its re-identification mapping", () => {
+  fullSession();
+  assert.equal(resetStep("run"), true);
+  const s = getState();
+  assert.equal(s.running, false);
+  assert.equal(s.progress, null);
+  assert.equal(s.results, null);
+  assert.equal(s.mapping, null, "the mapping is part of the run, and is the key");
+  // The values that produced the run survive, so re-running is one click.
+  assert.equal(s.entities.length, 1);
+});
+
+test("resetStep(run) re-locks the export step, which needs results", () => {
+  fullSession();
+  assert.equal(canGoTo("export"), true);
+  resetStep("run");
+  assert.equal(canGoTo("export"), false);
+});
+
+test("resetStep(export) clears only the metadata review decisions", () => {
+  fullSession();
+  assert.equal(resetStep("export"), true);
+  const s = getState();
+  assert.deepEqual(s.metaReview, {});
+  assert.ok(s.results, "the results are the Run step's, not Export's");
+});
+
+test("resetStep(import) clears the error strip but nothing else", () => {
+  fullSession();
+  assert.equal(resetStep("import"), true);
+  const s = getState();
+  assert.deepEqual(s.importErrors, []);
+  assert.equal(s.documents.length, 2);
+});

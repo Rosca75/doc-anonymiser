@@ -131,3 +131,137 @@ test("expand/collapse cycles never mutate entity data", () => {
   }
   assert.equal(JSON.stringify(getState().entities), before);
 });
+
+// --- BUILD-04 CR17: the variant drill-down regressions ---------------------
+//
+// Each case below was a REPORTED symptom, reproduced here before the fix
+// so it cannot come back quietly. They run against the pure view-model and
+// the reducers, which is where the state actually lives; the wiring that
+// consumes them is in views/values.js.
+
+import { moveVariant } from "./state.js";
+
+/** expandAll(entities) is the expanded-key set for every row. */
+function expandAll(entities) {
+  return new Set(entities.map((e) => entityKey(e.category, e.canonical)));
+}
+
+test("CR17: adding a variant to a SECOND value works like the first", () => {
+  resetState();
+  addEntities([
+    { category: "person_names", canonical: "Marie Duval", variants: ["Marie Duval"] },
+    { category: "person_names", canonical: "Anouk Berger", variants: ["Anouk Berger"] },
+  ]);
+
+  // First value: add, expand, settle.
+  addManualVariant("person_names", "Marie Duval", "Mimi");
+  let pending = pendingExpansions(getState().entities);
+  assert.deepEqual(pending.map((e) => e.canonical), ["Marie Duval"],
+    "only the touched row may re-expand");
+  setEntityVariants("person_names", "Marie Duval", ["Marie Duval", "Duval", "Mimi"]);
+
+  // Second value: the exact same sequence must behave identically. The
+  // reported symptom was that this one silently did nothing.
+  addManualVariant("person_names", "Anouk Berger", "Nouk");
+  pending = pendingExpansions(getState().entities);
+  assert.deepEqual(pending.map((e) => e.canonical), ["Anouk Berger"],
+    "the second value must become pending too, and alone");
+  setEntityVariants("person_names", "Anouk Berger", ["Anouk Berger", "Berger", "Nouk"]);
+
+  const rows = variantRows(getState().entities, expandAll(getState().entities));
+  assert.equal(rows.length, 2);
+  for (const row of rows) {
+    assert.equal(row.state, "list", `${row.canonical} must show its variants`);
+  }
+  assert.ok(rows[0].variants.includes("Mimi"));
+  assert.ok(rows[1].variants.includes("Nouk"));
+});
+
+test("CR17: an expanded row stays expanded across an add and its expansion", () => {
+  resetState();
+  addEntities([{ category: "client_names", canonical: "Alpine Trust", variants: ["Alpine Trust"] }]);
+  const key = entityKey("client_names", "Alpine Trust");
+  const expanded = new Set([key]);
+
+  // Open, then add: the row must be PENDING and still open, never gone.
+  addManualVariant("client_names", "Alpine Trust", "Alpine");
+  let rows = variantRows(getState().entities, expanded);
+  assert.equal(rows.length, 1, "the row must not disappear while expanding");
+  assert.equal(rows[0].state, "pending");
+
+  setEntityVariants("client_names", "Alpine Trust", ["Alpine Trust", "Alpine"]);
+  rows = variantRows(getState().entities, expanded);
+  assert.equal(rows.length, 1, "the row must still be open once expanded");
+  assert.equal(rows[0].state, "list");
+  assert.deepEqual(rows[0].variants, ["Alpine Trust", "Alpine"]);
+});
+
+test("CR17: a failed expansion surfaces as an error, never a stuck spinner", () => {
+  resetState();
+  addEntities([{ category: "client_names", canonical: "Alpine Trust" }]);
+  const expanded = expandAll(getState().entities);
+
+  assert.equal(variantRows(getState().entities, expanded)[0].state, "pending");
+  setEntityVariantError("client_names", "Alpine Trust", "the bridge went away");
+
+  const row = variantRows(getState().entities, expanded)[0];
+  assert.equal(row.state, "error");
+  assert.match(row.error, /bridge went away/);
+  // And it must no longer be retried on every repaint, which is what
+  // turned a single failure into an endless loop of bridge calls.
+  assert.deepEqual(pendingExpansions(getState().entities), []);
+});
+
+test("CR17: moving a variant between two freshly added values works", () => {
+  resetState();
+  addEntities([
+    { category: "person_names", canonical: "Marie Duval" },
+    { category: "client_names", canonical: "Alpine Trust" },
+  ]);
+  setEntityVariants("person_names", "Marie Duval", ["Marie Duval", "Duval", "Marie"]);
+  setEntityVariants("client_names", "Alpine Trust", ["Alpine Trust"]);
+
+  assert.equal(
+    moveVariant("person_names", "Marie Duval", "client_names", "Alpine Trust", "Duval"),
+    true);
+
+  const [from, to] = getState().entities;
+  assert.ok(from.excludedVariants.includes("Duval"), "the source must stop matching it");
+  assert.ok(to.manualVariants.includes("Duval"), "the target must gain it");
+  // BOTH rows re-expand, and nothing else does.
+  assert.deepEqual(
+    pendingExpansions(getState().entities).map((e) => e.canonical),
+    ["Marie Duval", "Alpine Trust"]);
+});
+
+test("CR17: renaming a value moves its expanded key with it", () => {
+  // The expanded set is keyed by (category, canonical), so a rename used
+  // to orphan the key and silently collapse the row the user was working
+  // in. The view migrates the key; this pins the contract it relies on.
+  resetState();
+  addEntities([{ category: "client_names", canonical: "Alpine", variants: ["Alpine"] }]);
+  const oldKey = entityKey("client_names", "Alpine");
+
+  assert.equal(editEntity("client_names", "Alpine", "Alpine Trust"), true);
+  const newKey = entityKey("client_names", "Alpine Trust");
+  assert.notEqual(oldKey, newKey, "the key must change, which is why it needs migrating");
+
+  // Migrated by hand, as the view does it.
+  const expanded = new Set([oldKey]);
+  expanded.delete(oldKey);
+  expanded.add(newKey);
+
+  const rows = variantRows(getState().entities, expanded);
+  assert.equal(rows.length, 1, "the renamed row must still be open");
+  assert.equal(rows[0].state, "pending", "and re-expanding under its new name");
+});
+
+test("CR17: a settled row is never re-expanded, an empty result included", () => {
+  resetState();
+  addEntities([{ category: "client_names", canonical: "ACME" }]);
+  setEntityVariants("client_names", "ACME", []); // expanded, none found
+  assert.deepEqual(pendingExpansions(getState().entities), [],
+    "an explicit empty result is settled, not pending");
+  const row = variantRows(getState().entities, expandAll(getState().entities))[0];
+  assert.equal(row.state, "empty");
+});

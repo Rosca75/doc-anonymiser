@@ -188,3 +188,37 @@ test("the documentation page styles itself from the brand tokens only", () => {
     "the documentation page must reference no remote URL");
   assert.match(docsHTML, /href="\.\.\/brand\.css"/);
 });
+
+// --- Variant chip contract (BUILD-04 CR17) --------------------------------
+//
+// Reported symptom: the variant chips looked disabled and could not be
+// dragged. Both were CSS, not markup: the chips inherited the muted
+// colour of the variant area, and nothing said they were draggable. The
+// markup side is asserted in views/values.js by reading the source, since
+// the chip builder is not exported and there is no DOM here.
+
+const valuesJS = fs.readFileSync(path.join(staticDir, "views", "values.js"), "utf8");
+
+test("variant chips are rendered draggable", () => {
+  assert.match(valuesJS, /class="pill variant-chip" draggable="true"/);
+});
+
+test("the move button inside a chip does not swallow the drag", () => {
+  // A draggable child would start its own (non) drag over most of the
+  // chip's width, which is why the button opts out explicitly.
+  assert.match(valuesJS, /class="variant-move" draggable="false"/);
+});
+
+test("variant chips are not styled as disabled", () => {
+  const chip = styleCSS.match(/\.variant-list \.variant-chip \{[^}]*\}/);
+  assert.ok(chip, "the chip rule must exist");
+  // The chip must override the muted colour its container carries.
+  assert.match(chip[0], /color:\s*var\(--text\)/);
+  assert.ok(!/opacity/.test(chip[0]), "a chip must never be dimmed, it is a live control");
+  // And it must say it can be dragged before the user tries.
+  assert.match(chip[0], /cursor:\s*grab/);
+});
+
+test("a drop target is visibly marked", () => {
+  assert.match(styleCSS, /tr\.drop-target > td \{/);
+});

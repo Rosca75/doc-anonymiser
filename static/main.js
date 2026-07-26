@@ -13,11 +13,12 @@ import {
   getState, setState, subscribe,
   WIZARD_STEPS, canGoTo, goTo, goToScreen, nextStep, prevStep,
   applyImportResult, defaultUseAIFromProbe,
+  isBackward, resetStep,
 } from "./state.js";
 import { escapeHTML } from "./html.js";
 import { button, banner } from "./ui.js";
 import { topnavHTML, workflowBannerHTML, showDocumentation } from "./shell.js";
-import { STEP_BANNERS } from "./copy.js";
+import { STEP_BANNERS, NAV } from "./copy.js";
 import { renderHome } from "./views/home.js";
 import { renderImport } from "./views/import.js";
 import { renderConfigure } from "./views/configure.js";
@@ -177,9 +178,12 @@ function paint(root) {
   // selector is scoped to the workflow banner so it can never pick up the
   // preset chips a view renders inside #view.
   for (const btn of root.querySelectorAll(".workflow-steps .chip")) {
-    btn.addEventListener("click", () => goTo(btn.dataset.step));
+    btn.addEventListener("click", () => navigateTo(btn.dataset.step));
   }
-  root.querySelector("#nav-back").addEventListener("click", prevStep);
+  root.querySelector("#nav-back").addEventListener("click", () => {
+    const index = WIZARD_STEPS.indexOf(getState().step);
+    if (index > 0) navigateTo(WIZARD_STEPS[index - 1]);
+  });
   root.querySelector("#nav-next").addEventListener("click", nextStep);
 
   // Per-step explainer banner (BUILD-02 Phase 2e), then the active view
@@ -193,6 +197,39 @@ function paint(root) {
   view.innerHTML = `${b ? banner(b.title, b.body, { icon: b.icon }) : ""}` +
     `<div id="step-view" class="step-view step-view-${escapeHTML(s.step)}"></div>`;
   VIEWS[s.step](view.querySelector("#step-view"));
+}
+
+/**
+ * navigateTo(step) is the ONE way the shell moves the wizard, and the
+ * place the backward-reset rule lives (BUILD-04 CR16).
+ *
+ * Forward moves are unchanged: the guard decides, nothing is cleared.
+ * A BACKWARD move asks first, because the owner's report was that going
+ * back could wipe the current step's work without warning. Now it is a
+ * choice with two clear outcomes:
+ *
+ *   confirm  the step being LEFT is reset, then the wizard moves back
+ *   cancel   nothing at all happens, not even the move
+ *
+ * Cancelling deliberately does NOT navigate. "Go back but keep
+ * everything" sounds convenient, but it leaves half-finished state
+ * behind that the user then walks forward into, which is the confusion
+ * the reset exists to prevent. Imported documents are never touched
+ * either way (state.js STEP_RESETS).
+ *
+ * @param {string} step the requested step token
+ * @returns {boolean} whether the wizard moved
+ */
+export function navigateTo(step) {
+  const current = getState().step;
+  if (step === current) return false;
+  if (!canGoTo(step)) return false;
+
+  if (isBackward(current, step)) {
+    if (!confirm(NAV.backConfirm(current))) return false;
+    resetStep(current);
+  }
+  return goTo(step);
 }
 
 /** shellErrorBanner(s) renders the dismissible chrome-level error strip. */

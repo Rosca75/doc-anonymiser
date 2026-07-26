@@ -454,6 +454,86 @@ export function migrateStep(step) {
   return WIZARD_STEPS.includes(migrated) ? migrated : "import";
 }
 
+// --- Per-step reset (BUILD-04 CR16) -----------------------------------------
+
+/**
+ * STEP_RESETS says what each wizard step OWNS, and therefore what going
+ * back past it clears. It is a table rather than a switch so the answer
+ * to "what does this step own?" is readable in one place, and so the
+ * cross-step test matrix can iterate it.
+ *
+ * Two things are deliberately absent from every entry:
+ *
+ *   documents  Imported files are step 1 data and survive ALL navigation
+ *              (BUILD-04 section 4.2). Re-importing a batch because the
+ *              user stepped back one screen would be indefensible.
+ *   allowlist  The never-anonymise list is shared by the Configure and
+ *              Values screens and is curated across the whole session, so
+ *              it belongs to neither step.
+ *
+ * The Ollama connection settings (port, model, context size, useAI) are
+ * likewise left alone by the configure reset: they describe the machine,
+ * not the choices made about this batch of documents.
+ */
+export const STEP_RESETS = {
+  // Import owns only the error strip of the last import action.
+  import: () => ({ importErrors: [] }),
+  // Configure owns what to anonymise and how strictly.
+  configure: () => ({
+    settings: {
+      ...state.settings,
+      categories: presetCategories(state.settings.level),
+      minConfidence: 0,
+      smartDetect: { ...SMART_DETECT_DEFAULTS },
+    },
+  }),
+  // Values owns the values to replace and everything proposed for review.
+  values: () => ({
+    entities: [],
+    candidates: [],
+    patterns: [],
+    discovery: null,
+  }),
+  // Run owns the run itself and everything it produced.
+  run: () => ({
+    running: false,
+    progress: null,
+    results: null,
+    mapping: null,
+  }),
+  // Export owns the per-document metadata review decisions.
+  export: () => ({ metaReview: {} }),
+};
+
+/**
+ * resetStep(step) clears exactly what that step owns (BUILD-04 CR16).
+ * Unknown steps are rejected rather than silently ignored, so a typo in a
+ * caller cannot quietly skip a reset the user confirmed.
+ * @param {string} step a token from WIZARD_STEPS
+ * @returns {boolean} whether a reset was applied
+ */
+export function resetStep(step) {
+  const reset = STEP_RESETS[step];
+  if (!reset) return false;
+  setState(reset());
+  return true;
+}
+
+/**
+ * isBackward(from, to) reports whether moving from one step to another
+ * goes BACK through the wizard. main.js asks before navigating, because
+ * only a backward move offers to reset the step being left.
+ * @param {string} from the current step
+ * @param {string} to the requested step
+ * @returns {boolean}
+ */
+export function isBackward(from, to) {
+  const fromIndex = WIZARD_STEPS.indexOf(from);
+  const toIndex = WIZARD_STEPS.indexOf(to);
+  if (fromIndex < 0 || toIndex < 0) return false;
+  return toIndex < fromIndex;
+}
+
 /** nextStep()/prevStep() move linearly through the wizard. */
 export function nextStep() {
   const idx = WIZARD_STEPS.indexOf(state.step);

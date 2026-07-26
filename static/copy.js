@@ -44,6 +44,25 @@ export const WORKFLOW = {
   title: "Anonymisation workflow",
 };
 
+// NAV: navigation copy (BUILD-04 CR16). Going BACK through the wizard
+// resets the step being left, so the user is asked first, in words that
+// say what will and will not be lost.
+export const NAV = {
+  // The visible step names, for the confirmation sentence. Kept here
+  // rather than reusing STEP_LABELS because those carry the "3 " prefix.
+  stepNames: {
+    import: "Import",
+    configure: "Configure",
+    values: "Values",
+    run: "Run",
+    export: "Export",
+  },
+  backConfirm(step) {
+    const name = NAV.stepNames[step] ?? step;
+    return `Going back will reset the ${name} step. Your imported documents are kept. Continue?`;
+  },
+};
+
 // Home page copy (BUILD-02 Phase 2b, rewritten for BUILD-04 CR1).
 //
 // The body is an ARRAY of three paragraphs, rendered one <p> each by
