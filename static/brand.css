@@ -7,14 +7,18 @@
   colour or font values.
 
   Usage rules (enforced in review):
-  - Headings in Georgia at regular weight; hierarchy comes from size and
-    space, not bold. Functional UI text (labels, buttons, tables) in Arial.
+  - Headings in Helvetica at regular weight; hierarchy comes from size and
+    space, not bold. Functional UI text (labels, buttons, tables) uses the
+    same face, so the whole web application is one typeface.
+    (BUILD-04 CR2: the serif face named in the presentation brand guideline
+    is for PowerPoint only and must never appear in the web application. A
+    guard in static/copy.test.js fails the build if it comes back.)
   - Black text on all light surfaces. White text only on black, or as large
     bold type on the accent orange.
   - ONE loud orange element per view. Greys carry everything contextual.
   - Status colours are functional only, never decorative.
 
-  Local-only guarantee: Georgia, Arial and Consolas are Windows system
+  Local-only guarantee: Helvetica, Arial and Consolas are Windows system
   fonts. No font files, no CDNs (CLAUDE.md section 4).
 */
 
@@ -50,7 +54,9 @@
   --err: #DC2626;
 
   /* Typography: Windows system fonts only, no font files, no CDNs */
-  --font-heading: Georgia, 'Times New Roman', serif;   /* regular weight, never bold */
-  --font-body: Arial, Helvetica, sans-serif;
+  /* Helvetica first, Arial as the fallback on machines without it, then the
+     generic sans-serif. Headings and body share the face (BUILD-04 CR2). */
+  --font-heading: Helvetica, Arial, sans-serif;        /* regular weight, never bold */
+  --font-body: Helvetica, Arial, sans-serif;
   --font-mono: Consolas, 'Courier New', monospace;     /* previews, unchanged */
 }

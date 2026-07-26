@@ -121,6 +121,10 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 	if categories == nil {
 		categories = a.settings.Categories
 	}
+	// The confidence floor is a SETTING, not a per-run input: it lives in
+	// the Configure screen and applies to every run and fast re-run alike
+	// (BUILD-04 CR9).
+	minConfidence := a.settings.MinConfidence
 	llm := a.llm
 	// The registry lives for the whole session so placeholders stay
 	// stable across runs and late-imported batches (CLAUDE.md §5).
@@ -140,14 +144,15 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 	}
 
 	input := engine.PipelineInput{
-		Documents:   docs,
-		Entities:    req.Entities,
-		Patterns:    req.Patterns,
-		Level:       level,
-		Categories:  categories,
-		Allowlist:   allow,
-		Registry:    reg,
-		SimpleRules: req.SimpleRules,
+		Documents:     docs,
+		Entities:      req.Entities,
+		Patterns:      req.Patterns,
+		Level:         level,
+		Categories:    categories,
+		MinConfidence: minConfidence,
+		Allowlist:     allow,
+		Registry:      reg,
+		SimpleRules:   req.SimpleRules,
 		Progress: func(ev engine.ProgressEvent) {
 			a.emit("pipeline:progress", ev)
 		},

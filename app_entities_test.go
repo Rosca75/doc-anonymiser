@@ -300,7 +300,9 @@ func TestRunSmartDetectionReturnsCandidatesNotEntities(t *testing.T) {
 		{Name: "a.txt", Format: engine.FormatTXT,
 			Markdown: "Meeting with Marie Duval about Alpine Trust S.A. Later Marie Duval called again."},
 	}
-	res, err := app.RunSmartDetection([]string{"a.txt"}, []string{"CSSF"}, false)
+	// A zero options value means "no filtering", so this test keeps
+	// asserting the unfiltered detector output (BUILD-04 CR13).
+	res, err := app.RunSmartDetection([]string{"a.txt"}, []string{"CSSF"}, false, engine.SmartDetectOptions{})
 	if err != nil {
 		t.Fatalf("RunSmartDetection: %v", err)
 	}

@@ -18,9 +18,11 @@ export const STEP_BANNERS = {
     body: "Choose what kinds of information to hide, and decide whether to use the optional local AI.",
     icon: "tune",
   },
-  entities: {
-    title: "Entities",
-    body: "Tell the app the names it should replace. You can add them yourself or let the app suggest candidates for your review.",
+  // BUILD-04 CR3: the step token and every user-visible word changed from
+  // "entities" to "values". Engine category identifiers are untouched.
+  values: {
+    title: "Values",
+    body: "Tell the app the values it should replace. You can add them yourself or let the app suggest candidates for your review.",
     icon: "badge",
   },
   run: {
@@ -35,31 +37,51 @@ export const STEP_BANNERS = {
   },
 };
 
-// Home page copy (BUILD-02 Phase 2b).
+// WORKFLOW: the banner that holds the five step chips (BUILD-04 CR7).
+// It sits under the permanent top menu, so the header itself no longer
+// changes shape when the user enters or leaves the wizard.
+export const WORKFLOW = {
+  title: "Anonymisation workflow",
+};
+
+// NAV: navigation copy (BUILD-04 CR16). Going BACK through the wizard
+// resets the step being left, so the user is asked first, in words that
+// say what will and will not be lost.
+export const NAV = {
+  // The visible step names, for the confirmation sentence. Kept here
+  // rather than reusing STEP_LABELS because those carry the "3 " prefix.
+  stepNames: {
+    import: "Import",
+    configure: "Configure",
+    values: "Values",
+    run: "Run",
+    export: "Export",
+  },
+  backConfirm(step) {
+    const name = NAV.stepNames[step] ?? step;
+    return `Going back will reset the ${name} step. Your imported documents are kept. Continue?`;
+  },
+};
+
+// Home page copy (BUILD-02 Phase 2b, rewritten for BUILD-04 CR1).
+//
+// The body is an ARRAY of three paragraphs, rendered one <p> each by
+// views/home.js. The three cover, in order: who stays in control, the two
+// ways sensitive information is found, and where the processing happens.
+// They replace the former single lede plus three feature panels, which said
+// the same three things twice.
 export const HOME = {
-  headline: "Anonymise client documents on this machine",
-  lede: "doc-anonymiser replaces names, personal details and other sensitive values in your documents with consistent placeholders, so you can share or process them safely. Everything happens locally.",
-  panels: [
-    {
-      title: "Anonymise documents",
-      body: "Import text, Word, PowerPoint, Excel or PDF files, review what will be replaced, and export anonymised copies.",
-      icon: "description",
-    },
-    {
-      title: "Everything stays on this machine",
-      body: "No cloud services, no telemetry. Your files are read once and never modified.",
-      icon: "cloud_off",
-    },
-    {
-      title: "Optional local AI",
-      body: "If Ollama is installed, a local model can suggest names to replace. The app works fully without it.",
-      icon: "smart_toy",
-    },
+  headline: "Anonymise your documents safely",
+  body: [
+    "You stay in control from the first step to the last. The app shows you every value it proposes to replace, and nothing is replaced until you accept it. Your original files are only ever read, never changed, and the anonymised copies are written where you choose to save them.",
+    "Two ways of finding sensitive information work side by side. Predefined patterns catch everything that always looks the same, such as email addresses, phone numbers, bank account numbers and national identification numbers. AI powered discovery looks for the rest, the names of people, clients and projects that no pattern can predict, and puts each one on a review list for you to accept or reject.",
+    "Everything runs on this machine by default. The predefined patterns need no network connection at all. The optional AI features talk to a language model running on 127.0.0.1, the address of your own computer, so your documents never leave it. The app makes no other network connection: no cloud service, no telemetry, no update check.",
   ],
 };
 
-// Documentation placeholder page (BUILD-02 Phase 2c).
-export const DOCS_PLACEHOLDER = "Documentation is coming soon.";
+// The documentation placeholder page was retired by BUILD-04 CR6: real
+// documentation now lives in static/docs/index.html and opens in its own
+// window, so there is no in-app docs screen and no placeholder string.
 
 // Configure step copy (BUILD-02 Phase 6). Plain language: no "PII", no
 // abbreviations without an example, full sentences.
@@ -76,6 +98,50 @@ export const CONFIGURE = {
   aiOffTooltip: "Local AI is turned off. Enable it under Configure, AI and advanced settings.",
   allowTitle: "Never anonymise these terms",
   allowHint: "Terms in this list survive every pass, even when they also appear as names to replace.",
+  // BUILD-04 CR9: the group that surfaces the BUILD-03 recognizers.
+  groupTechnical: "Payment, tax and technical identifiers",
+  // BUILD-04 CR10: the per-group bulk buttons.
+  selectAll: "Select all",
+  deselectAll: "Deselect all",
+  // BUILD-04 CR11: the allowlist bulk button.
+  clearAll: "Clear all",
+  clearAllConfirm: "Remove every term from the never anonymise list? The terms the application seeds at startup can be added back by restarting it, or from a CSV.",
+  // BUILD-04 CR9: the detection-confidence control. Plain language, with
+  // the two thresholds that actually change something spelled out.
+  confidenceTitle: "Detection confidence",
+  confidenceLabel: "Minimum confidence",
+  confidenceHint: "Every detection carries a score for how certain it is. Anything below the minimum you set here is left alone. Keep it at 0 to replace everything that is found, which is how the application behaves by default.",
+  confidenceScale: "Above 80, the values that only the local AI suggested are left alone. Above 95, the values you listed yourself are left alone too, and only pattern matches remain.",
+};
+
+// Values step copy (BUILD-04 Phase 5): the smart-detection tuning block
+// (CR13) and the suggestions table (CR14/CR15).
+export const VALUES = {
+  // Smart detection tuning.
+  smartSettingsTitle: "Smart detection settings",
+  smartSettingsHint: "Smart detection guesses which words are names from how they are written, so it always proposes some things that are not names. These settings decide how strict it is. Set them all to zero, and untick the box, to see everything it can find.",
+  smartMinLength: "Shortest value",
+  smartMinLengthHint: "Suggestions shorter than this many letters are skipped.",
+  smartMinOccurrences: "Fewest occurrences",
+  smartMinOccurrencesHint: "How often a value must appear before it is suggested. 1 means once is enough.",
+  smartCommonWords: "Skip ordinary words",
+  smartCommonWordsHint: "Ignores month names, weekdays and common sentence openers, which are capitalised without being names.",
+  smartMinConfidence: "Minimum certainty",
+  smartMinConfidenceHint: "Higher values keep only the strongest suggestions, such as a name followed by a company form or introduced by a title.",
+
+  // Suggestions table.
+  colValue: "Value",
+  colType: "Type",
+  colOccurrences: "Occurrences",
+  colFoundBy: "Found by",
+  colActions: "Actions",
+  searchPlaceholder: "search values",
+  filterAllTypes: "All types",
+  sortValueHint: "Sort by value, A to Z or Z to A.",
+  sortCountHint: "Sort by how often the value occurs.",
+  noMatchingSuggestions: "No suggestion matches the current search and type filter.",
+  bulkScopeHint: "Applies to the rows shown below, so a search or a type filter limits it too.",
+  denyAllConfirm: (n) => `Reject ${n} suggestion${n === 1 ? "" : "s"}? They are removed from the review list and nothing is replaced.`,
 };
 
 // Per-category checkbox labels and one-line examples (BUILD-02 Phase 6b).
@@ -87,13 +153,24 @@ export const CATEGORY_LABELS = {
   vat: ["VAT numbers", "For example LU12345678"],
   matricule: ["National identification numbers", "For example the Luxembourg 13 digit number"],
   url: ["Web addresses", "For example https://example.com/report"],
-  client_names: ["Client names", "The client names you list in the Entities step"],
-  project_names: ["Project names", "The project names you list in the Entities step"],
+  client_names: ["Client names", "The client names you list in the Values step"],
+  project_names: ["Project names", "The project names you list in the Values step"],
   internal_names: ["Internal names", "Internal staff, teams and systems"],
   person_names: ["Person names", "For example Marie Duval, M. Duval or just Marie"],
-  custom_patterns: ["Custom patterns", "The regular expressions you add in the Entities step"],
+  custom_patterns: ["Custom patterns", "The regular expressions you add in the Values step"],
   date: ["Dates", "For example 15 January 2026 or 15/01/2026"],
   organisation_names: ["Organisation names", "Organisations suggested by the AI review"],
   location_names: ["Place names", "Cities and places suggested by the AI review"],
   amount: ["Money amounts", "For example EUR 12,500"],
+  // BUILD-04 CR9: the recognizers BUILD-03 built into the engine. They
+  // were detecting all along; these labels are what finally let a user
+  // see and switch them.
+  credit_card: ["Payment card numbers", "For example 4111 1111 1111 1111, checked against its own check digit"],
+  uk_nhs: ["UK health service numbers", "The 10 digit NHS number, for example 943 476 5919"],
+  ip_address: ["Network addresses", "For example 192.168.1.24, and the longer IPv6 form"],
+  mac_address: ["Device hardware addresses", "For example 3C:22:FB:1A:9E:04"],
+  crypto: ["Cryptocurrency addresses", "Bitcoin addresses, for example bc1qar0srrr7xfkvy5l643lydnw9re59gtzz"],
+  database_uri: ["Database connection strings", "For example postgres://user:password@host/db, which carries a password"],
+  de_steuer_id: ["German tax identification numbers", "The 11 digit Steueridentifikationsnummer"],
+  es_nif: ["Spanish tax numbers", "The NIF, 8 digits and a letter, for example 12345678Z"],
 };

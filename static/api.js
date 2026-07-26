@@ -35,6 +35,44 @@ export function probeOllama() {
   return bridge().ProbeOllama();
 }
 
+// --- Documentation window (BUILD-04 CR6) --------------------------------
+
+/** documentationURL() resolves to the asset path of the bundled
+ *  documentation page, as declared by Go (app.go DocumentationURL). */
+export function documentationURL() {
+  return bridge().DocumentationURL();
+}
+
+/**
+ * openDocumentation() opens the bundled documentation in a SEPARATE
+ * window.
+ *
+ * The URL comes from Go and is a path relative to the application's own
+ * embedded asset server, so the new window loads embedded bytes and never
+ * touches the network (CLAUDE.md section 4). It is deliberately NOT
+ * runtime.BrowserOpenURL: that would hand the page to the system browser,
+ * which cannot reach the embedded assets.
+ *
+ * Wails v2 drives a single native window per process (see app.go
+ * DocumentationURL for the full reasoning), so the second window is one
+ * the WebView opens itself. `name` keeps it to ONE documentation window:
+ * clicking Documentation again focuses the existing one instead of
+ * stacking copies.
+ *
+ * @returns {Promise<void>} rejects with an actionable message when the
+ *   WebView refuses to open the window.
+ */
+export async function openDocumentation() {
+  const url = await documentationURL();
+  const opened = window.open(url, "doc-anonymiser-docs", "width=980,height=820");
+  if (!opened) {
+    throw new Error(
+      "The documentation window could not be opened. If a popup blocker is " +
+      "active for this application window, allow popups for it and try again.");
+  }
+  opened.focus?.();
+}
+
 // --- Import ------------------------------------------------------------
 
 /** importFiles() opens the native multi-file dialog; resolves to an
@@ -117,11 +155,20 @@ export function expandVariants(entity) {
   return bridge().ExpandEntityVariants(entity);
 }
 
-/** runSmartDetection(fileNames, allowTerms, classify) resolves to a
- *  SmartDetectionResult {candidates, status, cancelled}. Works fully
- *  offline; classify=true refines categories via the local AI. */
-export function runSmartDetection(fileNames, allowTerms, classify) {
-  return bridge().RunSmartDetection(fileNames, allowTerms, !!classify);
+/**
+ * runSmartDetection(fileNames, allowTerms, classify, options) resolves to
+ * a SmartDetectionResult {candidates, status, cancelled}. Works fully
+ * offline; classify=true refines categories via the local AI.
+ *
+ * options is the BUILD-04 CR13 tuning
+ * ({minLength, minOccurrences, excludeCommonWords, minConfidence}),
+ * matching engine.SmartDetectOptions field for field. Omitting it sends
+ * the zero value, which means "no filtering".
+ */
+export function runSmartDetection(fileNames, allowTerms, classify, options) {
+  return bridge().RunSmartDetection(fileNames, allowTerms, !!classify, options ?? {
+    minLength: 0, minOccurrences: 0, excludeCommonWords: false, minConfidence: 0,
+  });
 }
 
 /** countTermMatches(term) resolves to {count, documents} for the live

@@ -1,25 +1,28 @@
-// main.js, the application shell: top navigation (Home / wizard / docs),
-// the wizard step header, per-step explainer banner, active view,
-// navigation footer, and the startup checks (bridge ping, Ollama probe,
-// event subscriptions).
+// main.js, the application shell: the permanent top menu, the
+// "Anonymisation workflow" banner, the per-step explainer banner, the
+// active view, the navigation footer, and the startup checks (bridge
+// ping, Ollama probe, event subscriptions).
 //
 // The shell owns NO business state, it renders from state.js and defers
-// every screen to its view module (one per screen, CLAUDE.md §3).
+// every screen to its view module (one per screen, CLAUDE.md §3). The
+// header and banner MARKUP lives in shell.js so it can be unit-tested;
+// this file only wires the handlers onto it (BUILD-04 Phase 2).
 
 import { ping, probeOllama, onEvent, defaultAllowlist } from "./api.js";
 import {
   getState, setState, subscribe,
   WIZARD_STEPS, canGoTo, goTo, goToScreen, nextStep, prevStep,
   applyImportResult, defaultUseAIFromProbe,
+  isBackward, resetStep,
 } from "./state.js";
 import { escapeHTML } from "./html.js";
 import { button, banner } from "./ui.js";
-import { STEP_BANNERS } from "./copy.js";
+import { topnavHTML, workflowBannerHTML, showDocumentation } from "./shell.js";
+import { STEP_BANNERS, NAV } from "./copy.js";
 import { renderHome } from "./views/home.js";
-import { renderDocs } from "./views/docs.js";
 import { renderImport } from "./views/import.js";
 import { renderConfigure } from "./views/configure.js";
-import { renderEntities } from "./views/entities.js";
+import { renderValues } from "./views/values.js";
 import { renderRun } from "./views/run.js";
 import { renderExport } from "./views/export.js";
 
@@ -27,7 +30,7 @@ import { renderExport } from "./views/export.js";
 const STEP_LABELS = {
   import: "1 · Import",
   configure: "2 · Configure",
-  entities: "3 · Entities",
+  values: "3 · Values",
   run: "4 · Run",
   export: "5 · Export",
 };
@@ -36,7 +39,7 @@ const STEP_LABELS = {
 const VIEWS = {
   import: renderImport,
   configure: renderConfigure,
-  entities: renderEntities,
+  values: renderValues,
   run: renderRun,
   export: renderExport,
 };
@@ -124,34 +127,30 @@ export function boot(root) {
 function paint(root) {
   const s = getState();
 
-  // Persistent top navigation: Home, Anonymise documents (the wizard),
-  // Documentation (BUILD-02 Phase 2d). Ghost buttons; the active screen's
-  // entry is visually quiet, never a second orange element.
-  const topnav = `
-    <nav class="topnav">
-      ${button("Home", { kind: "ghost", id: "nav-home", icon: "home" })}
-      ${button("Anonymise documents", { kind: "ghost", id: "nav-wizard", icon: "description" })}
-      ${button("Documentation", { kind: "ghost", id: "nav-docs", icon: "menu_book" })}
-    </nav>`;
+  // The top menu is IDENTICAL on every screen (CR4): same three buttons,
+  // in the same order, with only a quiet highlight moving. Its markup
+  // comes from shell.js, which is what shell.test.js asserts.
+  const topnav = topnavHTML(s.screen);
 
-  // Wizard chrome (step chips + footer) only appears on the wizard screen.
+  // The five step chips live in their own banner UNDER the menu (CR7),
+  // and only while the wizard is on screen, so the header itself never
+  // changes shape. The wizard footer follows the same rule.
   const isWizard = s.screen === "wizard";
-  const chips = isWizard ? WIZARD_STEPS.map((step) => {
-    const active = s.step === step ? " active" : "";
-    const enabled = canGoTo(step) ? "" : " disabled";
-    return `<button class="chip${active}${enabled}" data-step="${step}" ${enabled ? "disabled" : ""}>${STEP_LABELS[step]}</button>`;
-  }).join("") : "";
+  const workflow = isWizard
+    ? workflowBannerHTML(WIZARD_STEPS, s.step, STEP_LABELS, (step) => canGoTo(step))
+    : "";
 
   root.innerHTML = `
     <header class="topbar">
       <div class="brand">doc-anonymiser</div>
       ${topnav}
-      <nav class="steps">${chips}</nav>
       <div class="badges">
         ${bridgeBadge(s)}
         ${ollamaBadge(s)}
       </div>
     </header>
+    ${workflow}
+    ${shellErrorBanner(s)}
     <main id="view"></main>
     ${isWizard ? `
     <footer class="navbar">
@@ -162,30 +161,84 @@ function paint(root) {
 
   root.querySelector("#nav-home").addEventListener("click", () => goToScreen("home"));
   root.querySelector("#nav-wizard").addEventListener("click", () => goToScreen("wizard"));
-  root.querySelector("#nav-docs").addEventListener("click", () => goToScreen("docs"));
+  // Documentation is NOT a screen any more (BUILD-04 CR6): it opens in a
+  // separate window served by the embedded asset server. A failure to
+  // open it is a chrome-level problem, so it surfaces in the shell
+  // banner rather than inside whichever view happens to be visible.
+  root.querySelector("#nav-docs").addEventListener("click", showDocumentation);
+  root.querySelector("#shell-error-dismiss")?.addEventListener("click", () => setState({ shellError: null }));
 
   const view = root.querySelector("#view");
   if (s.screen === "home") {
     renderHome(view);
     return;
   }
-  if (s.screen === "docs") {
-    renderDocs(view);
-    return;
-  }
 
-  // Wizard: step chips navigate directly (guards enforced in goTo).
-  for (const btn of root.querySelectorAll(".chip")) {
-    btn.addEventListener("click", () => goTo(btn.dataset.step));
+  // Wizard: step chips navigate directly (guards enforced in goTo). The
+  // selector is scoped to the workflow banner so it can never pick up the
+  // preset chips a view renders inside #view.
+  for (const btn of root.querySelectorAll(".workflow-steps .chip")) {
+    btn.addEventListener("click", () => navigateTo(btn.dataset.step));
   }
-  root.querySelector("#nav-back").addEventListener("click", prevStep);
+  root.querySelector("#nav-back").addEventListener("click", () => {
+    const index = WIZARD_STEPS.indexOf(getState().step);
+    if (index > 0) navigateTo(WIZARD_STEPS[index - 1]);
+  });
   root.querySelector("#nav-next").addEventListener("click", nextStep);
 
   // Per-step explainer banner (BUILD-02 Phase 2e), then the active view
   // below it in its own container.
+  // The per-step class on #step-view is a LAYOUT contract, not decoration
+  // (BUILD-04 CR8): the import step needs its container to fill the
+  // remaining height so the pane divider spans top to bottom even with an
+  // empty preview. Every other step keeps content height. Doing it with a
+  // class beats :has(), which needs a newer WebView than the pin assumes.
   const b = STEP_BANNERS[s.step];
-  view.innerHTML = `${b ? banner(b.title, b.body, { icon: b.icon }) : ""}<div id="step-view"></div>`;
+  view.innerHTML = `${b ? banner(b.title, b.body, { icon: b.icon }) : ""}` +
+    `<div id="step-view" class="step-view step-view-${escapeHTML(s.step)}"></div>`;
   VIEWS[s.step](view.querySelector("#step-view"));
+}
+
+/**
+ * navigateTo(step) is the ONE way the shell moves the wizard, and the
+ * place the backward-reset rule lives (BUILD-04 CR16).
+ *
+ * Forward moves are unchanged: the guard decides, nothing is cleared.
+ * A BACKWARD move asks first, because the owner's report was that going
+ * back could wipe the current step's work without warning. Now it is a
+ * choice with two clear outcomes:
+ *
+ *   confirm  the step being LEFT is reset, then the wizard moves back
+ *   cancel   nothing at all happens, not even the move
+ *
+ * Cancelling deliberately does NOT navigate. "Go back but keep
+ * everything" sounds convenient, but it leaves half-finished state
+ * behind that the user then walks forward into, which is the confusion
+ * the reset exists to prevent. Imported documents are never touched
+ * either way (state.js STEP_RESETS).
+ *
+ * @param {string} step the requested step token
+ * @returns {boolean} whether the wizard moved
+ */
+export function navigateTo(step) {
+  const current = getState().step;
+  if (step === current) return false;
+  if (!canGoTo(step)) return false;
+
+  if (isBackward(current, step)) {
+    if (!confirm(NAV.backConfirm(current))) return false;
+    resetStep(current);
+  }
+  return goTo(step);
+}
+
+/** shellErrorBanner(s) renders the dismissible chrome-level error strip. */
+function shellErrorBanner(s) {
+  if (!s.shellError) return "";
+  return `<div class="shell-error"><div class="banner error">` +
+    `${escapeHTML(s.shellError)}` +
+    `<button class="dismiss" id="shell-error-dismiss" title="Dismiss">\u2715</button>` +
+    `</div></div>`;
 }
 
 /** canAdvance(s), is the linear "Next" allowed from the current step? */

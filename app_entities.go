@@ -169,7 +169,11 @@ type SmartDetectionResult struct {
 // Classification failures degrade to the heuristic categories with a
 // status note; they never fail the run (the deterministic tier is the
 // whole point of Smart detection).
-func (a *App) RunSmartDetection(fileNames []string, allowTerms []string, classify bool) (*SmartDetectionResult, error) {
+//
+// opts is the BUILD-04 CR13 tuning the Values screen sends. A zero value
+// means no filtering, so a caller that has nothing to say still gets the
+// pre-BUILD-04 behaviour rather than a surprise.
+func (a *App) RunSmartDetection(fileNames []string, allowTerms []string, classify bool, opts engine.SmartDetectOptions) (*SmartDetectionResult, error) {
 	docs := a.docsByName(fileNames)
 	if len(docs) == 0 {
 		return nil, fmt.Errorf("no matching imported files to scan, import documents first, then pick at least one for smart detection")
@@ -210,7 +214,7 @@ func (a *App) RunSmartDetection(fileNames []string, allowTerms []string, classif
 		a.emit("discovery:progress", map[string]interface{}{
 			"docIndex": i, "docCount": len(docs), "docName": doc.Name,
 		})
-		for _, cand := range engine.SmartDetect(doc.Markdown, allow) {
+		for _, cand := range engine.SmartDetectWithOptions(doc.Markdown, allow, opts) {
 			m, ok := merged[cand.Text]
 			if !ok {
 				copyCand := cand
@@ -219,6 +223,12 @@ func (a *App) RunSmartDetection(fileNames []string, allowTerms []string, classif
 				continue
 			}
 			m.Count += cand.Count
+			// The strongest sighting across documents wins: a name that
+			// appears once in one file and next to a legal form in another
+			// is as good as the legal-form sighting (BUILD-04 CR13).
+			if cand.Confidence > m.Confidence {
+				m.Confidence = cand.Confidence
+			}
 			for _, ctxSnippet := range cand.Contexts {
 				if len(m.Contexts) >= 3 {
 					break

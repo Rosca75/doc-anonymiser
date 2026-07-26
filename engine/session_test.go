@@ -182,3 +182,113 @@ func TestExportFileName(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadSessionWithoutBuild04Fields: a session file written BEFORE
+// BUILD-04 has no minConfidence field. It must load, and the missing
+// field must land on 0, the "keep every detection" default. Anything else
+// would mean opening an old session quietly changed what gets replaced
+// (BUILD-04 CR9, ground rule 5).
+func TestLoadSessionWithoutBuild04Fields(t *testing.T) {
+	legacy := []byte(`{
+	  "version": 1,
+	  "entities": [{"category": "client_names", "canonical": "Alpine Trust"}],
+	  "allowTerms": ["CSSF"],
+	  "patterns": [],
+	  "simpleRules": [],
+	  "settings": {
+	    "level": "medium",
+	    "categories": {"email": true, "person_names": true},
+	    "ollamaPort": 11434,
+	    "model": "qwen2.5:3b-instruct",
+	    "contextSize": 8192,
+	    "useAI": true
+	  },
+	  "registry": []
+	}`)
+
+	s, err := LoadSession(legacy)
+	if err != nil {
+		t.Fatalf("a pre-BUILD-04 session must still load, got: %v", err)
+	}
+	if s.Settings.MinConfidence != 0 {
+		t.Errorf("MinConfidence = %v, want 0 so an old session replaces exactly what it always did",
+			s.Settings.MinConfidence)
+	}
+	// The fields that WERE present must survive untouched.
+	if s.Settings.Level != "medium" || !s.Settings.UseAI || s.Settings.ContextSize != 8192 {
+		t.Errorf("existing settings were not preserved: %+v", s.Settings)
+	}
+	if len(s.Entities) != 1 || s.Entities[0].Canonical != "Alpine Trust" {
+		t.Errorf("entities were not preserved: %+v", s.Entities)
+	}
+	// An entity with no stated confidence is a value the USER listed, and
+	// must stay filterable only as one (see engine/confidence_test.go).
+	if s.Entities[0].Confidence != 0 {
+		t.Errorf("a legacy entity must carry no stated confidence, got %v", s.Entities[0].Confidence)
+	}
+}
+
+// TestSessionRoundTripsMinConfidence: the new field survives save/load.
+func TestSessionRoundTripsMinConfidence(t *testing.T) {
+	raw, err := SaveSession(Session{
+		Settings: SessionSettings{Level: "medium", OllamaPort: 11434, MinConfidence: 0.9},
+	})
+	if err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	back, err := LoadSession(raw)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if back.Settings.MinConfidence != 0.9 {
+		t.Errorf("MinConfidence = %v, want 0.9", back.Settings.MinConfidence)
+	}
+}
+
+// TestSessionSmartDetectAbsentVersusExplicitZero: the pointer field must
+// tell "an older file said nothing" apart from "the user deliberately
+// turned every filter off" (BUILD-04 CR13). Collapsing the two would
+// silently re-enable filtering for someone who switched it off.
+func TestSessionSmartDetectAbsentVersusExplicitZero(t *testing.T) {
+	legacy, err := LoadSession([]byte(`{"version":1,"settings":{"level":"medium"}}`))
+	if err != nil {
+		t.Fatalf("legacy session: %v", err)
+	}
+	if legacy.Settings.SmartDetect != nil {
+		t.Errorf("an absent smartDetect block must load as nil, got %+v", legacy.Settings.SmartDetect)
+	}
+
+	off := SmartDetectOptions{}
+	raw, err := SaveSession(Session{Settings: SessionSettings{Level: "medium", SmartDetect: &off}})
+	if err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	back, err := LoadSession(raw)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if back.Settings.SmartDetect == nil {
+		t.Fatal("an explicitly all-zero smartDetect block must survive as a present value")
+	}
+	if *back.Settings.SmartDetect != off {
+		t.Errorf("SmartDetect = %+v, want %+v", *back.Settings.SmartDetect, off)
+	}
+}
+
+// TestSessionRoundTripsSmartDetect: the tuning survives save and load.
+func TestSessionRoundTripsSmartDetect(t *testing.T) {
+	want := SmartDetectOptions{
+		MinLength: 6, MinOccurrences: 2, ExcludeCommonWords: true, MinConfidence: 0.8,
+	}
+	raw, err := SaveSession(Session{Settings: SessionSettings{Level: "medium", SmartDetect: &want}})
+	if err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	back, err := LoadSession(raw)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if back.Settings.SmartDetect == nil || *back.Settings.SmartDetect != want {
+		t.Errorf("SmartDetect = %+v, want %+v", back.Settings.SmartDetect, want)
+	}
+}

@@ -48,6 +48,18 @@ type Settings struct {
 	// Phase 6d). Every AI-dependent control gates on UseAI AND the live
 	// Ollama availability; the choice persists in sessions.
 	UseAI bool `json:"useAI"`
+	// MinConfidence is the detection-confidence floor (BUILD-04 CR9), on
+	// the BUILD-03 Phase C scale of 0.0 to 1.0. Spans scoring below it are
+	// not replaced. 0 (the default, and what an older session file without
+	// the field loads as) keeps every detection, so the setting can never
+	// silently remove replacements a user did not ask it to remove. See
+	// engine.FilterByMinConfidence for what each level currently excludes.
+	MinConfidence float32 `json:"minConfidence"`
+	// SmartDetect is the smart-detection tuning (BUILD-04 CR13). It is a
+	// SETTING rather than a per-run argument so it survives in the session
+	// file; RunSmartDetection still receives it explicitly, so a call
+	// always says what it is filtering by.
+	SmartDetect engine.SmartDetectOptions `json:"smartDetect"`
 }
 
 // DocumentInfo is the frontend-facing summary of one loaded Document.
@@ -122,6 +134,9 @@ func NewApp() *App {
 			OllamaPort:  11434,
 			Model:       ollama.DefaultModel,
 			ContextSize: ollama.DefaultContextSize,
+			// The stricter defaults, matching the frontend store: Smart
+			// detection over-detecting was the reported problem.
+			SmartDetect: engine.DefaultSmartDetectOptions(),
 		},
 	}
 }
@@ -151,6 +166,31 @@ func (a *App) Ping() string {
 // carried inside the returned status (graceful degradation, CLAUDE.md §4).
 func (a *App) ProbeOllama() ollama.OllamaStatus {
 	return a.llm.Probe()
+}
+
+// --- Documentation window (BUILD-04 CR6) -------------------------------------
+
+// documentationAsset is the path, relative to the asset server root, of
+// the bundled documentation page. It lives under static/ and is therefore
+// already inside the //go:embed all:static directive in main.go: the
+// documentation window loads embedded bytes and nothing else, so the
+// local-only guarantee (CLAUDE.md section 4) is untouched.
+const documentationAsset = "docs/index.html"
+
+// DocumentationURL returns where the bundled documentation lives, so the
+// frontend can open it in a separate window without hardcoding the path.
+//
+// Why this is a path and not an "open a window" call: Wails v2 (the pinned
+// version, CLAUDE.md section 7) drives exactly ONE window per process.
+// Its runtime package exposes WindowShow, WindowHide, WindowSetSize and so
+// on, all of which act on that single window, and there is no API to
+// create a second one. Multi-window arrived in Wails v3, whose idioms this
+// project must not use. So Go owns WHERE the documentation is (it is Go
+// that embeds it) and the frontend opens it with window.open, which the
+// WebView creates as a real separate window served by this same embedded
+// asset server. See static/api.js openDocumentation.
+func (a *App) DocumentationURL() string {
+	return documentationAsset
 }
 
 // --- Import ---------------------------------------------------------------
@@ -287,6 +327,19 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 	if s.ContextSize < 0 || s.ContextSize > 1<<20 {
 		return ollama.OllamaStatus{}, fmt.Errorf(
 			"invalid context size %d, expected 0 (model default) or a positive number of tokens such as 8192", s.ContextSize)
+	}
+	if s.MinConfidence < 0 || s.MinConfidence > 1 {
+		return ollama.OllamaStatus{}, fmt.Errorf(
+			"invalid minimum confidence %v, expected a number between 0 (replace every detection) and 1 (replace only the most certain ones)", s.MinConfidence)
+	}
+	if s.SmartDetect.MinConfidence < 0 || s.SmartDetect.MinConfidence > 1 {
+		return ollama.OllamaStatus{}, fmt.Errorf(
+			"invalid smart detection confidence %v, expected a number between 0 (show every suggestion) and 1 (show only the strongest)", s.SmartDetect.MinConfidence)
+	}
+	if s.SmartDetect.MinLength < 0 || s.SmartDetect.MinOccurrences < 0 {
+		return ollama.OllamaStatus{}, fmt.Errorf(
+			"invalid smart detection limits (minimum length %d, minimum occurrences %d), both must be zero or a positive number",
+			s.SmartDetect.MinLength, s.SmartDetect.MinOccurrences)
 	}
 
 	a.mu.Lock()

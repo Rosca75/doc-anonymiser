@@ -29,6 +29,9 @@ doc-anonymiser/
 ├── CLAUDE.md                  # this file — authoritative
 ├── BUILD.md                   # phased implementation plan (v1, executed)
 ├── BUILD-02.md                # functional-improvements build plan (v2)
+├── docs/BUILD-03.md           # Presidio-benchmarked detection layer (v3)
+├── docs/BUILD-04.md           # UI correctness and feature-surfacing plan (v4);
+│                              # AUTHORITATIVE for the CR1 to CR17 to phase mapping
 ├── README.md                  # user-facing documentation
 ├── LICENSE                    # MIT, Oscar Liber
 ├── .gitignore
@@ -60,12 +63,17 @@ doc-anonymiser/
 │   ├── style.css              # consumes brand.css variables only
 │   ├── api.js                 # THE ONLY file that calls Go bound methods
 │   ├── state.js               # single source of truth for frontend state
+│   ├── shell.js               # pure header/workflow-banner markup + docs action
 │   ├── ui.js                  # shared UI toolkit (button/banner/panel/icon)
 │   ├── icons.js               # vendored Material Symbols SVG map
 │   ├── copy.js                # user-visible strings (banners, step copy)
+│   ├── scroll.js              # scroll preservation across re-renders
+│   ├── docs/                  # bundled offline user documentation, opened in
+│   │                          # a SECOND window (embedded assets only)
 │   ├── entitymodel.js         # pure variant view-model (regression-tested)
+│   ├── candidatemodel.js      # pure suggestions filter/sort view-model
 │   ├── assets/icons/          # vendored Material Symbols SVGs + LICENSE
-│   └── views/                 # one JS module per screen (home, docs, wizard steps, shared allowlist panel)
+│   └── views/                 # one JS module per screen (home, wizard steps, shared allowlist panel)
 ├── .github/workflows/
 │   ├── ci.yml                 # build + test on push/PR
 │   └── release.yml            # on tag: build, zip, attach to Release
@@ -87,6 +95,21 @@ doc-anonymiser/
   filename via `app.go`. This keeps the engine unit-testable headless.
 - **Frontend discipline:** `api.js` is the only bridge caller; `state.js` is
   the only state holder; view modules render from state and dispatch actions.
+- **Documentation opens in a second window (BUILD-04 CR6):** the "Documentation"
+  menu entry opens a SEPARATE application window whose content comes from
+  `static/docs/*`, embedded in the binary by the same `go:embed` directive as
+  the rest of `static/`. It may load NOTHING but embedded assets: no
+  `http(s)://` URL, no CDN, no system browser hand-off. There is no in-app
+  documentation screen any more; the top menu keeps its entry.
+
+  Mechanism, verified against the pin: **Wails v2 drives exactly one native
+  window per process** and exposes no API to create a second one (multi-window
+  is a v3 feature, and v3 idioms are forbidden). So Go owns the PATH
+  (`app.go DocumentationURL`, since Go is what embeds the page) and the
+  frontend opens it with a named `window.open` on the application's own asset
+  server (`api.js openDocumentation`). Do NOT "fix" this into
+  `runtime.BrowserOpenURL`: the system browser cannot reach the embedded
+  assets, and handing it a real URL would break the local-only guarantee.
 - **Originals are immutable:** imported files are read once and never written
   back to their source path. All output goes through explicit save dialogs.
 - **Graceful degradation:** Ollama availability is probed at startup and on
@@ -167,6 +190,13 @@ doc-anonymiser/
   `internal_names`, `person_names`, `custom_patterns` (user regex),
   plus PII categories emitted by pass 1. The user-visible label for
   `internal_names` is "Internal".
+- **Engine identifiers are stable, user-visible labels are not (BUILD-04 CR3):**
+  wizard step 3 is called **"Values"** everywhere the user can see it (step
+  chip, step banner, headings, help text), and its view module is
+  `static/views/values.js`. The engine category identifiers listed above, and
+  the PII category constants in `engine/pii.go`, are NEVER renamed to follow a
+  label change. A saved session that stored the old step token `entities`
+  still loads, mapped to `values` by an explicit migration.
 - **Sensitive state stays in memory** by default. Saving a session (registry
   + entities + settings) to disk is an explicit user action with a warning
   that the file contains the re-identification key.
@@ -179,6 +209,13 @@ doc-anonymiser/
 - Table-driven unit tests for all engine logic; `testdata/` fixtures in the
   three supported formats, in English and French.
 - Frontend: ES modules, no framework, no build step, no external fonts/CDNs.
+- **Typography (BUILD-04 CR2):** the web application uses **Helvetica, with
+  Arial as the fallback**, for headings AND body text. Georgia is a
+  PowerPoint-only brand guideline and must NOT appear anywhere under
+  `static/`; `--font-heading` in `brand.css` is the single place the heading
+  face is declared. Headings stay at regular weight: hierarchy comes from size
+  and space, never bold. Helvetica and Arial are Windows system fonts, so this
+  needs no font files and does not touch the local-only guarantee.
 - All user-visible strings in English for v1 (UI i18n deferred to v2).
 - Regexes are compiled once at package init and documented with examples of
   what they match and deliberately do not match.

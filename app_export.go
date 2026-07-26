@@ -342,6 +342,7 @@ func (a *App) ExportReport(format string) error {
 func (a *App) SaveSessionToFile(req RunRequest) error {
 	a.mu.Lock()
 	settings := a.settings
+	smartDetect := settings.SmartDetect
 	var registry []engine.MappingEntry
 	if a.registry != nil {
 		registry = a.registry.Export()
@@ -354,12 +355,14 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 		Patterns:    req.Patterns,
 		SimpleRules: req.SimpleRules,
 		Settings: engine.SessionSettings{
-			Level:       settings.Level,
-			Categories:  settings.Categories,
-			OllamaPort:  settings.OllamaPort,
-			Model:       settings.Model,
-			ContextSize: settings.ContextSize,
-			UseAI:       settings.UseAI,
+			Level:         settings.Level,
+			Categories:    settings.Categories,
+			OllamaPort:    settings.OllamaPort,
+			Model:         settings.Model,
+			ContextSize:   settings.ContextSize,
+			UseAI:         settings.UseAI,
+			MinConfidence: settings.MinConfidence,
+			SmartDetect:   &smartDetect,
 		},
 		Registry: registry,
 	})

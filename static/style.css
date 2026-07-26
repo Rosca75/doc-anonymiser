@@ -20,8 +20,8 @@ body {
   overflow: hidden;
 }
 
-/* Headings are Georgia at REGULAR weight; hierarchy comes from size and
-   space, never bold (brand rule). */
+/* Headings are Helvetica at REGULAR weight; hierarchy comes from size and
+   space, never bold (brand rule, BUILD-04 CR2). */
 h1, h2, h3, h4 {
   font-family: var(--font-heading);
   font-weight: 400;
@@ -40,10 +40,32 @@ h1, h2, h3, h4 {
 
 .brand { font-family: var(--font-heading); font-size: 1.05rem; }
 
-/* Top navigation (Home / Anonymise documents / Documentation). */
-.topnav { display: flex; gap: 0.25rem; }
+/* Permanent top menu (Home / Anonymise documents / Documentation). The
+   same three buttons render on every screen (BUILD-04 CR4); flex: 1 lets
+   it take the space the step chips used to occupy. */
+.topnav { display: flex; gap: 0.25rem; flex: 1; }
 
-.steps { display: flex; gap: 0.4rem; flex: 1; }
+/* The active menu entry is marked QUIETLY: a grey fill and a grey
+   underline, never orange. The one loud element per view belongs to the
+   view, not to the chrome. */
+.topnav .topnav-active {
+  background: var(--gray-5);
+  box-shadow: inset 0 -2px 0 var(--gray-1);
+}
+
+/* Anonymisation workflow banner (BUILD-04 CR7): the five step chips moved
+   out of the header into this strip, which appears only on the wizard
+   screen. The header above it is now identical everywhere. */
+.workflow-banner {
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  padding: 0.5rem 1rem;
+  background: var(--gray-6);
+  border-bottom: 1px solid var(--gray-4);
+}
+.workflow-title {
+  font-family: var(--font-heading); font-size: 0.95rem; color: var(--text);
+}
+.workflow-steps { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 
 /* Step chips: quiet grey fill; the ACTIVE chip is marked by an orange
    underline, not an orange flood fill (one loud element per view rule). */
@@ -57,7 +79,20 @@ h1, h2, h3, h4 {
 
 .badges { display: flex; gap: 0.5rem; }
 
-main#view { flex: 1; overflow: auto; padding: 1rem; background: var(--gray-6); }
+/* #view is the scroll owner AND a flex column, so a step view can ask to
+   fill the leftover height instead of collapsing to its content
+   (BUILD-04 CR8). Steps that do not ask keep content height, exactly as
+   before, because a flex item only grows when it says so. */
+main#view {
+  flex: 1; overflow: auto; padding: 1rem; background: var(--gray-6);
+  display: flex; flex-direction: column;
+}
+
+/* Chrome-level error strip (BUILD-04 CR6), e.g. the documentation window
+   refusing to open. It sits between the banner and the view so it is
+   visible on every screen. */
+.shell-error { padding: 0.75rem 1rem 0; }
+.shell-error .banner { margin-bottom: 0; }
 
 .navbar {
   display: flex; justify-content: space-between;
@@ -68,7 +103,16 @@ main#view { flex: 1; overflow: auto; padding: 1rem; background: var(--gray-6); }
 
 /* --- Buttons (ui.js kinds) ---------------------------------------------- */
 
+/* Buttons lay their icon and label out as a CENTRED flex row (BUILD-04
+   CR5). The previous fix nudged the icon down with a negative
+   vertical-align, which only lined up at one font size and left the
+   top-menu icons sitting below the text baseline. Centring both children
+   on the cross axis is font-size independent, and the gap replaces the
+   literal space ui.js used to emit (whitespace-only text nodes are not
+   flex items, so no double spacing). */
 button, .btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 0.35rem;
   font: inherit; cursor: pointer;
   border: 1px solid var(--gray-3); border-radius: 6px;
   background: var(--gray-5); color: var(--text);
@@ -88,9 +132,12 @@ button:focus-visible, .btn:focus-visible, input:focus-visible, select:focus-visi
   outline: 2px solid var(--accent-medium); outline-offset: 1px;
 }
 
-/* Inline icons inside buttons and banners follow the text colour. */
-.btn .icon, button .icon { display: inline-flex; vertical-align: -0.32em; }
-.icon svg { width: 1.1em; height: 1.1em; }
+/* Inline icons follow the text colour. Outside a flex parent (inside a
+   heading or a paragraph) vertical-align: middle keeps them on the text
+   centre line rather than the baseline; inside one, align-items on the
+   parent already does the work. */
+.icon { display: inline-flex; align-items: center; vertical-align: middle; }
+.icon svg { width: 1.1em; height: 1.1em; display: block; }
 
 input, select {
   font: inherit; padding: 0.3rem 0.5rem;
@@ -172,6 +219,19 @@ input, select {
 /* --- Configure sub-tabs (BUILD-02 Phase 6a) -------------------------------- */
 
 .subtabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+
+/* Panel-header actions (BUILD-04 CR10 select-all, CR11 clear-all). They
+   stay quiet ghost buttons: a bulk action is not the hero of the view. */
+.panel-head-right .btn-ghost { font-size: 0.85rem; padding: 0.2rem 0.5rem; }
+
+/* Detection confidence slider (BUILD-04 CR9). The read-out sits next to
+   the track so the number and its plain-language effect are read
+   together. */
+#min-confidence { flex: 1; min-width: 12rem; max-width: 24rem; accent-color: var(--accent); }
+#min-confidence-value {
+  font-family: var(--font-mono); font-size: 0.9rem;
+  min-width: 2.5rem; text-align: right;
+}
 .preset-chip { cursor: pointer; }
 .preset-chip.active { border-bottom-color: var(--accent); background: var(--gray-6); font-weight: 700; }
 
@@ -179,15 +239,39 @@ input, select {
 
 .home-view { max-width: 60rem; margin: 0 auto; padding-top: 2rem; }
 .home-view h1 { font-size: 2rem; margin: 0 0 0.5rem; }
-.home-lede { color: var(--text); max-width: 42rem; }
-.home-panels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 1.5rem 0; }
-.home-actions { display: flex; gap: 0.75rem; margin-top: 1rem; }
+/* The landing page body is three paragraphs (BUILD-04 CR1), each rendered
+   as .home-lede. A readable measure matters more than filling the width. */
+.home-lede { color: var(--text); max-width: 42rem; line-height: 1.5; margin: 0 0 1rem; }
+.home-actions { display: flex; gap: 0.75rem; margin-top: 1.5rem; }
 
 /* --- Import view ---------------------------------------------------------- */
 
+/* The import step is the one step that fills the available height, so its
+   pane divider spans top to bottom BEFORE any preview is loaded
+   (BUILD-04 CR8). Previously the grid row was as tall as its tallest
+   child, which with an empty preview pane was a couple of lines of hint
+   text, leaving a stub of a divider. min-height: 0 on each link of the
+   chain is what lets the inner panes scroll instead of pushing the grid
+   taller than the window. */
+.step-view-import { flex: 1; min-height: 0; }
+.step-view-import .import-view { height: 100%; display: flex; flex-direction: column; }
+.step-view-import .import-columns { flex: 1; min-height: 0; }
+/* Each pane is itself a column: its heading stays put and only the list
+   or the preview inside it scrolls, so the two panes and the divider
+   between them keep their full height. The max-height override undoes the
+   60vh cap those blocks carry when they are NOT inside a filled pane. */
+.step-view-import .import-columns > .panel { min-height: 0; display: flex; flex-direction: column; }
+.step-view-import .import-columns .doc-list,
+.step-view-import .import-columns .table-scroll,
+.step-view-import .import-columns .md-preview {
+  flex: 1; min-height: 0; overflow: auto; max-height: none;
+}
+
 /* Two resizable panes separated by a draggable divider (BUILD-02 2g).
-   The column template is set inline from state.importSplit. */
-.import-columns { display: grid; gap: 0; align-items: start; }
+   The column template is set inline from state.importSplit. align-items:
+   stretch (the grid default, spelled out here because it is load-bearing)
+   makes the divider as tall as the row. */
+.import-columns { display: grid; gap: 0; align-items: stretch; }
 .import-divider {
   width: 6px; cursor: col-resize; align-self: stretch;
   background: var(--gray-4); border-radius: 3px; margin: 0 0.35rem;
@@ -225,12 +309,70 @@ input, select {
 }
 .grid-table th { background: var(--gray-5); position: sticky; top: 0; }
 
-/* --- Entities view --------------------------------------------------------- */
+/* --- Values view ----------------------------------------------------------- */
 
 .entity-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 .entity-table th, .entity-table td { border-bottom: 1px solid var(--gray-4); padding: 0.4rem 0.5rem; text-align: left; }
+
+/* Suggestions table (BUILD-04 CR14): a real header row, a filter row
+   under it, and the bulk actions above the whole thing (CR15). */
+.candidate-table thead th { background: var(--gray-6); font-weight: 700; }
+.candidate-table thead th:first-child { border-top-left-radius: 6px; }
+.candidate-table .filter-row th { background: var(--bg); font-weight: 400; padding-top: 0.5rem; }
+.candidate-table .filter-row input,
+.candidate-table .filter-row select { width: 100%; font-size: 0.85rem; }
+/* Sort buttons look like headings, not like actions: the table has enough
+   buttons already. The arrow shows which column is sorted. */
+.candidate-table .cand-sort {
+  border: none; background: none; padding: 0; font-weight: 700;
+  color: var(--text); gap: 0.25rem;
+}
+.candidate-table .cand-sort:hover { text-decoration: underline; }
+
+/* Bulk Accept all / Deny all, kept as a pair per category so the two
+   always read together. */
+.bulk-row { gap: 1rem; }
+.bulk-pair { display: inline-flex; gap: 0.25rem; }
+
+/* Smart detection settings (BUILD-04 CR13): a folded block, so the tuning
+   is available without pushing the buttons off the screen. */
+.smart-settings {
+  border: 1px solid var(--gray-4); border-radius: 8px;
+  padding: 0.4rem 0.75rem; margin: 0.5rem 0; background: var(--gray-6);
+}
+.smart-settings > summary { cursor: pointer; font-size: 0.9rem; padding: 0.15rem 0; }
+.smart-settings[open] > summary { margin-bottom: 0.4rem; }
+.smart-settings input[type="number"] { width: 5rem; }
+.smart-settings input[type="range"] { flex: 1; min-width: 8rem; max-width: 16rem; accent-color: var(--accent); }
+.smart-settings output { font-family: var(--font-mono); font-size: 0.9rem; min-width: 2.5rem; }
 .entity-table tr.denied td { opacity: 0.45; text-decoration: line-through; }
+
+/* The variant area is secondary text, but the CHIPS inside it are live
+   controls and must not inherit the muted colour: greyed-out chips read
+   as disabled, which is exactly what was reported (BUILD-04 CR17). */
 .variant-list { color: var(--muted); font-size: 0.8rem; }
+.variant-list .variant-chip {
+  color: var(--text);
+  background: var(--gray-5);
+  border-color: var(--gray-3);
+  font-size: 0.85rem;
+  cursor: grab;                 /* says "you can drag this" before you try */
+  user-select: none;            /* a text selection would cancel the drag */
+}
+.variant-list .variant-chip:active { cursor: grabbing; }
+.variant-list .variant-chip:hover { background: var(--tint-orange-3); border-color: var(--accent-light); }
+.variant-list .drag-handle { color: var(--gray-1); cursor: grab; }
+/* The move button is the keyboard and mouse fallback for the drag, so it
+   stays legible rather than fading into the chip. */
+.variant-list .variant-chip .variant-move {
+  color: var(--muted); font-size: 0.75rem; text-decoration: underline;
+  cursor: pointer; border: none; background: none; padding: 0;
+}
+.variant-list .variant-chip .variant-move:hover { color: var(--text); }
+/* Drop target feedback while a chip is being dragged over a value row. */
+.entity-table tr.drop-target > td { background: var(--tint-orange-3); }
+.variant-note:empty { display: none; }
+.variant-note { margin-top: 0.25rem; }
 
 .pill-list { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .pill {

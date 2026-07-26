@@ -37,6 +37,18 @@ type Entity struct {
 	// variant to another entity excludes it here so exactly one entity
 	// matches it afterwards.
 	ExcludedVariants []string `json:"excludedVariants,omitempty"`
+	// Confidence is how much this entity is trusted, in [0.0, 1.0]
+	// (BUILD-04 CR9, using the BUILD-03 Phase C scale). Zero means "not
+	// stated", which DetectEntities reads as ConfidenceManualDefault:
+	// every entity the USER listed is a high-trust entity.
+	//
+	// The one thing that sets it explicitly today is acceptProposals,
+	// which stamps ConfidenceLLMDefault on entities the local AI proposed
+	// during the deep-scan pass. That is what gives the Configure screen's
+	// minimum-confidence setting something real to act on: raising the
+	// minimum above the AI level stops replacing values only the model
+	// suggested, while everything the user listed keeps being replaced.
+	Confidence float32 `json:"confidence,omitempty"`
 }
 
 // personCategories lists the categories whose canonical names are people —
@@ -224,13 +236,28 @@ func DetectEntities(text string, entities []Entity, allow *Allowlist) []Span {
 					Original: original,
 					// Every variant maps back to the canonical name so
 					// "M. Duval" and "Marie" share one placeholder.
-					Canonical:  e.Canonical,
-					Confidence: ConfidenceManualDefault,
+					Canonical: e.Canonical,
+					// An entity that states its own confidence keeps it
+					// (AI proposals do); anything else is a value the user
+					// listed, which is high trust (BUILD-04 CR9).
+					Confidence: entityConfidence(e),
 				})
 			}
 		}
 	}
 	return spans
+}
+
+// entityConfidence is the score DetectEntities stamps on an entity's
+// spans: the entity's own Confidence when it stated one, otherwise
+// ConfidenceManualDefault. Keeping the "unset means manual" rule in one
+// function means a zero value can never be mistaken for "no confidence at
+// all", which would make every user-listed value filterable by accident.
+func entityConfidence(e Entity) float32 {
+	if e.Confidence > 0 {
+		return e.Confidence
+	}
+	return ConfidenceManualDefault
 }
 
 // isWordBoundary reports whether text[start:end] is delimited by

@@ -216,10 +216,10 @@ test("goToScreen switches screens and rejects unknown names", () => {
   assert.equal(getState().screen, "home");
   assert.equal(goToScreen("wizard"), true);
   assert.equal(getState().screen, "wizard");
-  assert.equal(goToScreen("docs"), true);
-  assert.equal(getState().screen, "docs");
+  assert.equal(goToScreen("home"), true);
+  assert.equal(getState().screen, "home");
   assert.equal(goToScreen("settings"), false);
-  assert.equal(getState().screen, "docs");
+  assert.equal(getState().screen, "home");
 });
 
 test("wizard state survives navigating to home and back", () => {
@@ -468,4 +468,449 @@ test("reassignOriginal removes a standalone entity and adds the variant", () => 
   assert.equal(entities[0].variants, null, "target re-expands");
   // Unknown target rejected, state untouched.
   assert.equal(reassignOriginal("X", "person_names", "Ghost"), false);
+});
+
+// --- Step token rename and migration (BUILD-04 CR3) ------------------------
+
+import { migrateStep, LEGACY_STEP_TOKENS } from "./state.js";
+import { STEP_BANNERS } from "./copy.js";
+
+test("the wizard's third step token is values, not entities", () => {
+  assert.deepEqual(WIZARD_STEPS, ["import", "configure", "values", "run", "export"]);
+});
+
+test("migrateStep maps the legacy entities token onto values", () => {
+  assert.equal(migrateStep("entities"), "values");
+  assert.equal(LEGACY_STEP_TOKENS.entities, "values");
+});
+
+test("migrateStep passes current tokens through untouched", () => {
+  for (const step of WIZARD_STEPS) {
+    assert.equal(migrateStep(step), step);
+  }
+});
+
+test("migrateStep falls back to import for unknown or missing tokens", () => {
+  // A hand-edited or corrupted session must never strand the wizard on a
+  // step that does not exist; import is the only always-reachable step.
+  assert.equal(migrateStep("teleport"), "import");
+  assert.equal(migrateStep(undefined), "import");
+  assert.equal(migrateStep(""), "import");
+});
+
+test("every wizard step has a banner keyed by its current token", () => {
+  for (const step of WIZARD_STEPS) {
+    assert.ok(STEP_BANNERS[step], `no step banner for ${step}`);
+  }
+});
+
+test("no user-visible step wording still says Entities", () => {
+  for (const [step, banner] of Object.entries(STEP_BANNERS)) {
+    assert.doesNotMatch(banner.title, /entit/i, `${step} title`);
+    assert.doesNotMatch(banner.body, /entit/i, `${step} body`);
+  }
+});
+
+// --- Documentation is no longer a screen (BUILD-04 CR6) --------------------
+
+import { SCREENS } from "./state.js";
+
+test("SCREENS no longer contains docs", () => {
+  assert.deepEqual(SCREENS, ["home", "wizard"]);
+});
+
+test("goToScreen(\"docs\") is rejected and leaves the screen untouched", () => {
+  resetState();
+  assert.equal(goToScreen("wizard"), true);
+  assert.equal(goToScreen("docs"), false, "docs is not a screen any more");
+  assert.equal(getState().screen, "wizard");
+});
+
+test("a failed documentation open is recorded as a dismissible shell error", () => {
+  resetState();
+  assert.equal(getState().shellError, null);
+  setState({ shellError: "The documentation window could not be opened." });
+  assert.match(getState().shellError, /could not be opened/);
+  // Wizard state is untouched by a chrome-level error.
+  assert.equal(getState().step, "import");
+  setState({ shellError: null });
+  assert.equal(getState().shellError, null);
+});
+
+// --- BUILD-04 Phase 4: surfaced recognizers, groups, confidence ------------
+
+import {
+  EXTENDED_PII_CATEGORIES, ALL_CATEGORIES,
+  setCategoryGroup, setMinConfidence, clearAllowlist,
+} from "./state.js";
+import { CATEGORY_LABELS } from "./copy.js";
+
+test("the eight BUILD-03 recognizers are known to the store (CR9)", () => {
+  const expected = [
+    "credit_card", "uk_nhs", "ip_address", "mac_address",
+    "crypto", "database_uri", "de_steuer_id", "es_nif",
+  ];
+  assert.deepEqual(EXTENDED_PII_CATEGORIES, expected);
+  for (const key of expected) {
+    assert.ok(ALL_CATEGORIES.includes(key), `${key} missing from ALL_CATEGORIES`);
+  }
+});
+
+test("every category the store knows has a label and an example (CR9)", () => {
+  for (const key of ALL_CATEGORIES) {
+    const entry = CATEGORY_LABELS[key];
+    assert.ok(entry, `no CATEGORY_LABELS entry for ${key}`);
+    const [label, example] = entry;
+    assert.ok(label && label.length > 2, `${key} has no readable label`);
+    assert.ok(example && example.length > 5, `${key} has no example`);
+  }
+});
+
+test("the extended recognizers are on at every preset (CR9)", () => {
+  // Mirrors engine.PresetSelection; the Go side is pinned in
+  // category_parity_test.go, and the two must not drift.
+  for (const level of ["soft", "medium", "advanced"]) {
+    const sel = presetCategories(level);
+    for (const key of EXTENDED_PII_CATEGORIES) {
+      assert.equal(sel[key], true, `${key} must be on at ${level}`);
+    }
+  }
+});
+
+test("adding the new categories did not change what a preset switches ON", () => {
+  // Regression guard for the preset semantics themselves: soft must still
+  // exclude person names, dates, amounts, organisations and places.
+  const soft = presetCategories("soft");
+  assert.equal(soft.person_names, false);
+  const medium = presetCategories("medium");
+  assert.equal(medium.person_names, true);
+  assert.equal(medium.date, false);
+  assert.equal(medium.amount, false);
+  const advanced = presetCategories("advanced");
+  for (const key of ALL_CATEGORIES) {
+    assert.equal(advanced[key], true, `thorough must switch ${key} on`);
+  }
+});
+
+test("setCategoryGroup flips exactly the given keys in one change (CR10)", () => {
+  resetState();
+  let notifications = 0;
+  const unsub = subscribe(() => { notifications++; });
+
+  const group = [...EXTENDED_PII_CATEGORIES];
+  const changed = setCategoryGroup(group, false);
+  assert.equal(changed, group.length, "all eight started on and must all flip");
+  assert.equal(notifications, 1, "a whole group must cost exactly one re-render");
+
+  const s = getState();
+  for (const key of group) assert.equal(s.settings.categories[key], false);
+  // Nothing outside the group moved.
+  assert.equal(s.settings.categories.email, true);
+  assert.equal(s.settings.categories.person_names, true);
+  unsub();
+});
+
+test("setCategoryGroup ignores unknown keys and reports no-op runs (CR10)", () => {
+  resetState();
+  assert.equal(setCategoryGroup(["not_a_category"], true), 0);
+  assert.equal(setCategoryGroup(["email"], true), 0, "email is already on");
+  assert.equal(setCategoryGroup(["email"], false), 1);
+  assert.equal(setCategoryGroup([], true), 0);
+  assert.equal(setCategoryGroup(undefined, true), 0);
+});
+
+test("a deselected group makes the selection Custom (CR10)", () => {
+  resetState();
+  assert.equal(selectionPresetName(getState().settings.categories), "medium");
+  setCategoryGroup(EXTENDED_PII_CATEGORIES, false);
+  assert.equal(selectionPresetName(getState().settings.categories), "custom");
+});
+
+test("minConfidence defaults to 0 and round-trips through the setter (CR9)", () => {
+  resetState();
+  assert.equal(getState().settings.minConfidence, 0,
+    "the default must keep every detection");
+  assert.equal(setMinConfidence(0.9), 0.9);
+  assert.equal(getState().settings.minConfidence, 0.9);
+  assert.equal(setMinConfidence(0), 0);
+  assert.equal(setMinConfidence(1), 1);
+});
+
+test("minConfidence rejects values outside 0 to 1 (CR9)", () => {
+  resetState();
+  for (const bad of [-0.1, 1.1, NaN, "0.5", null, undefined]) {
+    assert.equal(setMinConfidence(bad), null, `${bad} must be rejected`);
+  }
+  assert.equal(getState().settings.minConfidence, 0, "a rejected value changes nothing");
+});
+
+test("clearAllowlist empties the list and reports the count (CR11)", () => {
+  resetState();
+  for (const term of ["CSSF", "EUR", "GDPR"]) addAllowTerm(term);
+  assert.equal(getState().allowlist.length, 3);
+  assert.equal(clearAllowlist(), 3);
+  assert.deepEqual(getState().allowlist, []);
+  // Clearing an empty list is a no-op that reports zero.
+  assert.equal(clearAllowlist(), 0);
+});
+
+test("clearAllowlist touches nothing but the allowlist (CR11)", () => {
+  resetState();
+  setState({ documents: [{ name: "a.txt" }] });
+  addAllowTerm("CSSF");
+  addEntities([{ category: "client_names", canonical: "Alpine Trust" }]);
+  clearAllowlist();
+  assert.equal(getState().entities.length, 1);
+  assert.equal(getState().documents.length, 1);
+});
+
+// --- BUILD-04 Phase 5: smart-detection tuning and bulk deny ----------------
+
+import {
+  denyAllInCategory, setSmartDetectOptions, smartDetectOptions,
+  SMART_DETECT_DEFAULTS,
+} from "./state.js";
+
+/** seedCandidates() puts a mixed review list in the store. */
+function seedCandidates() {
+  resetState();
+  addCandidates([
+    { text: "Marie Duval", category: "person_names", count: 7 },
+    { text: "Anouk Berger", category: "person_names", count: 3 },
+    { text: "Alpine Trust", category: "client_names", count: 3 },
+  ], "smart");
+}
+
+test("denyAllInCategory drops that category and adds no entity (CR15)", () => {
+  seedCandidates();
+  assert.equal(denyAllInCategory("person_names"), 2);
+  const s = getState();
+  assert.deepEqual(s.candidates.map((c) => c.text), ["Alpine Trust"]);
+  assert.equal(s.entities.length, 0, "denying must never promote anything");
+});
+
+test("denyAllInCategory on an absent category is a no-op (CR15)", () => {
+  seedCandidates();
+  assert.equal(denyAllInCategory("project_names"), 0);
+  assert.equal(getState().candidates.length, 3);
+});
+
+test("bulk actions restricted to the visible rows touch only those (CR15)", () => {
+  // This is the filtered-set semantics the Values table relies on: a
+  // search hiding a row must also protect it from a bulk button.
+  seedCandidates();
+  assert.equal(denyAllInCategory("person_names", ["Anouk Berger"]), 1);
+  assert.deepEqual(getState().candidates.map((c) => c.text), ["Marie Duval", "Alpine Trust"]);
+
+  seedCandidates();
+  assert.equal(acceptAllInCategory("person_names", ["Marie Duval"]), 1);
+  const s = getState();
+  assert.deepEqual(s.entities.map((e) => e.canonical), ["Marie Duval"]);
+  assert.deepEqual(s.candidates.map((c) => c.text), ["Anouk Berger", "Alpine Trust"]);
+});
+
+test("a restriction listing nothing visible changes nothing (CR15)", () => {
+  seedCandidates();
+  assert.equal(denyAllInCategory("person_names", []), 0);
+  assert.equal(acceptAllInCategory("person_names", []), 0);
+  assert.equal(getState().candidates.length, 3);
+});
+
+test("bulk restrictions match case-insensitively, like every candidate key", () => {
+  seedCandidates();
+  assert.equal(denyAllInCategory("person_names", ["marie duval"]), 1);
+  assert.deepEqual(getState().candidates.map((c) => c.text), ["Anouk Berger", "Alpine Trust"]);
+});
+
+test("smart detection ships with the stricter defaults (CR13)", () => {
+  resetState();
+  assert.deepEqual(getState().settings.smartDetect, SMART_DETECT_DEFAULTS);
+  assert.equal(SMART_DETECT_DEFAULTS.excludeCommonWords, true);
+  assert.ok(SMART_DETECT_DEFAULTS.minLength > 0);
+  // Requiring two occurrences would throw away single-sighting full
+  // names, which are the most valuable thing smart detection finds.
+  assert.equal(SMART_DETECT_DEFAULTS.minOccurrences, 1);
+});
+
+test("setSmartDetectOptions merges a partial patch (CR13)", () => {
+  resetState();
+  const out = setSmartDetectOptions({ minLength: 6 });
+  assert.equal(out.minLength, 6);
+  assert.equal(out.excludeCommonWords, SMART_DETECT_DEFAULTS.excludeCommonWords,
+    "untouched options keep their value");
+  assert.equal(getState().settings.smartDetect.minLength, 6);
+});
+
+test("setSmartDetectOptions accepts the permissive extreme (CR13)", () => {
+  // Turning every filter off must be reachable: that is the escape hatch
+  // for a user who would rather review too much than miss something.
+  resetState();
+  const out = setSmartDetectOptions({
+    minLength: 0, minOccurrences: 0, excludeCommonWords: false, minConfidence: 0,
+  });
+  assert.deepEqual(out, {
+    minLength: 0, minOccurrences: 0, excludeCommonWords: false, minConfidence: 0,
+  });
+});
+
+test("setSmartDetectOptions ignores invalid values rather than storing them (CR13)", () => {
+  resetState();
+  const before = { ...getState().settings.smartDetect };
+  const out = setSmartDetectOptions({
+    minLength: -1, minOccurrences: 2.5, excludeCommonWords: "yes", minConfidence: 4,
+  });
+  assert.deepEqual(out, before, "every invalid value must be ignored");
+  // Unknown keys are simply not carried over.
+  setSmartDetectOptions({ nonsense: 1 });
+  assert.equal(getState().settings.smartDetect.nonsense, undefined);
+});
+
+test("smartDetectOptions fills defaults for a session without the block (CR13)", () => {
+  // A session file written before BUILD-04 has no smartDetect at all.
+  resetState();
+  setState({ settings: { ...getState().settings, smartDetect: undefined } });
+  assert.deepEqual(smartDetectOptions(), SMART_DETECT_DEFAULTS);
+  // A partially written block is completed rather than rejected.
+  setState({ settings: { ...getState().settings, smartDetect: { minLength: 9 } } });
+  assert.deepEqual(smartDetectOptions(), { ...SMART_DETECT_DEFAULTS, minLength: 9 });
+});
+
+// --- BUILD-04 Phase 6: per-step reset (CR16) -------------------------------
+
+import { resetStep, isBackward, STEP_RESETS } from "./state.js";
+
+/** fullSession() fills every step's state so a reset is visible. */
+function fullSession() {
+  resetState();
+  setState({
+    documents: [{ name: "a.txt" }, { name: "b.csv" }],
+    previewDoc: "a.txt",
+    importErrors: ["something failed"],
+    allowlist: ["CSSF"],
+    results: { documents: [{ name: "a.txt" }] },
+    mapping: { "[PERSON_1]": { original: "Marie Duval" } },
+    metaReview: { "a.txt": { ext: "docx" } },
+    running: true,
+    progress: { stage: "deterministic" },
+    discovery: { running: true },
+  });
+  addEntities([{ category: "person_names", canonical: "Marie Duval" }]);
+  addCandidates([{ text: "Alpine Trust", category: "client_names" }], "smart");
+  addPattern("PRJ-[0-9]+", null);
+  setMinConfidence(0.9);
+  setCategoryGroup(["email"], false);
+}
+
+test("isBackward only reports moves toward the start of the wizard", () => {
+  assert.equal(isBackward("values", "configure"), true);
+  assert.equal(isBackward("export", "import"), true);
+  assert.equal(isBackward("configure", "values"), false);
+  assert.equal(isBackward("run", "run"), false);
+  assert.equal(isBackward("run", "nowhere"), false, "an unknown step is not a backward move");
+});
+
+test("resetStep rejects an unknown step instead of silently doing nothing", () => {
+  resetState();
+  assert.equal(resetStep("teleport"), false);
+  assert.equal(resetStep("values"), true);
+});
+
+test("every wizard step has a reset entry (CR16)", () => {
+  for (const step of WIZARD_STEPS) {
+    assert.ok(STEP_RESETS[step], `no reset defined for ${step}`);
+  }
+});
+
+test("NO reset ever clears the imported documents (CR16)", () => {
+  // The one non-negotiable rule of BUILD-04 section 4.2.
+  for (const step of WIZARD_STEPS) {
+    fullSession();
+    resetStep(step);
+    assert.equal(getState().documents.length, 2, `${step} reset dropped the documents`);
+    assert.equal(getState().previewDoc, "a.txt", `${step} reset lost the preview selection`);
+  }
+});
+
+test("NO reset ever clears the allowlist (CR16)", () => {
+  // It is shared by two steps and curated across the session, so it
+  // belongs to neither.
+  for (const step of WIZARD_STEPS) {
+    fullSession();
+    resetStep(step);
+    assert.deepEqual(getState().allowlist, ["CSSF"], `${step} reset dropped the allowlist`);
+  }
+});
+
+test("resetStep(configure) restores the preset and the detection defaults", () => {
+  fullSession();
+  assert.equal(getState().settings.categories.email, false);
+  assert.equal(getState().settings.minConfidence, 0.9);
+
+  assert.equal(resetStep("configure"), true);
+  const s = getState();
+  assert.deepEqual(s.settings.categories, presetCategories(s.settings.level));
+  assert.equal(s.settings.minConfidence, 0);
+  assert.deepEqual(s.settings.smartDetect, SMART_DETECT_DEFAULTS);
+  // The values step is untouched by a configure reset.
+  assert.equal(s.entities.length, 1);
+});
+
+test("resetStep(configure) keeps the machine's connection settings", () => {
+  // Port, model and the AI toggle describe the machine, not this batch of
+  // documents, so stepping back must not make the user reconfigure Ollama.
+  fullSession();
+  setState({ settings: { ...getState().settings, ollamaPort: 12345, model: "custom:7b", useAI: true } });
+  resetStep("configure");
+  const s = getState();
+  assert.equal(s.settings.ollamaPort, 12345);
+  assert.equal(s.settings.model, "custom:7b");
+  assert.equal(s.settings.useAI, true);
+});
+
+test("resetStep(values) clears values, suggestions, patterns and discovery", () => {
+  fullSession();
+  assert.equal(resetStep("values"), true);
+  const s = getState();
+  assert.deepEqual(s.entities, []);
+  assert.deepEqual(s.candidates, []);
+  assert.deepEqual(s.patterns, []);
+  assert.equal(s.discovery, null);
+  // Configure and Run are untouched.
+  assert.equal(s.settings.minConfidence, 0.9);
+  assert.ok(s.results);
+});
+
+test("resetStep(run) clears the run and its re-identification mapping", () => {
+  fullSession();
+  assert.equal(resetStep("run"), true);
+  const s = getState();
+  assert.equal(s.running, false);
+  assert.equal(s.progress, null);
+  assert.equal(s.results, null);
+  assert.equal(s.mapping, null, "the mapping is part of the run, and is the key");
+  // The values that produced the run survive, so re-running is one click.
+  assert.equal(s.entities.length, 1);
+});
+
+test("resetStep(run) re-locks the export step, which needs results", () => {
+  fullSession();
+  assert.equal(canGoTo("export"), true);
+  resetStep("run");
+  assert.equal(canGoTo("export"), false);
+});
+
+test("resetStep(export) clears only the metadata review decisions", () => {
+  fullSession();
+  assert.equal(resetStep("export"), true);
+  const s = getState();
+  assert.deepEqual(s.metaReview, {});
+  assert.ok(s.results, "the results are the Run step's, not Export's");
+});
+
+test("resetStep(import) clears the error strip but nothing else", () => {
+  fullSession();
+  assert.equal(resetStep("import"), true);
+  const s = getState();
+  assert.deepEqual(s.importErrors, []);
+  assert.equal(s.documents.length, 2);
 });

@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { HOME, STEP_BANNERS } from "./copy.js";
 
 const staticDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -43,4 +44,76 @@ test("no em or en dashes in frontend source", () => {
   assert.deepEqual(hits, [],
     "em/en dashes found in UI source; replace them with commas, periods or parentheses:\n" +
     hits.join("\n"));
+});
+
+// --- Home page copy (BUILD-04 CR1) ---------------------------------------
+
+test("home headline is the CR1 title", () => {
+  assert.equal(HOME.headline, "Anonymise your documents safely");
+});
+
+test("home body is three paragraphs, none of them empty", () => {
+  assert.ok(Array.isArray(HOME.body), "HOME.body must be an array of paragraphs");
+  assert.equal(HOME.body.length, 3, "CR1 asks for exactly three paragraphs");
+  for (const paragraph of HOME.body) {
+    assert.equal(typeof paragraph, "string");
+    assert.ok(paragraph.trim().length > 40, `paragraph too short: ${paragraph}`);
+  }
+});
+
+test("home body covers control, the two detection methods, and locality", () => {
+  const [control, detection, locality] = HOME.body;
+  assert.match(control, /control/i);
+  assert.match(detection, /pattern/i);
+  assert.match(detection, /\bAI\b/);
+  assert.match(locality, /127\.0\.0\.1/);
+  assert.match(locality, /this machine/i);
+});
+
+// --- Step 3 wording (BUILD-04 CR3) ----------------------------------------
+
+test("the third step banner is keyed and titled Values, not Entities", () => {
+  assert.equal(STEP_BANNERS.entities, undefined, "the legacy key must be gone");
+  assert.equal(STEP_BANNERS.values.title, "Values");
+  assert.doesNotMatch(STEP_BANNERS.values.body, /entit/i);
+});
+
+// --- Brand guards (BUILD-04 CR2) ------------------------------------------
+
+/** walkAll(dir) yields every file under dir, skipping assets and node_modules. */
+function* walkAll(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === "assets" || entry.name === "node_modules") continue;
+      yield* walkAll(full);
+      continue;
+    }
+    yield full;
+  }
+}
+
+test("no Georgia reference remains anywhere under static/", () => {
+  // CR2: Georgia is a PowerPoint-only brand guideline. This walks EVERY
+  // file (css and js and html, tests included) so neither a font stack nor
+  // a stale comment can quietly bring the name back.
+  const hits = [];
+  for (const file of walkAll(staticDir)) {
+    if (file === fileURLToPath(import.meta.url)) continue; // this guard names it on purpose
+    const lines = fs.readFileSync(file, "utf8").split("\n");
+    lines.forEach((line, i) => {
+      if (line.includes("Georgia")) {
+        hits.push(`${path.relative(staticDir, file)}:${i + 1}: ${line.trim()}`);
+      }
+    });
+  }
+  assert.deepEqual(hits, [],
+    "Georgia found under static/; the web application uses Helvetica with an Arial fallback:\n" +
+    hits.join("\n"));
+});
+
+test("brand.css declares Helvetica first for headings and body", () => {
+  const css = fs.readFileSync(path.join(staticDir, "brand.css"), "utf8");
+  assert.match(css, /--font-heading:\s*Helvetica,\s*Arial,\s*sans-serif;/);
+  assert.match(css, /--font-body:\s*Helvetica,\s*Arial,\s*sans-serif;/);
 });

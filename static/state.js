@@ -11,16 +11,26 @@
 // stay logic-free (BUILD.md Phase 6).
 
 // WIZARD_STEPS defines the fixed wizard order (CLAUDE.md wizard flow).
-export const WIZARD_STEPS = ["import", "configure", "entities", "run", "export"];
+// BUILD-04 CR3 renamed the third step's token from "entities" to
+// "values". Saved sessions written before that rename are migrated by
+// migrateStep() below, so an older file never lands the wizard on a step
+// that no longer exists.
+export const WIZARD_STEPS = ["import", "configure", "values", "run", "export"];
 
 // The initial application state. Every field is documented; grow it here,
 // never ad hoc in views.
 const initialState = {
-  // Top-level screen: "home" (landing page), "wizard" (the 5-step flow) or
-  // "docs" (documentation placeholder). Leaving the wizard NEVER clears
-  // wizard state, so documents and entities survive navigation
-  // (BUILD-02 Phase 2a).
+  // Top-level screen: "home" (landing page) or "wizard" (the 5-step
+  // flow). Leaving the wizard NEVER clears wizard state, so documents and
+  // values survive navigation (BUILD-02 Phase 2a). Documentation is not a
+  // screen: it opens in its own window (BUILD-04 CR6).
   screen: "home",
+
+  // Shell-level error message, or null. Used for failures that belong to
+  // the application chrome rather than to any one view, such as the
+  // documentation window refusing to open. Rendered as a dismissible
+  // banner above the active view (BUILD-04 CR6).
+  shellError: null,
 
   // Bridge self-test: null = not yet run, "pong" = OK, anything else =
   // error message to display.
@@ -57,7 +67,24 @@ const initialState = {
   // null = not yet decided (defaults to Ollama availability after the
   // first probe), true/false = explicit user choice.
   // contextSize is the Ollama num_ctx setting (Phase 5b), default 8192.
-  settings: { level: "medium", categories: null, ollamaPort: 11434, model: "", contextSize: 8192, useAI: null },
+  // minConfidence is the detection-confidence floor (BUILD-04 CR9), 0 to
+  // 1 on the engine's scale. 0 is the default and keeps every detection,
+  // which is exactly the behaviour before the setting existed.
+  settings: {
+    level: "medium", categories: null, ollamaPort: 11434, model: "",
+    contextSize: 8192, useAI: null, minConfidence: 0,
+    // smartDetect is the BUILD-04 CR13 tuning for the offline Smart
+    // detection pass, matching engine.SmartDetectOptions field for field.
+    // The defaults are the STRICTER ones (engine
+    // DefaultSmartDetectOptions), because over-detection was the reported
+    // problem; a user who wants everything back sets them to 0/false.
+    smartDetect: {
+      minLength: 4,
+      minOccurrences: 1,
+      excludeCommonWords: true,
+      minConfidence: 0.5,
+    },
+  },
 
   // Entity review state (Phase 7): array of
   // {category, canonical, manualVariants, status: "accepted"|"denied"}.
@@ -106,11 +133,21 @@ const initialState = {
 // Category keys, split by preset tier. Must stay in sync with the Go side
 // (engine/pipeline.go AllPIICategories / AllEntityCategories).
 export const HARD_PII_CATEGORIES = ["email", "url", "iban", "vat", "matricule", "phone"];
+// The extended recognizers BUILD-03 added to the engine. They are HARD
+// PII exactly like the group above, so every preset switches them on
+// (engine/pipeline.go PresetSelection). BUILD-04 CR9 finally surfaces
+// them in the Configure screen; until then they were detectable but
+// invisible, which is why the list is separate rather than merged: the
+// Configure screen shows them as their own group.
+export const EXTENDED_PII_CATEGORIES = [
+  "credit_card", "uk_nhs", "ip_address", "mac_address",
+  "crypto", "database_uri", "de_steuer_id", "es_nif",
+];
 export const ADVANCED_PII_CATEGORIES = ["amount", "date"];
 export const NAME_CATEGORIES = ["client_names", "project_names", "internal_names", "person_names"];
 export const ADVANCED_ENTITY_CATEGORIES = ["organisation_names", "location_names"];
 export const ALL_CATEGORIES = [
-  ...HARD_PII_CATEGORIES, ...ADVANCED_PII_CATEGORIES,
+  ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES, ...ADVANCED_PII_CATEGORIES,
   ...NAME_CATEGORIES, "custom_patterns", ...ADVANCED_ENTITY_CATEGORIES,
 ];
 
@@ -123,6 +160,9 @@ export function presetCategories(level) {
   const sel = {};
   for (const c of ALL_CATEGORIES) sel[c] = false;
   for (const c of HARD_PII_CATEGORIES) sel[c] = true;
+  // Extended recognizers are hard PII at every level, matching the Go
+  // PresetSelection exactly (BUILD-04 CR9).
+  for (const c of EXTENDED_PII_CATEGORIES) sel[c] = true;
   sel.client_names = sel.project_names = sel.internal_names = true;
   sel.custom_patterns = true;
   if (level === "medium" || level === "advanced") sel.person_names = true;
@@ -199,6 +239,103 @@ export function toggleCategory(key, on) {
 }
 
 /**
+ * setCategoryGroup(keys, on) flips a whole group of switches in ONE
+ * state change (BUILD-04 CR10, the "Select all" / "Deselect all" buttons
+ * on each Configure group).
+ *
+ * Doing it in one setState rather than looping toggleCategory matters:
+ * every setState repaints, so a loop over eight keys would repaint eight
+ * times and, before the CR12 fix, scroll the page eight times.
+ *
+ * Unknown keys are ignored rather than rejected, so a group definition
+ * that drifts ahead of ALL_CATEGORIES degrades to flipping what it can.
+ * Returns how many switches were actually changed.
+ *
+ * @param {string[]} keys category keys to set
+ * @param {boolean} on the value to set them all to
+ * @returns {number} how many switches changed value
+ */
+export function setCategoryGroup(keys, on) {
+  const value = !!on;
+  const categories = { ...state.settings.categories };
+  let changed = 0;
+  for (const key of keys ?? []) {
+    if (!ALL_CATEGORIES.includes(key)) continue;
+    if (!!categories[key] === value) continue;
+    categories[key] = value;
+    changed++;
+  }
+  if (changed) setState({ settings: { ...state.settings, categories } });
+  return changed;
+}
+
+/**
+ * setMinConfidence(value) stores the detection-confidence floor
+ * (BUILD-04 CR9). Values outside 0 to 1 are rejected (returns null)
+ * rather than clamped, so a bad caller is visible instead of silently
+ * changing what gets replaced.
+ * @param {number} value the floor, 0 (keep everything) to 1 (strictest)
+ * @returns {number|null} the stored value, or null when rejected
+ */
+export function setMinConfidence(value) {
+  if (typeof value !== "number" || Number.isNaN(value) || value < 0 || value > 1) {
+    return null;
+  }
+  setState({ settings: { ...state.settings, minConfidence: value } });
+  return value;
+}
+
+// SMART_DETECT_DEFAULTS mirrors engine.DefaultSmartDetectOptions. It is
+// exported so a session loaded from an older file, which has no
+// smartDetect block at all, can be filled with the same defaults a fresh
+// session starts from (BUILD-04 CR13, ground rule 5).
+export const SMART_DETECT_DEFAULTS = {
+  minLength: 4,
+  minOccurrences: 1,
+  excludeCommonWords: true,
+  minConfidence: 0.5,
+};
+
+/**
+ * setSmartDetectOptions(patch) merges a partial tuning into the settings
+ * (BUILD-04 CR13). Only the four known keys are accepted, and each is
+ * validated: a bad value is IGNORED rather than stored, because these
+ * options decide what the user gets to review, and a silently broken one
+ * would look like Smart detection being broken.
+ * @param {object} patch any subset of the four options
+ * @returns {object} the stored options after the merge
+ */
+export function setSmartDetectOptions(patch) {
+  const current = { ...SMART_DETECT_DEFAULTS, ...(state.settings.smartDetect ?? {}) };
+  const next = { ...current };
+  const p = patch ?? {};
+  if (Number.isInteger(p.minLength) && p.minLength >= 0 && p.minLength <= 40) {
+    next.minLength = p.minLength;
+  }
+  if (Number.isInteger(p.minOccurrences) && p.minOccurrences >= 0 && p.minOccurrences <= 100) {
+    next.minOccurrences = p.minOccurrences;
+  }
+  if (typeof p.excludeCommonWords === "boolean") {
+    next.excludeCommonWords = p.excludeCommonWords;
+  }
+  if (typeof p.minConfidence === "number" && !Number.isNaN(p.minConfidence) &&
+      p.minConfidence >= 0 && p.minConfidence <= 1) {
+    next.minConfidence = p.minConfidence;
+  }
+  setState({ settings: { ...state.settings, smartDetect: next } });
+  return next;
+}
+
+/**
+ * smartDetectOptions(s) is the tuning to SEND to Go: the stored options
+ * with every default filled in, so a session written before CR13 (no
+ * smartDetect block) still produces a complete payload.
+ */
+export function smartDetectOptions(s = state) {
+  return { ...SMART_DETECT_DEFAULTS, ...(s.settings.smartDetect ?? {}) };
+}
+
+/**
  * selectionPresetName(categories) returns "soft" | "medium" | "advanced"
  * when the selection exactly matches that preset, else "custom".
  */
@@ -239,8 +376,13 @@ export function llmEnabled(s = state) {
 
 // --- Screen navigation (BUILD-02 Phase 2a) -----------------------------------
 
-/** SCREENS: the valid top-level screens. */
-export const SCREENS = ["home", "wizard", "docs"];
+/** SCREENS: the valid top-level screens.
+ *
+ * "docs" was retired by BUILD-04 CR6: the documentation is no longer an
+ * in-app screen, it opens in a separate window (api.js
+ * openDocumentation). goToScreen("docs") therefore returns false now,
+ * exactly like any other unknown name. */
+export const SCREENS = ["home", "wizard"];
 
 /**
  * goToScreen(name) switches the top-level screen. Wizard state (documents,
@@ -288,6 +430,108 @@ export function goTo(step) {
   if (!canGoTo(step)) return false;
   setState({ step });
   return true;
+}
+
+// LEGACY_STEP_TOKENS maps wizard step tokens written by OLDER versions of
+// the application onto their current names (BUILD-04 CR3). Session files
+// and any other persisted step reference pass through migrateStep() so a
+// rename in the UI can never strand a user on a step that no longer
+// exists. Grow this table on every future token rename; never remove an
+// entry, old files keep existing forever.
+export const LEGACY_STEP_TOKENS = {
+  entities: "values",
+};
+
+/**
+ * migrateStep(step) returns the CURRENT token for a possibly legacy step
+ * name. Unknown tokens (a corrupted or hand-edited file) fall back to
+ * "import", the only step that is always reachable.
+ * @param {string} step token read from a persisted session
+ * @returns {string} a token guaranteed to be in WIZARD_STEPS
+ */
+export function migrateStep(step) {
+  const migrated = LEGACY_STEP_TOKENS[step] ?? step;
+  return WIZARD_STEPS.includes(migrated) ? migrated : "import";
+}
+
+// --- Per-step reset (BUILD-04 CR16) -----------------------------------------
+
+/**
+ * STEP_RESETS says what each wizard step OWNS, and therefore what going
+ * back past it clears. It is a table rather than a switch so the answer
+ * to "what does this step own?" is readable in one place, and so the
+ * cross-step test matrix can iterate it.
+ *
+ * Two things are deliberately absent from every entry:
+ *
+ *   documents  Imported files are step 1 data and survive ALL navigation
+ *              (BUILD-04 section 4.2). Re-importing a batch because the
+ *              user stepped back one screen would be indefensible.
+ *   allowlist  The never-anonymise list is shared by the Configure and
+ *              Values screens and is curated across the whole session, so
+ *              it belongs to neither step.
+ *
+ * The Ollama connection settings (port, model, context size, useAI) are
+ * likewise left alone by the configure reset: they describe the machine,
+ * not the choices made about this batch of documents.
+ */
+export const STEP_RESETS = {
+  // Import owns only the error strip of the last import action.
+  import: () => ({ importErrors: [] }),
+  // Configure owns what to anonymise and how strictly.
+  configure: () => ({
+    settings: {
+      ...state.settings,
+      categories: presetCategories(state.settings.level),
+      minConfidence: 0,
+      smartDetect: { ...SMART_DETECT_DEFAULTS },
+    },
+  }),
+  // Values owns the values to replace and everything proposed for review.
+  values: () => ({
+    entities: [],
+    candidates: [],
+    patterns: [],
+    discovery: null,
+  }),
+  // Run owns the run itself and everything it produced.
+  run: () => ({
+    running: false,
+    progress: null,
+    results: null,
+    mapping: null,
+  }),
+  // Export owns the per-document metadata review decisions.
+  export: () => ({ metaReview: {} }),
+};
+
+/**
+ * resetStep(step) clears exactly what that step owns (BUILD-04 CR16).
+ * Unknown steps are rejected rather than silently ignored, so a typo in a
+ * caller cannot quietly skip a reset the user confirmed.
+ * @param {string} step a token from WIZARD_STEPS
+ * @returns {boolean} whether a reset was applied
+ */
+export function resetStep(step) {
+  const reset = STEP_RESETS[step];
+  if (!reset) return false;
+  setState(reset());
+  return true;
+}
+
+/**
+ * isBackward(from, to) reports whether moving from one step to another
+ * goes BACK through the wizard. main.js asks before navigating, because
+ * only a backward move offers to reset the step being left.
+ * @param {string} from the current step
+ * @param {string} to the requested step
+ * @returns {boolean}
+ */
+export function isBackward(from, to) {
+  const fromIndex = WIZARD_STEPS.indexOf(from);
+  const toIndex = WIZARD_STEPS.indexOf(to);
+  if (fromIndex < 0 || toIndex < 0) return false;
+  return toIndex < fromIndex;
 }
 
 /** nextStep()/prevStep() move linearly through the wizard. */
@@ -525,14 +769,52 @@ export function updateCandidate(text, patch) {
   return true;
 }
 
-/** acceptAllInCategory(category) bulk-accepts every candidate currently
- *  assigned to the category; returns how many entities were added. */
-export function acceptAllInCategory(category) {
-  const batch = state.candidates.filter((c) => c.category === category);
+/**
+ * bulkSelection(category, onlyTexts) is the shared row picker for the two
+ * bulk actions (BUILD-04 CR15). Returns a predicate over candidates.
+ *
+ * onlyTexts, when given, restricts the action to those exact values. The
+ * Values screen always passes the currently FILTERED set, so a bulk
+ * button acts on exactly the rows the user can see and never on rows a
+ * search box is hiding. Omitting it keeps the original whole-category
+ * behaviour, which is what a caller with no filter wants.
+ */
+function bulkSelection(category, onlyTexts) {
+  const allowed = onlyTexts ? new Set(onlyTexts.map(candidateKey)) : null;
+  return (c) => c.category === category && (!allowed || allowed.has(candidateKey(c.text)));
+}
+
+/**
+ * acceptAllInCategory(category, onlyTexts) bulk-accepts candidates of a
+ * category, optionally restricted to onlyTexts; returns how many entities
+ * were added.
+ */
+export function acceptAllInCategory(category, onlyTexts) {
+  const inBatch = bulkSelection(category, onlyTexts);
+  const batch = state.candidates.filter(inBatch);
   if (!batch.length) return 0;
   const added = addEntities(batch.map((c) => ({ category: c.category, canonical: c.text })));
-  setState({ candidates: state.candidates.filter((c) => c.category !== category) });
+  setState({ candidates: state.candidates.filter((c) => !inBatch(c)) });
   return added;
+}
+
+/**
+ * denyAllInCategory(category, onlyTexts) is the mirror of
+ * acceptAllInCategory (BUILD-04 CR15): it DROPS the candidates instead of
+ * promoting them, exactly as rejectCandidate does one at a time. Nothing
+ * is added to the entity list and nothing is remembered, so a denied
+ * suggestion simply stops taking up review space.
+ *
+ * @param {string} category the engine category key
+ * @param {string[]} [onlyTexts] restrict to these values (the filtered set)
+ * @returns {number} how many candidates were removed
+ */
+export function denyAllInCategory(category, onlyTexts) {
+  const inBatch = bulkSelection(category, onlyTexts);
+  const removed = state.candidates.filter(inBatch).length;
+  if (!removed) return 0;
+  setState({ candidates: state.candidates.filter((c) => !inBatch(c)) });
+  return removed;
 }
 
 // --- Variant regrouping (BUILD-02 Phase 9d) -----------------------------------
@@ -660,6 +942,19 @@ export function addAllowTerm(term) {
 
 export function removeAllowTerm(term) {
   setState({ allowlist: state.allowlist.filter((x) => x.toLowerCase() !== term.toLowerCase()) });
+}
+
+/**
+ * clearAllowlist() empties the never-anonymise list in one step
+ * (BUILD-04 CR11). The engine defaults are NOT re-seeded: they are
+ * available again through the panel's import and the startup seeding, so
+ * clearing stays a clear rather than a reset to something else.
+ * @returns {number} how many terms were removed
+ */
+export function clearAllowlist() {
+  const removed = state.allowlist.length;
+  if (removed) setState({ allowlist: [] });
+  return removed;
 }
 
 /** addPattern(expr, error) stores a custom regex with its validation state. */

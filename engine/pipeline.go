@@ -68,7 +68,12 @@ type PipelineInput struct {
 	// (BUILD-02 Phase 3). nil means "use PresetSelection(Level)", which
 	// reproduces the v1 behaviour byte for byte.
 	Categories CategorySelection
-	Allowlist  *Allowlist
+	// MinConfidence drops every detected span scoring below it, on the
+	// BUILD-03 Phase C scale (BUILD-04 CR9). 0 (the default) keeps
+	// everything, which reproduces the pre-BUILD-04 behaviour exactly.
+	// See FilterByMinConfidence for what each level currently excludes.
+	MinConfidence float32
+	Allowlist     *Allowlist
 	// Registry is the session registry. Pass the same instance across
 	// runs to keep placeholders stable for the whole session; nil creates
 	// a fresh one (fresh numbering).
@@ -255,7 +260,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 			llmDurations[i] = llmMS
 		}
 
-		rd, traces := anonymiseDocument(doc, docEntities, in.Patterns, sel, in.Allowlist, reg, in.OnTrace != nil)
+		rd, traces := anonymiseDocument(doc, docEntities, in.Patterns, sel, in.MinConfidence, in.Allowlist, reg, in.OnTrace != nil)
 		if in.OnTrace != nil {
 			in.OnTrace(doc.Name, traces)
 		}
@@ -347,7 +352,14 @@ func acceptProposals(proposals []ProposedEntity, sourceText string, allow *Allow
 		if !active[p.Category] {
 			continue // e.g. organisation_names proposed at medium level
 		}
-		out = append(out, Entity{Category: p.Category, Canonical: p.Text})
+		// An AI proposal is trusted LESS than a value the user listed
+		// (BUILD-04 CR9): stamping ConfidenceLLMDefault here is what lets
+		// PipelineInput.MinConfidence separate the two tiers.
+		out = append(out, Entity{
+			Category:   p.Category,
+			Canonical:  p.Text,
+			Confidence: ConfidenceLLMDefault,
+		})
 	}
 	return out
 }
@@ -356,7 +368,7 @@ func acceptProposals(proposals []ProposedEntity, sourceText string, allow *Allow
 // entities) over one document, routing grid documents through per-cell
 // processing. When traceEnabled is true it collects the resolved spans of
 // every anonymiseText call and returns them for the caller's OnTrace hook.
-func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern, sel CategorySelection, allow *Allowlist, reg *Registry, traceEnabled bool) (ResultDocument, []SpanTrace) {
+func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern, sel CategorySelection, minConfidence float32, allow *Allowlist, reg *Registry, traceEnabled bool) (ResultDocument, []SpanTrace) {
 	rd := ResultDocument{
 		Name:       doc.Name,
 		Format:     doc.Format,
@@ -397,7 +409,7 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 				if traceEnabled {
 					region = fmt.Sprintf("row %d col %d", r, c)
 				}
-				grid[r][c] = anonymiseText(cell, entities, patterns, sel, allow, assign, makeTraceFn(region))
+				grid[r][c] = anonymiseText(cell, entities, patterns, sel, minConfidence, allow, assign, makeTraceFn(region))
 			}
 		}
 		rd.Grid = grid
@@ -408,12 +420,12 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 	if doc.Format == FormatXLSXJSON {
 		// Complex sheets: anonymise the raw JSON text, keep both the JSON
 		// (for .json export) and the fenced markdown rendering in sync.
-		rd.JSON = anonymiseText(doc.JSON, entities, patterns, sel, allow, assign, makeTraceFn("json"))
+		rd.JSON = anonymiseText(doc.JSON, entities, patterns, sel, minConfidence, allow, assign, makeTraceFn("json"))
 		rd.Anonymised = "```json\n" + rd.JSON + "\n```\n"
 		return rd, traces
 	}
 
-	rd.Anonymised = anonymiseText(doc.Markdown, entities, patterns, sel, allow, assign, makeTraceFn(""))
+	rd.Anonymised = anonymiseText(doc.Markdown, entities, patterns, sel, minConfidence, allow, assign, makeTraceFn(""))
 	return rd, traces
 }
 
@@ -422,12 +434,16 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 // custom-pattern pass; entity categories were already filtered by the
 // caller (filterEntities). traceFn, when non-nil, receives the resolved
 // spans (post overlap resolution) before replacement — BUILD-03 Phase E.
-func anonymiseText(text string, entities []Entity, patterns []CustomPattern, sel CategorySelection, allow *Allowlist, assign func(Span) string, traceFn func([]Span)) string {
+func anonymiseText(text string, entities []Entity, patterns []CustomPattern, sel CategorySelection, minConfidence float32, allow *Allowlist, assign func(Span) string, traceFn func([]Span)) string {
 	spans := FilterAllowed(DetectPIISelected(text, sel), allow)
 	spans = append(spans, DetectEntities(text, entities, allow)...)
 	if sel["custom_patterns"] {
 		spans = append(spans, DetectCustomPatterns(text, patterns, allow)...)
 	}
+	// The confidence floor is applied BEFORE overlap resolution, so a
+	// discarded low-confidence span cannot suppress a stronger one it
+	// happens to overlap (BUILD-04 CR9). At the default 0 this is a no-op.
+	spans = FilterByMinConfidence(spans, minConfidence)
 	resolved := ResolveOverlaps(spans)
 	if traceFn != nil {
 		traceFn(resolved)

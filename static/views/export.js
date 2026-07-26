@@ -14,7 +14,7 @@ import {
   exportMapping, exportReport, saveSession, loadSession,
   getSameFormatMetadata, saveSameFormat,
 } from "../api.js";
-import { getState, setState, buildRunRequest, addEntities, presetCategories, setMetaReview } from "../state.js";
+import { getState, setState, buildRunRequest, addEntities, presetCategories, setMetaReview, SMART_DETECT_DEFAULTS } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { panel, wirePanels, button } from "../ui.js";
 
@@ -78,7 +78,7 @@ export function renderExport(container) {
         </div>`;
 
   const sessionContent = `
-        <p class="hint">Saves entities, allowlist, patterns, rules, settings and the placeholder registry, so a
+        <p class="hint">Saves values, allowlist, patterns, rules, settings and the placeholder registry, so a
           follow-up batch reuses the same placeholders. The file contains the re-identification key.</p>
         <div class="form-row">
           <button id="ses-save">Save session</button>
@@ -95,7 +95,7 @@ export function renderExport(container) {
         headExtraHTML: button("Export all as zip", { kind: "primary", id: "btn-zip", icon: "download" }),
       })}
       ${metaPanels}
-      ${panel("export-mapping-panel", "Entity mapping (re-identification key)", mappingContent, {
+      ${panel("export-mapping-panel", "Value mapping (re-identification key)", mappingContent, {
         collapsible: true, collapsedSet: collapsedPanels,
       })}
       ${panel("export-report-panel", "Report", reportContent, {
@@ -281,12 +281,19 @@ function wire(container) {
           model: session.settings?.model ?? "",
           contextSize: session.settings?.contextSize || getState().settings.contextSize,
           useAI: session.settings?.useAI ?? getState().settings.useAI,
+          // BUILD-04 CR9: absent in every session file written before
+          // BUILD-04, where 0 is exactly the right default (keep every
+          // detection), so an older session behaves as it always did.
+          minConfidence: session.settings?.minConfidence ?? 0,
+          // BUILD-04 CR13: absent in older files, where the shipped
+          // defaults are the right thing to fall back to.
+          smartDetect: { ...SMART_DETECT_DEFAULTS, ...(session.settings?.smartDetect ?? {}) },
         },
       });
       addEntities((session.entities ?? []).map((e) => ({
         category: e.category, canonical: e.canonical, manualVariants: e.manualVariants ?? [],
       })));
-      feedback("Session loaded. Entities, allowlist, patterns, rules and settings were restored.", false);
+      feedback("Session loaded. Values, allowlist, patterns, rules and settings were restored.", false);
     } catch (err) {
       feedback(String(err?.message ?? err), true);
     }

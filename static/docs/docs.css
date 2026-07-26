@@ -1,0 +1,86 @@
+/*
+  docs/docs.css, the reading layout for the bundled documentation window
+  (BUILD-04 CR6).
+
+  Colours and fonts come EXCLUSIVELY from brand.css, which this page loads
+  first, exactly like the application shell does. No literal colour or font
+  value belongs here, and no external stylesheet or font may be referenced:
+  this page is served by the application's own embedded asset server.
+*/
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 2rem 1.5rem 4rem;
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.55;
+}
+
+/* A single readable column. Documentation is prose, so the measure matters
+   more than filling a maximised window. */
+.doc { max-width: 46rem; margin: 0 auto; }
+
+/* Headings at regular weight; hierarchy comes from size and space, never
+   bold (brand rule). */
+h1, h2, h3 { font-family: var(--font-heading); font-weight: 400; }
+h1 { font-size: 2rem; margin: 0 0 0.75rem; }
+h2 { font-size: 1.4rem; margin: 2.5rem 0 0.5rem; }
+h3 { font-size: 1.1rem; margin: 1.5rem 0 0.35rem; }
+
+p { margin: 0 0 1rem; }
+
+.lede { font-size: 1.05rem; }
+
+/* Contents box: quiet grey, no accent. The one loud element on this page
+   is nothing at all, documentation has no primary action. */
+.toc {
+  background: var(--gray-6);
+  border: 1px solid var(--gray-4);
+  border-radius: 8px;
+  padding: 0.75rem 1.25rem 1rem;
+  margin: 1.5rem 0 2rem;
+}
+.toc h2 { font-size: 1rem; margin: 0.25rem 0 0.5rem; }
+.toc ol { margin: 0; padding-left: 1.25rem; }
+.toc li { margin: 0.15rem 0; }
+.toc a { color: var(--text); }
+
+/* Section anchors sit under nothing, but a little scroll margin keeps a
+   jumped-to heading off the very top edge of the window. */
+section { scroll-margin-top: 1rem; }
+
+dl { margin: 0 0 1rem; }
+dt { font-weight: 700; margin-top: 1rem; }
+dd { margin: 0.25rem 0 0; padding-left: 0; }
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--gray-6);
+  border: 1px solid var(--gray-4);
+  border-radius: 4px;
+  padding: 0 0.25rem;
+}
+
+/* The one place on the page that needs to stop the reader: the
+   re-identification key warning. Orange tint, black text (brand rule:
+   black text on every light fill). */
+.callout {
+  background: var(--tint-orange-3);
+  border: 1px solid var(--tint-orange-1);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 1rem 0;
+}
+
+.doc-footer {
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--gray-4);
+  color: var(--muted);
+  font-size: 0.85rem;
+}
