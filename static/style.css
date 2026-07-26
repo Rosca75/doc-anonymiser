@@ -40,10 +40,32 @@ h1, h2, h3, h4 {
 
 .brand { font-family: var(--font-heading); font-size: 1.05rem; }
 
-/* Top navigation (Home / Anonymise documents / Documentation). */
-.topnav { display: flex; gap: 0.25rem; }
+/* Permanent top menu (Home / Anonymise documents / Documentation). The
+   same three buttons render on every screen (BUILD-04 CR4); flex: 1 lets
+   it take the space the step chips used to occupy. */
+.topnav { display: flex; gap: 0.25rem; flex: 1; }
 
-.steps { display: flex; gap: 0.4rem; flex: 1; }
+/* The active menu entry is marked QUIETLY: a grey fill and a grey
+   underline, never orange. The one loud element per view belongs to the
+   view, not to the chrome. */
+.topnav .topnav-active {
+  background: var(--gray-5);
+  box-shadow: inset 0 -2px 0 var(--gray-1);
+}
+
+/* Anonymisation workflow banner (BUILD-04 CR7): the five step chips moved
+   out of the header into this strip, which appears only on the wizard
+   screen. The header above it is now identical everywhere. */
+.workflow-banner {
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  padding: 0.5rem 1rem;
+  background: var(--gray-6);
+  border-bottom: 1px solid var(--gray-4);
+}
+.workflow-title {
+  font-family: var(--font-heading); font-size: 0.95rem; color: var(--text);
+}
+.workflow-steps { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 
 /* Step chips: quiet grey fill; the ACTIVE chip is marked by an orange
    underline, not an orange flood fill (one loud element per view rule). */
@@ -68,7 +90,16 @@ main#view { flex: 1; overflow: auto; padding: 1rem; background: var(--gray-6); }
 
 /* --- Buttons (ui.js kinds) ---------------------------------------------- */
 
+/* Buttons lay their icon and label out as a CENTRED flex row (BUILD-04
+   CR5). The previous fix nudged the icon down with a negative
+   vertical-align, which only lined up at one font size and left the
+   top-menu icons sitting below the text baseline. Centring both children
+   on the cross axis is font-size independent, and the gap replaces the
+   literal space ui.js used to emit (whitespace-only text nodes are not
+   flex items, so no double spacing). */
 button, .btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 0.35rem;
   font: inherit; cursor: pointer;
   border: 1px solid var(--gray-3); border-radius: 6px;
   background: var(--gray-5); color: var(--text);
@@ -88,9 +119,12 @@ button:focus-visible, .btn:focus-visible, input:focus-visible, select:focus-visi
   outline: 2px solid var(--accent-medium); outline-offset: 1px;
 }
 
-/* Inline icons inside buttons and banners follow the text colour. */
-.btn .icon, button .icon { display: inline-flex; vertical-align: -0.32em; }
-.icon svg { width: 1.1em; height: 1.1em; }
+/* Inline icons follow the text colour. Outside a flex parent (inside a
+   heading or a paragraph) vertical-align: middle keeps them on the text
+   centre line rather than the baseline; inside one, align-items on the
+   parent already does the work. */
+.icon { display: inline-flex; align-items: center; vertical-align: middle; }
+.icon svg { width: 1.1em; height: 1.1em; display: block; }
 
 input, select {
   font: inherit; padding: 0.3rem 0.5rem;

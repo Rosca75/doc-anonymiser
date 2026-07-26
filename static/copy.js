@@ -37,6 +37,13 @@ export const STEP_BANNERS = {
   },
 };
 
+// WORKFLOW: the banner that holds the five step chips (BUILD-04 CR7).
+// It sits under the permanent top menu, so the header itself no longer
+// changes shape when the user enters or leaves the wizard.
+export const WORKFLOW = {
+  title: "Anonymisation workflow",
+};
+
 // Home page copy (BUILD-02 Phase 2b, rewritten for BUILD-04 CR1).
 //
 // The body is an ARRAY of three paragraphs, rendered one <p> each by

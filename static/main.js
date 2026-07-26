@@ -1,10 +1,12 @@
-// main.js, the application shell: top navigation (Home / wizard / docs),
-// the wizard step header, per-step explainer banner, active view,
-// navigation footer, and the startup checks (bridge ping, Ollama probe,
-// event subscriptions).
+// main.js, the application shell: the permanent top menu, the
+// "Anonymisation workflow" banner, the per-step explainer banner, the
+// active view, the navigation footer, and the startup checks (bridge
+// ping, Ollama probe, event subscriptions).
 //
 // The shell owns NO business state, it renders from state.js and defers
-// every screen to its view module (one per screen, CLAUDE.md §3).
+// every screen to its view module (one per screen, CLAUDE.md §3). The
+// header and banner MARKUP lives in shell.js so it can be unit-tested;
+// this file only wires the handlers onto it (BUILD-04 Phase 2).
 
 import { ping, probeOllama, onEvent, defaultAllowlist } from "./api.js";
 import {
@@ -14,6 +16,7 @@ import {
 } from "./state.js";
 import { escapeHTML } from "./html.js";
 import { button, banner } from "./ui.js";
+import { topnavHTML, workflowBannerHTML } from "./shell.js";
 import { STEP_BANNERS } from "./copy.js";
 import { renderHome } from "./views/home.js";
 import { renderDocs } from "./views/docs.js";
@@ -124,34 +127,29 @@ export function boot(root) {
 function paint(root) {
   const s = getState();
 
-  // Persistent top navigation: Home, Anonymise documents (the wizard),
-  // Documentation (BUILD-02 Phase 2d). Ghost buttons; the active screen's
-  // entry is visually quiet, never a second orange element.
-  const topnav = `
-    <nav class="topnav">
-      ${button("Home", { kind: "ghost", id: "nav-home", icon: "home" })}
-      ${button("Anonymise documents", { kind: "ghost", id: "nav-wizard", icon: "description" })}
-      ${button("Documentation", { kind: "ghost", id: "nav-docs", icon: "menu_book" })}
-    </nav>`;
+  // The top menu is IDENTICAL on every screen (CR4): same three buttons,
+  // in the same order, with only a quiet highlight moving. Its markup
+  // comes from shell.js, which is what shell.test.js asserts.
+  const topnav = topnavHTML(s.screen);
 
-  // Wizard chrome (step chips + footer) only appears on the wizard screen.
+  // The five step chips live in their own banner UNDER the menu (CR7),
+  // and only while the wizard is on screen, so the header itself never
+  // changes shape. The wizard footer follows the same rule.
   const isWizard = s.screen === "wizard";
-  const chips = isWizard ? WIZARD_STEPS.map((step) => {
-    const active = s.step === step ? " active" : "";
-    const enabled = canGoTo(step) ? "" : " disabled";
-    return `<button class="chip${active}${enabled}" data-step="${step}" ${enabled ? "disabled" : ""}>${STEP_LABELS[step]}</button>`;
-  }).join("") : "";
+  const workflow = isWizard
+    ? workflowBannerHTML(WIZARD_STEPS, s.step, STEP_LABELS, (step) => canGoTo(step))
+    : "";
 
   root.innerHTML = `
     <header class="topbar">
       <div class="brand">doc-anonymiser</div>
       ${topnav}
-      <nav class="steps">${chips}</nav>
       <div class="badges">
         ${bridgeBadge(s)}
         ${ollamaBadge(s)}
       </div>
     </header>
+    ${workflow}
     <main id="view"></main>
     ${isWizard ? `
     <footer class="navbar">
@@ -174,8 +172,10 @@ function paint(root) {
     return;
   }
 
-  // Wizard: step chips navigate directly (guards enforced in goTo).
-  for (const btn of root.querySelectorAll(".chip")) {
+  // Wizard: step chips navigate directly (guards enforced in goTo). The
+  // selector is scoped to the workflow banner so it can never pick up the
+  // preset chips a view renders inside #view.
+  for (const btn of root.querySelectorAll(".workflow-steps .chip")) {
     btn.addEventListener("click", () => goTo(btn.dataset.step));
   }
   root.querySelector("#nav-back").addEventListener("click", prevStep);

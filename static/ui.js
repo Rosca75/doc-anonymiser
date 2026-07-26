@@ -37,6 +37,10 @@ export function icon(name) {
  * @param {string} [opts.title] tooltip (escaped)
  * @param {string} [opts.cls] extra CSS classes appended verbatim
  * @param {object} [opts.data] data-* attributes ({key: value}, escaped)
+ * @param {boolean} [opts.current] marks the button as the current location
+ *   (aria-current="page"): used by the permanent top menu to announce the
+ *   active screen to assistive technology, since the highlight is a quiet
+ *   visual one (BUILD-04 CR4).
  * @returns {string} safe HTML
  */
 export function button(label, opts = {}) {
@@ -47,6 +51,7 @@ export function button(label, opts = {}) {
     opts.id ? `id="${escapeHTML(opts.id)}"` : "",
     opts.disabled ? "disabled" : "",
     opts.title ? `title="${escapeHTML(opts.title)}"` : "",
+    opts.current ? `aria-current="page"` : "",
   ];
   for (const [k, v] of Object.entries(opts.data ?? {})) {
     attrs.push(`data-${escapeHTML(k)}="${escapeHTML(v)}"`);
