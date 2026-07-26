@@ -73,9 +73,9 @@ export const NAV = {
 export const HOME = {
   headline: "Anonymise your documents safely",
   body: [
-    "You stay in control from the first step to the last. The app shows you every value it proposes to replace, and nothing is replaced until you accept it. Your original files are only ever read, never changed, and the anonymised copies are written where you choose to save them.",
-    "Two ways of finding sensitive information work side by side. Predefined patterns catch everything that always looks the same, such as email addresses, phone numbers, bank account numbers and national identification numbers. AI powered discovery looks for the rest, the names of people, clients and projects that no pattern can predict, and puts each one on a review list for you to accept or reject.",
-    "Everything runs on this machine by default. The predefined patterns need no network connection at all. The optional AI features talk to a language model running on 127.0.0.1, the address of your own computer, so your documents never leave it. The app makes no other network connection: no cloud service, no telemetry, no update check.",
+    "doc-anonymiser is a simple yet powerful application that helps you anonymise documents directly from your workstation. It replaces names, personal details and other sensitive information with consistent placeholders, making your documents safer to share or process.",
+    "You remain in control throughout the process. Choose from a wide range of predefined patterns or use AI-powered discovery to identify information that may need to be anonymised. You can then review what has been detected and decide which data to replace.",
+    "Depending on your security and confidentiality requirements, you can run the entire process locally or connect to an AI endpoint.",
   ],
 };
 
