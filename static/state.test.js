@@ -536,3 +536,130 @@ test("a failed documentation open is recorded as a dismissible shell error", () 
   setState({ shellError: null });
   assert.equal(getState().shellError, null);
 });
+
+// --- BUILD-04 Phase 4: surfaced recognizers, groups, confidence ------------
+
+import {
+  EXTENDED_PII_CATEGORIES, ALL_CATEGORIES,
+  setCategoryGroup, setMinConfidence, clearAllowlist,
+} from "./state.js";
+import { CATEGORY_LABELS } from "./copy.js";
+
+test("the eight BUILD-03 recognizers are known to the store (CR9)", () => {
+  const expected = [
+    "credit_card", "uk_nhs", "ip_address", "mac_address",
+    "crypto", "database_uri", "de_steuer_id", "es_nif",
+  ];
+  assert.deepEqual(EXTENDED_PII_CATEGORIES, expected);
+  for (const key of expected) {
+    assert.ok(ALL_CATEGORIES.includes(key), `${key} missing from ALL_CATEGORIES`);
+  }
+});
+
+test("every category the store knows has a label and an example (CR9)", () => {
+  for (const key of ALL_CATEGORIES) {
+    const entry = CATEGORY_LABELS[key];
+    assert.ok(entry, `no CATEGORY_LABELS entry for ${key}`);
+    const [label, example] = entry;
+    assert.ok(label && label.length > 2, `${key} has no readable label`);
+    assert.ok(example && example.length > 5, `${key} has no example`);
+  }
+});
+
+test("the extended recognizers are on at every preset (CR9)", () => {
+  // Mirrors engine.PresetSelection; the Go side is pinned in
+  // category_parity_test.go, and the two must not drift.
+  for (const level of ["soft", "medium", "advanced"]) {
+    const sel = presetCategories(level);
+    for (const key of EXTENDED_PII_CATEGORIES) {
+      assert.equal(sel[key], true, `${key} must be on at ${level}`);
+    }
+  }
+});
+
+test("adding the new categories did not change what a preset switches ON", () => {
+  // Regression guard for the preset semantics themselves: soft must still
+  // exclude person names, dates, amounts, organisations and places.
+  const soft = presetCategories("soft");
+  assert.equal(soft.person_names, false);
+  const medium = presetCategories("medium");
+  assert.equal(medium.person_names, true);
+  assert.equal(medium.date, false);
+  assert.equal(medium.amount, false);
+  const advanced = presetCategories("advanced");
+  for (const key of ALL_CATEGORIES) {
+    assert.equal(advanced[key], true, `thorough must switch ${key} on`);
+  }
+});
+
+test("setCategoryGroup flips exactly the given keys in one change (CR10)", () => {
+  resetState();
+  let notifications = 0;
+  const unsub = subscribe(() => { notifications++; });
+
+  const group = [...EXTENDED_PII_CATEGORIES];
+  const changed = setCategoryGroup(group, false);
+  assert.equal(changed, group.length, "all eight started on and must all flip");
+  assert.equal(notifications, 1, "a whole group must cost exactly one re-render");
+
+  const s = getState();
+  for (const key of group) assert.equal(s.settings.categories[key], false);
+  // Nothing outside the group moved.
+  assert.equal(s.settings.categories.email, true);
+  assert.equal(s.settings.categories.person_names, true);
+  unsub();
+});
+
+test("setCategoryGroup ignores unknown keys and reports no-op runs (CR10)", () => {
+  resetState();
+  assert.equal(setCategoryGroup(["not_a_category"], true), 0);
+  assert.equal(setCategoryGroup(["email"], true), 0, "email is already on");
+  assert.equal(setCategoryGroup(["email"], false), 1);
+  assert.equal(setCategoryGroup([], true), 0);
+  assert.equal(setCategoryGroup(undefined, true), 0);
+});
+
+test("a deselected group makes the selection Custom (CR10)", () => {
+  resetState();
+  assert.equal(selectionPresetName(getState().settings.categories), "medium");
+  setCategoryGroup(EXTENDED_PII_CATEGORIES, false);
+  assert.equal(selectionPresetName(getState().settings.categories), "custom");
+});
+
+test("minConfidence defaults to 0 and round-trips through the setter (CR9)", () => {
+  resetState();
+  assert.equal(getState().settings.minConfidence, 0,
+    "the default must keep every detection");
+  assert.equal(setMinConfidence(0.9), 0.9);
+  assert.equal(getState().settings.minConfidence, 0.9);
+  assert.equal(setMinConfidence(0), 0);
+  assert.equal(setMinConfidence(1), 1);
+});
+
+test("minConfidence rejects values outside 0 to 1 (CR9)", () => {
+  resetState();
+  for (const bad of [-0.1, 1.1, NaN, "0.5", null, undefined]) {
+    assert.equal(setMinConfidence(bad), null, `${bad} must be rejected`);
+  }
+  assert.equal(getState().settings.minConfidence, 0, "a rejected value changes nothing");
+});
+
+test("clearAllowlist empties the list and reports the count (CR11)", () => {
+  resetState();
+  for (const term of ["CSSF", "EUR", "GDPR"]) addAllowTerm(term);
+  assert.equal(getState().allowlist.length, 3);
+  assert.equal(clearAllowlist(), 3);
+  assert.deepEqual(getState().allowlist, []);
+  // Clearing an empty list is a no-op that reports zero.
+  assert.equal(clearAllowlist(), 0);
+});
+
+test("clearAllowlist touches nothing but the allowlist (CR11)", () => {
+  resetState();
+  setState({ documents: [{ name: "a.txt" }] });
+  addAllowTerm("CSSF");
+  addEntities([{ category: "client_names", canonical: "Alpine Trust" }]);
+  clearAllowlist();
+  assert.equal(getState().entities.length, 1);
+  assert.equal(getState().documents.length, 1);
+});

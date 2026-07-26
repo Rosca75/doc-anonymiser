@@ -31,6 +31,11 @@ type SessionSettings struct {
 	Model       string            `json:"model"`
 	ContextSize int               `json:"contextSize,omitempty"`
 	UseAI       bool              `json:"useAI,omitempty"`
+	// MinConfidence is the BUILD-04 CR9 detection-confidence floor. Absent
+	// in every session file written before BUILD-04, where it loads as 0,
+	// which is exactly the "keep every detection" default: an older
+	// session therefore reproduces its original behaviour.
+	MinConfidence float32 `json:"minConfidence,omitempty"`
 }
 
 // Session is the complete persistable session state.

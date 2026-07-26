@@ -281,6 +281,10 @@ function wire(container) {
           model: session.settings?.model ?? "",
           contextSize: session.settings?.contextSize || getState().settings.contextSize,
           useAI: session.settings?.useAI ?? getState().settings.useAI,
+          // BUILD-04 CR9: absent in every session file written before
+          // BUILD-04, where 0 is exactly the right default (keep every
+          // detection), so an older session behaves as it always did.
+          minConfidence: session.settings?.minConfidence ?? 0,
         },
       });
       addEntities((session.entities ?? []).map((e) => ({

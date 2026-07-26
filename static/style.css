@@ -219,6 +219,19 @@ input, select {
 /* --- Configure sub-tabs (BUILD-02 Phase 6a) -------------------------------- */
 
 .subtabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+
+/* Panel-header actions (BUILD-04 CR10 select-all, CR11 clear-all). They
+   stay quiet ghost buttons: a bulk action is not the hero of the view. */
+.panel-head-right .btn-ghost { font-size: 0.85rem; padding: 0.2rem 0.5rem; }
+
+/* Detection confidence slider (BUILD-04 CR9). The read-out sits next to
+   the track so the number and its plain-language effect are read
+   together. */
+#min-confidence { flex: 1; min-width: 12rem; max-width: 24rem; accent-color: var(--accent); }
+#min-confidence-value {
+  font-family: var(--font-mono); font-size: 0.9rem;
+  min-width: 2.5rem; text-align: right;
+}
 .preset-chip { cursor: pointer; }
 .preset-chip.active { border-bottom-color: var(--accent); background: var(--gray-6); font-weight: 700; }
 

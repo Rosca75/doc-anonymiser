@@ -408,6 +408,34 @@ func FilterByConfidence(spans []Span, thresholds map[string]float32) []Span {
 	return out
 }
 
+// FilterByMinConfidence drops every span scoring below one GLOBAL minimum
+// (BUILD-04 CR9), the shape the Configure screen's confidence control
+// needs. It is the flat sibling of FilterByConfidence, which takes a
+// per-category map.
+//
+// min <= 0 is a no-op, and that is the documented default: the setting
+// must never quietly remove detections a user did not ask it to remove.
+// A span with Confidence == 0 counts as 1.0, same back-compat rule as
+// everywhere else in this file.
+//
+// Examples with the current scale: min 0.9 drops values the local AI
+// proposed on its own (ConfidenceLLMDefault, 0.8) and keeps both the
+// values the user listed (0.95) and the pattern matches (1.0); min 0.99
+// keeps only the pattern matches.
+func FilterByMinConfidence(spans []Span, min float32) []Span {
+	if min <= 0 {
+		return spans
+	}
+	out := spans[:0]
+	for _, s := range spans {
+		if effectiveConfidence(s) < min {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
 // effectiveConfidence is the score used by comparators: the span's stored
 // Confidence, with 0 (never set) promoted to 1.0 so pre-BUILD-03 spans
 // order and filter the same way they did before the field existed.

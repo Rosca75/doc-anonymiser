@@ -15,13 +15,15 @@ import { applySettings, listOllamaModels, probeOllama } from "../api.js";
 import {
   getState, setState,
   applyPreset, toggleCategory, selectionPresetName, setUseAI, llmEnabled,
-  HARD_PII_CATEGORIES, NAME_CATEGORIES,
+  setCategoryGroup, setMinConfidence,
+  HARD_PII_CATEGORIES, EXTENDED_PII_CATEGORIES, NAME_CATEGORIES,
   ADVANCED_PII_CATEGORIES, ADVANCED_ENTITY_CATEGORIES,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { panel, wirePanels, button } from "../ui.js";
 import { CONFIGURE, CATEGORY_LABELS } from "../copy.js";
 import { renderAllowlistPanel, wireAllowlistPanel } from "./allowlist.js";
+import { keepScrollPosition } from "../scroll.js";
 
 // The tooltip used by every disabled LLM control when Ollama is missing,
 // verbatim from CLAUDE.md §4.
@@ -75,18 +77,27 @@ const PRESETS = [
   ["advanced", "Thorough"],
 ];
 
+// CATEGORY_GROUPS is the Configure screen's grouping of the engine
+// categories: [visible title, category keys]. It is a module constant so
+// the select-all buttons can address a group by INDEX rather than by
+// re-deriving the key list, and so a test can assert that every engine
+// category the store knows about is reachable from some group (BUILD-04
+// CR9: the BUILD-03 recognizers were unreachable precisely because they
+// belonged to no group).
+export const CATEGORY_GROUPS = [
+  [CONFIGURE.groupContact, HARD_PII_CATEGORIES],
+  [CONFIGURE.groupTechnical, EXTENDED_PII_CATEGORIES],
+  [CONFIGURE.groupNames, [...NAME_CATEGORIES, "custom_patterns"]],
+  [CONFIGURE.groupThorough, [...ADVANCED_PII_CATEGORIES, ...ADVANCED_ENTITY_CATEGORIES]],
+];
+
 function whatTab(s) {
   const current = selectionPresetName(s.settings.categories);
   const chips = PRESETS.map(([value, label]) =>
     `<button class="chip preset-chip ${current === value ? "active" : ""}" data-preset="${value}">${label}</button>`).join("");
   const customChip = `<span class="chip preset-chip ${current === "custom" ? "active" : ""}" title="${escapeHTML(CONFIGURE.presetHint)}">Custom</span>`;
 
-  const groups = [
-    [CONFIGURE.groupContact, HARD_PII_CATEGORIES],
-    [CONFIGURE.groupNames, [...NAME_CATEGORIES, "custom_patterns"]],
-    [CONFIGURE.groupThorough, [...ADVANCED_PII_CATEGORIES, ...ADVANCED_ENTITY_CATEGORIES]],
-  ];
-  const groupsHTML = groups.map(([title, keys], i) => {
+  const groupsHTML = CATEGORY_GROUPS.map(([title, keys], i) => {
     const rows = keys.map((key) => {
       const [label, example] = CATEGORY_LABELS[key] ?? [key, ""];
       return `
@@ -95,7 +106,15 @@ function whatTab(s) {
           <span>${escapeHTML(label)} <span class="hint">${escapeHTML(example)}</span></span>
         </label>`;
     }).join("");
-    return panel(`cfg-group-${i}`, title, rows, { collapsible: true, collapsedSet: collapsedPanels });
+    // Bulk switches for the whole group (BUILD-04 CR10). They sit in the
+    // panel header, which wirePanels already treats as "not a collapse
+    // click", so pressing one does not fold the panel shut.
+    const bulk =
+      button(CONFIGURE.selectAll, { kind: "ghost", cls: "cat-group-all", data: { group: String(i), on: "1" } }) +
+      button(CONFIGURE.deselectAll, { kind: "ghost", cls: "cat-group-all", data: { group: String(i), on: "0" } });
+    return panel(`cfg-group-${i}`, title, rows, {
+      collapsible: true, collapsedSet: collapsedPanels, headExtraHTML: bulk,
+    });
   }).join("");
 
   const presetPanel = panel("cfg-presets", "Preset", `
@@ -114,9 +133,27 @@ function wireWhatTab(container, s) {
     });
   }
   for (const box of container.querySelectorAll(".cat-toggle")) {
-    box.addEventListener("change", () => {
+    // keepScrollPosition wraps the state change so the full re-render it
+    // triggers lands with the page where the user left it (BUILD-04 CR12:
+    // ticking a box in a long list used to jump back to the top).
+    box.addEventListener("change", () => keepScrollPosition(() => {
       toggleCategory(box.dataset.category, box.checked);
       pushSettings(container);
+    }));
+  }
+  // Select all / Deselect all per group (BUILD-04 CR10). One reducer call
+  // flips the whole group, so there is exactly one re-render.
+  for (const btn of container.querySelectorAll(".cat-group-all")) {
+    btn.addEventListener("click", (ev) => {
+      // The button lives in a collapsible panel header; stop the click
+      // before wirePanels reads it as a request to fold the panel.
+      ev.stopPropagation();
+      const group = CATEGORY_GROUPS[Number(btn.dataset.group)];
+      if (!group) return;
+      keepScrollPosition(() => {
+        setCategoryGroup(group[1], btn.dataset.on === "1");
+        pushSettings(container);
+      });
     });
   }
   wireAllowlistPanel(container);
@@ -160,7 +197,48 @@ function aiTab(s) {
         <span class="hint">${escapeHTML(CONFIGURE.contextSizeHint)}</span>
       </div>`;
 
-  return panel("cfg-ai", CONFIGURE.tabAI, content, { collapsible: false });
+  return panel("cfg-ai", CONFIGURE.tabAI, content, { collapsible: false }) +
+    confidencePanel(s);
+}
+
+/**
+ * confidencePanel(s) renders the detection-confidence control
+ * (BUILD-04 CR9), which surfaces the BUILD-03 confidence scoring.
+ *
+ * The control is deliberately NOT gated on the local AI: the score exists
+ * for every detection, whether or not Ollama is running. It is a slider in
+ * whole percent rather than a free number field because the meaningful
+ * settings are ranges, not exact values, and the live read-out names what
+ * the current position actually excludes.
+ */
+function confidencePanel(s) {
+  const percent = Math.round((s.settings.minConfidence ?? 0) * 100);
+  const content = `
+      <p class="hint">${escapeHTML(CONFIGURE.confidenceHint)}</p>
+      <div class="form-row">
+        <label for="min-confidence">${escapeHTML(CONFIGURE.confidenceLabel)}</label>
+        <input id="min-confidence" type="range" min="0" max="100" step="5" value="${percent}"/>
+        <output id="min-confidence-value" for="min-confidence">${percent}</output>
+      </div>
+      <p class="hint">${escapeHTML(CONFIGURE.confidenceScale)}</p>
+      <p class="hint" id="min-confidence-effect">${escapeHTML(confidenceEffect(percent))}</p>`;
+  return panel("cfg-confidence", CONFIGURE.confidenceTitle, content, { collapsible: false });
+}
+
+/**
+ * confidenceEffect(percent) puts the current slider position into words,
+ * so the user reads what the setting DOES rather than a bare number. The
+ * thresholds mirror the engine's confidence scale (engine/pii.go: local AI
+ * proposals score 0.8, values the user listed 0.95, pattern matches 1.0).
+ * @param {number} percent slider position, 0 to 100
+ * @returns {string} a plain-language sentence
+ */
+export function confidenceEffect(percent) {
+  if (percent <= 0) return "Nothing is skipped: every detection is replaced.";
+  if (percent <= 80) return "Nothing is skipped yet at this setting: every detection scores at least 80.";
+  if (percent <= 95) return "Values that only the local AI suggested are skipped. The values you listed and the pattern matches are still replaced.";
+  if (percent <= 100 && percent > 95) return "Only pattern matches are replaced. The values you listed yourself and the AI suggestions are both skipped.";
+  return "Nothing is skipped: every detection is replaced.";
 }
 
 function wireAITab(container, s) {
@@ -170,6 +248,24 @@ function wireAITab(container, s) {
   });
   for (const id of ["#ollama-port", "#ollama-model", "#context-size"]) {
     container.querySelector(id)?.addEventListener("change", () => pushSettings(container));
+  }
+
+  // Detection confidence (BUILD-04 CR9). "input" updates the read-out
+  // live while dragging without touching the store; "change" (on release)
+  // commits it, so a drag does not fire one bridge round-trip per pixel.
+  const confidence = container.querySelector("#min-confidence");
+  if (confidence) {
+    const readout = container.querySelector("#min-confidence-value");
+    const effect = container.querySelector("#min-confidence-effect");
+    confidence.addEventListener("input", () => {
+      const percent = Number(confidence.value);
+      if (readout) readout.textContent = String(percent);
+      if (effect) effect.textContent = confidenceEffect(percent);
+    });
+    confidence.addEventListener("change", () => keepScrollPosition(() => {
+      setMinConfidence(Number(confidence.value) / 100);
+      return pushSettings(container);
+    }));
   }
   container.querySelector("#btn-reprobe").addEventListener("click", async () => {
     await pushSettings(container);
@@ -196,6 +292,9 @@ async function pushSettings(container) {
     model: model?.value || s.settings.model,
     contextSize: ctxSize ? (parseInt(ctxSize.value, 10) || 0) : (s.settings.contextSize ?? 8192),
     useAI: !!s.settings.useAI,
+    // Read from the store, not the input: setMinConfidence already
+    // validated and stored it, and the AI tab may not be rendered at all.
+    minConfidence: s.settings.minConfidence ?? 0,
   };
   try {
     const status = await applySettings(settings);

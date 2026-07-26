@@ -79,6 +79,20 @@ export const CONFIGURE = {
   aiOffTooltip: "Local AI is turned off. Enable it under Configure, AI and advanced settings.",
   allowTitle: "Never anonymise these terms",
   allowHint: "Terms in this list survive every pass, even when they also appear as names to replace.",
+  // BUILD-04 CR9: the group that surfaces the BUILD-03 recognizers.
+  groupTechnical: "Payment, tax and technical identifiers",
+  // BUILD-04 CR10: the per-group bulk buttons.
+  selectAll: "Select all",
+  deselectAll: "Deselect all",
+  // BUILD-04 CR11: the allowlist bulk button.
+  clearAll: "Clear all",
+  clearAllConfirm: "Remove every term from the never anonymise list? The terms the application seeds at startup can be added back by restarting it, or from a CSV.",
+  // BUILD-04 CR9: the detection-confidence control. Plain language, with
+  // the two thresholds that actually change something spelled out.
+  confidenceTitle: "Detection confidence",
+  confidenceLabel: "Minimum confidence",
+  confidenceHint: "Every detection carries a score for how certain it is. Anything below the minimum you set here is left alone. Keep it at 0 to replace everything that is found, which is how the application behaves by default.",
+  confidenceScale: "Above 80, the values that only the local AI suggested are left alone. Above 95, the values you listed yourself are left alone too, and only pattern matches remain.",
 };
 
 // Per-category checkbox labels and one-line examples (BUILD-02 Phase 6b).
@@ -99,4 +113,15 @@ export const CATEGORY_LABELS = {
   organisation_names: ["Organisation names", "Organisations suggested by the AI review"],
   location_names: ["Place names", "Cities and places suggested by the AI review"],
   amount: ["Money amounts", "For example EUR 12,500"],
+  // BUILD-04 CR9: the recognizers BUILD-03 built into the engine. They
+  // were detecting all along; these labels are what finally let a user
+  // see and switch them.
+  credit_card: ["Payment card numbers", "For example 4111 1111 1111 1111, checked against its own check digit"],
+  uk_nhs: ["UK health service numbers", "The 10 digit NHS number, for example 943 476 5919"],
+  ip_address: ["Network addresses", "For example 192.168.1.24, and the longer IPv6 form"],
+  mac_address: ["Device hardware addresses", "For example 3C:22:FB:1A:9E:04"],
+  crypto: ["Cryptocurrency addresses", "Bitcoin addresses, for example bc1qar0srrr7xfkvy5l643lydnw9re59gtzz"],
+  database_uri: ["Database connection strings", "For example postgres://user:password@host/db, which carries a password"],
+  de_steuer_id: ["German tax identification numbers", "The 11 digit Steueridentifikationsnummer"],
+  es_nif: ["Spanish tax numbers", "The NIF, 8 digits and a letter, for example 12345678Z"],
 };

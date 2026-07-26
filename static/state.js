@@ -67,7 +67,13 @@ const initialState = {
   // null = not yet decided (defaults to Ollama availability after the
   // first probe), true/false = explicit user choice.
   // contextSize is the Ollama num_ctx setting (Phase 5b), default 8192.
-  settings: { level: "medium", categories: null, ollamaPort: 11434, model: "", contextSize: 8192, useAI: null },
+  // minConfidence is the detection-confidence floor (BUILD-04 CR9), 0 to
+  // 1 on the engine's scale. 0 is the default and keeps every detection,
+  // which is exactly the behaviour before the setting existed.
+  settings: {
+    level: "medium", categories: null, ollamaPort: 11434, model: "",
+    contextSize: 8192, useAI: null, minConfidence: 0,
+  },
 
   // Entity review state (Phase 7): array of
   // {category, canonical, manualVariants, status: "accepted"|"denied"}.
@@ -116,11 +122,21 @@ const initialState = {
 // Category keys, split by preset tier. Must stay in sync with the Go side
 // (engine/pipeline.go AllPIICategories / AllEntityCategories).
 export const HARD_PII_CATEGORIES = ["email", "url", "iban", "vat", "matricule", "phone"];
+// The extended recognizers BUILD-03 added to the engine. They are HARD
+// PII exactly like the group above, so every preset switches them on
+// (engine/pipeline.go PresetSelection). BUILD-04 CR9 finally surfaces
+// them in the Configure screen; until then they were detectable but
+// invisible, which is why the list is separate rather than merged: the
+// Configure screen shows them as their own group.
+export const EXTENDED_PII_CATEGORIES = [
+  "credit_card", "uk_nhs", "ip_address", "mac_address",
+  "crypto", "database_uri", "de_steuer_id", "es_nif",
+];
 export const ADVANCED_PII_CATEGORIES = ["amount", "date"];
 export const NAME_CATEGORIES = ["client_names", "project_names", "internal_names", "person_names"];
 export const ADVANCED_ENTITY_CATEGORIES = ["organisation_names", "location_names"];
 export const ALL_CATEGORIES = [
-  ...HARD_PII_CATEGORIES, ...ADVANCED_PII_CATEGORIES,
+  ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES, ...ADVANCED_PII_CATEGORIES,
   ...NAME_CATEGORIES, "custom_patterns", ...ADVANCED_ENTITY_CATEGORIES,
 ];
 
@@ -133,6 +149,9 @@ export function presetCategories(level) {
   const sel = {};
   for (const c of ALL_CATEGORIES) sel[c] = false;
   for (const c of HARD_PII_CATEGORIES) sel[c] = true;
+  // Extended recognizers are hard PII at every level, matching the Go
+  // PresetSelection exactly (BUILD-04 CR9).
+  for (const c of EXTENDED_PII_CATEGORIES) sel[c] = true;
   sel.client_names = sel.project_names = sel.internal_names = true;
   sel.custom_patterns = true;
   if (level === "medium" || level === "advanced") sel.person_names = true;
@@ -206,6 +225,53 @@ export function toggleCategory(key, on) {
     },
   });
   return true;
+}
+
+/**
+ * setCategoryGroup(keys, on) flips a whole group of switches in ONE
+ * state change (BUILD-04 CR10, the "Select all" / "Deselect all" buttons
+ * on each Configure group).
+ *
+ * Doing it in one setState rather than looping toggleCategory matters:
+ * every setState repaints, so a loop over eight keys would repaint eight
+ * times and, before the CR12 fix, scroll the page eight times.
+ *
+ * Unknown keys are ignored rather than rejected, so a group definition
+ * that drifts ahead of ALL_CATEGORIES degrades to flipping what it can.
+ * Returns how many switches were actually changed.
+ *
+ * @param {string[]} keys category keys to set
+ * @param {boolean} on the value to set them all to
+ * @returns {number} how many switches changed value
+ */
+export function setCategoryGroup(keys, on) {
+  const value = !!on;
+  const categories = { ...state.settings.categories };
+  let changed = 0;
+  for (const key of keys ?? []) {
+    if (!ALL_CATEGORIES.includes(key)) continue;
+    if (!!categories[key] === value) continue;
+    categories[key] = value;
+    changed++;
+  }
+  if (changed) setState({ settings: { ...state.settings, categories } });
+  return changed;
+}
+
+/**
+ * setMinConfidence(value) stores the detection-confidence floor
+ * (BUILD-04 CR9). Values outside 0 to 1 are rejected (returns null)
+ * rather than clamped, so a bad caller is visible instead of silently
+ * changing what gets replaced.
+ * @param {number} value the floor, 0 (keep everything) to 1 (strictest)
+ * @returns {number|null} the stored value, or null when rejected
+ */
+export function setMinConfidence(value) {
+  if (typeof value !== "number" || Number.isNaN(value) || value < 0 || value > 1) {
+    return null;
+  }
+  setState({ settings: { ...state.settings, minConfidence: value } });
+  return value;
 }
 
 /**
@@ -697,6 +763,19 @@ export function addAllowTerm(term) {
 
 export function removeAllowTerm(term) {
   setState({ allowlist: state.allowlist.filter((x) => x.toLowerCase() !== term.toLowerCase()) });
+}
+
+/**
+ * clearAllowlist() empties the never-anonymise list in one step
+ * (BUILD-04 CR11). The engine defaults are NOT re-seeded: they are
+ * available again through the panel's import and the startup seeding, so
+ * clearing stays a clear rather than a reset to something else.
+ * @returns {number} how many terms were removed
+ */
+export function clearAllowlist() {
+  const removed = state.allowlist.length;
+  if (removed) setState({ allowlist: [] });
+  return removed;
 }
 
 /** addPattern(expr, error) stores a custom regex with its validation state. */

@@ -48,6 +48,13 @@ type Settings struct {
 	// Phase 6d). Every AI-dependent control gates on UseAI AND the live
 	// Ollama availability; the choice persists in sessions.
 	UseAI bool `json:"useAI"`
+	// MinConfidence is the detection-confidence floor (BUILD-04 CR9), on
+	// the BUILD-03 Phase C scale of 0.0 to 1.0. Spans scoring below it are
+	// not replaced. 0 (the default, and what an older session file without
+	// the field loads as) keeps every detection, so the setting can never
+	// silently remove replacements a user did not ask it to remove. See
+	// engine.FilterByMinConfidence for what each level currently excludes.
+	MinConfidence float32 `json:"minConfidence"`
 }
 
 // DocumentInfo is the frontend-facing summary of one loaded Document.
@@ -312,6 +319,10 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 	if s.ContextSize < 0 || s.ContextSize > 1<<20 {
 		return ollama.OllamaStatus{}, fmt.Errorf(
 			"invalid context size %d, expected 0 (model default) or a positive number of tokens such as 8192", s.ContextSize)
+	}
+	if s.MinConfidence < 0 || s.MinConfidence > 1 {
+		return ollama.OllamaStatus{}, fmt.Errorf(
+			"invalid minimum confidence %v, expected a number between 0 (replace every detection) and 1 (replace only the most certain ones)", s.MinConfidence)
 	}
 
 	a.mu.Lock()

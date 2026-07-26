@@ -7,10 +7,11 @@
 // attaches the handlers after the view sets innerHTML.
 
 import { importAllowlistCSV, saveAllowlistTemplate } from "../api.js";
-import { getState, addAllowTerm, removeAllowTerm } from "../state.js";
+import { getState, addAllowTerm, removeAllowTerm, clearAllowlist } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { panel, button } from "../ui.js";
 import { CONFIGURE } from "../copy.js";
+import { keepScrollPosition } from "../scroll.js";
 
 /**
  * renderAllowlistPanel(s, collapsedSet) returns the allowlist panel HTML.
@@ -30,8 +31,18 @@ export function renderAllowlistPanel(s, collapsedSet) {
         ${button("Download template", { id: "allow-template", icon: "download" })}
       </div>
       <div id="allow-feedback" class="hint"></div>`;
+  // "Clear all" sits in the panel header next to the collapse chevron
+  // (BUILD-04 CR11). It is disabled on an empty list so the button never
+  // looks like it did nothing.
+  const clearButton = button(CONFIGURE.clearAll, {
+    kind: "ghost", id: "allow-clear", icon: "delete",
+    disabled: s.allowlist.length === 0,
+    title: s.allowlist.length === 0
+      ? "The list is already empty."
+      : `Remove all ${s.allowlist.length} terms from this list.`,
+  });
   return panel("allow-panel", CONFIGURE.allowTitle, content, {
-    collapsible: true, collapsedSet,
+    collapsible: true, collapsedSet, headExtraHTML: clearButton,
   });
 }
 
@@ -45,20 +56,35 @@ export function wireAllowlistPanel(container) {
   const feedback = root.querySelector("#allow-feedback");
   const input = root.querySelector("#allow-input");
 
-  const add = () => addAllowTerm(input.value);
+  // Every mutation here re-renders the whole view, so each one is wrapped
+  // to carry the scroll position across (BUILD-04 CR12): this panel is
+  // rendered near the BOTTOM of both the Configure and the Values screen,
+  // which is exactly where a jump to the top hurts most.
+  const add = () => keepScrollPosition(() => addAllowTerm(input.value));
   root.querySelector("#allow-add").addEventListener("click", add);
   input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") add(); });
 
   for (const btn of root.querySelectorAll(".allow-del")) {
-    btn.addEventListener("click", () => removeAllowTerm(btn.dataset.term));
+    btn.addEventListener("click", () => keepScrollPosition(() => removeAllowTerm(btn.dataset.term)));
   }
+
+  // Clear all (BUILD-04 CR11). Emptying a list the user has curated, and
+  // which protects terms from every pass, is worth one confirmation.
+  root.querySelector("#allow-clear")?.addEventListener("click", (ev) => {
+    ev.stopPropagation(); // the header row is also the collapse toggle
+    if (!confirm(CONFIGURE.clearAllConfirm)) return;
+    keepScrollPosition(() => {
+      const removed = clearAllowlist();
+      feedback.textContent = `${removed} term(s) removed.`;
+    });
+  });
 
   root.querySelector("#allow-import").addEventListener("click", async () => {
     try {
       const terms = await importAllowlistCSV();
       if (!terms) return; // dialog cancelled
       const before = getState().allowlist.length;
-      for (const t of terms) addAllowTerm(t);
+      keepScrollPosition(() => { for (const t of terms) addAllowTerm(t); });
       const added = getState().allowlist.length - before;
       feedback.textContent = `${terms.length} term(s) read, ${added} new added.`;
     } catch (err) {
