@@ -153,6 +153,31 @@ func (a *App) ProbeOllama() ollama.OllamaStatus {
 	return a.llm.Probe()
 }
 
+// --- Documentation window (BUILD-04 CR6) -------------------------------------
+
+// documentationAsset is the path, relative to the asset server root, of
+// the bundled documentation page. It lives under static/ and is therefore
+// already inside the //go:embed all:static directive in main.go: the
+// documentation window loads embedded bytes and nothing else, so the
+// local-only guarantee (CLAUDE.md section 4) is untouched.
+const documentationAsset = "docs/index.html"
+
+// DocumentationURL returns where the bundled documentation lives, so the
+// frontend can open it in a separate window without hardcoding the path.
+//
+// Why this is a path and not an "open a window" call: Wails v2 (the pinned
+// version, CLAUDE.md section 7) drives exactly ONE window per process.
+// Its runtime package exposes WindowShow, WindowHide, WindowSetSize and so
+// on, all of which act on that single window, and there is no API to
+// create a second one. Multi-window arrived in Wails v3, whose idioms this
+// project must not use. So Go owns WHERE the documentation is (it is Go
+// that embeds it) and the frontend opens it with window.open, which the
+// WebView creates as a real separate window served by this same embedded
+// asset server. See static/api.js openDocumentation.
+func (a *App) DocumentationURL() string {
+	return documentationAsset
+}
+
 // --- Import ---------------------------------------------------------------
 
 // dialogFilters is the file-dialog filter for the seven supported formats

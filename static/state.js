@@ -20,11 +20,17 @@ export const WIZARD_STEPS = ["import", "configure", "values", "run", "export"];
 // The initial application state. Every field is documented; grow it here,
 // never ad hoc in views.
 const initialState = {
-  // Top-level screen: "home" (landing page), "wizard" (the 5-step flow) or
-  // "docs" (documentation placeholder). Leaving the wizard NEVER clears
-  // wizard state, so documents and entities survive navigation
-  // (BUILD-02 Phase 2a).
+  // Top-level screen: "home" (landing page) or "wizard" (the 5-step
+  // flow). Leaving the wizard NEVER clears wizard state, so documents and
+  // values survive navigation (BUILD-02 Phase 2a). Documentation is not a
+  // screen: it opens in its own window (BUILD-04 CR6).
   screen: "home",
+
+  // Shell-level error message, or null. Used for failures that belong to
+  // the application chrome rather than to any one view, such as the
+  // documentation window refusing to open. Rendered as a dismissible
+  // banner above the active view (BUILD-04 CR6).
+  shellError: null,
 
   // Bridge self-test: null = not yet run, "pong" = OK, anything else =
   // error message to display.
@@ -243,8 +249,13 @@ export function llmEnabled(s = state) {
 
 // --- Screen navigation (BUILD-02 Phase 2a) -----------------------------------
 
-/** SCREENS: the valid top-level screens. */
-export const SCREENS = ["home", "wizard", "docs"];
+/** SCREENS: the valid top-level screens.
+ *
+ * "docs" was retired by BUILD-04 CR6: the documentation is no longer an
+ * in-app screen, it opens in a separate window (api.js
+ * openDocumentation). goToScreen("docs") therefore returns false now,
+ * exactly like any other unknown name. */
+export const SCREENS = ["home", "wizard"];
 
 /**
  * goToScreen(name) switches the top-level screen. Wizard state (documents,

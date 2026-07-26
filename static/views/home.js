@@ -7,6 +7,7 @@
 // actions it dispatches are the screen change and the documentation window.
 
 import { goToScreen } from "../state.js";
+import { showDocumentation } from "../shell.js";
 import { escapeHTML } from "../html.js";
 import { button } from "../ui.js";
 import { HOME } from "../copy.js";
@@ -31,5 +32,7 @@ export function renderHome(container) {
   `;
 
   container.querySelector("#home-start").addEventListener("click", () => goToScreen("wizard"));
-  container.querySelector("#home-docs").addEventListener("click", () => goToScreen("docs"));
+  // Same behaviour as the menu entry: the documentation opens in its own
+  // window (BUILD-04 CR6), and a refusal shows in the shell banner.
+  container.querySelector("#home-docs").addEventListener("click", showDocumentation);
 }

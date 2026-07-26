@@ -10,14 +10,21 @@
 //        belong to a separate "Anonymisation workflow" banner rendered
 //        under the menu, and only while the wizard is on screen.
 //
-// Both are now string-rendering functions with no DOM and no bridge
-// access, in the same spirit as ui.js and html.js, so shell.test.js can
-// assert them under `node --test`. main.js keeps the wiring (event
-// listeners), these functions keep the markup.
+// Both are string-rendering functions with no DOM access, in the same
+// spirit as ui.js and html.js, so shell.test.js can assert them under
+// `node --test`. main.js keeps the wiring (event listeners), these
+// functions keep the markup.
+//
+// The file also owns the one SHELL-LEVEL action, showDocumentation
+// (CR6). It lives here rather than in main.js because both the top menu
+// and the Home page button need it, and home.js importing main.js would
+// make the module graph circular.
 
 import { escapeHTML } from "./html.js";
 import { button } from "./ui.js";
 import { WORKFLOW } from "./copy.js";
+import { openDocumentation } from "./api.js";
+import { setState } from "./state.js";
 
 /**
  * TOPNAV_ITEMS is THE definition of the permanent top menu. It is a
@@ -89,4 +96,26 @@ export function workflowBannerHTML(steps, activeStep, labels, isEnabled) {
     `<span class="workflow-title">${escapeHTML(WORKFLOW.title)}</span>` +
     `<nav class="workflow-steps">${chips}</nav>` +
     `</section>`;
+}
+
+// --- Shell-level actions ---------------------------------------------------
+
+/**
+ * showDocumentation() opens the bundled documentation in its own window
+ * (CR6) and records a refusal in state.shellError, which main.js renders
+ * as a dismissible banner above the active view.
+ *
+ * Failing to open the documentation must never break the screen the user
+ * is on, hence the state field rather than a thrown error: this is the
+ * chrome reporting a chrome problem.
+ *
+ * @returns {Promise<void>} always resolves; failures land in shellError.
+ */
+export async function showDocumentation() {
+  try {
+    await openDocumentation();
+    setState({ shellError: null });
+  } catch (err) {
+    setState({ shellError: String(err?.message ?? err) });
+  }
 }

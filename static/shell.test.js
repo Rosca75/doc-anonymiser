@@ -124,3 +124,12 @@ test("the workflow banner escapes labels and tokens", () => {
   assert.ok(html.includes("&lt;img"));
   assert.ok(html.includes(`data-step="a&lt;b"`));
 });
+
+// --- CR6: the documentation window ----------------------------------------
+
+test("Documentation is a menu entry with no screen of its own", () => {
+  // The in-app docs screen was retired: the entry opens a separate
+  // window instead, so it must not carry a screen to navigate to.
+  const docs = TOPNAV_ITEMS.find((i) => i.id === "nav-docs");
+  assert.equal(docs.screen, null);
+});

@@ -216,10 +216,10 @@ test("goToScreen switches screens and rejects unknown names", () => {
   assert.equal(getState().screen, "home");
   assert.equal(goToScreen("wizard"), true);
   assert.equal(getState().screen, "wizard");
-  assert.equal(goToScreen("docs"), true);
-  assert.equal(getState().screen, "docs");
+  assert.equal(goToScreen("home"), true);
+  assert.equal(getState().screen, "home");
   assert.equal(goToScreen("settings"), false);
-  assert.equal(getState().screen, "docs");
+  assert.equal(getState().screen, "home");
 });
 
 test("wizard state survives navigating to home and back", () => {
@@ -509,4 +509,30 @@ test("no user-visible step wording still says Entities", () => {
     assert.doesNotMatch(banner.title, /entit/i, `${step} title`);
     assert.doesNotMatch(banner.body, /entit/i, `${step} body`);
   }
+});
+
+// --- Documentation is no longer a screen (BUILD-04 CR6) --------------------
+
+import { SCREENS } from "./state.js";
+
+test("SCREENS no longer contains docs", () => {
+  assert.deepEqual(SCREENS, ["home", "wizard"]);
+});
+
+test("goToScreen(\"docs\") is rejected and leaves the screen untouched", () => {
+  resetState();
+  assert.equal(goToScreen("wizard"), true);
+  assert.equal(goToScreen("docs"), false, "docs is not a screen any more");
+  assert.equal(getState().screen, "wizard");
+});
+
+test("a failed documentation open is recorded as a dismissible shell error", () => {
+  resetState();
+  assert.equal(getState().shellError, null);
+  setState({ shellError: "The documentation window could not be opened." });
+  assert.match(getState().shellError, /could not be opened/);
+  // Wizard state is untouched by a chrome-level error.
+  assert.equal(getState().step, "import");
+  setState({ shellError: null });
+  assert.equal(getState().shellError, null);
 });

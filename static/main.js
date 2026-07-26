@@ -16,10 +16,9 @@ import {
 } from "./state.js";
 import { escapeHTML } from "./html.js";
 import { button, banner } from "./ui.js";
-import { topnavHTML, workflowBannerHTML } from "./shell.js";
+import { topnavHTML, workflowBannerHTML, showDocumentation } from "./shell.js";
 import { STEP_BANNERS } from "./copy.js";
 import { renderHome } from "./views/home.js";
-import { renderDocs } from "./views/docs.js";
 import { renderImport } from "./views/import.js";
 import { renderConfigure } from "./views/configure.js";
 import { renderValues } from "./views/values.js";
@@ -150,6 +149,7 @@ function paint(root) {
       </div>
     </header>
     ${workflow}
+    ${shellErrorBanner(s)}
     <main id="view"></main>
     ${isWizard ? `
     <footer class="navbar">
@@ -160,15 +160,16 @@ function paint(root) {
 
   root.querySelector("#nav-home").addEventListener("click", () => goToScreen("home"));
   root.querySelector("#nav-wizard").addEventListener("click", () => goToScreen("wizard"));
-  root.querySelector("#nav-docs").addEventListener("click", () => goToScreen("docs"));
+  // Documentation is NOT a screen any more (BUILD-04 CR6): it opens in a
+  // separate window served by the embedded asset server. A failure to
+  // open it is a chrome-level problem, so it surfaces in the shell
+  // banner rather than inside whichever view happens to be visible.
+  root.querySelector("#nav-docs").addEventListener("click", showDocumentation);
+  root.querySelector("#shell-error-dismiss")?.addEventListener("click", () => setState({ shellError: null }));
 
   const view = root.querySelector("#view");
   if (s.screen === "home") {
     renderHome(view);
-    return;
-  }
-  if (s.screen === "docs") {
-    renderDocs(view);
     return;
   }
 
@@ -183,9 +184,24 @@ function paint(root) {
 
   // Per-step explainer banner (BUILD-02 Phase 2e), then the active view
   // below it in its own container.
+  // The per-step class on #step-view is a LAYOUT contract, not decoration
+  // (BUILD-04 CR8): the import step needs its container to fill the
+  // remaining height so the pane divider spans top to bottom even with an
+  // empty preview. Every other step keeps content height. Doing it with a
+  // class beats :has(), which needs a newer WebView than the pin assumes.
   const b = STEP_BANNERS[s.step];
-  view.innerHTML = `${b ? banner(b.title, b.body, { icon: b.icon }) : ""}<div id="step-view"></div>`;
+  view.innerHTML = `${b ? banner(b.title, b.body, { icon: b.icon }) : ""}` +
+    `<div id="step-view" class="step-view step-view-${escapeHTML(s.step)}"></div>`;
   VIEWS[s.step](view.querySelector("#step-view"));
+}
+
+/** shellErrorBanner(s) renders the dismissible chrome-level error strip. */
+function shellErrorBanner(s) {
+  if (!s.shellError) return "";
+  return `<div class="shell-error"><div class="banner error">` +
+    `${escapeHTML(s.shellError)}` +
+    `<button class="dismiss" id="shell-error-dismiss" title="Dismiss">\u2715</button>` +
+    `</div></div>`;
 }
 
 /** canAdvance(s), is the linear "Next" allowed from the current step? */

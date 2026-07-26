@@ -79,7 +79,20 @@ h1, h2, h3, h4 {
 
 .badges { display: flex; gap: 0.5rem; }
 
-main#view { flex: 1; overflow: auto; padding: 1rem; background: var(--gray-6); }
+/* #view is the scroll owner AND a flex column, so a step view can ask to
+   fill the leftover height instead of collapsing to its content
+   (BUILD-04 CR8). Steps that do not ask keep content height, exactly as
+   before, because a flex item only grows when it says so. */
+main#view {
+  flex: 1; overflow: auto; padding: 1rem; background: var(--gray-6);
+  display: flex; flex-direction: column;
+}
+
+/* Chrome-level error strip (BUILD-04 CR6), e.g. the documentation window
+   refusing to open. It sits between the banner and the view so it is
+   visible on every screen. */
+.shell-error { padding: 0.75rem 1rem 0; }
+.shell-error .banner { margin-bottom: 0; }
 
 .navbar {
   display: flex; justify-content: space-between;
@@ -220,9 +233,32 @@ input, select {
 
 /* --- Import view ---------------------------------------------------------- */
 
+/* The import step is the one step that fills the available height, so its
+   pane divider spans top to bottom BEFORE any preview is loaded
+   (BUILD-04 CR8). Previously the grid row was as tall as its tallest
+   child, which with an empty preview pane was a couple of lines of hint
+   text, leaving a stub of a divider. min-height: 0 on each link of the
+   chain is what lets the inner panes scroll instead of pushing the grid
+   taller than the window. */
+.step-view-import { flex: 1; min-height: 0; }
+.step-view-import .import-view { height: 100%; display: flex; flex-direction: column; }
+.step-view-import .import-columns { flex: 1; min-height: 0; }
+/* Each pane is itself a column: its heading stays put and only the list
+   or the preview inside it scrolls, so the two panes and the divider
+   between them keep their full height. The max-height override undoes the
+   60vh cap those blocks carry when they are NOT inside a filled pane. */
+.step-view-import .import-columns > .panel { min-height: 0; display: flex; flex-direction: column; }
+.step-view-import .import-columns .doc-list,
+.step-view-import .import-columns .table-scroll,
+.step-view-import .import-columns .md-preview {
+  flex: 1; min-height: 0; overflow: auto; max-height: none;
+}
+
 /* Two resizable panes separated by a draggable divider (BUILD-02 2g).
-   The column template is set inline from state.importSplit. */
-.import-columns { display: grid; gap: 0; align-items: start; }
+   The column template is set inline from state.importSplit. align-items:
+   stretch (the grid default, spelled out here because it is load-bearing)
+   makes the divider as tall as the row. */
+.import-columns { display: grid; gap: 0; align-items: stretch; }
 .import-divider {
   width: 6px; cursor: col-resize; align-self: stretch;
   background: var(--gray-4); border-radius: 3px; margin: 0 0.35rem;

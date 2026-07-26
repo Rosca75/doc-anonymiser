@@ -146,3 +146,45 @@ test("button renders aria-current only when asked", () => {
   assert.match(button("Home", { current: true }), /aria-current="page"/);
   assert.ok(!button("Home").includes("aria-current"));
 });
+
+// --- Import pane height contract (BUILD-04 CR8) ----------------------------
+//
+// The bug: .import-columns collapsed to its content height, so the pane
+// divider only reached full height once a preview was loaded. The fix is a
+// height chain from #view down to the grid. Layout cannot be measured
+// without a browser, so this asserts the chain is declared.
+
+test("the import step view fills the available height", () => {
+  const view = styleCSS.match(/main#view \{[^}]*\}/);
+  assert.ok(view, "the #view rule must exist");
+  assert.match(view[0], /display:\s*flex/);
+  assert.match(view[0], /flex-direction:\s*column/);
+
+  const fill = styleCSS.match(/\.step-view-import \{[^}]*\}/);
+  assert.ok(fill, "the import step view must claim the leftover height");
+  assert.match(fill[0], /flex:\s*1/);
+  assert.match(fill[0], /min-height:\s*0/);
+
+  assert.match(styleCSS, /\.step-view-import \.import-columns \{[^}]*flex:\s*1/);
+});
+
+test("the import grid stretches its row so the divider spans it", () => {
+  const columns = styleCSS.match(/\n\.import-columns \{[^}]*\}/);
+  assert.ok(columns, "the .import-columns rule must exist");
+  assert.match(columns[0], /align-items:\s*stretch/);
+  assert.ok(!columns[0].includes("align-items: start"),
+    "align-items: start is what collapsed the row (BUILD-04 CR8)");
+  assert.match(styleCSS, /\.import-divider \{[^}]*align-self:\s*stretch/);
+});
+
+test("the documentation page styles itself from the brand tokens only", () => {
+  const docsCSS = fs.readFileSync(path.join(staticDir, "docs", "docs.css"), "utf8");
+  // No literal colour or font value: brand.css stays the single source.
+  assert.ok(!/#[0-9a-fA-F]{3,8}\b/.test(docsCSS), "no literal colours in docs.css");
+  assert.match(docsCSS, /var\(--font-body\)/);
+  const docsHTML = fs.readFileSync(path.join(staticDir, "docs", "index.html"), "utf8");
+  // Local-only guarantee: no remote stylesheet, script or font.
+  assert.ok(!/https?:\/\//.test(docsHTML.replace(/127\.0\.0\.1/g, "")),
+    "the documentation page must reference no remote URL");
+  assert.match(docsHTML, /href="\.\.\/brand\.css"/);
+});
