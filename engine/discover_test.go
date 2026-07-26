@@ -172,3 +172,205 @@ func TestSmartDetectFrenchFixture(t *testing.T) {
 		t.Errorf("French company with Sàrl suffix missing or misrouted: %+v", got)
 	}
 }
+
+// --- BUILD-04 CR13: SmartDetectOptions ------------------------------------
+
+// TestSmartDetectLegacySignatureIsUnfiltered: the two-argument SmartDetect
+// must behave exactly as it did before the options existed. Every earlier
+// test in this file depends on that, and so does any caller that has
+// nothing to say about tuning.
+func TestSmartDetectLegacySignatureIsUnfiltered(t *testing.T) {
+	const text = "Ltd was mentioned. Marie Duval called. Marie Duval called again.\n"
+	legacy := SmartDetect(text, NewEmptyAllowlist())
+	zero := SmartDetectWithOptions(text, NewEmptyAllowlist(), SmartDetectOptions{})
+	if len(legacy) != len(zero) {
+		t.Fatalf("legacy SmartDetect returned %d candidates, zero options returned %d; they must agree",
+			len(legacy), len(zero))
+	}
+	for i := range legacy {
+		if legacy[i].Text != zero[i].Text || legacy[i].Count != zero[i].Count {
+			t.Errorf("candidate %d differs: %+v vs %+v", i, legacy[i], zero[i])
+		}
+	}
+}
+
+// TestSmartDetectCandidatesCarryAScore: every candidate must carry the
+// heuristic score, whether or not filtering is on, because the review UI
+// sorts and filters on it without re-running detection.
+func TestSmartDetectCandidatesCarryAScore(t *testing.T) {
+	got := SmartDetect("Alpine Trust S.A. signed. Marie Duval signed too.\n", NewEmptyAllowlist())
+	if len(got) == 0 {
+		t.Fatal("expected candidates")
+	}
+	for _, c := range got {
+		if c.Confidence <= 0 || c.Confidence > 1 {
+			t.Errorf("candidate %q scored %v, want a score in (0, 1]", c.Text, c.Confidence)
+		}
+	}
+}
+
+// TestCandidateScoreLadder pins the score each detector signal earns, in
+// English and French. The ladder is the thing a future tuning change has
+// to argue with, so it is asserted directly.
+func TestCandidateScoreLadder(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want map[string]float32
+	}{
+		{
+			name: "legal form outranks everything (English)",
+			text: "Alpine Trust S.A. signed the mandate today.\n",
+			want: map[string]float32{"Alpine Trust S.A.": 0.95},
+		},
+		{
+			name: "a title routes and scores a person (French)",
+			text: "Le rapport a ete valide par Mme Weber hier soir.\n",
+			want: map[string]float32{"Weber": 0.90},
+		},
+		{
+			name: "a repeated full name beats a single sighting",
+			text: "Marie Duval called. Later Marie Duval wrote to Anouk Berger.\n",
+			want: map[string]float32{"Marie Duval": 0.80, "Anouk Berger": 0.65},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SmartDetect(tc.text, NewEmptyAllowlist())
+			scores := map[string]float32{}
+			for _, c := range got {
+				scores[c.Text] = c.Confidence
+			}
+			for text, want := range tc.want {
+				if scores[text] != want {
+					t.Errorf("%q scored %v, want %v (all: %+v)", text, scores[text], want, scores)
+				}
+			}
+		})
+	}
+}
+
+// TestSmartDetectOptionsFilters walks each option independently, so a
+// failure names the knob that broke rather than "fewer candidates".
+func TestSmartDetectOptionsFilters(t *testing.T) {
+	// Anouk Berger sits MID-sentence on purpose: a name whose only
+	// occurrence opens a sentence is dropped by the sentence-start rule,
+	// which predates these options and is not what is under test here.
+	const text = "Marie Duval called. Later Marie Duval wrote. March was busy. March was long.\n" +
+		"Later that week Anouk Berger replied once.\n"
+
+	has := func(cands []Candidate, want string) bool {
+		for _, c := range cands {
+			if c.Text == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	cases := []struct {
+		name     string
+		opts     SmartDetectOptions
+		mustKeep []string
+		mustDrop []string
+	}{
+		{
+			name:     "no options keeps the noise",
+			opts:     SmartDetectOptions{},
+			mustKeep: []string{"Marie Duval", "March", "Anouk Berger"},
+		},
+		{
+			name:     "MinLength drops short candidates",
+			opts:     SmartDetectOptions{MinLength: 6},
+			mustKeep: []string{"Marie Duval", "Anouk Berger"},
+			mustDrop: []string{"March"},
+		},
+		{
+			name:     "MinOccurrences drops the single sighting",
+			opts:     SmartDetectOptions{MinOccurrences: 2},
+			mustKeep: []string{"Marie Duval", "March"},
+			mustDrop: []string{"Anouk Berger"},
+		},
+		{
+			name:     "ExcludeCommonWords drops the month, keeps the names",
+			opts:     SmartDetectOptions{ExcludeCommonWords: true},
+			mustKeep: []string{"Marie Duval", "Anouk Berger"},
+			mustDrop: []string{"March"},
+		},
+		{
+			name:     "MinConfidence drops the single-word repeat",
+			opts:     SmartDetectOptions{MinConfidence: 0.5},
+			mustKeep: []string{"Marie Duval", "Anouk Berger"},
+			mustDrop: []string{"March"},
+		},
+		{
+			name:     "the shipped defaults keep the names and drop the noise",
+			opts:     DefaultSmartDetectOptions(),
+			mustKeep: []string{"Marie Duval", "Anouk Berger"},
+			mustDrop: []string{"March"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SmartDetectWithOptions(text, NewEmptyAllowlist(), tc.opts)
+			for _, want := range tc.mustKeep {
+				if !has(got, want) {
+					t.Errorf("%q must survive, got %+v", want, got)
+				}
+			}
+			for _, unwanted := range tc.mustDrop {
+				if has(got, unwanted) {
+					t.Errorf("%q must be dropped, got %+v", unwanted, got)
+				}
+			}
+		})
+	}
+}
+
+// TestExcludeCommonWordsKeepsNamesContainingOne: "March Consulting" is a
+// perfectly good company name and must not be dropped just because one of
+// its words is a month.
+func TestExcludeCommonWordsKeepsNamesContainingOne(t *testing.T) {
+	got := SmartDetectWithOptions(
+		"March Consulting signed. March Consulting invoiced.\n",
+		NewEmptyAllowlist(),
+		SmartDetectOptions{ExcludeCommonWords: true})
+	found := false
+	for _, c := range got {
+		if c.Text == "March Consulting" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a multi-word name containing a common word must survive, got %+v", got)
+	}
+}
+
+// TestExcludeCommonWordsFrench: the word list covers French too, since
+// testdata carries French fixtures (CLAUDE.md section 6).
+func TestExcludeCommonWordsFrench(t *testing.T) {
+	got := SmartDetectWithOptions(
+		"Cependant le dossier avance. Cependant rien n'est signe.\n",
+		NewEmptyAllowlist(),
+		SmartDetectOptions{ExcludeCommonWords: true})
+	for _, c := range got {
+		if c.Text == "Cependant" {
+			t.Errorf("a French sentence opener must be dropped, got %+v", got)
+		}
+	}
+}
+
+// TestAllowlistStillWinsOverTuning: an allowlisted term is dropped no
+// matter how strongly the heuristics vouch for it (CLAUDE.md section 5).
+func TestAllowlistStillWinsOverTuning(t *testing.T) {
+	allow := NewEmptyAllowlist()
+	allow.Add("Alpine Trust S.A.")
+	got := SmartDetectWithOptions(
+		"Alpine Trust S.A. signed the mandate.\n", allow, SmartDetectOptions{})
+	for _, c := range got {
+		if c.Text == "Alpine Trust S.A." {
+			t.Errorf("an allowlisted term must never be proposed, got %+v", got)
+		}
+	}
+}

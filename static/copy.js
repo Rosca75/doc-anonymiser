@@ -95,6 +95,36 @@ export const CONFIGURE = {
   confidenceScale: "Above 80, the values that only the local AI suggested are left alone. Above 95, the values you listed yourself are left alone too, and only pattern matches remain.",
 };
 
+// Values step copy (BUILD-04 Phase 5): the smart-detection tuning block
+// (CR13) and the suggestions table (CR14/CR15).
+export const VALUES = {
+  // Smart detection tuning.
+  smartSettingsTitle: "Smart detection settings",
+  smartSettingsHint: "Smart detection guesses which words are names from how they are written, so it always proposes some things that are not names. These settings decide how strict it is. Set them all to zero, and untick the box, to see everything it can find.",
+  smartMinLength: "Shortest value",
+  smartMinLengthHint: "Suggestions shorter than this many letters are skipped.",
+  smartMinOccurrences: "Fewest occurrences",
+  smartMinOccurrencesHint: "How often a value must appear before it is suggested. 1 means once is enough.",
+  smartCommonWords: "Skip ordinary words",
+  smartCommonWordsHint: "Ignores month names, weekdays and common sentence openers, which are capitalised without being names.",
+  smartMinConfidence: "Minimum certainty",
+  smartMinConfidenceHint: "Higher values keep only the strongest suggestions, such as a name followed by a company form or introduced by a title.",
+
+  // Suggestions table.
+  colValue: "Value",
+  colType: "Type",
+  colOccurrences: "Occurrences",
+  colFoundBy: "Found by",
+  colActions: "Actions",
+  searchPlaceholder: "search values",
+  filterAllTypes: "All types",
+  sortValueHint: "Sort by value, A to Z or Z to A.",
+  sortCountHint: "Sort by how often the value occurs.",
+  noMatchingSuggestions: "No suggestion matches the current search and type filter.",
+  bulkScopeHint: "Applies to the rows shown below, so a search or a type filter limits it too.",
+  denyAllConfirm: (n) => `Reject ${n} suggestion${n === 1 ? "" : "s"}? They are removed from the review list and nothing is replaced.`,
+};
+
 // Per-category checkbox labels and one-line examples (BUILD-02 Phase 6b).
 // Keys match engine category identifiers.
 export const CATEGORY_LABELS = {

@@ -23,14 +23,21 @@ import {
   addEntities, setEntityStatus, editEntity, removeEntity,
   setEntityVariants, setEntityVariantError, addManualVariant, entityKey,
   addCandidates, acceptCandidate, rejectCandidate, updateCandidate,
-  acceptAllInCategory, moveVariant,
+  acceptAllInCategory, denyAllInCategory, moveVariant,
   addPattern, removePattern,
+  setSmartDetectOptions, smartDetectOptions,
 } from "../state.js";
 import { variantRows, pendingExpansions } from "../entitymodel.js";
+import {
+  visibleCandidates, candidateCategoryCounts,
+  toggleCountSort, toggleValueSort, DEFAULT_CANDIDATE_FILTER,
+} from "../candidatemodel.js";
 import { escapeHTML } from "../html.js";
-import { panel, wirePanels } from "../ui.js";
+import { panel, wirePanels, button } from "../ui.js";
 import { llmGateTooltip } from "./configure.js";
 import { renderAllowlistPanel, wireAllowlistPanel } from "./allowlist.js";
+import { keepScrollPosition } from "../scroll.js";
+import { VALUES } from "../copy.js";
 
 // The reviewable entity categories (CLAUDE.md §5) with display labels.
 const CATEGORIES = [
@@ -47,6 +54,12 @@ const expanded = new Set();
 // Panels the user toggled away from their default open/collapsed state
 // (BUILD-02 Phase 2f). View-local, same pattern as `expanded`.
 const collapsedPanels = new Set();
+
+// The suggestions table's search / category / sort selection
+// (BUILD-04 CR14). Which column a user is sorting by is a VIEW
+// preference, not application state, so it lives here next to `expanded`
+// rather than in the store. candidatemodel.js turns it into rows.
+let candidateFilter = { ...DEFAULT_CANDIDATE_FILTER };
 
 export function renderValues(container) {
   const s = getState();
@@ -113,11 +126,50 @@ function discoveryPanel(s, aiOK) {
         <button id="btn-smart" ${d?.running ? "disabled" : ""}>Smart detection</button>
         <span class="hint">Works without any AI. Finds likely names by how they are written.</span>
       </div>
+      ${smartSettingsHTML(s)}
       ${progressHTML}
       <div id="disc-progress" class="hint"></div>`;
   return panel("panel-discovery", "Find names to replace", content, {
     collapsible: true, collapsedSet: collapsedPanels,
   });
+}
+
+/**
+ * smartSettingsHTML(s) renders the Smart-detection tuning controls
+ * (BUILD-04 CR13). Smart detection was surfacing far more values than
+ * anyone could review, so these four controls each remove a distinct kind
+ * of noise. They ship at the stricter defaults; every one of them can be
+ * turned off to get the old, exhaustive behaviour back.
+ */
+function smartSettingsHTML(s) {
+  const o = smartDetectOptions(s);
+  return `
+      <details class="smart-settings" id="smart-settings">
+        <summary>${escapeHTML(VALUES.smartSettingsTitle)}</summary>
+        <p class="hint">${escapeHTML(VALUES.smartSettingsHint)}</p>
+        <div class="form-row">
+          <label for="smart-min-length">${escapeHTML(VALUES.smartMinLength)}</label>
+          <input id="smart-min-length" type="number" min="0" max="40" step="1" value="${o.minLength}"/>
+          <span class="hint">${escapeHTML(VALUES.smartMinLengthHint)}</span>
+        </div>
+        <div class="form-row">
+          <label for="smart-min-occurrences">${escapeHTML(VALUES.smartMinOccurrences)}</label>
+          <input id="smart-min-occurrences" type="number" min="0" max="100" step="1" value="${o.minOccurrences}"/>
+          <span class="hint">${escapeHTML(VALUES.smartMinOccurrencesHint)}</span>
+        </div>
+        <label class="radio-row">
+          <input type="checkbox" id="smart-common-words" ${o.excludeCommonWords ? "checked" : ""}/>
+          <span>${escapeHTML(VALUES.smartCommonWords)}
+            <span class="hint">${escapeHTML(VALUES.smartCommonWordsHint)}</span></span>
+        </label>
+        <div class="form-row">
+          <label for="smart-min-confidence">${escapeHTML(VALUES.smartMinConfidence)}</label>
+          <input id="smart-min-confidence" type="range" min="0" max="100" step="5"
+                 value="${Math.round(o.minConfidence * 100)}"/>
+          <output id="smart-min-confidence-value">${Math.round(o.minConfidence * 100)}</output>
+          <span class="hint">${escapeHTML(VALUES.smartMinConfidenceHint)}</span>
+        </div>
+      </details>`;
 }
 
 /** selectedFiles(container) reads the shared file-checkbox list. */
@@ -127,6 +179,7 @@ function selectedFiles(container) {
 
 function wireDiscovery(container, s) {
   container.querySelector("#btn-disc-cancel")?.addEventListener("click", () => cancelDiscovery());
+  wireSmartSettings(container);
 
   const feedback = (msg) => {
     const slot = document.querySelector("#disc-progress");
@@ -182,7 +235,10 @@ function wireDiscovery(container, s) {
     }
     setState({ discovery: { running: true, current: 0, total: files.length, file: files[0] } });
     try {
-      const res = await runSmartDetection(files, s.allowlist, llmEnabled(s));
+      // The tuning travels with the call (BUILD-04 CR13); it is read from
+      // the store, so the options in force are exactly the ones shown.
+      const res = await runSmartDetection(
+        files, s.allowlist, llmEnabled(s), smartDetectOptions(getState()));
       const added = addCandidates(res?.candidates ?? [], "smart");
       setState({ discovery: null });
       feedback(`${res?.status ?? "done"}. ${added} new candidate(s) for review below.`);
@@ -192,6 +248,51 @@ function wireDiscovery(container, s) {
     }
   });
 }
+
+/**
+ * wireSmartSettings(container) commits each tuning control to the store
+ * (BUILD-04 CR13). Every commit is wrapped in keepScrollPosition, because
+ * the settings block sits mid-screen and the re-render would otherwise
+ * throw the user back to the top (CR12).
+ *
+ * The <details> block keeps its open state across re-renders by hand: the
+ * store deliberately knows nothing about it, and losing it on every
+ * keystroke would make the controls unusable.
+ */
+function wireSmartSettings(container) {
+  const details = container.querySelector("#smart-settings");
+  if (!details) return;
+  details.open = smartSettingsOpen;
+  details.addEventListener("toggle", () => { smartSettingsOpen = details.open; });
+
+  const commit = (patch) => keepScrollPosition(() => setSmartDetectOptions(patch));
+
+  container.querySelector("#smart-min-length")?.addEventListener("change", (ev) => {
+    commit({ minLength: parseInt(ev.target.value, 10) });
+  });
+  container.querySelector("#smart-min-occurrences")?.addEventListener("change", (ev) => {
+    commit({ minOccurrences: parseInt(ev.target.value, 10) });
+  });
+  container.querySelector("#smart-common-words")?.addEventListener("change", (ev) => {
+    commit({ excludeCommonWords: ev.target.checked });
+  });
+
+  const confidence = container.querySelector("#smart-min-confidence");
+  if (confidence) {
+    const readout = container.querySelector("#smart-min-confidence-value");
+    // Live read-out while dragging, one commit on release.
+    confidence.addEventListener("input", () => {
+      if (readout) readout.textContent = confidence.value;
+    });
+    confidence.addEventListener("change", () => {
+      commit({ minConfidence: Number(confidence.value) / 100 });
+    });
+  }
+}
+
+// Whether the smart-detection settings block is unfolded. View-local, in
+// the same family as `expanded` and `collapsedPanels`.
+let smartSettingsOpen = false;
 
 // --- Candidate review (BUILD-02 Phase 9b) ---------------------------------
 
@@ -204,35 +305,97 @@ const CANDIDATE_CATEGORIES = [
 
 function candidatesPanel(s) {
   if (!s.candidates.length) return "";
+
+  // The rows the user can currently SEE, from the tested pure model.
+  // Everything below (the bulk buttons, the empty state, the counts) is
+  // derived from this list, so what a button does always matches what the
+  // table shows (BUILD-04 CR14/CR15).
+  const rows = visibleCandidates(s.candidates, candidateFilter);
+  const counts = candidateCategoryCounts(rows);
+
   const options = (selected) => CANDIDATE_CATEGORIES.map(([v, l]) =>
     `<option value="${v}" ${v === selected ? "selected" : ""}>${l}</option>`).join("");
 
-  const rows = s.candidates.map((c) => `
+  // Category selector: only the NAME categories the user actually
+  // enabled in Configure (CR14), so the filter reflects their choices
+  // instead of offering categories that cannot appear.
+  const enabled = CANDIDATE_CATEGORIES.filter(([v]) => s.settings.categories?.[v]);
+  const filterCategories = enabled.length ? enabled : CANDIDATE_CATEGORIES;
+  const categoryOptions = [`<option value="">${escapeHTML(VALUES.filterAllTypes)}</option>`]
+    .concat(filterCategories.map(([v, l]) =>
+      `<option value="${v}" ${v === candidateFilter.category ? "selected" : ""}>${escapeHTML(l)}</option>`))
+    .join("");
+
+  // Bulk actions ABOVE the table (CR15), one pair per category present in
+  // the visible rows, each naming exactly how many rows it will touch.
+  const bulk = CANDIDATE_CATEGORIES
+    .filter(([v]) => counts[v] > 0)
+    .map(([v, l]) => `
+      <span class="bulk-pair">
+        <button class="cand-accept-all" data-category="${v}"
+                title="${escapeHTML(VALUES.bulkScopeHint)}">Accept all ${counts[v]} ${escapeHTML(l.toLowerCase())}${counts[v] === 1 ? "" : "s"}</button>
+        <button class="cand-deny-all" data-category="${v}"
+                title="${escapeHTML(VALUES.bulkScopeHint)}">Deny all ${counts[v]} ${escapeHTML(l.toLowerCase())}${counts[v] === 1 ? "" : "s"}</button>
+      </span>`).join(" ");
+
+  const countArrow = candidateFilter.sort === "count-asc" ? "\u25B2"
+    : candidateFilter.sort === "count-desc" ? "\u25BC" : "";
+  const valueArrow = candidateFilter.sort === "value-asc" ? "\u25B2"
+    : candidateFilter.sort === "value-desc" ? "\u25BC" : "";
+
+  const body = rows.length ? rows.map((c) => `
     <tr data-ctext="${escapeHTML(c.text)}">
       <td class="ent-name" title="${escapeHTML((c.contexts ?? []).join("\n"))}">
         <input class="cand-text" value="${escapeHTML(c.text)}"/>
       </td>
       <td><select class="cand-category">${options(c.category)}</select></td>
-      <td class="hint">${c.count ? `${c.count}×` : ""} ${escapeHTML(c.source)}</td>
+      <td class="hint">${c.count ? `${c.count}` : ""}</td>
+      <td class="hint">${escapeHTML(c.source)}</td>
       <td class="ent-actions">
         <button class="cand-accept">accept</button>
         <button class="cand-reject">reject</button>
       </td>
-    </tr>`).join("");
-
-  const bulk = CANDIDATE_CATEGORIES
-    .filter(([v]) => s.candidates.some((c) => c.category === v))
-    .map(([v, l]) => `<button class="cand-accept-all" data-category="${v}">Accept all ${l.toLowerCase()}s</button>`)
-    .join(" ");
+    </tr>`).join("")
+    : `<tr><td colspan="5" class="hint">${escapeHTML(VALUES.noMatchingSuggestions)}</td></tr>`;
 
   const content = `
-      <p class="hint">Review each suggestion: fix the name or category if needed, then accept or
-        reject. Only accepted names are ever replaced.</p>
-      <table class="entity-table"><tbody>${rows}</tbody></table>
-      <div class="form-row">${bulk}</div>`;
+      <p class="hint">Review each suggestion: fix the value or its type if needed, then accept or
+        reject. Only accepted values are ever replaced.</p>
+      <div class="form-row bulk-row">${bulk}</div>
+      <table class="entity-table candidate-table">
+        <thead>
+          <tr>
+            <th>
+              <button class="cand-sort" data-sort="value" title="${escapeHTML(VALUES.sortValueHint)}">
+                ${escapeHTML(VALUES.colValue)} ${valueArrow}</button>
+            </th>
+            <th>${escapeHTML(VALUES.colType)}</th>
+            <th>
+              <button class="cand-sort" data-sort="count" title="${escapeHTML(VALUES.sortCountHint)}">
+                ${escapeHTML(VALUES.colOccurrences)} ${countArrow}</button>
+            </th>
+            <th>${escapeHTML(VALUES.colFoundBy)}</th>
+            <th>${escapeHTML(VALUES.colActions)}</th>
+          </tr>
+          <tr class="filter-row">
+            <th><input id="cand-search" type="search" placeholder="${escapeHTML(VALUES.searchPlaceholder)}"
+                       value="${escapeHTML(candidateFilter.search)}"/></th>
+            <th><select id="cand-filter-category">${categoryOptions}</select></th>
+            <th colspan="3" class="hint">${escapeHTML(showingLabel(rows.length, s.candidates.length))}</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>`;
   return panel("panel-candidates", `Suggestions to review (${s.candidates.length})`, content, {
     collapsible: true, collapsedSet: collapsedPanels,
   });
+}
+
+/** showingLabel(visible, total) states how much of the list is on screen,
+ *  so a filter can never silently hide rows the user forgets about. */
+export function showingLabel(visible, total) {
+  if (visible === total) return `Showing all ${total}.`;
+  return `Showing ${visible} of ${total}.`;
 }
 
 function wireCandidates(container) {
@@ -240,20 +403,75 @@ function wireCandidates(container) {
     const original = row.dataset.ctext;
     const textInput = row.querySelector(".cand-text");
     const catSelect = row.querySelector(".cand-category");
-    textInput.addEventListener("change", () => {
+    textInput.addEventListener("change", () => keepScrollPosition(() => {
       if (!updateCandidate(original, { text: textInput.value })) {
         textInput.value = original; // collision or blank: revert visibly
       }
-    });
-    catSelect.addEventListener("change", () => updateCandidate(original, { category: catSelect.value }));
+    }));
+    catSelect.addEventListener("change", () => keepScrollPosition(
+      () => updateCandidate(original, { category: catSelect.value })));
     row.querySelector(".cand-accept").addEventListener("click", async () => {
       if (acceptCandidate(row.dataset.ctext)) await refreshVariants();
     });
     row.querySelector(".cand-reject").addEventListener("click", () => rejectCandidate(row.dataset.ctext));
   }
+
+  // Per-column filters (CR14). They change VIEW state only, then ask for
+  // a repaint; the scroll position is carried across it.
+  const search = container.querySelector("#cand-search");
+  if (search) {
+    let timer = null;
+    search.addEventListener("input", () => {
+      // Debounced: retyping a search must not repaint on every keystroke.
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        candidateFilter = { ...candidateFilter, search: search.value };
+        keepScrollPosition(() => setState({}));
+        // The re-render replaced the input, so put the caret back.
+        const next = document.querySelector("#cand-search");
+        if (next) {
+          next.focus();
+          next.setSelectionRange(next.value.length, next.value.length);
+        }
+      }, 200);
+    });
+  }
+  container.querySelector("#cand-filter-category")?.addEventListener("change", (ev) => {
+    candidateFilter = { ...candidateFilter, category: ev.target.value };
+    keepScrollPosition(() => setState({}));
+  });
+  for (const btn of container.querySelectorAll(".cand-sort")) {
+    btn.addEventListener("click", () => {
+      candidateFilter = {
+        ...candidateFilter,
+        sort: btn.dataset.sort === "count"
+          ? toggleCountSort(candidateFilter.sort)
+          : toggleValueSort(candidateFilter.sort),
+      };
+      keepScrollPosition(() => setState({}));
+    });
+  }
+
+  // Bulk accept / deny (CR15). Both act on the VISIBLE rows only, which
+  // is what the button labels count, so a filtered list can never hide
+  // rows a bulk action silently swept up.
+  const visibleTexts = (category) => visibleCandidates(getState().candidates, candidateFilter)
+    .filter((c) => c.category === category)
+    .map((c) => c.text);
+
   for (const btn of container.querySelectorAll(".cand-accept-all")) {
     btn.addEventListener("click", async () => {
-      if (acceptAllInCategory(btn.dataset.category) > 0) await refreshVariants();
+      const category = btn.dataset.category;
+      if (acceptAllInCategory(category, visibleTexts(category)) > 0) await refreshVariants();
+    });
+  }
+  for (const btn of container.querySelectorAll(".cand-deny-all")) {
+    btn.addEventListener("click", () => {
+      const category = btn.dataset.category;
+      const texts = visibleTexts(category);
+      if (!texts.length) return;
+      if (!confirm(VALUES.denyAllConfirm(texts.length))) return;
+      keepScrollPosition(() => denyAllInCategory(category, texts));
     });
   }
 }

@@ -663,3 +663,114 @@ test("clearAllowlist touches nothing but the allowlist (CR11)", () => {
   assert.equal(getState().entities.length, 1);
   assert.equal(getState().documents.length, 1);
 });
+
+// --- BUILD-04 Phase 5: smart-detection tuning and bulk deny ----------------
+
+import {
+  denyAllInCategory, setSmartDetectOptions, smartDetectOptions,
+  SMART_DETECT_DEFAULTS,
+} from "./state.js";
+
+/** seedCandidates() puts a mixed review list in the store. */
+function seedCandidates() {
+  resetState();
+  addCandidates([
+    { text: "Marie Duval", category: "person_names", count: 7 },
+    { text: "Anouk Berger", category: "person_names", count: 3 },
+    { text: "Alpine Trust", category: "client_names", count: 3 },
+  ], "smart");
+}
+
+test("denyAllInCategory drops that category and adds no entity (CR15)", () => {
+  seedCandidates();
+  assert.equal(denyAllInCategory("person_names"), 2);
+  const s = getState();
+  assert.deepEqual(s.candidates.map((c) => c.text), ["Alpine Trust"]);
+  assert.equal(s.entities.length, 0, "denying must never promote anything");
+});
+
+test("denyAllInCategory on an absent category is a no-op (CR15)", () => {
+  seedCandidates();
+  assert.equal(denyAllInCategory("project_names"), 0);
+  assert.equal(getState().candidates.length, 3);
+});
+
+test("bulk actions restricted to the visible rows touch only those (CR15)", () => {
+  // This is the filtered-set semantics the Values table relies on: a
+  // search hiding a row must also protect it from a bulk button.
+  seedCandidates();
+  assert.equal(denyAllInCategory("person_names", ["Anouk Berger"]), 1);
+  assert.deepEqual(getState().candidates.map((c) => c.text), ["Marie Duval", "Alpine Trust"]);
+
+  seedCandidates();
+  assert.equal(acceptAllInCategory("person_names", ["Marie Duval"]), 1);
+  const s = getState();
+  assert.deepEqual(s.entities.map((e) => e.canonical), ["Marie Duval"]);
+  assert.deepEqual(s.candidates.map((c) => c.text), ["Anouk Berger", "Alpine Trust"]);
+});
+
+test("a restriction listing nothing visible changes nothing (CR15)", () => {
+  seedCandidates();
+  assert.equal(denyAllInCategory("person_names", []), 0);
+  assert.equal(acceptAllInCategory("person_names", []), 0);
+  assert.equal(getState().candidates.length, 3);
+});
+
+test("bulk restrictions match case-insensitively, like every candidate key", () => {
+  seedCandidates();
+  assert.equal(denyAllInCategory("person_names", ["marie duval"]), 1);
+  assert.deepEqual(getState().candidates.map((c) => c.text), ["Anouk Berger", "Alpine Trust"]);
+});
+
+test("smart detection ships with the stricter defaults (CR13)", () => {
+  resetState();
+  assert.deepEqual(getState().settings.smartDetect, SMART_DETECT_DEFAULTS);
+  assert.equal(SMART_DETECT_DEFAULTS.excludeCommonWords, true);
+  assert.ok(SMART_DETECT_DEFAULTS.minLength > 0);
+  // Requiring two occurrences would throw away single-sighting full
+  // names, which are the most valuable thing smart detection finds.
+  assert.equal(SMART_DETECT_DEFAULTS.minOccurrences, 1);
+});
+
+test("setSmartDetectOptions merges a partial patch (CR13)", () => {
+  resetState();
+  const out = setSmartDetectOptions({ minLength: 6 });
+  assert.equal(out.minLength, 6);
+  assert.equal(out.excludeCommonWords, SMART_DETECT_DEFAULTS.excludeCommonWords,
+    "untouched options keep their value");
+  assert.equal(getState().settings.smartDetect.minLength, 6);
+});
+
+test("setSmartDetectOptions accepts the permissive extreme (CR13)", () => {
+  // Turning every filter off must be reachable: that is the escape hatch
+  // for a user who would rather review too much than miss something.
+  resetState();
+  const out = setSmartDetectOptions({
+    minLength: 0, minOccurrences: 0, excludeCommonWords: false, minConfidence: 0,
+  });
+  assert.deepEqual(out, {
+    minLength: 0, minOccurrences: 0, excludeCommonWords: false, minConfidence: 0,
+  });
+});
+
+test("setSmartDetectOptions ignores invalid values rather than storing them (CR13)", () => {
+  resetState();
+  const before = { ...getState().settings.smartDetect };
+  const out = setSmartDetectOptions({
+    minLength: -1, minOccurrences: 2.5, excludeCommonWords: "yes", minConfidence: 4,
+  });
+  assert.deepEqual(out, before, "every invalid value must be ignored");
+  // Unknown keys are simply not carried over.
+  setSmartDetectOptions({ nonsense: 1 });
+  assert.equal(getState().settings.smartDetect.nonsense, undefined);
+});
+
+test("smartDetectOptions fills defaults for a session without the block (CR13)", () => {
+  // A session file written before BUILD-04 has no smartDetect at all.
+  resetState();
+  setState({ settings: { ...getState().settings, smartDetect: undefined } });
+  assert.deepEqual(smartDetectOptions(), SMART_DETECT_DEFAULTS);
+  // A partially written block is completed rather than rejected.
+  setState({ settings: { ...getState().settings, smartDetect: { minLength: 9 } } });
+  assert.deepEqual(smartDetectOptions(), { ...SMART_DETECT_DEFAULTS, minLength: 9 });
+});

@@ -155,11 +155,20 @@ export function expandVariants(entity) {
   return bridge().ExpandEntityVariants(entity);
 }
 
-/** runSmartDetection(fileNames, allowTerms, classify) resolves to a
- *  SmartDetectionResult {candidates, status, cancelled}. Works fully
- *  offline; classify=true refines categories via the local AI. */
-export function runSmartDetection(fileNames, allowTerms, classify) {
-  return bridge().RunSmartDetection(fileNames, allowTerms, !!classify);
+/**
+ * runSmartDetection(fileNames, allowTerms, classify, options) resolves to
+ * a SmartDetectionResult {candidates, status, cancelled}. Works fully
+ * offline; classify=true refines categories via the local AI.
+ *
+ * options is the BUILD-04 CR13 tuning
+ * ({minLength, minOccurrences, excludeCommonWords, minConfidence}),
+ * matching engine.SmartDetectOptions field for field. Omitting it sends
+ * the zero value, which means "no filtering".
+ */
+export function runSmartDetection(fileNames, allowTerms, classify, options) {
+  return bridge().RunSmartDetection(fileNames, allowTerms, !!classify, options ?? {
+    minLength: 0, minOccurrences: 0, excludeCommonWords: false, minConfidence: 0,
+  });
 }
 
 /** countTermMatches(term) resolves to {count, documents} for the live

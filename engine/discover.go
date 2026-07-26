@@ -43,6 +43,105 @@ type Candidate struct {
 	// Contexts holds up to 3 snippets of ±60 runes around occurrences,
 	// for the review UI and for LLM classification prompts.
 	Contexts []string `json:"contexts,omitempty"`
+	// Confidence is the HEURISTIC score of this proposal, 0.0 to 1.0
+	// (BUILD-04 CR13). It is not the same kind of number as Span
+	// .Confidence: nothing is replaced on the strength of it, it only
+	// ranks and filters what the review list shows. See candidateScore
+	// for the exact ladder.
+	Confidence float32 `json:"confidence,omitempty"`
+}
+
+// SmartDetectOptions tunes how eagerly SmartDetect proposes candidates
+// (BUILD-04 CR13). The owner's report was that Smart detection surfaces
+// far too many values to review, so every knob here removes noise:
+//
+//   - MinLength drops very short candidates ("Ltd", "Rue").
+//   - MinOccurrences requires a candidate to appear N times.
+//   - ExcludeCommonWords drops candidates made only of ordinary
+//     capitalised words (month names, weekdays, common sentence openers),
+//     which is where most of the noise comes from.
+//   - MinConfidence drops candidates whose heuristic score is too low,
+//     which is the single control that trades recall for precision
+//     smoothly rather than in one dimension at a time.
+//
+// A zero value of this struct means "no filtering at all", which is what
+// keeps the legacy SmartDetect signature behaving exactly as it did.
+type SmartDetectOptions struct {
+	// MinLength is the minimum candidate length in RUNES (not bytes, so
+	// accented names count correctly). 0 disables the check.
+	MinLength int `json:"minLength"`
+	// MinOccurrences is the minimum number of times the candidate must
+	// occur. 0 and 1 both mean "once is enough".
+	MinOccurrences int `json:"minOccurrences"`
+	// ExcludeCommonWords drops candidates whose every significant word is
+	// an ordinary capitalised word rather than a name.
+	ExcludeCommonWords bool `json:"excludeCommonWords"`
+	// MinConfidence is the heuristic-score floor, 0.0 to 1.0. 0 disables
+	// the check.
+	MinConfidence float32 `json:"minConfidence"`
+}
+
+// DefaultSmartDetectOptions are the options the APPLICATION starts with
+// (BUILD-04 CR13). They are deliberately stricter than the legacy
+// no-filter behaviour, because over-detection was the reported problem:
+// a review list nobody can get through is worse than one that misses a
+// value the user can still type in by hand.
+//
+// MinOccurrences stays at 1 on purpose. A multi-word name occurring once
+// ("Marie Duval" in a one-page note) is the most valuable thing Smart
+// detection finds, and requiring two occurrences would throw exactly
+// those away. The noise is cut by the word list and the score floor
+// instead.
+func DefaultSmartDetectOptions() SmartDetectOptions {
+	return SmartDetectOptions{
+		MinLength:          4,
+		MinOccurrences:     1,
+		ExcludeCommonWords: true,
+		MinConfidence:      0.5,
+	}
+}
+
+// smartCommonWords are ordinary capitalised words that are not names:
+// month names, weekdays and frequent sentence openers, in English and
+// French (the two document languages this application is tested against,
+// CLAUDE.md §6). A candidate whose significant words are ALL in this set
+// is dropped when ExcludeCommonWords is on.
+//
+// Compared lower-cased. Table-driven; extend freely, and prefer adding a
+// word here over loosening a numeric threshold.
+var smartCommonWords = map[string]bool{
+	// Months, English.
+	"january": true, "february": true, "march": true, "april": true,
+	"may": true, "june": true, "july": true, "august": true,
+	"september": true, "october": true, "november": true, "december": true,
+	// Months, French.
+	"janvier": true, "février": true, "fevrier": true, "mars": true,
+	"avril": true, "mai": true, "juin": true, "juillet": true, "août": true,
+	"aout": true, "septembre": true, "octobre": true, "novembre": true,
+	"décembre": true, "decembre": true,
+	// Weekdays, English then French.
+	"monday": true, "tuesday": true, "wednesday": true, "thursday": true,
+	"friday": true, "saturday": true, "sunday": true,
+	"lundi": true, "mardi": true, "mercredi": true, "jeudi": true,
+	"vendredi": true, "samedi": true, "dimanche": true,
+	// Frequent capitalised sentence openers and connectives, English.
+	"however": true, "therefore": true, "moreover": true, "furthermore": true,
+	"finally": true, "first": true, "second": true, "third": true,
+	"next": true, "then": true, "also": true, "since": true, "during": true,
+	"following": true, "regarding": true, "please": true, "note": true,
+	"yesterday": true, "today": true, "tomorrow": true, "when": true,
+	"after": true, "before": true, "both": true, "each": true, "here": true,
+	// Frequent capitalised sentence openers and connectives, French.
+	"cependant": true, "toutefois": true, "ensuite": true, "enfin": true,
+	"donc": true, "ainsi": true, "pourtant": true, "aussi": true,
+	"depuis": true, "pendant": true, "concernant": true, "veuillez": true,
+	"premièrement": true, "premierement": true, "hier": true,
+	"aujourd'hui": true, "demain": true, "lorsque": true, "apres": true,
+	"après": true, "avant": true,
+	// Document furniture that reads like a name at the start of a line.
+	"introduction": true, "conclusion": true, "summary": true, "annex": true,
+	"appendix": true, "annexe": true, "résumé": true, "resume": true,
+	"objet": true, "subject": true, "date": true, "page": true,
 }
 
 // smartParticles are the lowercase name particles tolerated INSIDE a
@@ -99,19 +198,34 @@ type smartRun struct {
 // SmartDetect extracts entity candidates from text using the four
 // detectors above, then applies the allowlist veto. Deterministic: the
 // result is sorted by descending count, then first appearance.
+//
+// This is the LEGACY signature, kept so every existing caller and test
+// compiles unchanged (BUILD-04 CR13). It applies no tuning at all, which
+// is exactly the behaviour it had before the options existed. New callers
+// that want the application's stricter defaults use
+// SmartDetectWithOptions(text, allow, DefaultSmartDetectOptions()).
 func SmartDetect(text string, allow *Allowlist) []Candidate {
+	return SmartDetectWithOptions(text, allow, SmartDetectOptions{})
+}
+
+// SmartDetectWithOptions is SmartDetect with the BUILD-04 CR13 tuning
+// applied. The detectors themselves are unchanged; the options decide
+// which of their proposals reach the review list, and every candidate
+// carries the heuristic score the filtering used (candidateScore), so the
+// UI can filter further without recomputing anything.
+func SmartDetectWithOptions(text string, allow *Allowlist, opts SmartDetectOptions) []Candidate {
 	runs := extractRuns(text)
 
 	// Group occurrences by candidate text (case-sensitive: "WEBER" and
 	// "Weber" are different spellings the review UI should see as typed;
 	// the registry collapses case later anyway).
 	type group struct {
-		text       string
-		count      int
-		firstStart int
-		category   string
-		qualifies  bool
-		contexts   []string
+		text         string
+		count        int
+		firstStart   int
+		category     string
+		qualifies    bool
+		contexts     []string
 		sentenceOnly bool
 	}
 	groups := map[string]*group{}
@@ -171,15 +285,26 @@ func SmartDetect(text string, allow *Allowlist) []Candidate {
 				g.category = "client_names"
 			}
 		}
-		// Allowlist veto LAST (allowlist wins, CLAUDE.md §5).
+		// Allowlist veto LAST among the ORIGINAL rules (allowlist wins,
+		// CLAUDE.md §5).
 		if allow.Contains(g.text) {
 			continue
 		}
+
+		// BUILD-04 CR13 tuning. The score is computed either way, so the
+		// review UI always has it to filter and sort on, even when the
+		// engine-side floor is off.
+		score := candidateScore(r, g.count)
+		if !keepCandidate(g.text, r, g.count, score, opts) {
+			continue
+		}
+
 		out = append(out, Candidate{
-			Text:     g.text,
-			Category: g.category,
-			Count:    g.count,
-			Contexts: g.contexts,
+			Text:       g.text,
+			Category:   g.category,
+			Count:      g.count,
+			Contexts:   g.contexts,
+			Confidence: score,
 		})
 	}
 
@@ -474,4 +599,83 @@ func contextSnippet(text string, start, end int) string {
 		}
 	}
 	return strings.Join(strings.Fields(text[from:to]), " ")
+}
+
+// --- BUILD-04 CR13: candidate scoring and filtering -------------------------
+
+// candidateScore turns what the detectors observed about a run into one
+// heuristic number in [0.0, 1.0]. It is a LADDER, not a formula, so every
+// step can be read and argued with:
+//
+//	0.95  a legal form follows the name ("Alpine Trust S.A."): as close to
+//	      certain as a heuristic gets, companies are named this way on purpose
+//	0.90  a person title introduced it ("Mme Weber", "Dr Keller")
+//	0.80  several words, seen more than once: a repeated full name
+//	0.65  several words, seen once: "Marie Duval" mid-sentence is still a
+//	      strong signal, but a single sighting leaves room for a fluke
+//	0.45  one word, seen more than once: the weakest thing worth showing,
+//	      and where most of the over-detection lives
+//	0.25  anything else that survived the detectors
+//
+// The default floor (0.5) therefore keeps the first four rungs and drops
+// the last two.
+func candidateScore(r smartRun, count int) float32 {
+	switch {
+	case r.hasSuffix:
+		return 0.95
+	case r.hasTitle:
+		return 0.90
+	case r.words >= 2 && count >= 2:
+		return 0.80
+	case r.words >= 2:
+		return 0.65
+	case count >= 2:
+		return 0.45
+	default:
+		return 0.25
+	}
+}
+
+// keepCandidate applies the SmartDetectOptions filters to one candidate.
+// Split out of SmartDetectWithOptions so each rule is independently
+// testable and so the order of the checks is visible: cheapest first,
+// and the word list before the score, because "this is just the word
+// March" is a better reason to drop something than "it scored low".
+func keepCandidate(text string, r smartRun, count int, score float32, opts SmartDetectOptions) bool {
+	if opts.MinLength > 0 && len([]rune(text)) < opts.MinLength {
+		return false
+	}
+	if opts.MinOccurrences > 1 && count < opts.MinOccurrences {
+		return false
+	}
+	if opts.ExcludeCommonWords && isCommonWordRun(text) {
+		return false
+	}
+	if opts.MinConfidence > 0 && score < opts.MinConfidence {
+		return false
+	}
+	return true
+}
+
+// isCommonWordRun reports whether EVERY significant word of the candidate
+// is an ordinary capitalised word (smartCommonWords). "March" is dropped;
+// "March Consulting" is not, because "Consulting" is not in the list, and
+// a real company can perfectly well be called that.
+//
+// Particles ("de", "van") are skipped like everywhere else, and a run
+// with no significant words at all is not treated as common: that would
+// be a detector bug, and dropping it silently would hide it.
+func isCommonWordRun(text string) bool {
+	significant := 0
+	for _, w := range strings.FieldsFunc(text, func(r rune) bool { return r == ' ' || r == '-' }) {
+		lower := strings.ToLower(strings.Trim(w, ".,;:!?()\"\u2019'"))
+		if lower == "" || smartParticles[lower] {
+			continue
+		}
+		significant++
+		if !smartCommonWords[lower] {
+			return false
+		}
+	}
+	return significant > 0
 }

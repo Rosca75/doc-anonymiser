@@ -14,7 +14,7 @@ import {
   exportMapping, exportReport, saveSession, loadSession,
   getSameFormatMetadata, saveSameFormat,
 } from "../api.js";
-import { getState, setState, buildRunRequest, addEntities, presetCategories, setMetaReview } from "../state.js";
+import { getState, setState, buildRunRequest, addEntities, presetCategories, setMetaReview, SMART_DETECT_DEFAULTS } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { panel, wirePanels, button } from "../ui.js";
 
@@ -285,6 +285,9 @@ function wire(container) {
           // BUILD-04, where 0 is exactly the right default (keep every
           // detection), so an older session behaves as it always did.
           minConfidence: session.settings?.minConfidence ?? 0,
+          // BUILD-04 CR13: absent in older files, where the shipped
+          // defaults are the right thing to fall back to.
+          smartDetect: { ...SMART_DETECT_DEFAULTS, ...(session.settings?.smartDetect ?? {}) },
         },
       });
       addEntities((session.entities ?? []).map((e) => ({

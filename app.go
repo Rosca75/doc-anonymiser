@@ -55,6 +55,11 @@ type Settings struct {
 	// silently remove replacements a user did not ask it to remove. See
 	// engine.FilterByMinConfidence for what each level currently excludes.
 	MinConfidence float32 `json:"minConfidence"`
+	// SmartDetect is the smart-detection tuning (BUILD-04 CR13). It is a
+	// SETTING rather than a per-run argument so it survives in the session
+	// file; RunSmartDetection still receives it explicitly, so a call
+	// always says what it is filtering by.
+	SmartDetect engine.SmartDetectOptions `json:"smartDetect"`
 }
 
 // DocumentInfo is the frontend-facing summary of one loaded Document.
@@ -129,6 +134,9 @@ func NewApp() *App {
 			OllamaPort:  11434,
 			Model:       ollama.DefaultModel,
 			ContextSize: ollama.DefaultContextSize,
+			// The stricter defaults, matching the frontend store: Smart
+			// detection over-detecting was the reported problem.
+			SmartDetect: engine.DefaultSmartDetectOptions(),
 		},
 	}
 }
@@ -323,6 +331,15 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 	if s.MinConfidence < 0 || s.MinConfidence > 1 {
 		return ollama.OllamaStatus{}, fmt.Errorf(
 			"invalid minimum confidence %v, expected a number between 0 (replace every detection) and 1 (replace only the most certain ones)", s.MinConfidence)
+	}
+	if s.SmartDetect.MinConfidence < 0 || s.SmartDetect.MinConfidence > 1 {
+		return ollama.OllamaStatus{}, fmt.Errorf(
+			"invalid smart detection confidence %v, expected a number between 0 (show every suggestion) and 1 (show only the strongest)", s.SmartDetect.MinConfidence)
+	}
+	if s.SmartDetect.MinLength < 0 || s.SmartDetect.MinOccurrences < 0 {
+		return ollama.OllamaStatus{}, fmt.Errorf(
+			"invalid smart detection limits (minimum length %d, minimum occurrences %d), both must be zero or a positive number",
+			s.SmartDetect.MinLength, s.SmartDetect.MinOccurrences)
 	}
 
 	a.mu.Lock()

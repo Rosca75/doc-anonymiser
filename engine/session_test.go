@@ -244,3 +244,51 @@ func TestSessionRoundTripsMinConfidence(t *testing.T) {
 		t.Errorf("MinConfidence = %v, want 0.9", back.Settings.MinConfidence)
 	}
 }
+
+// TestSessionSmartDetectAbsentVersusExplicitZero: the pointer field must
+// tell "an older file said nothing" apart from "the user deliberately
+// turned every filter off" (BUILD-04 CR13). Collapsing the two would
+// silently re-enable filtering for someone who switched it off.
+func TestSessionSmartDetectAbsentVersusExplicitZero(t *testing.T) {
+	legacy, err := LoadSession([]byte(`{"version":1,"settings":{"level":"medium"}}`))
+	if err != nil {
+		t.Fatalf("legacy session: %v", err)
+	}
+	if legacy.Settings.SmartDetect != nil {
+		t.Errorf("an absent smartDetect block must load as nil, got %+v", legacy.Settings.SmartDetect)
+	}
+
+	off := SmartDetectOptions{}
+	raw, err := SaveSession(Session{Settings: SessionSettings{Level: "medium", SmartDetect: &off}})
+	if err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	back, err := LoadSession(raw)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if back.Settings.SmartDetect == nil {
+		t.Fatal("an explicitly all-zero smartDetect block must survive as a present value")
+	}
+	if *back.Settings.SmartDetect != off {
+		t.Errorf("SmartDetect = %+v, want %+v", *back.Settings.SmartDetect, off)
+	}
+}
+
+// TestSessionRoundTripsSmartDetect: the tuning survives save and load.
+func TestSessionRoundTripsSmartDetect(t *testing.T) {
+	want := SmartDetectOptions{
+		MinLength: 6, MinOccurrences: 2, ExcludeCommonWords: true, MinConfidence: 0.8,
+	}
+	raw, err := SaveSession(Session{Settings: SessionSettings{Level: "medium", SmartDetect: &want}})
+	if err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	back, err := LoadSession(raw)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if back.Settings.SmartDetect == nil || *back.Settings.SmartDetect != want {
+		t.Errorf("SmartDetect = %+v, want %+v", back.Settings.SmartDetect, want)
+	}
+}

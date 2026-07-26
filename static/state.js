@@ -73,6 +73,17 @@ const initialState = {
   settings: {
     level: "medium", categories: null, ollamaPort: 11434, model: "",
     contextSize: 8192, useAI: null, minConfidence: 0,
+    // smartDetect is the BUILD-04 CR13 tuning for the offline Smart
+    // detection pass, matching engine.SmartDetectOptions field for field.
+    // The defaults are the STRICTER ones (engine
+    // DefaultSmartDetectOptions), because over-detection was the reported
+    // problem; a user who wants everything back sets them to 0/false.
+    smartDetect: {
+      minLength: 4,
+      minOccurrences: 1,
+      excludeCommonWords: true,
+      minConfidence: 0.5,
+    },
   },
 
   // Entity review state (Phase 7): array of
@@ -272,6 +283,56 @@ export function setMinConfidence(value) {
   }
   setState({ settings: { ...state.settings, minConfidence: value } });
   return value;
+}
+
+// SMART_DETECT_DEFAULTS mirrors engine.DefaultSmartDetectOptions. It is
+// exported so a session loaded from an older file, which has no
+// smartDetect block at all, can be filled with the same defaults a fresh
+// session starts from (BUILD-04 CR13, ground rule 5).
+export const SMART_DETECT_DEFAULTS = {
+  minLength: 4,
+  minOccurrences: 1,
+  excludeCommonWords: true,
+  minConfidence: 0.5,
+};
+
+/**
+ * setSmartDetectOptions(patch) merges a partial tuning into the settings
+ * (BUILD-04 CR13). Only the four known keys are accepted, and each is
+ * validated: a bad value is IGNORED rather than stored, because these
+ * options decide what the user gets to review, and a silently broken one
+ * would look like Smart detection being broken.
+ * @param {object} patch any subset of the four options
+ * @returns {object} the stored options after the merge
+ */
+export function setSmartDetectOptions(patch) {
+  const current = { ...SMART_DETECT_DEFAULTS, ...(state.settings.smartDetect ?? {}) };
+  const next = { ...current };
+  const p = patch ?? {};
+  if (Number.isInteger(p.minLength) && p.minLength >= 0 && p.minLength <= 40) {
+    next.minLength = p.minLength;
+  }
+  if (Number.isInteger(p.minOccurrences) && p.minOccurrences >= 0 && p.minOccurrences <= 100) {
+    next.minOccurrences = p.minOccurrences;
+  }
+  if (typeof p.excludeCommonWords === "boolean") {
+    next.excludeCommonWords = p.excludeCommonWords;
+  }
+  if (typeof p.minConfidence === "number" && !Number.isNaN(p.minConfidence) &&
+      p.minConfidence >= 0 && p.minConfidence <= 1) {
+    next.minConfidence = p.minConfidence;
+  }
+  setState({ settings: { ...state.settings, smartDetect: next } });
+  return next;
+}
+
+/**
+ * smartDetectOptions(s) is the tuning to SEND to Go: the stored options
+ * with every default filled in, so a session written before CR13 (no
+ * smartDetect block) still produces a complete payload.
+ */
+export function smartDetectOptions(s = state) {
+  return { ...SMART_DETECT_DEFAULTS, ...(s.settings.smartDetect ?? {}) };
 }
 
 /**
@@ -628,14 +689,52 @@ export function updateCandidate(text, patch) {
   return true;
 }
 
-/** acceptAllInCategory(category) bulk-accepts every candidate currently
- *  assigned to the category; returns how many entities were added. */
-export function acceptAllInCategory(category) {
-  const batch = state.candidates.filter((c) => c.category === category);
+/**
+ * bulkSelection(category, onlyTexts) is the shared row picker for the two
+ * bulk actions (BUILD-04 CR15). Returns a predicate over candidates.
+ *
+ * onlyTexts, when given, restricts the action to those exact values. The
+ * Values screen always passes the currently FILTERED set, so a bulk
+ * button acts on exactly the rows the user can see and never on rows a
+ * search box is hiding. Omitting it keeps the original whole-category
+ * behaviour, which is what a caller with no filter wants.
+ */
+function bulkSelection(category, onlyTexts) {
+  const allowed = onlyTexts ? new Set(onlyTexts.map(candidateKey)) : null;
+  return (c) => c.category === category && (!allowed || allowed.has(candidateKey(c.text)));
+}
+
+/**
+ * acceptAllInCategory(category, onlyTexts) bulk-accepts candidates of a
+ * category, optionally restricted to onlyTexts; returns how many entities
+ * were added.
+ */
+export function acceptAllInCategory(category, onlyTexts) {
+  const inBatch = bulkSelection(category, onlyTexts);
+  const batch = state.candidates.filter(inBatch);
   if (!batch.length) return 0;
   const added = addEntities(batch.map((c) => ({ category: c.category, canonical: c.text })));
-  setState({ candidates: state.candidates.filter((c) => c.category !== category) });
+  setState({ candidates: state.candidates.filter((c) => !inBatch(c)) });
   return added;
+}
+
+/**
+ * denyAllInCategory(category, onlyTexts) is the mirror of
+ * acceptAllInCategory (BUILD-04 CR15): it DROPS the candidates instead of
+ * promoting them, exactly as rejectCandidate does one at a time. Nothing
+ * is added to the entity list and nothing is remembered, so a denied
+ * suggestion simply stops taking up review space.
+ *
+ * @param {string} category the engine category key
+ * @param {string[]} [onlyTexts] restrict to these values (the filtered set)
+ * @returns {number} how many candidates were removed
+ */
+export function denyAllInCategory(category, onlyTexts) {
+  const inBatch = bulkSelection(category, onlyTexts);
+  const removed = state.candidates.filter(inBatch).length;
+  if (!removed) return 0;
+  setState({ candidates: state.candidates.filter((c) => !inBatch(c)) });
+  return removed;
 }
 
 // --- Variant regrouping (BUILD-02 Phase 9d) -----------------------------------

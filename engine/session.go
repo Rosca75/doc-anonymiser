@@ -36,6 +36,11 @@ type SessionSettings struct {
 	// which is exactly the "keep every detection" default: an older
 	// session therefore reproduces its original behaviour.
 	MinConfidence float32 `json:"minConfidence,omitempty"`
+	// SmartDetect is the BUILD-04 CR13 smart-detection tuning. A pointer
+	// so "absent" (an older file) is distinguishable from "present and
+	// all zeroes" (a user who deliberately turned every filter off): the
+	// first fills the defaults, the second must be obeyed.
+	SmartDetect *SmartDetectOptions `json:"smartDetect,omitempty"`
 }
 
 // Session is the complete persistable session state.
