@@ -17,7 +17,7 @@ import {
 } from "./state.js";
 import { escapeHTML } from "./html.js";
 import { button, banner } from "./ui.js";
-import { topnavHTML, workflowBannerHTML, showDocumentation } from "./shell.js";
+import { topnavHTML, workflowBannerHTML, headerActionsHTML, appFooterHTML, showDocumentation } from "./shell.js";
 import { STEP_BANNERS, NAV } from "./copy.js";
 import { renderHome } from "./views/home.js";
 import { renderImport } from "./views/import.js";
@@ -142,21 +142,19 @@ function paint(root) {
 
   root.innerHTML = `
     <header class="topbar">
-      <div class="brand">doc-anonymiser</div>
+      <div class="brand">Doc Anonymiser</div>
       ${topnav}
-      <div class="badges">
-        ${bridgeBadge(s)}
-        ${ollamaBadge(s)}
-      </div>
+      ${headerActionsHTML(`${bridgeBadge(s)}${ollamaBadge(s)}`)}
     </header>
     ${workflow}
     ${shellErrorBanner(s)}
     <main id="view"></main>
     ${isWizard ? `
-    <footer class="navbar">
+    <div class="navbar">
       ${button("Back", { kind: "secondary", id: "nav-back", icon: "arrow_back", disabled: s.step === "import" })}
       ${button("Next", { kind: "primary", id: "nav-next", icon: "arrow_forward", disabled: !canAdvance(s) })}
-    </footer>` : ""}
+    </div>` : ""}
+    ${appFooterHTML()}
   `;
 
   root.querySelector("#nav-home").addEventListener("click", () => goToScreen("home"));
@@ -166,6 +164,11 @@ function paint(root) {
   // open it is a chrome-level problem, so it surfaces in the shell
   // banner rather than inside whichever view happens to be visible.
   root.querySelector("#nav-docs").addEventListener("click", showDocumentation);
+  // The header's Help icon is a second entry point to the same action
+  // (BUILD-05 CR2, from the Claude Design mockup). Settings has no
+  // click handler yet: there is no settings surface to open, so the
+  // button renders for layout only until that screen exists.
+  root.querySelector("#header-help").addEventListener("click", showDocumentation);
   root.querySelector("#shell-error-dismiss")?.addEventListener("click", () => setState({ shellError: null }));
 
   const view = root.querySelector("#view");

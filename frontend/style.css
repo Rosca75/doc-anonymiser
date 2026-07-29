@@ -31,27 +31,42 @@ h1, h2, h3, h4 {
 
 /* --- Shell: header, top navigation, steps, footer ----------------------- */
 
+/* Grid, not flex (BUILD-05 CR2, from the Claude Design mockup): a 3-column
+   1fr/auto/1fr track keeps the nav truly centred regardless of how wide the
+   brand mark or the right-hand action cluster are, instead of the flex
+   layout's "nav takes the leftover space" approximation. */
 .topbar {
-  display: flex; align-items: center; gap: 1.25rem;
-  padding: 0.6rem 1rem;
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  gap: 1.25rem;
+  padding: 0 2.5rem;
+  height: 5rem;
   background: var(--bg);
   border-bottom: 1px solid var(--gray-4);
 }
 
-.brand { font-family: var(--font-heading); font-size: 1.05rem; }
+/* The wordmark is a logotype, not a content heading, so it sits outside the
+   h1-h4 "never bold" rule (BUILD-04 CR2): bold is how the mockup marks it
+   as chrome rather than page content. */
+.brand { font-family: var(--font-heading); font-weight: 700; font-size: 1.6rem; letter-spacing: -0.01em; }
 
-/* Permanent top menu (Home / Anonymise documents / Documentation). The
-   same three buttons render on every screen (BUILD-04 CR4); flex: 1 lets
-   it take the space the step chips used to occupy. */
-.topnav { display: flex; gap: 0.25rem; flex: 1; }
-
-/* The active menu entry is marked QUIETLY: a grey fill and a grey
-   underline, never orange. The one loud element per view belongs to the
-   view, not to the chrome. */
-.topnav .topnav-active {
-  background: var(--gray-5);
-  box-shadow: inset 0 -2px 0 var(--gray-1);
+/* Permanent top menu (Home / Anonymise documents / Documentation), styled
+   as plain text links (BUILD-05 CR3, from the Claude Design mockup): no
+   icon, no button fill or border, centred in its own grid column. */
+.topnav { display: flex; gap: 2.5rem; justify-self: center; }
+.topnav .btn-ghost {
+  background: none; border: none; border-radius: 0;
+  padding: 0.3rem 0; font-size: 1rem;
+  border-bottom: 2px solid transparent;
 }
+.topnav .btn-ghost:hover { background: none; border-bottom-color: var(--gray-3); }
+
+/* The active menu entry is marked QUIETLY: a grey underline, never a fill
+   and never orange. The one loud element per view belongs to the view,
+   not to the chrome. */
+.topnav .topnav-active {
+  border-bottom-color: var(--gray-1);
+}
+.topnav .topnav-active:hover { border-bottom-color: var(--gray-1); }
 
 /* Anonymisation workflow banner (BUILD-04 CR7): the five step chips moved
    out of the header into this strip, which appears only on the wizard
@@ -77,7 +92,21 @@ h1, h2, h3, h4 {
 .chip.active { border-bottom-color: var(--accent); background: var(--gray-6); }
 .chip.disabled { opacity: 0.45; cursor: not-allowed; }
 
+/* Right-hand header cluster (BUILD-05 CR2): the live status badges, then
+   the Help/Settings icon buttons from the mockup, justified to the grid's
+   third column. */
+.header-actions { display: flex; align-items: center; gap: 1.25rem; justify-self: end; }
 .badges { display: flex; gap: 0.5rem; }
+
+/* Icon-only buttons carry no visible label (accessible name comes from
+   aria-label, ui.js button()'s ariaLabel option), so they are sized and
+   coloured as quiet icon chrome rather than as a text button. */
+.header-actions .icon-btn {
+  width: 2rem; height: 2rem; padding: 0; border: none;
+  background: none; color: var(--gray-1);
+}
+.header-actions .icon-btn:hover { background: none; color: var(--text); }
+.header-actions .icon-btn .icon svg { width: 1.4em; height: 1.4em; }
 
 /* #view is the scroll owner AND a flex column, so a step view can ask to
    fill the leftover height instead of collapsing to its content
@@ -100,6 +129,20 @@ main#view {
   background: var(--bg);
   border-top: 1px solid var(--gray-4);
 }
+
+/* Permanent app footer (BUILD-05 CR2), shown under every screen: the
+   version string and the local-processing reassurance from the mockup. */
+.appfooter {
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 2.5rem; height: 3.5rem;
+  background: var(--bg);
+  border-top: 1px solid var(--gray-4);
+  font-size: 0.85rem; color: var(--muted);
+}
+.local-processing { display: flex; align-items: center; gap: 0.55rem; }
+/* Status colour is functional (processing IS local), not decorative. */
+.status-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--ok); }
 
 /* --- Buttons (ui.js kinds) ---------------------------------------------- */
 
@@ -237,12 +280,57 @@ input, select {
 
 /* --- Home / documentation screens ---------------------------------------- */
 
-.home-view { max-width: 60rem; margin: 0 auto; padding-top: 2rem; }
-.home-view h1 { font-size: 2rem; margin: 0 0 0.5rem; }
+/* Two columns: the hero card grows to fill the space, the five-steps
+   sidebar keeps a fixed measure. Wrapping lets the sidebar drop under the
+   hero instead of squeezing it on a narrow window. */
+.home-view {
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 2.5rem;
+  max-width: 72rem; margin: 0 auto; padding-top: 1.5rem;
+}
+.home-main {
+  flex: 1 1 26rem; min-width: 0;
+  display: flex; flex-direction: column; align-items: center;
+}
+.home-hero {
+  width: 100%; max-width: 42rem; text-align: center;
+  background: var(--bg); border: 1px solid var(--gray-4); border-radius: 8px;
+  padding: 3rem 3.5rem;
+}
+.home-hero h1 { font-size: 2rem; margin: 0 0 1.5rem; }
 /* The landing page body is three paragraphs (BUILD-04 CR1), each rendered
    as .home-lede. A readable measure matters more than filling the width. */
-.home-lede { color: var(--text); max-width: 42rem; line-height: 1.5; margin: 0 0 1rem; }
-.home-actions { display: flex; gap: 0.75rem; margin-top: 1.5rem; }
+.home-lede { color: var(--text); line-height: 1.6; margin: 0; text-align: left; }
+.home-lede + .home-lede { margin-top: 1rem; }
+.home-actions { display: flex; flex-direction: column; align-items: center; gap: 1rem; margin-top: 2rem; }
+/* The documentation action reads as a plain text link, not a second button,
+   so the primary button stays the one loud element in the actions row. */
+.home-docs-link { padding: 0; }
+.home-docs-link:hover { background: none; color: var(--accent); text-decoration: underline; }
+
+/* Decorative reinforcement of the three paragraphs above (control, review,
+   local or connected processing); purely visual, so the row is hidden from
+   assistive technology rather than read out with no text of its own. */
+.home-badges { display: flex; gap: 1.75rem; margin-top: 2.5rem; color: var(--gray-2); }
+.home-badges .icon svg { width: 1.9em; height: 1.9em; }
+
+/* Five-steps sidebar: a quiet explainer next to the hero, not a second
+   call to action, so it stays grey and gets no orange of its own. */
+.home-steps {
+  width: 20rem; flex: none;
+  border-left: 1px solid var(--gray-4); padding: 0.25rem 0 0 1.75rem;
+}
+.home-steps-title {
+  font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 1.1rem;
+}
+.home-steps-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1.1rem; }
+.home-step { display: flex; gap: 0.7rem; align-items: flex-start; }
+.home-step-check {
+  flex: none; width: 1rem; height: 1rem; margin-top: 0.2rem;
+  border: 1px solid var(--gray-3); border-radius: 4px; background: var(--bg);
+}
+.home-step-label { font-size: 0.9rem; margin-bottom: 0.2rem; }
+.home-step-body { font-size: 0.8rem; line-height: 1.45; color: var(--muted); }
 
 /* --- Import view ---------------------------------------------------------- */
 

@@ -44,6 +44,15 @@ export const WORKFLOW = {
   title: "Anonymisation workflow",
 };
 
+// FOOTER: the permanent strip under every screen (BUILD-05 CR2), matching
+// the Claude Design mockup's welcome page. version is the same string as
+// wails.json productVersion; there is no bound Go method to read it live
+// yet, so it is a plain literal here until that wiring exists.
+export const FOOTER = {
+  version: "Version 0.1.0",
+  localProcessing: "Local processing only",
+};
+
 // NAV: navigation copy (BUILD-04 CR16). Going BACK through the wizard
 // resets the step being left, so the user is asked first, in words that
 // say what will and will not be lost.
@@ -63,13 +72,20 @@ export const NAV = {
   },
 };
 
-// Home page copy (BUILD-02 Phase 2b, rewritten for BUILD-04 CR1).
+// Home page copy (BUILD-02 Phase 2b, rewritten for BUILD-04 CR1, sidebar
+// added in BUILD-05 CR1).
 //
 // The body is an ARRAY of three paragraphs, rendered one <p> each by
 // views/home.js. The three cover, in order: who stays in control, the two
 // ways sensitive information is found, and where the processing happens.
 // They replace the former single lede plus three feature panels, which said
 // the same three things twice.
+//
+// `steps` feeds the "five steps" sidebar next to the hero: a plain-language
+// walk through the wizard so a first-time user knows what they are signing
+// up for before they click Anonymise documents. The labels here are
+// display-only; they are deliberately not the wizard's own step tokens
+// (state.js WIZARD_STEPS) or NAV.stepNames, which keep "Values" and "Run".
 export const HOME = {
   headline: "Anonymise your documents safely",
   body: [
@@ -77,6 +93,15 @@ export const HOME = {
     "You remain in control throughout the process. Choose from a wide range of predefined patterns or use AI-powered discovery to identify information that may need to be anonymised. You can then review what has been detected and decide which data to replace.",
     "Depending on your security and confidentiality requirements, you can run the entire process locally or connect to an AI endpoint.",
   ],
+  stepsTitle: "The five steps",
+  steps: [
+    { label: "Import", body: "Drop in .docx, .pptx, .xlsx, .pdf, .csv, .md or .txt files. Your originals are only ever read, never changed." },
+    { label: "Configure", body: "Pick a preset, then fine-tune the 23 detection categories to fit the document." },
+    { label: "Identify", body: "Go through every candidate one by one. Nothing is replaced until you accept it." },
+    { label: "Anonymise", body: "Check the result side by side, with every replacement mapped back to its original." },
+    { label: "Export", body: "Save the anonymised copies, the report and the re-identification key." },
+  ],
+  docsLink: "Read the documentation",
 };
 
 // The documentation placeholder page was retired by BUILD-04 CR6: real

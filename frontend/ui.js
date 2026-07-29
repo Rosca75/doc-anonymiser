@@ -41,6 +41,9 @@ export function icon(name) {
  *   (aria-current="page"): used by the permanent top menu to announce the
  *   active screen to assistive technology, since the highlight is a quiet
  *   visual one (BUILD-04 CR4).
+ * @param {string} [opts.ariaLabel] accessible name for an icon-only button
+ *   (no visible label): the header's Help/Settings icon buttons need one
+ *   since they render no text.
  * @returns {string} safe HTML
  */
 export function button(label, opts = {}) {
@@ -52,6 +55,7 @@ export function button(label, opts = {}) {
     opts.disabled ? "disabled" : "",
     opts.title ? `title="${escapeHTML(opts.title)}"` : "",
     opts.current ? `aria-current="page"` : "",
+    opts.ariaLabel ? `aria-label="${escapeHTML(opts.ariaLabel)}"` : "",
   ];
   for (const [k, v] of Object.entries(opts.data ?? {})) {
     attrs.push(`data-${escapeHTML(k)}="${escapeHTML(v)}"`);
