@@ -27,7 +27,7 @@ import (
 
 	"github.com/go-pdf/fpdf"
 
-	"doc-anonymiser/engine"
+	"doc-anonymiser/backend/engine"
 )
 
 // pdfInfoFields are the Info-dictionary keys offered for review

@@ -1,7 +1,7 @@
 // app_hardening_test.go — Phase 10 tests: error-message format, the
 // large-file truncated preview, and mid-run Ollama failure degrading the
 // LLM pass instead of failing the batch.
-package main
+package backend
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"doc-anonymiser/engine"
-	"doc-anonymiser/ollama"
+	"doc-anonymiser/backend/engine"
+	"doc-anonymiser/backend/ollama"
 )
 
 // TestErrorMessageFormat samples representative user-facing errors and

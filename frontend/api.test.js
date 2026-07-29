@@ -24,7 +24,9 @@ async function withStubBridge(app, openImpl, fn) {
   const previous = globalThis.window;
   const calls = [];
   globalThis.window = {
-    go: { main: { App: app } },
+    // Namespace mirrors the real Wails binding: App lives in package
+    // backend, so it is exposed as window.go.backend.App (see api.js).
+    go: { backend: { App: app } },
     open: (...args) => {
       calls.push(args);
       return openImpl(...args);

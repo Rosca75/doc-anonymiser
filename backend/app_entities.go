@@ -2,7 +2,7 @@
 // LLM discovery over selected files, variant expansion for the review
 // table, and custom-pattern validation/testing. Thin adapters only
 // (CLAUDE.md §3): all logic lives in engine/* and ollama/*.
-package main
+package backend
 
 import (
 	"context"
@@ -10,8 +10,8 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"doc-anonymiser/engine"
-	"doc-anonymiser/ollama"
+	"doc-anonymiser/backend/engine"
+	"doc-anonymiser/backend/ollama"
 )
 
 // runtimeEventsEmit is an indirection over the Wails event runtime so unit

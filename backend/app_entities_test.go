@@ -1,7 +1,7 @@
 // app_entities_test.go — Phase 7 Go-side tests: the ExpandEntityVariants
 // bound-method adapter and multi-file discovery merge/dedupe against a
 // mocked Ollama server (zero real network).
-package main
+package backend
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"doc-anonymiser/engine"
-	"doc-anonymiser/ollama"
+	"doc-anonymiser/backend/engine"
+	"doc-anonymiser/backend/ollama"
 )
 
 // newTestApp builds an App whose Ollama client points at a mock server

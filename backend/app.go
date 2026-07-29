@@ -2,14 +2,14 @@
 // frontend and Go: every method here must be a thin adapter that delegates
 // straight to engine/* or ollama/* (CLAUDE.md §3 — no business logic in
 // this file). The frontend calls these methods exclusively through
-// static/api.js.
+// frontend/api.js.
 //
 // app.go is also the only place allowed to touch the filesystem paths the
 // user picks (dialogs, drag-drop): it reads the bytes ONCE and hands them
 // to the engine — the engine itself never sees a path (CLAUDE.md §4), and
 // nothing is ever written back to a source file ("originals are
 // immutable").
-package main
+package backend
 
 import (
 	"context"
@@ -20,8 +20,8 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"doc-anonymiser/engine"
-	"doc-anonymiser/ollama"
+	"doc-anonymiser/backend/engine"
+	"doc-anonymiser/backend/ollama"
 )
 
 // Settings are the user-tweakable options (Configure screen): level (the
@@ -141,11 +141,15 @@ func NewApp() *App {
 	}
 }
 
-// startup is called by Wails once the runtime is ready (see main.go).
+// Startup is called by Wails once the runtime is ready (see main.go).
 // It also registers the drag-and-drop handler: dropped files go through
 // the exact same validation as dialog-picked ones (CLAUDE.md §5 requires
 // rejection on drop too, because drop bypasses the dialog filter).
-func (a *App) startup(ctx context.Context) {
+//
+// It is exported because main.go (package main) wires it as the Wails
+// OnStartup hook and can only reach exported methods across the package
+// boundary introduced by the backend/ split.
+func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 	runtime.OnFileDrop(ctx, func(x, y int, paths []string) {
 		result := a.importPaths(paths)
@@ -170,12 +174,15 @@ func (a *App) ProbeOllama() ollama.OllamaStatus {
 
 // --- Documentation window (BUILD-04 CR6) -------------------------------------
 
-// documentationAsset is the path, relative to the asset server root, of
-// the bundled documentation page. It lives under static/ and is therefore
-// already inside the //go:embed all:static directive in main.go: the
+// DocumentationAsset is the path, relative to the asset server root, of
+// the bundled documentation page. It lives under frontend/ and is therefore
+// already inside the //go:embed all:frontend directive in main.go: the
 // documentation window loads embedded bytes and nothing else, so the
 // local-only guarantee (CLAUDE.md section 4) is untouched.
-const documentationAsset = "docs/index.html"
+//
+// It is exported so the root package's embed_test.go (which owns the
+// embedded filesystem) can assert this exact path is present in the binary.
+const DocumentationAsset = "docs/index.html"
 
 // DocumentationURL returns where the bundled documentation lives, so the
 // frontend can open it in a separate window without hardcoding the path.
@@ -188,9 +195,9 @@ const documentationAsset = "docs/index.html"
 // project must not use. So Go owns WHERE the documentation is (it is Go
 // that embeds it) and the frontend opens it with window.open, which the
 // WebView creates as a real separate window served by this same embedded
-// asset server. See static/api.js openDocumentation.
+// asset server. See frontend/api.js openDocumentation.
 func (a *App) DocumentationURL() string {
-	return documentationAsset
+	return DocumentationAsset
 }
 
 // --- Import ---------------------------------------------------------------

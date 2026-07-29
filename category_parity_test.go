@@ -3,11 +3,11 @@
 //
 // The bug this exists to prevent already happened once: BUILD-03 added
 // eight recognizers to engine/pii.go and engine/pipeline.go, and nobody
-// added them to static/state.js. They detected nothing in practice,
+// added them to frontend/state.js. They detected nothing in practice,
 // because the Configure screen never sent a switch for them and never
 // showed one either. Nothing failed; the feature was simply invisible.
 //
-// So this test reads static/state.js, extracts the category key lists it
+// So this test reads frontend/state.js, extracts the category key lists it
 // declares, and compares that set against the categories the Go engine
 // actually knows. A recognizer added on one side and forgotten on the
 // other now breaks the build with a message naming it.
@@ -25,7 +25,7 @@ import (
 	"strings"
 	"testing"
 
-	"doc-anonymiser/engine"
+	"doc-anonymiser/backend/engine"
 )
 
 // categoryListRe matches `export const NAME = ["a", "b", ...];` including
@@ -41,9 +41,9 @@ var quotedRe = regexp.MustCompile(`"([a-z0-9_]+)"`)
 // the constant it came from, plus the flat union of all of them.
 func frontendCategories(t *testing.T) (map[string][]string, map[string]bool) {
 	t.Helper()
-	raw, err := os.ReadFile("static/state.js")
+	raw, err := os.ReadFile("frontend/state.js")
 	if err != nil {
-		t.Fatalf("could not read static/state.js: %v", err)
+		t.Fatalf("could not read frontend/state.js: %v", err)
 	}
 
 	byList := map[string][]string{}
@@ -62,7 +62,7 @@ func frontendCategories(t *testing.T) (map[string][]string, map[string]bool) {
 	}
 
 	if len(byList) == 0 {
-		t.Fatal("found no `export const ..._CATEGORIES = [...]` list in static/state.js; " +
+		t.Fatal("found no `export const ..._CATEGORIES = [...]` list in frontend/state.js; " +
 			"this guard cannot work, fix the parser or the declaration style")
 	}
 	return byList, union
@@ -83,8 +83,8 @@ func TestEveryEngineCategoryIsKnownToTheFrontend(t *testing.T) {
 
 	if len(missing) > 0 {
 		t.Errorf("the Go engine detects categories the Configure screen never shows or sends: %s\n"+
-			"Add each one to a list in static/state.js, to CATEGORY_LABELS in static/copy.js, "+
-			"and to a group in static/views/configure.js. Detecting a category the UI cannot "+
+			"Add each one to a list in frontend/state.js, to CATEGORY_LABELS in frontend/copy.js, "+
+			"and to a group in frontend/views/configure.js. Detecting a category the UI cannot "+
 			"switch means it is silently inactive (BUILD-04 CR9).",
 			strings.Join(missing, ", "))
 	}
@@ -110,7 +110,7 @@ func TestFrontendInventsNoCategory(t *testing.T) {
 	sort.Strings(unknown)
 
 	if len(unknown) > 0 {
-		t.Errorf("static/state.js lists categories the engine does not know: %s\n"+
+		t.Errorf("frontend/state.js lists categories the engine does not know: %s\n"+
 			"A switch for a category no pass reads does nothing at all.",
 			strings.Join(unknown, ", "))
 	}
@@ -139,9 +139,9 @@ func TestEveryEngineCategoryHasAFrontendLabel(t *testing.T) {
 	// A category with no CATEGORY_LABELS entry renders as its raw
 	// identifier ("de_steuer_id") with no example, which is exactly the
 	// unexplained jargon the copy rules forbid.
-	raw, err := os.ReadFile("static/copy.js")
+	raw, err := os.ReadFile("frontend/copy.js")
 	if err != nil {
-		t.Fatalf("could not read static/copy.js: %v", err)
+		t.Fatalf("could not read frontend/copy.js: %v", err)
 	}
 	copyJS := string(raw)
 
@@ -156,7 +156,7 @@ func TestEveryEngineCategoryHasAFrontendLabel(t *testing.T) {
 	sort.Strings(missing)
 
 	if len(missing) > 0 {
-		t.Errorf("no CATEGORY_LABELS entry in static/copy.js for: %s\n"+
+		t.Errorf("no CATEGORY_LABELS entry in frontend/copy.js for: %s\n"+
 			"Each needs a plain-language label and one example.",
 			strings.Join(missing, ", "))
 	}

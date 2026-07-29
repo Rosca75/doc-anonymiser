@@ -24,7 +24,7 @@ import (
 	"io"
 	"sort"
 
-	"doc-anonymiser/engine"
+	"doc-anonymiser/backend/engine"
 )
 
 // Config bundles everything the rewriters need to reproduce the body

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"doc-anonymiser/engine"
+	"doc-anonymiser/backend/engine"
 )
 
 // newTestClient points a Client at a mock server. httptest serves on

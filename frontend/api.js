@@ -1,9 +1,15 @@
 // api.js, THE ONLY file allowed to call Go bound methods (CLAUDE.md §4).
 //
-// Wails exposes bound Go methods as window.go.main.App.<Method>, each
+// Wails exposes bound Go methods as window.go.backend.App.<Method>, each
 // returning a Promise, and runtime events on window.runtime. Every
 // view/module must go through these wrappers so the Go↔JS surface stays
 // greppable in exactly one place.
+//
+// The namespace is "backend" (not "main") because the App struct lives in
+// package backend (backend/app.go). Wails derives the window.go.<pkg>.<Struct>
+// path from the bound struct's package, so the backend/ split moved this
+// from window.go.main.App to window.go.backend.App. If every bound call ever
+// starts throwing "Wails bridge not available", check this namespace first.
 
 /**
  * bridge() returns the bound App object, or throws a readable error when
@@ -11,7 +17,7 @@
  * browser instead of the app window).
  */
 function bridge() {
-  const app = window.go?.main?.App;
+  const app = window.go?.backend?.App;
   if (!app) {
     throw new Error(
       "Wails bridge not available. This page must run inside the " +

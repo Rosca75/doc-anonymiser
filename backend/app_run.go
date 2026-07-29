@@ -2,13 +2,13 @@
 // execution in a goroutine with progress events, cancellation, and the
 // fast "something missed?" re-run path. Thin adapters (CLAUDE.md §3) —
 // the engine does all the work.
-package main
+package backend
 
 import (
 	"context"
 	"fmt"
 
-	"doc-anonymiser/engine"
+	"doc-anonymiser/backend/engine"
 )
 
 // RunRequest is the frontend's pipeline configuration: the reviewed

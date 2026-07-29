@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"doc-anonymiser/engine"
+	"doc-anonymiser/backend/engine"
 )
 
 // buildPropsDocx assembles a minimal docx with authored core, app and

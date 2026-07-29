@@ -3,15 +3,16 @@
 // UI copy rule (BUILD-02 ground rule 4): no em dashes (U+2014) in any
 // user-visible string. Go user-visible strings are error messages, report
 // text and prompt/status strings, all of which live in string LITERALS in
-// app*.go, engine/ and ollama/. This test parses those files and fails
-// listing file:line for every string literal containing an em dash, so the
-// style rule is enforced by CI forever, not by reviewer memory.
+// backend/app*.go, backend/engine/ and backend/ollama/. This test parses
+// those files and fails listing file:line for every string literal
+// containing an em dash, so the style rule is enforced by CI forever, not by
+// reviewer memory.
 //
 // Comments are deliberately NOT scanned: they are developer-facing and em
 // dashes are fine prose there. Test files are skipped too (their literals
 // assert on content, they are never shown to users).
 //
-// The matching frontend guard is static/copy.test.js.
+// The matching frontend guard is frontend/copy.test.js.
 package main
 
 import (
@@ -26,7 +27,10 @@ import (
 )
 
 // guardedDirs are the source trees whose string literals reach users.
-var guardedDirs = []string{".", "engine", "engine/convert", "engine/exportfmt", "ollama"}
+// Paths are relative to the repo root (this test's working directory). The
+// backend/ split moved the app layer and the logic packages under backend/,
+// so the guard now walks there; "." still covers the root main package.
+var guardedDirs = []string{".", "backend", "backend/engine", "backend/engine/convert", "backend/engine/exportfmt", "backend/ollama"}
 
 func TestNoEmDashInUserFacingStrings(t *testing.T) {
 	var hits []string

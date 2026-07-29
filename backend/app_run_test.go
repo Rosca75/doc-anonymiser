@@ -1,7 +1,7 @@
 // app_run_test.go — Phase 8 Go tests: cancellation stops the pipeline
 // between documents, and the fast re-run path applies a new entity without
 // touching the LLM again.
-package main
+package backend
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"doc-anonymiser/engine"
-	"doc-anonymiser/ollama"
+	"doc-anonymiser/backend/engine"
+	"doc-anonymiser/backend/ollama"
 )
 
 func TestRunPipelineCancellation(t *testing.T) {

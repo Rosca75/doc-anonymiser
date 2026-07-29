@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	"doc-anonymiser/engine"
+	"doc-anonymiser/backend/engine"
 )
 
 // DefaultBaseURL is the standard Ollama endpoint on the local machine.

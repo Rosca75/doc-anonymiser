@@ -12,8 +12,8 @@ import (
 	"bytes"
 	ledongthuc "github.com/ledongthuc/pdf"
 
-	"doc-anonymiser/engine"
-	"doc-anonymiser/engine/convert"
+	"doc-anonymiser/backend/engine"
+	"doc-anonymiser/backend/engine/convert"
 )
 
 // pdfFixture loads a committed PDF fixture.

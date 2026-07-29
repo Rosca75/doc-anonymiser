@@ -16,7 +16,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"doc-anonymiser/engine/convert"
+	"doc-anonymiser/backend/engine/convert"
 )
 
 // Format identifies which supported input format a Document was loaded

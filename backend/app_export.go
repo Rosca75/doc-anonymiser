@@ -4,7 +4,7 @@
 // is ever written without the user choosing a destination (CLAUDE.md §5),
 // and no source file is ever overwritten (originals are immutable; all
 // suggested filenames carry the _anon suffix or a distinct extension).
-package main
+package backend
 
 import (
 	"encoding/json"
@@ -13,8 +13,8 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"doc-anonymiser/engine"
-	"doc-anonymiser/engine/exportfmt"
+	"doc-anonymiser/backend/engine"
+	"doc-anonymiser/backend/engine/exportfmt"
 )
 
 // findResultDoc returns the anonymised document by name, or an actionable
