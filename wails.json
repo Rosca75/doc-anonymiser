@@ -2,7 +2,7 @@
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "doc-anonymiser",
   "outputfilename": "doc-anonymiser",
-  "assetdir": "static",
+  "assetdir": "frontend",
   "frontend:install": "",
   "frontend:build": "",
   "frontend:dev:watcher": "",

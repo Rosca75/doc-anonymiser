@@ -9,7 +9,7 @@
 //
 // So this walks the embedded filesystem itself rather than the source
 // tree, and checks two things: the documentation is present, and nothing
-// under static/ references a remote origin (CLAUDE.md section 4).
+// under frontend/ references a remote origin (CLAUDE.md section 4).
 package main
 
 import (
@@ -18,18 +18,21 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"doc-anonymiser/backend"
 )
 
 // requiredAssets must all be present in the embedded filesystem for the
-// application to work offline.
+// application to work offline. The paths carry the frontend/ prefix because
+// //go:embed all:frontend bakes the folder name into every embedded path.
 var requiredAssets = []string{
-	"static/index.html",
-	"static/brand.css",
-	"static/style.css",
-	"static/main.js",
+	"frontend/index.html",
+	"frontend/brand.css",
+	"frontend/style.css",
+	"frontend/main.js",
 	// BUILD-04 CR6: the documentation window's page and its stylesheet.
-	"static/docs/index.html",
-	"static/docs/docs.css",
+	"frontend/docs/index.html",
+	"frontend/docs/docs.css",
 }
 
 func TestRequiredAssetsAreEmbedded(t *testing.T) {
@@ -46,10 +49,10 @@ func TestDocumentationAssetMatchesTheBoundPath(t *testing.T) {
 	// app.go tells the frontend where the documentation lives. If that
 	// path and the embedded file ever drift, the Documentation menu entry
 	// opens an empty window.
-	full := path.Join("static", documentationAsset)
+	full := path.Join("frontend", backend.DocumentationAsset)
 	if _, err := fs.Stat(assets, full); err != nil {
 		t.Errorf("DocumentationURL() returns %q, but %q is not embedded: %v",
-			documentationAsset, full, err)
+			backend.DocumentationAsset, full, err)
 	}
 }
 
@@ -82,7 +85,7 @@ func TestNoEmbeddedAssetReferencesARemoteOrigin(t *testing.T) {
 		return false
 	}
 
-	err := fs.WalkDir(assets, "static", func(name string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(assets, "frontend", func(name string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

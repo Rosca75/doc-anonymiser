@@ -67,7 +67,7 @@ jobs:
       # Dev-time frontend store tests: plain `node --test`, zero npm
       # dependencies (node ships on the runner; see BUILD.md Phase 6).
       - name: frontend store tests (node --test)
-        run: node --test static/*.test.js
+        run: node --test frontend/*.test.js
 
       # Build sanity only — we do not ship the Linux CI binary from here
       # (release.yml handles real artefacts on tags).

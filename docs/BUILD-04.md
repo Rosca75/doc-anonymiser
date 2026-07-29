@@ -1,5 +1,10 @@
 # BUILD-04.md — UI correctness and feature-surfacing build plan
 
+> **Path note (repo restructure, 2026-07):** This is a historical plan.
+> References to `static/...` and to root-level Go files now live under
+> `frontend/...` and `backend/...` respectively. The authoritative current
+> layout is `CLAUDE.md` §3.
+
 You are executing the fourth build plan for doc-anonymiser. BUILD.md produced
 v1. BUILD-02.md delivered the functional-improvements pass. BUILD-03.md added a
 Presidio-benchmarked deterministic detection layer (extended recognizers,

@@ -1,5 +1,10 @@
 # CHANGE-01 — Extend supported inputs to .docx, .pptx, .xlsx, .pdf
 
+> **Path note (repo restructure, 2026-07):** This is a historical plan.
+> References to `static/...` and to root-level Go files now live under
+> `frontend/...` and `backend/...` respectively. The authoritative current
+> layout is `CLAUDE.md` §3.
+
 You are executing a change order against the existing **doc-anonymiser** repository (bootstrapped from INITIALISATION.md, pattern P0 — pure Go + Wails v2). The original scope limited inputs to `.txt`, `.csv`, `.md`; that was a specification error. The application must additionally import **`.docx`, `.pptx`, `.xlsx`, `.pdf`**, converting them to markdown on import (the nb1 notebook capability), so the fixed process — 1) convert to markdown, 2) anonymise, 3) export — applies to all seven formats.
 
 Ground rules for this change order:

@@ -1,5 +1,10 @@
 # Presidio Benchmark and Improvement Plan
 
+> **Path note (repo restructure, 2026-07):** This is a historical plan.
+> References to `static/...` and to root-level Go files now live under
+> `frontend/...` and `backend/...` respectively. The authoritative current
+> layout is `CLAUDE.md` §3.
+
 ## Context
 
 doc-anonymiser is a Go + Wails desktop app (P0 pattern: pure Go, no CGo) focusing on deterministic, local-only anonymisation with optional Ollama LLM integration. Presidio is a mature Python NER + anonymisation framework with enterprise-grade recognizers.

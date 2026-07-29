@@ -1,5 +1,10 @@
 # BUILD-02.md — Functional improvements build plan
 
+> **Path note (repo restructure, 2026-07):** This is a historical plan.
+> References to `static/...` and to root-level Go files now live under
+> `frontend/...` and `backend/...` respectively. The authoritative current
+> layout is `CLAUDE.md` §3.
+
 You are executing the second build plan for doc-anonymiser. BUILD.md (fully
 executed, merged as PR #3) produced the working v1 application. This document
 turns the consolidated user-feedback improvement plan into an ordered,
