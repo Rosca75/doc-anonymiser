@@ -22,7 +22,7 @@
 
 import { escapeHTML } from "./html.js";
 import { button } from "./ui.js";
-import { WORKFLOW } from "./copy.js";
+import { WORKFLOW, FOOTER } from "./copy.js";
 import { openDocumentation } from "./api.js";
 import { setState } from "./state.js";
 
@@ -38,18 +38,19 @@ import { setState } from "./state.js";
  * as the current location.
  */
 export const TOPNAV_ITEMS = [
-  { id: "nav-home", label: "Home", icon: "home", screen: "home" },
-  { id: "nav-wizard", label: "Anonymise documents", icon: "description", screen: "wizard" },
-  { id: "nav-docs", label: "Documentation", icon: "menu_book", screen: null },
+  { id: "nav-home", label: "Home", screen: "home" },
+  { id: "nav-wizard", label: "Anonymise documents", screen: "wizard" },
+  { id: "nav-docs", label: "Documentation", screen: null },
 ];
 
 /**
  * topnavHTML(screen) renders the permanent top menu.
  *
- * Every entry is a ghost button on every screen; the active one gets the
- * quiet `topnav-active` class and aria-current="page". No orange: the one
- * loud element per view belongs to the view, not to the chrome
- * (brand rule).
+ * Every entry is a plain text link on every screen (BUILD-05 CR3, from the
+ * Claude Design mockup): no icon, no button chrome, just the label. The
+ * active one gets the quiet `topnav-active` underline and aria-current
+ * ="page". No orange: the one loud element per view belongs to the view,
+ * not to the chrome (brand rule).
  *
  * @param {string} screen the current top-level screen ("home" | "wizard")
  * @returns {string} safe HTML
@@ -60,12 +61,47 @@ export function topnavHTML(screen) {
     return button(item.label, {
       kind: "ghost",
       id: item.id,
-      icon: item.icon,
       cls: active ? "topnav-active" : "",
       current: active,
     });
   }).join("");
   return `<nav class="topnav" aria-label="Main menu">${items}</nav>`;
+}
+
+/**
+ * headerActionsHTML(badgesHTML) renders the right-hand cluster of the
+ * header: the bridge/Ollama status badges (caller-supplied, since they
+ * come from live state main.js owns) followed by the Help and Settings
+ * icon buttons from the Claude Design mockup.
+ *
+ * Settings has no screen to open yet, so its button renders with no click
+ * behaviour wired in main.js; it is here for layout only until a settings
+ * surface exists. Help reuses showDocumentation, the same action as the
+ * Documentation menu entry.
+ *
+ * @param {string} badgesHTML trusted markup for the status badges
+ * @returns {string} safe HTML
+ */
+export function headerActionsHTML(badgesHTML) {
+  return `<div class="header-actions">` +
+    `<div class="badges">${badgesHTML}</div>` +
+    button("", { kind: "ghost", id: "header-help", icon: "help", cls: "icon-btn", ariaLabel: "Help", title: "Help" }) +
+    button("", { kind: "ghost", id: "header-settings", icon: "settings", cls: "icon-btn", ariaLabel: "Settings", title: "Settings" }) +
+    `</div>`;
+}
+
+/**
+ * appFooterHTML() renders the permanent footer strip shown under every
+ * screen (BUILD-05 CR2): the app version and the local-processing
+ * reassurance with its status dot. Pure markup, no state.
+ * @returns {string} safe HTML
+ */
+export function appFooterHTML() {
+  return `<footer class="appfooter">` +
+    `<span>${escapeHTML(FOOTER.version)}</span>` +
+    `<span class="local-processing">${escapeHTML(FOOTER.localProcessing)}` +
+    `<span class="status-dot" aria-hidden="true"></span></span>` +
+    `</footer>`;
 }
 
 /**

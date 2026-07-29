@@ -79,9 +79,9 @@ test("Documentation is never marked current, it opens its own window", () => {
   }
 });
 
-test("every top-menu entry renders its icon", () => {
+test("top-menu entries render as plain text, no icon (BUILD-05 CR3)", () => {
   const html = topnavHTML("home");
-  assert.equal((html.match(/<svg/g) ?? []).length, TOPNAV_ITEMS.length);
+  assert.equal((html.match(/<svg/g) ?? []).length, 0);
 });
 
 // --- CR7: the Anonymisation workflow banner -------------------------------
