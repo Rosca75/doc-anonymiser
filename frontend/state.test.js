@@ -1,5 +1,5 @@
 // state.test.js — dev-time unit tests for the store, runnable with
-// `node --test static/` (node is present on CI runners; this is NOT an npm
+// `node --test frontend/` (node is present on CI runners; this is NOT an npm
 // dependency — see BUILD.md Phase 6).
 //
 // Only pure logic is tested here: state transitions, navigation guards and

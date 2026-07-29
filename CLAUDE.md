@@ -24,61 +24,76 @@ what failed, what was expected, how to fix it.
 
 ## 3. Repository structure
 
+The repo is split into two self-documenting top-level folders, `frontend/`
+and `backend/`, so GUI-focused and engine-focused work can be prompted
+independently. Each folder has its OWN `CLAUDE.md` charter that Claude Code
+auto-loads when editing files inside it; this root file stays authoritative
+for cross-cutting rules (§4-§8), and the charters own their subtree detail:
+
+- `frontend/CLAUDE.md` — frontend charter (module map, discipline, typography,
+  copy rules).
+- `frontend/BRIDGE.md` — the Go ↔ JS method/event contract (the design → code
+  handoff surface).
+- `backend/CLAUDE.md` — backend charter (engine passes, converters, Ollama
+  boundary, binding namespace).
+
+The module anchor (`main.go`, the `//go:embed all:frontend` directive and
+`wails.json`) stays at the ROOT because `go:embed` cannot reference a parent
+directory: the embedding file must sit at or above `frontend/`.
+
 ```
 doc-anonymiser/
-├── CLAUDE.md                  # this file — authoritative
-├── BUILD.md                   # phased implementation plan (v1, executed)
-├── BUILD-02.md                # functional-improvements build plan (v2)
-├── docs/BUILD-03.md           # Presidio-benchmarked detection layer (v3)
-├── docs/BUILD-04.md           # UI correctness and feature-surfacing plan (v4);
-│                              # AUTHORITATIVE for the CR1 to CR17 to phase mapping
+├── CLAUDE.md                  # this file — authoritative for cross-cutting rules
 ├── README.md                  # user-facing documentation
 ├── LICENSE                    # MIT, Oscar Liber
-├── .gitignore
-├── go.mod / go.sum
-├── main.go                    # Wails bootstrap only — no business logic
-├── app.go                     # Wails bound struct: thin adapters to engine/*
-├── engine/                    # ALL business logic lives here, UI-agnostic
-│   ├── document.go            # Document model, txt/csv/md ingestion
-│   ├── csvmd.go               # CSV ⇄ markdown-table conversion (round-trip)
-│   ├── convert/               # binary-format → markdown converters (pure Go, one-way)
-│   │   ├── docx.go            # zip + XML extraction of word/document.xml
-│   │   ├── pptx.go            # one H2 per slide; body, tables, speaker notes
-│   │   ├── xlsx.go            # excelize; smart per-sheet routing (flat → Grid, complex → JSON)
-│   │   └── pdf.go             # text extraction + spacing repair (EXPERIMENTAL)
-│   ├── pii.go                 # Pass 1: deterministic regex PII detection
-│   ├── entities.go            # Entity model, categories, variant expansion
-│   ├── registry.go            # Placeholder registry (consistent pseudonyms)
-│   ├── pipeline.go            # Pass orchestration per anonymisation level
-│   ├── allowlist.go           # Terms never anonymised
-│   ├── simplereplace.go       # Manual find-and-replace pass
-│   ├── report.go              # Per-file / per-category statistics
-│   ├── session.go             # Save/load session state (JSON, schema migrations)
-│   └── exportfmt/             # same-format export: rewrite of original bytes (docx/pptx/xlsx, pdf experimental)
-├── ollama/
-│   └── client.go              # THE ONLY FILE that talks to Ollama (net/http)
-├── static/                    # vanilla-JS frontend, embedded via go:embed
+├── .gitignore / .gitattributes
+├── go.mod / go.sum            # module root (module path: doc-anonymiser)
+├── wails.json                 # Wails config; assetdir: "frontend"
+├── main.go                    # Wails bootstrap ONLY: //go:embed all:frontend; backend.NewApp()
+├── embed_test.go              # asserts the frontend is embedded (package main)
+├── category_parity_test.go    # JS↔Go category parity guard (package main)
+├── copy_guard_test.go         # no em dashes in Go user-facing strings (package main)
+├── frontend/                  # THE GUI — vanilla ES modules, embedded via go:embed
+│   ├── CLAUDE.md              # frontend charter (see above)
+│   ├── BRIDGE.md              # Go↔JS contract (see above)
 │   ├── index.html
-│   ├── brand.css              # brand tokens (single source of truth)
-│   ├── style.css              # consumes brand.css variables only
+│   ├── brand.css / style.css  # brand tokens (single source) + styling
 │   ├── api.js                 # THE ONLY file that calls Go bound methods
 │   ├── state.js               # single source of truth for frontend state
-│   ├── shell.js               # pure header/workflow-banner markup + docs action
-│   ├── ui.js                  # shared UI toolkit (button/banner/panel/icon)
-│   ├── icons.js               # vendored Material Symbols SVG map
-│   ├── copy.js                # user-visible strings (banners, step copy)
-│   ├── scroll.js              # scroll preservation across re-renders
-│   ├── docs/                  # bundled offline user documentation, opened in
-│   │                          # a SECOND window (embedded assets only)
-│   ├── entitymodel.js         # pure variant view-model (regression-tested)
-│   ├── candidatemodel.js      # pure suggestions filter/sort view-model
+│   ├── main.js / shell.js / ui.js / html.js / icons.js / copy.js / scroll.js
+│   ├── highlight.js / entitymodel.js / candidatemodel.js
+│   ├── views/                 # one JS module per screen + shared allowlist panel
+│   ├── docs/                  # bundled offline user docs (SECOND window, embedded only)
 │   ├── assets/icons/          # vendored Material Symbols SVGs + LICENSE
-│   └── views/                 # one JS module per screen (home, wizard steps, shared allowlist panel)
+│   └── *.test.js              # node --test frontend/*.test.js (zero npm deps)
+├── backend/                   # ALL Go business logic + the Wails bound-app layer (package backend)
+│   ├── CLAUDE.md              # backend charter (see above)
+│   ├── app.go                 # Wails bound struct: thin adapters to engine/* and ollama/*
+│   ├── app_entities.go / app_export.go / app_run.go   # App method groups
+│   ├── engine/                # UI-agnostic anonymisation engine
+│   │   ├── document.go        # Document model, txt/csv/md ingestion
+│   │   ├── csvmd.go           # CSV ⇄ markdown-table conversion (round-trip)
+│   │   ├── convert/           # binary-format → markdown converters (pure Go, one-way)
+│   │   │   ├── docx.go / pptx.go / xlsx.go / pdf.go
+│   │   ├── pii.go             # Pass 1: deterministic regex PII detection
+│   │   ├── entities.go        # Entity model, categories, variant expansion
+│   │   ├── discover.go        # LLM discovery / deep-scan orchestration
+│   │   ├── registry.go        # Placeholder registry (consistent pseudonyms)
+│   │   ├── pipeline.go        # Pass orchestration per anonymisation level
+│   │   ├── allowlist.go       # Terms never anonymised
+│   │   ├── simplereplace.go   # Manual find-and-replace pass
+│   │   ├── report.go          # Per-file / per-category statistics
+│   │   ├── session.go         # Save/load session state (JSON, schema migrations)
+│   │   └── exportfmt/         # same-format export: rewrite of original bytes (docx/pptx/xlsx, pdf experimental)
+│   ├── ollama/
+│   │   └── client.go          # THE ONLY FILE that talks to Ollama (net/http)
+│   └── testdata/              # fixture documents for unit tests (lives with the engine that uses it)
+├── scripts/genicon.go         # standalone icon generator (//go:build ignore)
 ├── .github/workflows/
 │   ├── ci.yml                 # build + test on push/PR
 │   └── release.yml            # on tag: build, zip, attach to Release
-├── docs/brand/color-palette.json  # vendored brand palette (source for static/brand.css)
-└── testdata/                  # fixture documents for unit tests
+└── docs/                      # phased build plans (BUILD.md, BUILD-02..04, CHANGE-01)
+    └── brand/color-palette.json  # vendored brand palette (source for frontend/brand.css)
 ```
 
 ## 4. Architecture rules
@@ -86,30 +101,27 @@ doc-anonymiser/
 - **Local-only guarantee (non-negotiable):** the application performs no
   network I/O except HTTP to `127.0.0.1:11434` (Ollama). No telemetry, no
   update checks, no remote fonts/CDNs. All frontend assets are vendored in
-  `static/` and embedded in the binary.
-- **One-file external boundary:** only `ollama/client.go` may construct HTTP
-  requests to Ollama. `engine/*` receives an interface, never a concrete
-  client — this keeps the P4 fallback a contained refactor.
-- **Engine is UI-agnostic:** nothing under `engine/` imports Wails or reads
-  the filesystem paths chosen by the user; documents arrive as `[]byte` +
-  filename via `app.go`. This keeps the engine unit-testable headless.
-- **Frontend discipline:** `api.js` is the only bridge caller; `state.js` is
-  the only state holder; view modules render from state and dispatch actions.
-- **Documentation opens in a second window (BUILD-04 CR6):** the "Documentation"
-  menu entry opens a SEPARATE application window whose content comes from
-  `static/docs/*`, embedded in the binary by the same `go:embed` directive as
-  the rest of `static/`. It may load NOTHING but embedded assets: no
-  `http(s)://` URL, no CDN, no system browser hand-off. There is no in-app
-  documentation screen any more; the top menu keeps its entry.
-
-  Mechanism, verified against the pin: **Wails v2 drives exactly one native
-  window per process** and exposes no API to create a second one (multi-window
-  is a v3 feature, and v3 idioms are forbidden). So Go owns the PATH
-  (`app.go DocumentationURL`, since Go is what embeds the page) and the
-  frontend opens it with a named `window.open` on the application's own asset
-  server (`api.js openDocumentation`). Do NOT "fix" this into
-  `runtime.BrowserOpenURL`: the system browser cannot reach the embedded
-  assets, and handing it a real URL would break the local-only guarantee.
+  `frontend/` and embedded in the binary.
+- **One-file external boundary:** only `backend/ollama/client.go` may
+  construct HTTP requests to Ollama. `backend/engine/*` receives an interface,
+  never a concrete client — this keeps the P4 fallback a contained refactor.
+- **Engine is UI-agnostic:** nothing under `backend/engine/` imports Wails or
+  reads the filesystem paths chosen by the user; documents arrive as `[]byte`
+  + filename via `backend/app.go`. This keeps the engine unit-testable
+  headless.
+- **Frontend discipline** (detail in `frontend/CLAUDE.md`): `api.js` is the
+  only bridge caller; `state.js` is the only state holder; view modules render
+  from state and dispatch actions. The Wails binding namespace is
+  `window.go.backend.App` (App lives in package `backend`); the full method
+  contract is `frontend/BRIDGE.md`.
+- **Documentation opens in a second window (BUILD-04 CR6):** the
+  "Documentation" menu entry opens a SEPARATE window whose content comes from
+  `frontend/docs/*`, embedded by the same `go:embed` directive. It may load
+  NOTHING but embedded assets (no `http(s)://`, no CDN, no system-browser
+  hand-off): Wails v2 drives one native window per process, so Go owns the path
+  (`backend/app.go DocumentationURL`) and the frontend opens it with
+  `window.open` (`api.js openDocumentation`). Do NOT convert it to
+  `runtime.BrowserOpenURL`. Full mechanism in `frontend/CLAUDE.md`.
 - **Originals are immutable:** imported files are read once and never written
   back to their source path. All output goes through explicit save dialogs.
 - **Graceful degradation:** Ollama availability is probed at startup and on
@@ -117,17 +129,17 @@ doc-anonymiser/
   disabled state with a tooltip ("Requires Ollama, which was not detected
   on 127.0.0.1:11434") when unavailable. The deterministic pipeline must be
   fully usable without Ollama. User-visible copy never contains em dashes
-  (enforced by copy_guard_test.go and static/copy.test.js).
-- **Converters are pure Go and one-way:** `engine/convert/*` may use only the
-  Go standard library, excelize, and ledongthuc/pdf (pinned in §7). No CGo,
-  ever. Binary formats convert TO markdown on import for preview and
+  (enforced by copy_guard_test.go and frontend/copy.test.js).
+- **Converters are pure Go and one-way:** `backend/engine/convert/*` may use
+  only the Go standard library, excelize, and ledongthuc/pdf (pinned in §7).
+  No CGo, ever. Binary formats convert TO markdown on import for preview and
   processing. The app can additionally write a NEW anonymised copy in the
   source format (docx/pptx/xlsx, and experimentally pdf) at export time; this
   copy is produced by rewriting a copy of the original bytes held in memory
-  (`engine/exportfmt/`). The source file on disk is read once at import and
-  never written, moved, or modified. If pure-Go PDF extraction quality proves
-  unacceptable, the recorded fallback is a wazero-embedded WASM extractor
-  (P3 pattern) — not a CGo binding.
+  (`backend/engine/exportfmt/`). The source file on disk is read once at import
+  and never written, moved, or modified. If pure-Go PDF extraction quality
+  proves unacceptable, the recorded fallback is a wazero-embedded WASM
+  extractor (P3 pattern) — not a CGo binding.
 
 ## 5. Domain rules
 
@@ -172,10 +184,10 @@ doc-anonymiser/
     per-category selection; a level is the UI shorthand that fills it.
     `medium` remains the default preset.
 - **Pipeline passes (fixed order):**
-  1. Deterministic PII regex pass (`engine/pii.go`).
+  1. Deterministic PII regex pass (`backend/engine/pii.go`).
   2. Known-entity pass: discovery results + manual entities, expanded into
      name variants (initials, surname-only, first-name-only, hyphen/space
-     variants), longest-match-first (`engine/entities.go`).
+     variants), longest-match-first (`backend/engine/entities.go`).
   3. Optional LLM deep-scan pass (Ollama): finds residual entities. Every
      LLM-proposed entity passes a **hallucination filter** — it is dropped
      unless the exact string occurs in the source text — and respects the
@@ -193,8 +205,8 @@ doc-anonymiser/
 - **Engine identifiers are stable, user-visible labels are not (BUILD-04 CR3):**
   wizard step 3 is called **"Values"** everywhere the user can see it (step
   chip, step banner, headings, help text), and its view module is
-  `static/views/values.js`. The engine category identifiers listed above, and
-  the PII category constants in `engine/pii.go`, are NEVER renamed to follow a
+  `frontend/views/values.js`. The engine category identifiers listed above, and
+  the PII category constants in `backend/engine/pii.go`, are NEVER renamed to follow a
   label change. A saved session that stored the old step token `entities`
   still loads, mapped to `values` by an explicit migration.
 - **Sensitive state stays in memory** by default. Saving a session (registry
@@ -206,16 +218,13 @@ doc-anonymiser/
 - Heavy comments everywhere; each file starts with a purpose header.
 - Go standard library first. No new dependency without adding it to the
   BUILD.md dependency table AND the pinned-versions table below.
-- Table-driven unit tests for all engine logic; `testdata/` fixtures in the
-  three supported formats, in English and French.
-- Frontend: ES modules, no framework, no build step, no external fonts/CDNs.
-- **Typography (BUILD-04 CR2):** the web application uses **Helvetica, with
-  Arial as the fallback**, for headings AND body text. Georgia is a
-  PowerPoint-only brand guideline and must NOT appear anywhere under
-  `static/`; `--font-heading` in `brand.css` is the single place the heading
-  face is declared. Headings stay at regular weight: hierarchy comes from size
-  and space, never bold. Helvetica and Arial are Windows system fonts, so this
-  needs no font files and does not touch the local-only guarantee.
+- Table-driven unit tests for all engine logic; `backend/testdata/` fixtures
+  in the supported formats, in English and French. Keep `testdata/` under
+  `backend/` so the engine tests' relative fixture paths stay valid.
+- Frontend coding and typography rules live in `frontend/CLAUDE.md` (ES
+  modules, no framework/build/CDN; Helvetica with Arial fallback, no Georgia,
+  headings at regular weight; `--font-heading` in `brand.css` is the single
+  heading-face declaration).
 - All user-visible strings in English for v1 (UI i18n deferred to v2).
 - Regexes are compiled once at package init and documented with examples of
   what they match and deliberately do not match.
@@ -234,7 +243,7 @@ doc-anonymiser/
 | github.com/ledongthuc/pdf | v0.0.0-20250511090121-5959a4027728 | pure-Go PDF text extraction (BSD-3); limited by design — see §5 PDF rules. Pinned to the 2025-05-11 commit (go.mod `go 1.24.1`), adopted with the Go 1.26 upgrade: the older 2024-02-01 commit crashes under Go 1.26 (`malformed PDF: cross-reference table not found`), which the 2025 commit fixes |
 | github.com/pdfcpu/pdfcpu | NOT ADDED (evaluated at BUILD-02 Phase 13, 2026-07-24) | in-place PDF rewriting was rejected (subset-font glyph availability), so pdfcpu's metadata role is covered by fpdf (new file's Info dict) + ledongthuc/pdf (reading the original's Info dict). The earlier Go-version incompatibility no longer applies under the Go 1.26 pin, but pdfcpu stays out for the functional reason above |
 | github.com/go-pdf/fpdf | v0.9.0 | pure-Go PDF writer for the regenerated-PDF same-format fallback (BUILD-02 Phase 13); MIT; go.mod requires Go 1.20 (compatible with the Go 1.26 pin) |
-| Material Symbols SVGs (assets, not a Go module) | snapshot at BUILD-02 Phase 1 | individual SVG files vendored into `static/assets/icons/`; Apache-2.0; licence text at `static/assets/icons/LICENSE` |
+| Material Symbols SVGs (assets, not a Go module) | snapshot at BUILD-02 Phase 1 | individual SVG files vendored into `frontend/assets/icons/`; Apache-2.0; licence text at `frontend/assets/icons/LICENSE` |
 
 ## 8. Validated constants
 

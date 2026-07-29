@@ -80,7 +80,7 @@ export const HOME = {
 };
 
 // The documentation placeholder page was retired by BUILD-04 CR6: real
-// documentation now lives in static/docs/index.html and opens in its own
+// documentation now lives in frontend/docs/index.html and opens in its own
 // window, so there is no in-app docs screen and no placeholder string.
 
 // Configure step copy (BUILD-02 Phase 6). Plain language: no "PII", no

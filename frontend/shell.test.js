@@ -9,7 +9,7 @@
 //   CR7: the step chips render inside .workflow-banner, never inside the
 //        header, and only for the wizard.
 //
-// Run with `node --test static/*.test.js`.
+// Run with `node --test frontend/*.test.js`.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

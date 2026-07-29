@@ -1,5 +1,10 @@
 # BUILD — doc-anonymiser
 
+> **Path note (repo restructure, 2026-07):** This is a historical plan.
+> References to `static/...` and to root-level Go files now live under
+> `frontend/...` and `backend/...` respectively. The authoritative current
+> layout is `CLAUDE.md` §3.
+
 ## Ground rules
 
 - `CLAUDE.md` is non-negotiable; re-read it before every phase.

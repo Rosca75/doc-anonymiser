@@ -7,7 +7,7 @@
 // lives, open a SEPARATE window on that path, and fail with an actionable
 // message when the WebView refuses.
 //
-// Run with `node --test static/*.test.js`.
+// Run with `node --test frontend/*.test.js`.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

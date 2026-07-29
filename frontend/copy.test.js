@@ -2,7 +2,7 @@
 //
 // UI copy rules (BUILD-02 ground rule 4): no em dashes (U+2014) and no en
 // dashes used as dashes (U+2013) anywhere in the frontend source. This test
-// walks every .js and .html file under static/ (excluding *.test.js and
+// walks every .js and .html file under frontend/ (excluding *.test.js and
 // assets/) and fails listing file:line for each offending character, so a
 // dash can never quietly return. Use commas, periods, or parentheses.
 //
@@ -80,7 +80,11 @@ test("the third step banner is keyed and titled Values, not Entities", () => {
 
 // --- Brand guards (BUILD-04 CR2) ------------------------------------------
 
-/** walkAll(dir) yields every file under dir, skipping assets and node_modules. */
+/** walkAll(dir) yields every shipped source file under dir, skipping assets,
+ *  node_modules and Markdown documentation. The .md skip exists because the
+ *  frontend charters (CLAUDE.md, BRIDGE.md) restate the brand rule by naming
+ *  the forbidden font to forbid it, exactly like this guard names it on
+ *  purpose below; they are developer docs, not shipped font stacks. */
 function* walkAll(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
@@ -89,14 +93,15 @@ function* walkAll(dir) {
       yield* walkAll(full);
       continue;
     }
+    if (entry.name.endsWith(".md")) continue;
     yield full;
   }
 }
 
-test("no Georgia reference remains anywhere under static/", () => {
+test("no Georgia reference remains anywhere under frontend/", () => {
   // CR2: Georgia is a PowerPoint-only brand guideline. This walks EVERY
-  // file (css and js and html, tests included) so neither a font stack nor
-  // a stale comment can quietly bring the name back.
+  // shipped source file (css and js and html, tests included) so neither a
+  // font stack nor a stale comment can quietly bring the name back.
   const hits = [];
   for (const file of walkAll(staticDir)) {
     if (file === fileURLToPath(import.meta.url)) continue; // this guard names it on purpose
@@ -108,7 +113,7 @@ test("no Georgia reference remains anywhere under static/", () => {
     });
   }
   assert.deepEqual(hits, [],
-    "Georgia found under static/; the web application uses Helvetica with an Arial fallback:\n" +
+    "Georgia found under frontend/; the web application uses Helvetica with an Arial fallback:\n" +
     hits.join("\n"));
 });
 

@@ -12,7 +12,7 @@
     same face, so the whole web application is one typeface.
     (BUILD-04 CR2: the serif face named in the presentation brand guideline
     is for PowerPoint only and must never appear in the web application. A
-    guard in static/copy.test.js fails the build if it comes back.)
+    guard in frontend/copy.test.js fails the build if it comes back.)
   - Black text on all light surfaces. White text only on black, or as large
     bold type on the accent orange.
   - ONE loud orange element per view. Greys carry everything contextual.

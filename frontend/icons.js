@@ -6,7 +6,7 @@
 // (local-only guarantee, CLAUDE.md 4). The SVGs use fill="currentColor" so
 // CSS colours them like text.
 //
-// Source files live in static/assets/icons/<name>.svg; this map is what
+// Source files live in frontend/assets/icons/<name>.svg; this map is what
 // ui.js icon() reads. Regenerate per BUILD-02 Phase 1d if icons are added.
 
 export const ICONS = {
