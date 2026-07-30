@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Helvetica,Arial,sans-serif;color:#000000;-webkit-font-smoothing:antialiased}
+  a{color:#000000;text-decoration:none}
+  a:hover{color:#FD5108}
+  input,select,button{font-family:Helvetica,Arial,sans-serif}
+  input[type=checkbox]{accent-color:#000000;width:15px;height:15px;margin:0;flex:none}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:#CBD1D6;border-radius:6px;border:2px solid transparent;background-clip:content-box}
+</style>
+</helmet>
+<div style="display:flex;flex-direction:column;height:100vh;background:#F5F7F8">
+
+  <header style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 40px;height:80px;background:#FFFFFF;border-bottom:1px solid #DFE3E6;flex:none">
+    <div style="font-weight:700;font-size:26px;letter-spacing:-.01em;color:#000000">Doc Anonymiser</div>
+    <nav style="display:flex;align-items:center;gap:44px;font-size:16px">
+      <a href="#" style="color:#000000">Home</a>
+      <a href="#" style="display:flex;flex-direction:column;align-items:center;gap:6px;color:#000000">Anonymise documents
+        <span style="display:block;width:100%;height:2px;background:#A1A8B3;border-radius:2px"></span>
+      </a>
+      <a href="#" style="color:#000000">Documentation</a>
+    </nav>
+    <div style="display:flex;align-items:center;justify-content:flex-end;gap:22px">
+      <button aria-label="Help" style="display:grid;place-items:center;width:32px;height:32px;padding:0;border:none;background:none;cursor:pointer;color:#717C8D">
+        <svg width="24" height="24" viewBox="0 -960 960 960" fill="currentColor"><path d="M513.5-254.5Q528-269 528-290t-14.5-35.5Q499-340 478-340t-35.5 14.5Q428-311 428-290t14.5 35.5Q457-240 478-240t35.5-14.5ZM442-394h74q0-33 7.5-52t42.5-52q26-26 41-49.5t15-56.5q0-56-41-86t-97-30q-57 0-92.5 30T342-618l66 26q5-18 22.5-39t53.5-21q32 0 48 17.5t16 38.5q0 20-12 37.5T506-526q-44 39-54 59t-10 73Zm38 314q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Zm0-320Z"></path></svg>
+      </button>
+      <button aria-label="Settings" style="display:grid;place-items:center;width:32px;height:32px;padding:0;border:none;background:none;cursor:pointer;color:#717C8D">
+        <svg width="24" height="24" viewBox="0 -960 960 960" fill="currentColor"><path d="m370-80-16-128q-13-5-24.5-12T307-235l-119 50L78-375l103-78q-1-7-1-13.5v-27q0-6.5 1-13.5L78-585l110-190 119 50q11-8 23-15t24-12l16-128h220l16 128q13 5 24.5 12t22.5 15l119-50 110 190-103 78q1 7 1 13.5v27q0 6.5-2 13.5l103 78-110 190-118-50q-11 8-23 15t-24 12L590-80H370Zm70-80h79l14-106q31-8 57.5-23.5T639-327l99 41 39-68-86-65q5-14 7-29.5t2-31.5q0-16-2-31.5t-7-29.5l86-65-39-68-99 42q-22-23-48.5-38.5T533-694l-13-106h-79l-14 106q-31 8-57.5 23.5T321-633l-99-41-39 68 86 64q-5 15-7 30t-2 32q0 16 2 31t7 30l-86 65 39 68 99-42q22 23 48.5 38.5T427-266l13 106Zm42-180q58 0 99-41t41-99q0-58-41-99t-99-41q-59 0-99.5 41T342-480q0 58 40.5 99t99.5 41Zm-2-140Z"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <section aria-label="Anonymisation workflow" style="display:flex;align-items:center;gap:28px;padding:0 40px;height:68px;background:#FFFFFF;border-bottom:1px solid #DFE3E6;flex:none">
+    <a href="#" style="display:flex;align-items:center;gap:12px;color:#000000;font-size:21px;letter-spacing:-.01em">
+      <svg width="22" height="22" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="m313-440 224 224-57 56-320-320 320-320 57 56-224 224h487v80H313Z"></path></svg>
+      Anonymise Flow
+    </a>
+    <span style="width:1px;height:30px;background:#DFE3E6"></span>
+    <nav style="display:flex;align-items:stretch;gap:6px;height:100%">
+      <sc-for list="{{ steps }}" as="s" hint-placeholder-count="4">
+        <a href="#" style="{{ s.wrapStyle }}">
+          <span style="{{ s.circleStyle }}">{{ s.mark }}</span>
+          <span style="{{ s.labelStyle }}">{{ s.label }}</span>
+        </a>
+      </sc-for>
+    </nav>
+  </section>
+
+  <main style="flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:18px;padding:22px 40px 20px">
+
+    <div style="flex:1;min-height:520px;display:grid;grid-template-columns:392px minmax(0,1fr);gap:20px">
+      <!-- SIDE COLUMN -->
+      <div style="display:flex;flex-direction:column;gap:18px;min-height:0;overflow-y:auto;padding-right:2px">
+        <section style="flex:none;background:#FFFFFF;border:1px solid #DFE3E6;border-radius:8px;padding:16px 18px;display:flex;flex-direction:column;gap:14px">
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div style="display:flex;flex-direction:column;gap:4px;min-width:0">
+              <h2 style="margin:0;font-size:19px;font-weight:400;letter-spacing:-.01em">Run anonymisation</h2>
+              
+            </div>
+            <div style="display:flex;flex-direction:column;gap:12px">
+              <label title="An extra AI pass that looks for values the deterministic passes left behind." style="display:flex;align-items:center;gap:9px;font-size:13.5px;color:#000000;cursor:pointer">
+                <input type="checkbox" checked="{{ deepScan }}" onChange="{{ onDeepScan }}">
+                Deep scan (AI)
+              </label>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+                <button onClick="{{ onRun }}" style="{{ runStyle }}">
+                  <svg width="18" height="18" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="M320-200v-560l440 280-440 280Zm80-280Zm0 134 210-134-210-134v268Z"></path></svg>
+                  {{ runLabel }}
+                </button>
+                <button onClick="{{ onCancel }}" style="{{ cancelStyle }}">Cancel</button>
+              </div>
+            </div>
+          </div>
+
+          <sc-if value="{{ isRunning }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="height:6px;border-radius:4px;background:#EEEFF1;overflow:hidden">
+                <div style="{{ progressStyle }}"></div>
+              </div>
+              <span style="font-family:Consolas,'Courier New',monospace;font-size:12.5px;color:#54616C">{{ progressLabel }}</span>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isDone }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex;align-items:center;gap:6px 14px;flex-wrap:wrap;border-top:1px solid #EEEFF1;padding-top:9px">
+              <sc-for list="{{ stats }}" as="st" hint-placeholder-count="4">
+                <span style="display:flex;align-items:baseline;gap:5px">
+                  <span style="font-size: 10px; letter-spacing: -.01em; color: #000000">{{ st.value }}</span>
+                  <span style="font-size: 8px; font-weight: 700; letter-spacing: .06em; color: #717C8D">{{ st.label }}</span>
+                </span>
+              </sc-for>
+            </div>
+          </sc-if>
+        </section>
+
+
+        <sc-if value="{{ hasSelection }}" hint-placeholder-val="{{ false }}">
+          <section style="flex:none;background:#FFFFFF;border:1px solid #FFCDA8;border-radius:8px;overflow:hidden">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;background:#FFF5ED;border-bottom:1px solid #FFE8D4">
+              <span style="font-size:14px;color:#000000">Selected placeholder</span>
+              <button onClick="{{ onClearSelection }}" title="Close" style="display:grid;place-items:center;width:26px;height:26px;padding:0;border:none;background:none;cursor:pointer;color:#A1A8B3" style-hover="color:#000000">
+                <svg width="16" height="16" viewBox="0 -960 960 960" fill="currentColor"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"></path></svg>
+              </button>
+            </div>
+            <div style="padding:16px 18px;display:flex;flex-direction:column;gap:12px">
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                <span style="font-family:Consolas,'Courier New',monospace;font-size:12.5px;color:#000000;background:#F5F7F8;border:1px solid #EEEFF1;padding:3px 8px;border-radius:4px">{{ selectedPlaceholder }}</span>
+                <span style="font-size:13px;color:#A1A8B3">replaces</span>
+                <span style="font-size:13.5px;color:#000000">{{ selectedOriginal }}</span>
+              </div>
+              <label style="display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:#717C8D">Make it a variant of
+                <input value="{{ reassignDraft }}" onChange="{{ onReassignDraft }}" placeholder="type an existing value" style="padding:8px 10px;border:1px solid #DFE3E6;border-radius:6px;font-size:13.5px;color:#000000">
+              </label>
+              <sc-for list="{{ reassignMatches }}" as="m" hint-placeholder-count="0">
+                <button onClick="{{ m.onPick }}" style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;width:100%;padding:8px 10px;border:1px solid #EEEFF1;border-radius:6px;background:#FFFFFF;cursor:pointer;font-size:13px;color:#000000;text-align:left" style-hover="border-color:#000000">
+                  {{ m.canonical }}<span style="font-size:11.5px;color:#A1A8B3">{{ m.type }}</span>
+                </button>
+              </sc-for>
+              <p style="margin:0;font-size:12px;line-height:1.5;color:#A1A8B3;text-wrap:pretty">Reassigning runs the fast deterministic passes again. There is no AI re-scan, and existing placeholders keep their numbers.</p>
+            </div>
+          </section>
+        </sc-if>
+
+        <section style="flex:none;background:#FFFFFF;border:1px solid #DFE3E6;border-radius:8px;overflow:hidden">
+          
+          <div onClick="{{ onToggleReport }}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 18px;border-bottom:1px solid #EEEFF1;font-size:16px;cursor:pointer">
+            <span style="display:flex;align-items:center;gap:8px">
+              <svg width="17" height="17" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true" style="{{ reportChevron }}"><path d="M480-345 240-585l56-56 184 184 184-184 56 56-240 240Z"></path></svg>
+              Report
+            </span>
+            <span style="font-size:12px;color:#A1A8B3">{{ reportSummary }}</span>
+          </div><div style="{{ reportBodyStyle }}">
+            <select value="{{ reportScope }}" onChange="{{ onReportScope }}" style="width:100%;padding:7px 10px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;color:#000000;cursor:pointer">
+              <sc-for list="{{ reportScopeOptions }}" as="o" hint-placeholder-count="4">
+                <option value="{{ o.value }}">{{ o.label }}</option>
+              </sc-for>
+            </select>
+            <div style="display:flex;flex-direction:column">
+              <sc-for list="{{ reportRows }}" as="r" hint-placeholder-count="6">
+                <div style="border-bottom:1px solid #F5F7F8">
+                  <div onClick="{{ r.onToggle }}" style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 0; font-size: 13px; cursor: pointer; padding-top: 6px; padding-bottom: 6px">
+                    <span style="display:flex;align-items:center;gap:6px;color:#000000">
+                      <svg width="14" height="14" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true" style="{{ r.chevronStyle }}"><path d="M480-345 240-585l56-56 184 184 184-184 56 56-240 240Z"></path></svg>
+                      {{ r.label }}
+                    </span>
+                    <span style="font-family:Consolas,'Courier New',monospace;color:#54616C">{{ r.count }}</span>
+                  </div>
+                  <div style="{{ r.detailStyle }}">
+                    <div style="display:grid;grid-template-columns:1fr auto;gap:4px 10px;font-size:12px">
+                      <span style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#A1A8B3">VALUE / PLACEHOLDER</span>
+                      <span style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#A1A8B3;text-align:right">OCCUR.</span>
+                      <sc-for list="{{ r.items }}" as="it" hint-placeholder-count="3">
+                        <span style="display:flex;flex-direction:column;gap:1px;min-width:0">
+                          <span style="color:#000000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ it.original }}</span>
+                          <span style="font-family:Consolas,'Courier New',monospace;font-size:11.5px;color:#717C8D">{{ it.placeholder }}</span>
+                        </span>
+                        <span style="font-family:Consolas,'Courier New',monospace;color:#54616C;text-align:right">{{ it.occurrences }}</span>
+                      </sc-for>
+                    </div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+            <sc-for list="{{ warnings }}" as="w" hint-placeholder-count="0">
+              <div style="display:flex;align-items:flex-start;gap:9px;padding:11px 12px;border:1px solid #F5E3B8;border-radius:6px;background:#FBF6E6;font-size:12.5px;line-height:1.5;color:#6B5310;text-wrap:pretty">
+                <svg width="16" height="16" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true" style="flex:none;margin-top:1px"><path d="m40-120 440-760 440 760H40Zm138-80h604L480-720 178-200Zm330.5-51.5Q520-263 520-280t-11.5-28.5Q497-320 480-320t-28.5 11.5Q440-297 440-280t11.5 28.5Q463-240 480-240t28.5-11.5ZM440-360h80v-200h-80v200Zm40-100Z"></path></svg>
+                <span style="flex:1;min-width:0">{{ w.text }}</span>
+                <button onClick="{{ w.onDismiss }}" title="Hide this warning" style="display:grid;place-items:center;flex:none;width:20px;height:20px;padding:0;border:none;border-radius:4px;background:none;cursor:pointer;color:#A08A3C" style-hover="color:#6B5310;background:#F5E3B8">
+                  <svg width="13" height="13" viewBox="0 -960 960 960" fill="currentColor"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"></path></svg>
+                </button>
+              </div>
+            </sc-for>
+          </div>
+        </section>
+
+        <section style="flex:none;background:#FFFFFF;border:1px solid #DFE3E6;border-radius:8px;overflow:hidden">
+          <div onClick="{{ onToggleMissed }}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 18px;border-bottom:1px solid #EEEFF1;font-size:16px;cursor:pointer">
+            <span style="display:flex;align-items:center;gap:8px">
+              <svg width="17" height="17" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true" style="{{ missedChevron }}"><path d="M480-345 240-585l56-56 184 184 184-184 56 56-240 240Z"></path></svg>
+              Something missed?
+            </span>
+            <span style="font-size:12px;color:#A1A8B3">{{ missedSummary }}</span>
+          </div>
+          <div style="{{ missedBodyStyle }}">
+            <p style="margin:0;font-size:12.5px;line-height:1.5;color:#A1A8B3;text-wrap:pretty">Add the value, then re-run the fast passes. Existing placeholders keep their numbers.</p>
+            <div style="display:flex;gap:8px">
+              <select value="{{ missedCategory }}" onChange="{{ onMissedCategory }}" style="flex:none;width:112px;padding:8px 9px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;color:#000000;cursor:pointer">
+                <option value="person_names">Person</option>
+                <option value="client_names">Client</option>
+                <option value="project_names">Project</option>
+                <option value="internal_names">Internal</option>
+              </select>
+              <input value="{{ missedDraft }}" onChange="{{ onMissedDraft }}" placeholder="missed value, e.g. P. Stone" style="flex:1;min-width:0;padding:8px 10px;border:1px solid #DFE3E6;border-radius:6px;font-size:13px;color:#000000">
+            </div>
+            <div style="display:flex;gap:8px">
+              <button onClick="{{ onAddMissed }}" style="flex:1;padding:0 12px;height:34px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;cursor:pointer" style-hover="border-color:#000000">Add value</button>
+              <button onClick="{{ onFastRerun }}" style="flex:1;display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:0 12px;height:34px;border:1px solid #000000;border-radius:6px;background:#FFFFFF;font-size:13px;cursor:pointer" style-hover="background:#F5F7F8">
+                <svg width="16" height="16" viewBox="0 -960 960 960" fill="currentColor"><path d="M480-160q-134 0-227-93t-93-227q0-134 93-227t227-93q69 0 132 28.5T720-690v-110h80v280H520v-80h168q-32-56-87.5-88T480-720q-100 0-170 70t-70 170q0 100 70 170t170 70q77 0 139-44t87-116h84q-28 106-114 173t-196 67Z"></path></svg>
+                Fast re-run
+              </button>
+            </div>
+            <sc-if value="{{ hasPending }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-wrap:wrap;gap:7px;padding-top:2px">
+                <sc-for list="{{ pendingValues }}" as="p" hint-placeholder-count="0">
+                  <span style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:#000000;background:#FFF5ED;border:1px solid #FFE8D4;padding:4px 8px 4px 10px;border-radius:20px">{{ p.text }}
+                    <button onClick="{{ p.onRemove }}" title="Remove" style="display:grid;place-items:center;width:16px;height:16px;padding:0;border:none;border-radius:50%;background:none;cursor:pointer;color:#A1A8B3" style-hover="color:#DC2626">
+                      <svg width="12" height="12" viewBox="0 -960 960 960" fill="currentColor"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"></path></svg>
+                    </button>
+                  </span>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </section>
+
+        <section style="flex:none;background:#FFFFFF;border:1px solid #DFE3E6;border-radius:8px;overflow:hidden">
+          <div onClick="{{ onToggleRules }}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:16px 18px 14px;border-bottom:1px solid #EEEFF1;cursor:pointer">
+            <span style="display:flex;align-items:center;gap:8px;font-size:16px">
+              <svg width="17" height="17" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true" style="{{ rulesChevron }}"><path d="M480-345 240-585l56-56 184 184 184-184 56 56-240 240Z"></path></svg>
+              Find and replace
+            </span>
+            <span style="font-size:12px;color:#A1A8B3">{{ rulesCount }}</span>
+          </div>
+          <div style="{{ rulesBodyStyle }}">
+            <p style="margin:0;font-size:12.5px;line-height:1.5;color:#A1A8B3;text-wrap:pretty">These run last, in order, and each rule sees what the previous one produced.</p>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <sc-for list="{{ rules }}" as="r" hint-placeholder-count="2">
+                <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #EEEFF1;border-radius:6px;font-size:12.5px">
+                  <span style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;font-family:Consolas,'Courier New',monospace;color:#000000;overflow:hidden">
+                    <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.find }}</span>
+                    <span style="flex:none;color:#A1A8B3">to</span>
+                    <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.replace }}</span>
+                  </span>
+                  <span style="flex:none;font-size:11px;color:#A1A8B3">{{ r.caseLabel }}</span>
+                  <span style="display:flex;align-items:center;gap:2px;flex:none">
+                    <button onClick="{{ r.onUp }}" title="Move up" style="{{ r.upStyle }}">
+                      <svg width="15" height="15" viewBox="0 -960 960 960" fill="currentColor"><path d="m296-345-56-56 240-240 240 240-56 56-184-184-184 184Z"></path></svg>
+                    </button>
+                    <button onClick="{{ r.onDown }}" title="Move down" style="{{ r.downStyle }}">
+                      <svg width="15" height="15" viewBox="0 -960 960 960" fill="currentColor"><path d="M480-345 240-585l56-56 184 184 184-184 56 56-240 240Z"></path></svg>
+                    </button>
+                    <button onClick="{{ r.onRemove }}" title="Remove rule" style="display:grid;place-items:center;width:24px;height:24px;padding:0;border:none;border-radius:5px;background:none;cursor:pointer;color:#A1A8B3" style-hover="color:#DC2626">
+                      <svg width="14" height="14" viewBox="0 -960 960 960" fill="currentColor"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"></path></svg>
+                    </button>
+                  </span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;gap:8px">
+                <input value="{{ ruleFind }}" onChange="{{ onRuleFind }}" placeholder="find" style="flex:1;min-width:0;padding:8px 10px;border:1px solid #DFE3E6;border-radius:6px;font-size:13px;color:#000000">
+                <input value="{{ ruleReplace }}" onChange="{{ onRuleReplace }}" placeholder="replace with" style="flex:1;min-width:0;padding:8px 10px;border:1px solid #DFE3E6;border-radius:6px;font-size:13px;color:#000000">
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#000000;cursor:pointer">
+                  <input type="checkbox" checked="{{ ruleCase }}" onChange="{{ onRuleCase }}">
+                  Case-sensitive
+                </label>
+                <button onClick="{{ onAddRule }}" style="padding:0 14px;height:32px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;cursor:pointer" style-hover="border-color:#000000">Add rule</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+
+      <!-- COMPARISON -->
+      <section ref="{{ compareRef }}" style="position:relative;display:flex;flex-direction:column;min-height:0;background:#FFFFFF;border:1px solid #DFE3E6;border-radius:8px;overflow:hidden">
+        <sc-if value="{{ tipOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="{{ tipStyle }}">{{ tipText }}</div>
+        </sc-if>
+
+        <sc-if value="{{ selOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="{{ selCardStyle }}">
+            <div style="display:flex;flex-direction:column;gap:3px">
+              <span style="font-size:11px;font-weight:700;letter-spacing:.08em;color:#717C8D">REPLACE SELECTION</span>
+              <span style="font-family:Consolas,'Courier New',monospace;font-size:12.5px;color:#000000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ selText }}</span>
+            </div>
+            <input value="{{ selDraft }}" onChange="{{ onSelDraft }}" placeholder="[CUSTOM_1]" style="padding:8px 10px;border:1px solid #DFE3E6;border-radius:6px;font-family:Consolas,'Courier New',monospace;font-size:13px;color:#000000">
+            <div style="display:flex;gap:8px">
+              <button onClick="{{ onCancelSel }}" style="flex:1;height:32px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;cursor:pointer" style-hover="border-color:#000000">Cancel</button>
+              <button onClick="{{ onApplySel }}" style="flex:1;height:32px;border:1px solid #FD5108;border-radius:6px;background:#FD5108;color:#FFFFFF;font-size:13px;cursor:pointer" style-hover="background:#E64906">Replace</button>
+            </div>
+          </div>
+        </sc-if>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px 14px;border-bottom:1px solid #EEEFF1">
+          <div style="display:flex;align-items:baseline;gap:12px;min-width:0">
+            <h2 style="margin:0;font-size:18px;font-weight:400;letter-spacing:-.01em">Compare</h2>
+            <span style="font-size:13px;color:#A1A8B3">{{ replacedLabel }}</span>
+          </div>
+          <select value="{{ selectedDoc }}" onChange="{{ onSelectDoc }}" style="max-width:260px;padding:7px 10px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;color:#000000;cursor:pointer">
+            <sc-for list="{{ docOptions }}" as="d" hint-placeholder-count="3">
+              <option value="{{ d.name }}">{{ d.name }}</option>
+            </sc-for>
+          </select>
+        </div>
+
+        
+
+        <div style="flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr">
+          <div style="display:flex;flex-direction:column;min-height:0;border-right:1px solid #EEEFF1">
+            <div style="flex:none;padding:12px 20px;font-size:11.5px;font-weight:700;letter-spacing:.08em;color:#717C8D;background:#F9FAFB;border-bottom:1px solid #EEEFF1">ORIGINAL</div>
+            <pre onMouseUp="{{ onSelectText }}" style="flex:1;min-height:0;overflow:auto;margin:0;padding:18px 20px;font-family:Consolas,'Courier New',monospace;font-size:13px;line-height:1.75;color:#000000;white-space:pre-wrap;word-break:break-word"><sc-for list="{{ originalTokens }}" as="t" hint-placeholder-count="12"><span onMouseEnter="{{ t.onEnter }}" onMouseLeave="{{ t.onLeave }}" style="{{ t.style }}">{{ t.text }}</span></sc-for></pre>
+          </div>
+          <div style="display:flex;flex-direction:column;min-height:0">
+            <div style="flex:none;padding:12px 20px;font-size:11.5px;font-weight:700;letter-spacing:.08em;color:#717C8D;background:#F9FAFB;border-bottom:1px solid #EEEFF1">ANONYMISED</div>
+            <pre onMouseUp="{{ onSelectText }}" style="flex:1;min-height:0;overflow:auto;margin:0;padding:18px 20px;font-family:Consolas,'Courier New',monospace;font-size:13px;line-height:1.75;color:#000000;white-space:pre-wrap;word-break:break-word"><sc-for list="{{ anonTokens }}" as="t" hint-placeholder-count="12"><span onClick="{{ t.onClick }}" onMouseEnter="{{ t.onEnter }}" onMouseLeave="{{ t.onLeave }}" style="{{ t.style }}">{{ t.text }}</span></sc-for></pre>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <section style="flex:none;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 24px;background:#FFFFFF;border:1px solid #DFE3E6;border-radius:8px">
+      <a href="#" style="display:inline-flex;align-items:center;gap:8px;font-size:14px;color:#54616C">
+        <svg width="18" height="18" viewBox="0 -960 960 960" fill="currentColor"><path d="m313-440 224 224-57 56-320-320 320-320 57 56-224 224h487v80H313Z"></path></svg>
+        Back to Identify
+      </a>
+      <div style="display:flex;align-items:center;gap:16px">
+        <span style="font-size:13px;color:#A1A8B3">{{ continueHint }}</span>
+        <button style="{{ continueStyle }}">
+          CONTINUE TO EXPORT
+          <svg width="18" height="18" viewBox="0 -960 960 960" fill="currentColor"><path d="M647-440H160v-80h487L423-744l57-56 320 320-320 320-57-56 224-224Z"></path></svg>
+        </button>
+      </div>
+    </section>
+
+  </main>
+
+  <footer style="display:flex;align-items:center;justify-content:space-between;padding:0 40px;height:60px;background:#FFFFFF;border-top:1px solid #DFE3E6;font-size:15px;color:#A1A8B3;flex:none">
+    <span>Version 0.1.0</span>
+    <span style="display:flex;align-items:center;gap:10px">Local processing only
+      <span style="width:9px;height:9px;border-radius:50%;background:#059669"></span>
+    </span>
+  </footer>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;phase&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;idle&quot;,&quot;running&quot;,&quot;done&quot;],&quot;default&quot;:&quot;done&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;State&quot;},&quot;deepScanDefault&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;State&quot;}}">
+const PLACEHOLDER_RE = /\[([A-Z][A-Z0-9_]*)_(\d+)\]/g;
+const PII_LABELS = new Set(["EMAIL", "PHONE", "IBAN", "VAT", "NATIONAL_ID", "URL", "AMOUNT", "DATE"]);
+const ENTITY_LABELS = new Set(["CLIENT", "PROJECT", "INTERNAL", "PERSON", "ORG", "LOCATION"]);
+
+function markClass(label) {
+  if (PII_LABELS.has(label)) return "pii";
+  if (ENTITY_LABELS.has(label)) return "entity";
+  return "custom";
+}
+
+const TINT = {
+  pii: ["#FFE8D4", "#FFCDA8"],
+  entity: ["#E1E4E7", "#CBD1D6"],
+  custom: ["#EEEAF6", "#DAD2EC"],
+};
+
+const CATEGORY_NAMES = {
+  client_names: "Client names", project_names: "Project names",
+  internal_names: "Internal names", person_names: "Person names",
+  organisation_names: "Organisation names", email: "Email addresses",
+  phone: "Phone numbers", iban: "Bank account numbers", vat: "VAT numbers",
+  date: "Dates", amount: "Money amounts", custom_patterns: "Custom patterns",
+};
+
+const DOCS = [
+  {
+    name: "services-agreement.docx",
+    original: `SERVICES AGREEMENT
+
+This agreement is made between Meridian Consulting S.a r.l. and the
+client, represented by Marie Duval (marie.duval@meridian.lu,
++352 621 45 88 12).
+
+1. SCOPE
+The consultant, Thomas Berger, will deliver the review described in
+Appendix A. Invoices are settled to account
+LU28 0019 4006 4475 0000 within 30 days.
+
+2. CONFIDENTIALITY
+Both parties agree to protect all personal data exchanged during the
+engagement, in line with the client's internal policy 4471-B.`,
+    anonymised: `SERVICES AGREEMENT
+
+This agreement is made between [CLIENT_1] and the
+client, represented by [PERSON_1] ([EMAIL_1],
+[PHONE_1]).
+
+1. SCOPE
+The consultant, [PERSON_2], will deliver the review described in
+Appendix A. Invoices are settled to account
+[IBAN_1] within 30 days.
+
+2. CONFIDENTIALITY
+Both parties agree to protect all personal data exchanged during the
+engagement, in line with the client's internal policy [CUSTOM_1].`,
+    byCategory: { client_names: 1, person_names: 2, email: 1, phone: 1, iban: 1, custom_patterns: 1 },
+  },
+  {
+    name: "board-minutes.pptx",
+    original: `Board meeting, 14 January 2026
+
+Attendees
+- Sophie Klein (Chair)
+- Daniel Weber
+- Ana Ferreira
+
+Decisions
+1. Approved the Q4 budget presented by Daniel Weber.
+2. Renewed the contract with Orion Logistics until 2028.
+3. Noted the resignation of Ana Ferreira, effective 31 March.`,
+    anonymised: `Board meeting, 14 January 2026
+
+Attendees
+- [PERSON_3] (Chair)
+- [PERSON_4]
+- [PERSON_5]
+
+Decisions
+1. Approved the Q4 budget presented by [PERSON_4].
+2. Renewed the contract with [ORG_1] until 2028.
+3. Noted the resignation of [PERSON_5], effective 31 March.`,
+    byCategory: { person_names: 6, organisation_names: 1 },
+  },
+  {
+    name: "handover-notes.md",
+    original: `Handover notes
+
+Primary contact going forward is Sophie Klein
+(sophie.klein@example.com). Escalations go to Daniel Weber.
+
+Server access uses the account at 192.168.1.24; ask IT for the
+current credentials.`,
+    anonymised: `Handover notes
+
+Primary contact going forward is [PERSON_3]
+([EMAIL_2]). Escalations go to [PERSON_4].
+
+Server access uses the account at [IP_1]; ask IT for the
+current credentials.`,
+    byCategory: { person_names: 3, email: 1, ip_address: 1 },
+  },
+];
+
+const MAPPING = {
+  "[CLIENT_1]": { original: "Meridian Consulting S.a r.l.", type: "Client names" },
+  "[PERSON_1]": { original: "Marie Duval", type: "Person names" },
+  "[PERSON_2]": { original: "Thomas Berger", type: "Person names" },
+  "[PERSON_3]": { original: "Sophie Klein", type: "Person names" },
+  "[PERSON_4]": { original: "Daniel Weber", type: "Person names" },
+  "[PERSON_5]": { original: "Ana Ferreira", type: "Person names" },
+  "[EMAIL_1]": { original: "marie.duval@meridian.lu", type: "Email addresses" },
+  "[EMAIL_2]": { original: "sophie.klein@example.com", type: "Email addresses" },
+  "[PHONE_1]": { original: "+352 621 45 88 12", type: "Phone numbers" },
+  "[IBAN_1]": { original: "LU28 0019 4006 4475 0000", type: "Bank account numbers" },
+  "[ORG_1]": { original: "Orion Logistics", type: "Organisation names" },
+  "[IP_1]": { original: "192.168.1.24", type: "Network addresses" },
+  "[CUSTOM_1]": { original: "4471-B", type: "Custom patterns" },
+};
+
+const ENTITY_LIST = [
+  { canonical: "Marie Duval", type: "Person names" },
+  { canonical: "Thomas Berger", type: "Person names" },
+  { canonical: "Sophie Klein", type: "Person names" },
+  { canonical: "Daniel Weber", type: "Person names" },
+  { canonical: "Meridian Consulting S.a r.l.", type: "Client names" },
+  { canonical: "Orion Logistics", type: "Organisation names" },
+];
+
+function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+class Component extends DCLogic {
+  compareRef = React.createRef();
+
+  showTip = (e, text) => {
+    const host = this.compareRef.current;
+    if (!host) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const h = host.getBoundingClientRect();
+    const scale = host.offsetWidth ? h.width / host.offsetWidth : 1;
+    this.setState({ tip: {
+      text,
+      x: (r.left + r.width / 2 - h.left) / scale,
+      y: (r.top - h.top) / scale - 8,
+    } });
+  };
+
+  hideTip = () => { if (this.state.tip) this.setState({ tip: null }); };
+
+  hostPoint(rect) {
+    const host = this.compareRef.current;
+    const h = host.getBoundingClientRect();
+    const scale = host.offsetWidth ? h.width / host.offsetWidth : 1;
+    return {
+      x: (rect.left + rect.width / 2 - h.left) / scale,
+      y: (rect.top - h.top) / scale - 10,
+    };
+  }
+
+  onSelectText = () => {
+    const host = this.compareRef.current;
+    if (!host) return;
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) { this.setState({ sel: null }); return; }
+    const text = selection.toString().trim();
+    if (!text || text.length > 120 || !host.contains(selection.anchorNode)) {
+      this.setState({ sel: null });
+      return;
+    }
+    const rect = selection.getRangeAt(0).getBoundingClientRect();
+    const n = this.state.rules.filter((r) => /^\[CUSTOM_/.test(r.replace)).length + 1;
+    const p = this.hostPoint(rect);
+    this.setState({ sel: { text, x: p.x, y: p.y }, selDraft: "[CUSTOM_" + n + "]", tip: null });
+  };
+
+  applyRules(text) {
+    return this.state.rules.reduce((acc, r) => {
+      if (!r.find) return acc;
+      return acc.replace(new RegExp(escapeRe(r.find), r.caseSensitive ? "g" : "gi"), r.replace);
+    }, String(text));
+  }
+
+  state = {
+    tip: null,
+    sel: null,
+    selDraft: "",
+    dismissed: [],
+    openCats: [],
+    reportOpen: true,
+    reportScope: "__all",
+    missedOpen: false,
+    phase: null,
+    deepScan: true,
+    selectedDoc: DOCS[0].name,
+    selected: null,
+    reassignDraft: "",
+    missedCategory: "person_names",
+    missedDraft: "",
+    pending: [],
+    rulesOpen: false,
+    ruleFind: "", ruleReplace: "", ruleCase: false,
+    rules: [
+      { find: "Project Northstar", replace: "[PROJECT_1]", caseSensitive: false },
+      { find: "4471-B", replace: "[CUSTOM_1]", caseSensitive: true },
+    ],
+  };
+
+  plainStyle() {
+    return "white-space:pre-wrap";
+  }
+
+  markStyle(cls) {
+    const t = TINT[cls];
+    return "white-space:pre-wrap;background:" + t[0] + ";border-bottom:1px solid " + t[1] +
+      ";border-radius:3px;padding:1px 3px;cursor:pointer";
+  }
+
+  tokenizeAnon(text) {
+    const out = [];
+    let last = 0;
+    for (const m of String(text).matchAll(PLACEHOLDER_RE)) {
+      if (m.index > last) out.push({ text: text.slice(last, m.index), mark: null });
+      out.push({ text: m[0], mark: markClass(m[1]) });
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) out.push({ text: text.slice(last), mark: null });
+    return out;
+  }
+
+  tokenizeOriginal(text) {
+    const originals = Object.values(MAPPING).map((v) => v.original).sort((a, b) => b.length - a.length);
+    const re = new RegExp(originals.map(escapeRe).join("|"), "g");
+    const out = [];
+    let last = 0;
+    for (const m of String(text).matchAll(re)) {
+      if (m.index > last) out.push({ text: text.slice(last, m.index), mark: null });
+      const entry = Object.entries(MAPPING).find(([, v]) => v.original === m[0]);
+      const label = entry ? entry[0].slice(1).split("_")[0] : "CUSTOM";
+      out.push({ text: m[0], mark: markClass(label), original: m[0] });
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) out.push({ text: text.slice(last), mark: null });
+    return out;
+  }
+
+  renderVals() {
+    const s = this.state;
+    const phase = s.phase ?? this.props.phase ?? "done";
+    const isRunning = phase === "running";
+    const isDone = phase === "done";
+    const doc = DOCS.find((d) => d.name === s.selectedDoc) ?? DOCS[0];
+
+    const stepDefs = [
+      { mark: "\u2713", label: "Import", st: "done" },
+      { mark: "\u2713", label: "Identify", st: "done" },
+      { mark: "3", label: "Anonymise", st: "on" },
+      { mark: "4", label: "Export", st: "off" },
+    ];
+    const steps = stepDefs.map((d) => {
+      const on = d.st === "on", done = d.st === "done";
+      return {
+        mark: d.mark, label: d.label,
+        wrapStyle: "display:flex;align-items:center;gap:10px;padding:0 8px;height:100%;border-bottom:2px solid " +
+          (on ? "#FD5108" : "transparent"),
+        circleStyle: "display:grid;place-items:center;width:26px;height:26px;border-radius:50%;border:1.5px solid " +
+          (on ? "#FD5108" : done ? "#54616C" : "#CBD1D6") + ";font-size:13px;color:" +
+          (on ? "#FD5108" : done ? "#54616C" : "#A1A8B3"),
+        labelStyle: "font-size:16px;color:" + (on ? "#000000" : done ? "#54616C" : "#A1A8B3"),
+      };
+    });
+
+    const anonTokens = this.tokenizeAnon(this.applyRules(doc.anonymised)).map((t) => ({
+      text: t.text,
+      style: t.mark ? this.markStyle(t.mark) : this.plainStyle(),
+      onEnter: t.mark && MAPPING[t.text]
+        ? (e) => this.showTip(e, MAPPING[t.text].original)
+        : undefined,
+      onLeave: t.mark ? this.hideTip : undefined,
+      onClick: t.mark && MAPPING[t.text]
+        ? () => this.setState({ selected: t.text, reassignDraft: "" })
+        : undefined,
+    }));
+    const originalTokens = this.tokenizeOriginal(doc.original).map((t) => ({
+      text: t.text,
+      style: t.mark ? this.markStyle(t.mark).replace(";cursor:pointer", "") : this.plainStyle(),
+      onEnter: t.mark ? (e) => this.showTip(e, "Replaced in the anonymised copy") : undefined,
+      onLeave: t.mark ? this.hideTip : undefined,
+    }));
+
+    const countPills = Object.entries(doc.byCategory).map(([cat, n]) => ({
+      label: (CATEGORY_NAMES[cat] ?? cat) + " " + n,
+      style: "font-size:12px;color:#54616C;background:#F5F7F8;border:1px solid #EEEFF1;padding:4px 10px;border-radius:20px",
+    }));
+    const docTotal = Object.values(doc.byCategory).reduce((a, b) => a + b, 0);
+
+    const aggregate = {};
+    for (const d of DOCS) for (const [k, v] of Object.entries(d.byCategory)) aggregate[k] = (aggregate[k] ?? 0) + v;
+    const total = Object.values(aggregate).reduce((a, b) => a + b, 0);
+
+    const scopeDocs = s.reportScope === "__all"
+      ? DOCS
+      : DOCS.filter((d) => d.name === s.reportScope);
+    const scopeAgg = {};
+    for (const d of scopeDocs) for (const [k, v] of Object.entries(d.byCategory)) scopeAgg[k] = (scopeAgg[k] ?? 0) + v;
+    const scopeTotal = Object.values(scopeAgg).reduce((a, b) => a + b, 0);
+
+    const sel = s.selected;
+    const selInfo = sel ? MAPPING[sel] : null;
+    const q = s.reassignDraft.trim().toLowerCase();
+    const reassignMatches = !q ? [] : ENTITY_LIST
+      .filter((e) => e.canonical.toLowerCase().includes(q) && e.canonical !== selInfo?.original)
+      .slice(0, 5)
+      .map((e) => ({
+        canonical: e.canonical, type: e.type,
+        onPick: () => this.setState({ selected: null, reassignDraft: "" }),
+      }));
+
+    const rules = s.rules.map((r, i) => ({
+      find: r.find, replace: r.replace,
+      caseLabel: r.caseSensitive ? "exact case" : "any case",
+      upStyle: "display:grid;place-items:center;width:24px;height:24px;padding:0;border:none;border-radius:5px;background:none;color:" +
+        (i === 0 ? "#DFE3E6" : "#A1A8B3") + ";cursor:" + (i === 0 ? "default" : "pointer"),
+      downStyle: "display:grid;place-items:center;width:24px;height:24px;padding:0;border:none;border-radius:5px;background:none;color:" +
+        (i === s.rules.length - 1 ? "#DFE3E6" : "#A1A8B3") + ";cursor:" + (i === s.rules.length - 1 ? "default" : "pointer"),
+      onUp: () => { if (i > 0) this.moveRule(i, -1); },
+      onDown: () => { if (i < s.rules.length - 1) this.moveRule(i, 1); },
+      onRemove: () => this.setState((st) => ({ rules: st.rules.filter((_, j) => j !== i) })),
+    }));
+
+    const btnBase = "display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:0 14px;height:32px;min-width:0;border-radius:6px;font-size:13px;";
+    const primary = btnBase + "font-weight:700;letter-spacing:.04em;cursor:pointer;border:1px solid #FD5108;background:#FD5108;color:#FFFFFF";
+    const neutral = btnBase + "cursor:pointer;border:1px solid #000000;background:#FFFFFF;color:#000000";
+
+    const tip = s.tip;
+    return {
+      steps, anonTokens, originalTokens, countPills, rules,
+      compareRef: this.compareRef,
+      onSelectText: this.onSelectText,
+      selOpen: !!s.sel,
+      selText: s.sel ? s.sel.text : "",
+      selDraft: s.selDraft,
+      onSelDraft: (e) => this.setState({ selDraft: e.target.value }),
+      selCardStyle: "position:absolute;z-index:6;left:" + (s.sel ? s.sel.x : 0) + "px;top:" + (s.sel ? s.sel.y : 0) +
+        "px;transform:translate(-50%,-100%);width:308px;padding:14px;border:1px solid #DFE3E6;border-radius:8px;" +
+        "background:#FFFFFF;box-shadow:0 10px 26px rgba(0,0,0,.16);display:flex;flex-direction:column;gap:10px",
+      onCancelSel: () => this.setState({ sel: null }),
+      onApplySel: () => {
+        const find = s.sel && s.sel.text;
+        const replace = s.selDraft.trim();
+        if (!find || !replace) return;
+        this.setState((st) => ({
+          sel: null,
+          rules: [...st.rules, { find, replace, caseSensitive: true }],
+          rulesOpen: true,
+        }));
+        const sk = window.getSelection();
+        if (sk) sk.removeAllRanges();
+      },
+      tipOpen: !!tip,
+      tipText: tip ? tip.text : "",
+      tipStyle: "position:absolute;z-index:5;left:" + (tip ? tip.x : 0) + "px;top:" + (tip ? tip.y : 0) +
+        "px;transform:translate(-50%,-100%);pointer-events:none;max-width:280px;padding:6px 10px;" +
+        "border-radius:6px;background:#000000;color:#FFFFFF;font-family:Helvetica,Arial,sans-serif;" +
+        "font-size:12.5px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" +
+        "box-shadow:0 4px 14px rgba(0,0,0,.22)",
+      isRunning, isDone,
+      runSubtitle: isRunning
+        ? "The pipeline is working through your documents."
+        : isDone
+          ? "Check the result side by side. Every replacement maps back to its original."
+          : "Three documents are ready. Nothing has been replaced yet.",
+      runLabel: isDone ? "RUN AGAIN" : "RUN",
+      runStyle: isDone ? neutral : primary,
+      cancelStyle: btnBase + "border:1px solid #DFE3E6;background:#FFFFFF;color:" +
+        (isRunning ? "#000000" : "#CBD1D6") + ";cursor:" + (isRunning ? "pointer" : "default"),
+      onRun: () => this.setState({ phase: "running" }),
+      onCancel: () => { if (isRunning) this.setState({ phase: "idle" }); },
+      deepScan: s.deepScan,
+      onDeepScan: () => this.setState({ deepScan: !s.deepScan }),
+      progressStyle: "height:100%;width:62%;background:#FD5108;border-radius:4px;transition:width .3s",
+      progressLabel: "replace: board-minutes.pptx (2/3)",
+      stats: [
+        { value: String(total), label: "REPLACEMENTS" },
+        { value: String(DOCS.length), label: "DOCUMENTS" },
+        { value: String(Object.keys(aggregate).length), label: "CATEGORIES" },
+        { value: "1.8 s", label: "DURATION" },
+      ],
+      docOptions: DOCS.map((d) => ({ name: d.name })),
+      selectedDoc: s.selectedDoc,
+      onSelectDoc: (e) => this.setState({ selectedDoc: e.target.value, selected: null }),
+      replacedLabel: docTotal + " replacements in this document",
+      hasSelection: !!selInfo,
+      selectedPlaceholder: sel ?? "",
+      selectedOriginal: selInfo?.original ?? "",
+      onClearSelection: () => this.setState({ selected: null, reassignDraft: "" }),
+      reassignDraft: s.reassignDraft,
+      onReassignDraft: (e) => this.setState({ reassignDraft: e.target.value }),
+      reassignMatches,
+      reportLevel: "Preset: Standard",
+      reportLLM: "Local AI pass: yes",
+      reportDuration: "1 840 ms",
+      reportScope: s.reportScope,
+      onReportScope: (e) => this.setState({ reportScope: e.target.value }),
+      reportScopeOptions: [{ value: "__all", label: "All files" }]
+        .concat(DOCS.map((d) => ({ value: d.name, label: d.name }))),
+      reportRows: Object.entries(scopeAgg)
+        .sort((a, b) => b[1] - a[1])
+        .map(([cat, n]) => {
+          const label = CATEGORY_NAMES[cat] ?? cat;
+          const open = s.openCats.includes(cat);
+          return {
+            label, count: n, open,
+            onToggle: () => this.setState((st) => ({
+              openCats: st.openCats.includes(cat)
+                ? st.openCats.filter((c) => c !== cat)
+                : [...st.openCats, cat],
+            })),
+            chevronStyle: "flex:none;color:#A1A8B3;transition:transform .15s;transform:rotate(" +
+              (open ? "0deg" : "-90deg") + ")",
+            detailStyle: open
+              ? "padding:6px 0 12px 20px;display:flex;flex-direction:column;gap:8px"
+              : "display:none",
+            items: Object.entries(MAPPING)
+              .filter(([, v]) => v.type === label)
+              .map(([placeholder, v]) => ({
+                placeholder, original: v.original,
+                occurrences: scopeDocs.reduce((acc, d) =>
+                  acc + (d.anonymised.split(placeholder).length - 1), 0),
+              })),
+          };
+        }),
+      warnings: [
+        { id: "skipped-pdf", text: "q3-report.pdf was skipped: its text layer could not be read. Export it from the source application and import it again." },
+      ].filter((w) => !s.dismissed.includes(w.id))
+        .map((w) => ({
+          text: w.text,
+          onDismiss: () => this.setState((st) => ({ dismissed: [...st.dismissed, w.id] })),
+        })),
+      missedCategory: s.missedCategory,
+      onMissedCategory: (e) => this.setState({ missedCategory: e.target.value }),
+      missedDraft: s.missedDraft,
+      onMissedDraft: (e) => this.setState({ missedDraft: e.target.value }),
+      onAddMissed: () => {
+        const v = s.missedDraft.trim();
+        if (!v) return;
+        this.setState((st) => ({ missedDraft: "", pending: [...st.pending, v] }));
+      },
+      onFastRerun: () => this.setState({ pending: [] }),
+      hasPending: s.pending.length > 0,
+      pendingValues: s.pending.map((p, i) => ({
+        text: p,
+        onRemove: () => this.setState((st) => ({ pending: st.pending.filter((_, j) => j !== i) })),
+      })),
+      onToggleReport: () => this.setState({ reportOpen: !s.reportOpen }),
+      reportChevron: "flex:none;color:#A1A8B3;transition:transform .15s;transform:rotate(" +
+        (s.reportOpen ? "0deg" : "-90deg") + ")",
+      reportBodyStyle: s.reportOpen
+        ? "padding:16px 18px;display:flex;flex-direction:column;gap:14px"
+        : "display:none",
+      reportSummary: scopeTotal + " replacements",
+      onToggleMissed: () => this.setState({ missedOpen: !s.missedOpen }),
+      missedChevron: "flex:none;color:#A1A8B3;transition:transform .15s;transform:rotate(" +
+        (s.missedOpen ? "0deg" : "-90deg") + ")",
+      missedBodyStyle: s.missedOpen
+        ? "padding:16px 18px;display:flex;flex-direction:column;gap:12px"
+        : "display:none",
+      missedSummary: s.pending.length
+        ? s.pending.length + " pending"
+        : "add a value",
+      rulesCount: s.rules.length === 1 ? "1 rule" : s.rules.length + " rules",
+      onToggleRules: () => this.setState({ rulesOpen: !s.rulesOpen }),
+      rulesChevron: "flex:none;color:#A1A8B3;transition:transform .15s;transform:rotate(" +
+        (s.rulesOpen ? "0deg" : "-90deg") + ")",
+      rulesBodyStyle: s.rulesOpen
+        ? "padding:16px 18px;display:flex;flex-direction:column;gap:14px"
+        : "display:none",
+      ruleFind: s.ruleFind,
+      onRuleFind: (e) => this.setState({ ruleFind: e.target.value }),
+      ruleReplace: s.ruleReplace,
+      onRuleReplace: (e) => this.setState({ ruleReplace: e.target.value }),
+      ruleCase: s.ruleCase,
+      onRuleCase: () => this.setState({ ruleCase: !s.ruleCase }),
+      onAddRule: () => {
+        const find = s.ruleFind.trim();
+        if (!find) return;
+        this.setState((st) => ({
+          ruleFind: "", ruleReplace: "",
+          rules: [...st.rules, { find, replace: st.ruleReplace, caseSensitive: st.ruleCase }],
+        }));
+      },
+      continueHint: isDone ? total + " replacements ready to export" : "Run the anonymisation first",
+      continueStyle: isDone
+        ? "display:inline-flex;align-items:center;gap:10px;padding:0 22px;height:42px;border:1px solid #FD5108;border-radius:6px;background:#FD5108;color:#FFFFFF;font-size:14px;font-weight:700;letter-spacing:.04em;cursor:pointer"
+        : "display:inline-flex;align-items:center;gap:10px;padding:0 22px;height:42px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;color:#CBD1D6;font-size:14px;font-weight:700;letter-spacing:.04em;cursor:default",
+    };
+  }
+
+  moveRule(i, delta) {
+    this.setState((st) => {
+      const rules = [...st.rules];
+      const to = i + delta;
+      [rules[i], rules[to]] = [rules[to], rules[i]];
+      return { rules };
+    });
+  }
+}
+</script>
+</body>
+</html>

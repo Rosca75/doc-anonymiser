@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Helvetica,Arial,sans-serif;color:#000000;-webkit-font-smoothing:antialiased}
+  a{color:#000000;text-decoration:none}
+  a:hover{color:#FD5108}
+  input,select,button{font-family:Helvetica,Arial,sans-serif}
+  input[type=checkbox]{accent-color:#000000;width:15px;height:15px;margin:0;flex:none}
+  input[type=range]{accent-color:#000000}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:#CBD1D6;border-radius:6px;border:2px solid transparent;background-clip:content-box}
+</style>
+</helmet>
+<div style="display:flex;flex-direction:column;height:100vh;background:#F5F7F8">
+
+  <header style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 40px;height:80px;background:#FFFFFF;border-bottom:1px solid #DFE3E6;flex:none">
+    <div style="font-weight:700;font-size:26px;letter-spacing:-.01em;color:#000000">Doc Anonymiser</div>
+    <nav style="display:flex;align-items:center;gap:44px;font-size:16px">
+      <a href="#" style="color:#000000">Home</a>
+      <a href="#" style="display:flex;flex-direction:column;align-items:center;gap:6px;color:#000000">Anonymise documents
+        <span style="display:block;width:100%;height:2px;background:#A1A8B3;border-radius:2px"></span>
+      </a>
+      <a href="#" style="color:#000000">Documentation</a>
+    </nav>
+    <div style="display:flex;align-items:center;justify-content:flex-end;gap:22px">
+      <button aria-label="Help" style="display:grid;place-items:center;width:32px;height:32px;padding:0;border:none;background:none;cursor:pointer;color:#717C8D">
+        <svg width="24" height="24" viewBox="0 -960 960 960" fill="currentColor"><path d="M513.5-254.5Q528-269 528-290t-14.5-35.5Q499-340 478-340t-35.5 14.5Q428-311 428-290t14.5 35.5Q457-240 478-240t35.5-14.5ZM442-394h74q0-33 7.5-52t42.5-52q26-26 41-49.5t15-56.5q0-56-41-86t-97-30q-57 0-92.5 30T342-618l66 26q5-18 22.5-39t53.5-21q32 0 48 17.5t16 38.5q0 20-12 37.5T506-526q-44 39-54 59t-10 73Zm38 314q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Zm0-320Z"></path></svg>
+      </button>
+      <button aria-label="Settings" style="display:grid;place-items:center;width:32px;height:32px;padding:0;border:none;background:none;cursor:pointer;color:#717C8D">
+        <svg width="24" height="24" viewBox="0 -960 960 960" fill="currentColor"><path d="m370-80-16-128q-13-5-24.5-12T307-235l-119 50L78-375l103-78q-1-7-1-13.5v-27q0-6.5 1-13.5L78-585l110-190 119 50q11-8 23-15t24-12l16-128h220l16 128q13 5 24.5 12t22.5 15l119-50 110 190-103 78q1 7 1 13.5v27q0 6.5-2 13.5l103 78-110 190-118-50q-11 8-23 15t-24 12L590-80H370Zm70-80h79l14-106q31-8 57.5-23.5T639-327l99 41 39-68-86-65q5-14 7-29.5t2-31.5q0-16-2-31.5t-7-29.5l86-65-39-68-99 42q-22-23-48.5-38.5T533-694l-13-106h-79l-14 106q-31 8-57.5 23.5T321-633l-99-41-39 68 86 64q-5 15-7 30t-2 32q0 16 2 31t7 30l-86 65 39 68 99-42q22 23 48.5 38.5T427-266l13 106Zm42-180q58 0 99-41t41-99q0-58-41-99t-99-41q-59 0-99.5 41T342-480q0 58 40.5 99t99.5 41Zm-2-140Z"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <section aria-label="Anonymisation workflow" style="display:flex;align-items:center;gap:28px;padding:0 40px;height:68px;background:#FFFFFF;border-bottom:1px solid #DFE3E6;flex:none">
+    <a href="#" style="display:flex;align-items:center;gap:12px;color:#000000;font-size:21px;letter-spacing:-.01em">
+      <svg width="22" height="22" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="m313-440 224 224-57 56-320-320 320-320 57 56-224 224h487v80H313Z"></path></svg>
+      Anonymise Flow
+    </a>
+    <span style="width:1px;height:30px;background:#DFE3E6"></span>
+    <nav style="display:flex;align-items:stretch;gap:6px;height:100%">
+      <sc-for list="{{ steps }}" as="s" hint-placeholder-count="4">
+        <a href="#" style="{{ s.wrapStyle }}">
+          <span style="{{ s.circleStyle }}">{{ s.mark }}</span>
+          <span style="{{ s.labelStyle }}">{{ s.label }}</span>
+        </a>
+      </sc-for>
+    </nav>
+  </section>
+
+  <main style="flex:1;min-height:0;display:grid;grid-template-columns:1fr 2fr;gap:20px;padding:24px 40px;background:#F5F7F8">
+
+    <!-- CONFIGURE RAIL -->
+    <section style="display:flex;flex-direction:column;min-height:0;background:#FFFFFF;border:1px solid #DFE3E6;border-radius:8px;overflow:hidden">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:20px 22px 16px;border-bottom:1px solid #EEEFF1">
+        <h2 style="margin:0;font-size:19px;font-weight:400;letter-spacing:-.01em">Configure</h2>
+        <span style="font-size:13px;color:#A1A8B3">{{ activeCatLabel }}</span>
+      </div>
+
+      <div style="display:flex;flex-wrap:wrap;gap:6px;padding:12px 22px;border-bottom:1px solid #EEEFF1;flex:none">
+        <sc-for list="{{ cfgTabs }}" as="t" hint-placeholder-count="4">
+          <button onClick="{{ t.onPick }}" style="{{ t.style }}">{{ t.label }}</button>
+        </sc-for>
+      </div>
+
+      <div style="flex:1;min-height:0;overflow-y:auto;padding:20px 22px 24px;display:flex;flex-direction:column;gap:26px">
+
+        <sc-if value="{{ isCfgScope }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:column;gap:26px">
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div style="font-size:12px;font-weight:700;letter-spacing:.1em;color:#717C8D">DOCUMENT COUNTRY</div>
+          <select value="{{ country }}" onChange="{{ onCountry }}" style="width:100%;padding:9px 10px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13.5px;color:#000000;cursor:pointer">
+            <sc-for list="{{ countries }}" as="c" hint-placeholder-count="5">
+              <option value="{{ c.code }}">{{ c.name }}</option>
+            </sc-for>
+          </select>
+          
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div style="font-size:12px;font-weight:700;letter-spacing:.1em;color:#717C8D">PRESET</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            <sc-for list="{{ presets }}" as="p" hint-placeholder-count="4">
+              <button onClick="{{ p.onPick }}" style="{{ p.style }}">{{ p.label }}</button>
+            </sc-for>
+          </div>
+          
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <div style="font-size:12px;font-weight:700;letter-spacing:.1em;color:#717C8D">WHAT TO ANONYMISE</div>
+          <sc-for list="{{ groups }}" as="g" hint-placeholder-count="4">
+            <div style="border:1px solid #EEEFF1;border-radius:8px;overflow:hidden">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 13px; background: #F9FAFB; border-bottom: 1px solid #EEEFF1; padding-top: 0px; padding-bottom: 0px">
+                <span onClick="{{ g.onToggle }}" style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;font-size:13.5px;color:#000000;text-wrap:pretty;cursor:pointer">
+                  <svg width="16" height="16" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true" style="{{ g.chevronStyle }}"><path d="M480-345 240-585l56-56 184 184 184-184 56 56-240 240Z"></path></svg>
+                  {{ g.title }}
+                </span>
+                <span style="display:flex;align-items:center;gap:4px;flex:none">
+                  <span style="font-size:12px;color:#A1A8B3">{{ g.countLabel }}</span>
+                  <button onClick="{{ g.onAll }}" title="Select all" style="display:grid;place-items:center;width:24px;height:24px;padding:0;border:none;background:none;cursor:pointer;color:#A1A8B3" style-hover="color:#000000">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"></path></svg>
+                  </button>
+                  <button onClick="{{ g.onNone }}" title="Deselect all" style="display:grid;place-items:center;width:24px;height:24px;padding:0;border:none;background:none;cursor:pointer;color:#A1A8B3" style-hover="color:#000000">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13H5v-2h14v2z"></path></svg>
+                  </button>
+                </span>
+              </div>
+              <div style="{{ g.bodyStyle }}">
+                <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="5">
+                  <label style="display: flex; align-items: flex-start; gap: 10px; padding: 9px 13px; cursor: pointer; border-top: 1px solid #F5F7F8; padding-top: 0px; padding-bottom: 0px" style-hover="background:#F9FAFB">
+                    <input type="checkbox" checked="{{ r.checked }}" onChange="{{ r.onToggle }}" style="margin-top:2px">
+                    <span style="flex: 1; min-width: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 14px">
+                      <span style="flex: 1; min-width: 0; font-size: 13.5px; color: #000000; text-wrap: pretty; padding-top: 4px; padding-bottom: 4px">{{ r.label }}</span>
+                      <span title="{{ r.example }}" style="flex:none;max-width:58%;text-align:right;font-size:12px;line-height:1.45;color:#A1A8B3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.example }}</span>
+                    </span>
+                  </label>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div style="font-size:12px;font-weight:700;letter-spacing:.1em;color:#717C8D">DETECTION CONFIDENCE</div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <input type="range" min="0" max="100" step="5" value="{{ confidencePct }}" onChange="{{ onConfidence }}" onInput="{{ onConfidence }}" style="flex:1">
+            <span style="min-width:44px;text-align:right;font-family:Consolas,'Courier New',monospace;font-size:14px">{{ confidencePct }}</span>
+          </div>
+          <p style="margin:0;font-size:12.5px;line-height:1.5;color:#A1A8B3;text-wrap:pretty">{{ confidenceEffect }}</p>
+        </div>
+        </div>
+        </sc-if>
+
+        <sc-if value="{{ isCfgSmart }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div style="font-size:12px;font-weight:700;letter-spacing:.1em;color:#717C8D">SMART DETECTION</div>
+          <p style="margin:0;font-size:12.5px;line-height:1.5;color:#A1A8B3;text-wrap:pretty">Smart detection guesses which words are names from how they are written, so it always proposes some things that are not names. These settings decide how strict it is. Set them all to zero, and untick the box, to see everything it can find.</p>
+          <div style="display:grid;grid-template-columns:1fr 84px;gap:12px 10px;align-items:center;font-size:13px">
+            <label style="color:#000000">Shortest value</label>
+            <input value="4" style="width:100%;padding:7px 9px;border:1px solid #DFE3E6;border-radius:6px;font-size:13px;color:#000000">
+            <label style="color:#000000">Fewest occurrences</label>
+            <input value="1" style="width:100%;padding:7px 9px;border:1px solid #DFE3E6;border-radius:6px;font-size:13px;color:#000000">
+            <label style="color:#000000">Minimum certainty</label>
+            <input value="0.5" style="width:100%;padding:7px 9px;border:1px solid #DFE3E6;border-radius:6px;font-size:13px;color:#000000">
+          </div>
+          <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+            <input type="checkbox" checked="{{ true }}" style="margin-top:2px">
+            <span style="display:flex;flex-direction:column;gap:3px">
+              <span style="font-size:13.5px">Skip ordinary words</span>
+              <span style="font-size:12px;line-height:1.45;color:#A1A8B3;text-wrap:pretty">Ignores month names, weekdays and common sentence openers, which are capitalised without being names.</span>
+            </span>
+          </label>
+        </div>
+        </sc-if>
+
+        <sc-if value="{{ isCfgLocal }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div style="font-size:12px;font-weight:700;letter-spacing:.1em;color:#717C8D">LOCAL AI</div>
+          <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+            <input type="checkbox" checked="{{ aiOn }}" onChange="{{ onToggleAI }}" style="margin-top:2px">
+            <span style="display:flex;flex-direction:column;gap:3px">
+              <span style="font-size:13.5px">Use local AI (Ollama)</span>
+              <span style="font-size:12px;line-height:1.45;color:#A1A8B3;text-wrap:pretty">A language model running on this machine can suggest names to replace and double-check the result. Nothing leaves your computer.</span>
+            </span>
+          </label>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="{{ ollamaBadgeStyle }}">{{ ollamaBadgeText }}</span>
+            <span style="font-size:12px;color:#A1A8B3">Host locked to 127.0.0.1</span>
+          </div>
+          <div style="display:grid;grid-template-columns:78px 1fr;gap:8px 10px;align-items:center;font-size:13px">
+            <label style="color:#717C8D">Port</label>
+            <input value="11434" style="width:100%;padding:7px 9px;border:1px solid #DFE3E6;border-radius:6px;font-size:13px;color:#000000">
+            <label style="color:#717C8D">Model</label>
+            <select style="width:100%;padding:7px 9px;border:1px solid #DFE3E6;border-radius:6px;font-size:13px;color:#000000;background:#FFFFFF">
+              <option>llama3.1:8b</option>
+              <option>mistral:7b</option>
+            </select>
+            <label style="color:#717C8D">Context</label>
+            <input value="8192" style="width:100%;padding:7px 9px;border:1px solid #DFE3E6;border-radius:6px;font-size:13px;color:#000000">
+          </div>
+        </div>
+        </sc-if>
+
+        <sc-if value="{{ isCfgCloud }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="font-size:12px;font-weight:700;letter-spacing:.1em;color:#717C8D">CLOUD AI</div>
+          <div style="border:1px dashed #CBD1D6;border-radius:8px;background:#F9FAFB;padding:22px 18px;display:flex;flex-direction:column;gap:12px;align-items:flex-start">
+            <span style="font-size:11.5px;padding:3px 9px;border-radius:4px;color:#54616C;background:#EEEFF1">Not available yet</span>
+            <p style="margin:0;font-size:12.5px;line-height:1.55;color:#A1A8B3;text-wrap:pretty">Connecting to a cloud endpoint is not built yet. When it is, this is where you will pick the provider, the model and the endpoint, and confirm in writing what may leave this machine before anything is sent.</p>
+          </div>
+        </div>
+        </sc-if>
+
+      </div>
+    </section>
+
+    <!-- IDENTIFY WORKSPACE -->
+    <section style="display:flex;flex-direction:column;min-height:0;background:#FFFFFF;border:1px solid #DFE3E6;border-radius:8px;overflow:hidden">
+
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px 24px 16px">
+        <div style="display:flex;align-items:baseline;gap:12px;min-width:0">
+          <h2 style="margin:0;font-size:19px;font-weight:400;letter-spacing:-.01em">Identify</h2>
+          <span style="font-size:13px;color:#A1A8B3;text-wrap:pretty">{{ identifySubtitle }}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex:none">
+          <label style="display:flex;align-items:center;gap:8px;padding:0 10px;height:36px;border:1px solid #DFE3E6;border-radius:6px;color:#A1A8B3">
+            <svg width="17" height="17" viewBox="0 -960 960 960" fill="currentColor"><path d="M784-120 532-372q-30 24-69 38t-83 14q-109 0-184.5-75.5T120-580q0-109 75.5-184.5T380-840q109 0 184.5 75.5T640-580q0 44-14 83t-38 69l252 252-56 56ZM380-400q75 0 127.5-52.5T560-580q0-75-52.5-127.5T380-760q-75 0-127.5 52.5T200-580q0 75 52.5 127.5T380-400Z"></path></svg>
+            <input value="{{ search }}" onChange="{{ onSearch }}" placeholder="search values" style="width:150px;border:none;outline:none;background:none;font-size:13.5px;color:#000000">
+          </label>
+          <button onClick="{{ onRunDetection }}" style="display:inline-flex;align-items:center;gap:8px;padding:0 16px;height:36px;border:1px solid #000000;border-radius:6px;background:#FFFFFF;color:#000000;font-size:13.5px;cursor:pointer" style-hover="background:#F5F7F8">
+            <svg width="17" height="17" viewBox="0 -960 960 960" fill="currentColor"><path d="M160-360q-50 0-85-35t-35-85q0-50 35-85t85-35v-80q0-33 23.5-56.5T240-760h120q0-50 35-85t85-35q50 0 85 35t35 85h120q33 0 56.5 23.5T800-680v80q50 0 85 35t35 85q0 50-35 85t-85 35v160q0 33-23.5 56.5T720-120H240q-33 0-56.5-23.5T160-200v-160Zm242.5-97.5Q420-475 420-500t-17.5-42.5Q385-560 360-560t-42.5 17.5Q300-525 300-500t17.5 42.5Q335-440 360-440t42.5-17.5Zm240 0Q660-475 660-500t-17.5-42.5Q625-560 600-560t-42.5 17.5Q540-525 540-500t17.5 42.5Q575-440 600-440t42.5-17.5ZM320-280h320v-80H320v80Zm-80 80h480v-480H240v480Zm240-240Z"></path></svg>
+            Run detection
+          </button>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:stretch;gap:24px;padding:0 24px;border-bottom:1px solid #EEEFF1">
+        <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="4">
+          <button onClick="{{ t.onPick }}" style="{{ t.style }}">{{ t.label }}<span style="{{ t.badgeStyle }}">{{ t.count }}</span></button>
+        </sc-for>
+      </div>
+
+      <div style="flex:1;min-height:0;overflow-y:auto;padding:20px 24px 24px">
+
+        <!-- SUGGESTIONS -->
+        <sc-if value="{{ isSuggestions }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+              <p style="margin:0;font-size:13px;color:#A1A8B3;text-wrap:pretty">Nothing is replaced until you accept it. Bulk actions apply to the rows shown below, so a search limits them too.</p>
+              <div style="display:flex;align-items:center;gap:8px;flex:none">
+                <button onClick="{{ onAcceptAll }}" style="padding:0 12px;height:32px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;cursor:pointer" style-hover="border-color:#000000">Accept all shown</button>
+                <button onClick="{{ onRejectAll }}" style="padding:0 12px;height:32px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;cursor:pointer" style-hover="border-color:#000000">Reject all shown</button>
+              </div>
+            </div>
+
+            <div style="border:1px solid #EEEFF1;border-radius:8px;overflow:hidden">
+              <div style="display: grid; grid-template-columns: minmax(0,1fr) minmax(104px,150px) 88px minmax(92px,130px) 84px; gap: 12px; padding: 10px 16px; background: #F9FAFB; border-bottom: 1px solid #EEEFF1; font-size: 11.5px; font-weight: 700; letter-spacing: .07em; color: #717C8D; padding-top: 8px; padding-bottom: 8px">
+                <button onClick="{{ onSortValue }}" title="Sort by value, A to Z or Z to A." style="{{ sortValueStyle }}">VALUE
+                  <svg width="14" height="14" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true" style="{{ sortValueArrow }}"><path d="M480-345 240-585l56-56 184 184 184-184 56 56-240 240Z"></path></svg>
+                </button>
+                <select value="{{ typeFilter }}" onChange="{{ onTypeFilter }}" title="Filter by type" style="{{ headSelectStyle }}">
+                  <sc-for list="{{ typeOptions }}" as="o" hint-placeholder-count="3">
+                    <option value="{{ o.value }}">{{ o.label }}</option>
+                  </sc-for>
+                </select>
+                <button onClick="{{ onSortCount }}" title="Sort by how often the value occurs." style="{{ sortCountStyle }}">COUNT
+                  <svg width="14" height="14" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true" style="{{ sortCountArrow }}"><path d="M480-345 240-585l56-56 184 184 184-184 56 56-240 240Z"></path></svg>
+                </button>
+                <select value="{{ sourceFilter }}" onChange="{{ onSourceFilter }}" title="Filter by what found the value" style="{{ headSelectStyle }}">
+                  <sc-for list="{{ sourceOptions }}" as="o" hint-placeholder-count="3">
+                    <option value="{{ o.value }}">{{ o.label }}</option>
+                  </sc-for>
+                </select>
+                <span style="text-align:right">ACTIONS</span>
+              </div>
+              <sc-for list="{{ suggestions }}" as="c" hint-placeholder-count="6">
+                <div style="display: grid; grid-template-columns: minmax(0,1fr) minmax(104px,150px) 88px minmax(92px,130px) 84px; gap: 12px; align-items: center; padding: 11px 16px; border-top: 1px solid #F5F7F8; font-size: 13.5px; padding-left: 16px; padding-right: 16px; padding-top: 4px; padding-bottom: 4px" style-hover="background:#F9FAFB">
+                  <span style="min-width:0;color:#000000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.text }}</span>
+                  <span style="min-width:0;font-size:12.5px;color:#54616C;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.type }}</span>
+                  <span style="font-family:Consolas,'Courier New',monospace;font-size:13px;color:#54616C">{{ c.count }}</span>
+                  <span style="{{ c.sourceStyle }}">{{ c.source }}</span>
+                  <span style="display:flex;align-items:center;justify-content:flex-end;gap:4px">
+                    <button onClick="{{ c.onAccept }}" title="Accept" style="display:grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;cursor:pointer;color:#54616C" style-hover="border-color:#059669;color:#059669">
+                      <svg width="16" height="16" viewBox="0 -960 960 960" fill="currentColor"><path d="m424-296 282-282-56-56-226 226-114-114-56 56 170 170Zm56 216q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Zm0-320Z"></path></svg>
+                    </button>
+                    <button onClick="{{ c.onReject }}" title="Reject" style="display:grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;cursor:pointer;color:#54616C" style-hover="border-color:#DC2626;color:#DC2626">
+                      <svg width="16" height="16" viewBox="0 -960 960 960" fill="currentColor"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"></path></svg>
+                    </button>
+                  </span>
+                </div>
+              </sc-for>
+              <sc-if value="{{ noSuggestions }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:34px 16px;text-align:center;font-size:13.5px;color:#A1A8B3">No suggestion matches the current search and filters.</div>
+              </sc-if>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- MY VALUES -->
+        <sc-if value="{{ isValues }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <input value="{{ draftValue }}" onChange="{{ onDraftValue }}" placeholder="add a value to replace, e.g. Meridian Consulting" style="flex:1;padding:9px 12px;border:1px solid #DFE3E6;border-radius:6px;font-size:13.5px;color:#000000">
+              <select style="padding:9px 10px;border:1px solid #DFE3E6;border-radius:6px;font-size:13.5px;background:#FFFFFF;color:#000000">
+                <option>Client names</option><option>Project names</option>
+                <option>Internal names</option><option>Person names</option>
+              </select>
+              <button onClick="{{ onAddValue }}" style="padding:0 16px;height:36px;border:1px solid #000000;border-radius:6px;background:#FFFFFF;font-size:13.5px;cursor:pointer" style-hover="background:#F5F7F8">Add value</button>
+            </div>
+            <sc-for list="{{ entities }}" as="e" hint-placeholder-count="3">
+              <div style="border:1px solid #EEEFF1;border-radius:8px;padding:15px 17px;display:flex;flex-direction:column;gap:12px">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+                  <div style="display:flex;align-items:center;gap:10px;min-width:0">
+                    <span style="font-size:15px;color:#000000">{{ e.canonical }}</span>
+                    <span style="font-size:11.5px;color:#54616C;background:#EEEFF1;padding:2px 8px;border-radius:4px">{{ e.type }}</span>
+                    <input value="{{ e.placeholder }}" onChange="{{ e.onPlaceholder }}" title="Edit the replacement value" style="width:112px;font-family:Consolas,'Courier New',monospace;font-size:11.5px;color:#54616C;background:#F5F7F8;border:1px solid #EEEFF1;padding:3px 8px;border-radius:4px;outline:none" style-focus="border-color:#000000;color:#000000;background:#FFFFFF">
+                  </div>
+                  <button onClick="{{ e.onRemove }}" title="Remove value" style="display:grid;place-items:center;width:28px;height:28px;padding:0;border:none;border-radius:6px;background:none;cursor:pointer;color:#A1A8B3;flex:none" style-hover="color:#DC2626">
+                    <svg width="17" height="17" viewBox="0 -960 960 960" fill="currentColor"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"></path></svg>
+                  </button>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <span style="font-size:12px;color:#A1A8B3">Variants</span>
+                  <sc-for list="{{ e.variants }}" as="v" hint-placeholder-count="3">
+                    <span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:#000000;background:#F5F7F8;border:1px solid #EEEFF1;padding:3px 6px 3px 9px;border-radius:20px">{{ v.text }}
+                      <button onClick="{{ v.onRemove }}" title="Remove variant" style="display:grid;place-items:center;width:16px;height:16px;padding:0;border:none;border-radius:50%;background:none;cursor:pointer;color:#A1A8B3" style-hover="color:#DC2626">
+                        <svg width="12" height="12" viewBox="0 -960 960 960" fill="currentColor"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"></path></svg>
+                      </button>
+                    </span>
+                  </sc-for>
+                  <button onClick="{{ e.onAddVariant }}" style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;color:#54616C;background:none;border:1px dashed #CBD1D6;padding:3px 10px;border-radius:20px;cursor:pointer" style-hover="border-color:#000000;color:#000000">
+                    <svg width="13" height="13" viewBox="0 -960 960 960" fill="currentColor"><path d="M440-440H200v-80h240v-240h80v240h240v80H520v240h-80v-240Z"></path></svg>add
+                  </button>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <!-- NEVER ANONYMISE -->
+        <sc-if value="{{ isAllow }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <p style="margin:0;font-size:13px;line-height:1.55;color:#A1A8B3;text-wrap:pretty">Terms in this list survive every pass, even when they also appear as names to replace.</p>
+            <div style="display:flex;align-items:center;gap:10px">
+              <input value="{{ draftAllow }}" onChange="{{ onDraftAllow }}" placeholder="add a term, e.g. CSSF" style="flex:1;padding:9px 12px;border:1px solid #DFE3E6;border-radius:6px;font-size:13.5px;color:#000000">
+              <button onClick="{{ onAddAllow }}" style="padding:0 16px;height:36px;border:1px solid #000000;border-radius:6px;background:#FFFFFF;font-size:13.5px;cursor:pointer" style-hover="background:#F5F7F8">Add</button>
+              <button style="display:inline-flex;align-items:center;gap:8px;padding:0 14px;height:36px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13.5px;cursor:pointer;color:#000000" style-hover="border-color:#000000">
+                <svg width="16" height="16" viewBox="0 -960 960 960" fill="currentColor"><path d="M440-200h80v-167l64 64 56-57-160-160-160 160 57 56 63-63v167ZM240-80q-33 0-56.5-23.5T160-160v-640q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H240Zm280-520v-200H240v640h480v-440H520ZM240-800v200-200 640-640Z"></path></svg>Import CSV
+              </button>
+              <button style="display:inline-flex;align-items:center;gap:8px;padding:0 14px;height:36px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13.5px;cursor:pointer;color:#000000" style-hover="border-color:#000000">
+                <svg width="16" height="16" viewBox="0 -960 960 960" fill="currentColor"><path d="M480-320 280-520l56-58 104 104v-326h80v326l104-104 56 58-200 200ZM240-160q-33 0-56.5-23.5T160-240v-120h80v120h480v-120h80v120q0 33-23.5 56.5T720-160H240Z"></path></svg>Template
+              </button>
+            </div>
+            <div style="border:1px solid #EEEFF1;border-radius:8px;padding:16px;display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start">
+              <sc-for list="{{ allowTerms }}" as="a" hint-placeholder-count="6">
+                <span style="display:inline-flex;align-items:center;gap:7px;font-size:13px;color:#000000;background:#F5F7F8;border:1px solid #EEEFF1;padding:5px 8px 5px 11px;border-radius:20px">{{ a.text }}
+                  <button onClick="{{ a.onRemove }}" title="Remove" style="display:grid;place-items:center;width:17px;height:17px;padding:0;border:none;border-radius:50%;background:none;cursor:pointer;color:#A1A8B3" style-hover="color:#DC2626">
+                    <svg width="12" height="12" viewBox="0 -960 960 960" fill="currentColor"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"></path></svg>
+                  </button>
+                </span>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- PATTERNS -->
+        <sc-if value="{{ isPatterns }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <p style="margin:0;font-size:13px;line-height:1.55;color:#A1A8B3;text-wrap:pretty">Regular expressions are matched in addition to the categories you selected. A pattern that does not compile is kept but never used.</p>
+            <div style="display:flex;align-items:center;gap:10px">
+              <input value="{{ draftPattern }}" onChange="{{ onDraftPattern }}" placeholder="add an expression, e.g. INV-\d{6}" style="flex:1;padding:9px 12px;border:1px solid #DFE3E6;border-radius:6px;font-family:Consolas,'Courier New',monospace;font-size:13.5px;color:#000000">
+              <button onClick="{{ onAddPattern }}" style="padding:0 16px;height:36px;border:1px solid #000000;border-radius:6px;background:#FFFFFF;font-size:13.5px;cursor:pointer" style-hover="background:#F5F7F8">Add pattern</button>
+            </div>
+            <div style="border:1px solid #EEEFF1;border-radius:8px;overflow:hidden">
+              <sc-for list="{{ patterns }}" as="p" hint-placeholder-count="3">
+                <div style="display:flex;align-items:center;gap:14px;padding:13px 16px;border-bottom:1px solid #F5F7F8" style-hover="background:#F9FAFB">
+                  <span style="font-family:Consolas,'Courier New',monospace;font-size:13.5px;color:#000000;flex:none">{{ p.expr }}</span>
+                  <span style="{{ p.statusStyle }}">{{ p.status }}</span>
+                  <span style="flex:1"></span>
+                  <button onClick="{{ p.onRemove }}" title="Remove pattern" style="display:grid;place-items:center;width:28px;height:28px;padding:0;border:none;border-radius:6px;background:none;cursor:pointer;color:#A1A8B3;flex:none" style-hover="color:#DC2626">
+                    <svg width="17" height="17" viewBox="0 -960 960 960" fill="currentColor"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"></path></svg>
+                  </button>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 24px;border-top:1px solid #EEEFF1;background:#FFFFFF">
+        <a href="#" style="display:inline-flex;align-items:center;gap:8px;font-size:14px;color:#54616C">
+          <svg width="18" height="18" viewBox="0 -960 960 960" fill="currentColor"><path d="m313-440 224 224-57 56-320-320 320-320 57 56-224 224h487v80H313Z"></path></svg>
+          Back to Import
+        </a>
+        <div style="display:flex;align-items:center;gap:16px">
+          <span style="font-size:13px;color:#A1A8B3">{{ readyLabel }}</span>
+          <button style="display:inline-flex;align-items:center;gap:10px;padding:0 22px;height:42px;border:1px solid #FD5108;border-radius:6px;background:#FD5108;color:#FFFFFF;font-size:14px;font-weight:700;letter-spacing:.04em;cursor:pointer">
+            CONTINUE TO ANONYMISE
+            <svg width="18" height="18" viewBox="0 -960 960 960" fill="currentColor"><path d="M647-440H160v-80h487L423-744l57-56 320 320-320 320-57-56 224-224Z"></path></svg>
+          </button>
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <footer style="display:flex;align-items:center;justify-content:space-between;padding:0 40px;height:60px;background:#FFFFFF;border-top:1px solid #DFE3E6;font-size:15px;color:#A1A8B3;flex:none">
+    <span>Version 0.1.0</span>
+    <span style="display:flex;align-items:center;gap:10px">Local processing only
+      <span style="width:9px;height:9px;border-radius:50%;background:#059669"></span>
+    </span>
+  </footer>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;ollamaAvailable&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;State&quot;},&quot;activeTab&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;suggestions&quot;,&quot;values&quot;,&quot;allow&quot;,&quot;patterns&quot;],&quot;default&quot;:&quot;suggestions&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;State&quot;}}">
+const LABELS = {
+  email: ["Email addresses", "jean.muller@example.com"],
+  phone: ["Phone numbers", "+352 621 123 456"],
+  iban: ["Bank account numbers", "LU28 0019 4006 4475 0000"],
+  vat: ["VAT numbers", "LU12345678"],
+  matricule: ["National identification numbers", "13 digit number"],
+  url: ["Web addresses", "example.com/report"],
+  credit_card: ["Payment card numbers", "4111 1111 1111 1111"],
+  uk_nhs: ["UK health service numbers", "943 476 5919"],
+  ip_address: ["Network addresses", "192.168.1.24"],
+  mac_address: ["Device hardware addresses", "3C:22:FB:1A:9E:04"],
+  crypto: ["Cryptocurrency addresses", "bc1qar0srrr7xfkvy5"],
+  database_uri: ["Database connection strings", "postgres://host/db"],
+  de_steuer_id: ["German tax identification numbers", "11 digit Steuer-ID"],
+  es_nif: ["Spanish tax numbers", "NIF, 12345678Z"],
+  client_names: ["Client names", "listed on the right"],
+  project_names: ["Project names", "listed on the right"],
+  internal_names: ["Internal names", "staff, teams, systems"],
+  person_names: ["Person names", "Marie Duval, M. Duval"],
+  custom_patterns: ["Custom patterns", "your expressions"],
+  amount: ["Money amounts", "EUR 12,500"],
+  date: ["Dates", "15/01/2026"],
+  organisation_names: ["Organisation names", "from AI review"],
+  location_names: ["Place names", "cities and places"],
+};
+
+const COUNTRIES = [
+  { code: "LU", name: "Luxembourg", phone: "+352 621 123 456", vat: "LU12345678",
+    matricule: "13 digit number", ids: [] },
+  { code: "FR", name: "France", phone: "+33 6 12 34 56 78", vat: "FR90887654",
+    matricule: "15 digit NIR", ids: [] },
+  { code: "DE", name: "Germany", phone: "+49 151 234 5678", vat: "DE123456789",
+    matricule: "11 digit Steuer-ID", ids: ["de_steuer_id"] },
+  { code: "ES", name: "Spain", phone: "+34 612 345 678", vat: "ESA12345674",
+    matricule: "NIF, 12345678Z", ids: ["es_nif"] },
+  { code: "UK", name: "United Kingdom", phone: "+44 7700 900123", vat: "GB123456789",
+    matricule: "QQ123456C", ids: ["uk_nhs"] },
+];
+const COUNTRY_IDS = ["de_steuer_id", "es_nif", "uk_nhs"];
+
+const HARD = ["email", "phone", "iban", "vat", "matricule", "url"];
+const EXTENDED = ["credit_card", "uk_nhs", "ip_address", "mac_address", "crypto", "database_uri", "de_steuer_id", "es_nif"];
+const NAMES = ["client_names", "project_names", "internal_names", "person_names", "custom_patterns"];
+const THOROUGH = ["amount", "date", "organisation_names", "location_names"];
+const GROUPS = [
+  ["Contact and account details", HARD],
+  ["Payment, tax and technical identifiers", EXTENDED],
+  ["Names", NAMES],
+  ["Only for thorough anonymisation", THOROUGH],
+];
+const ALL = [...HARD, ...EXTENDED, ...NAMES, ...THOROUGH];
+
+function presetCategories(level) {
+  const sel = {};
+  for (const c of ALL) sel[c] = false;
+  for (const c of HARD) sel[c] = true;
+  for (const c of EXTENDED) sel[c] = true;
+  sel.client_names = sel.project_names = sel.internal_names = true;
+  sel.custom_patterns = true;
+  if (level === "medium" || level === "advanced") sel.person_names = true;
+  if (level === "advanced") for (const c of THOROUGH) sel[c] = true;
+  return sel;
+}
+
+class Component extends DCLogic {
+  state = {
+    tab: null,
+    cfgTab: "scope",
+    country: "LU",
+    collapsed: {},
+    categories: presetCategories("medium"),
+    level: "medium",
+    confidence: 0,
+    aiOn: true,
+    tuneOpen: false,
+    search: "",
+    draftValue: "", draftAllow: "", draftPattern: "",
+    suggestions: [
+      { text: "Marie Duval", type: "Person names", count: 14, source: "Pattern" },
+      { text: "Thomas Berger", type: "Person names", count: 9, source: "Smart" },
+      { text: "Meridian Consulting", type: "Organisation names", count: 6, source: "Local AI" },
+      { text: "Sophie Klein", type: "Person names", count: 5, source: "Smart" },
+      { text: "Aurora Group", type: "Organisation names", count: 4, source: "Local AI" },
+      { text: "Lena Fischer", type: "Person names", count: 3, source: "Smart" },
+      { text: "Orion Logistics", type: "Organisation names", count: 2, source: "Local AI" },
+      { text: "Ana Ferreira", type: "Person names", count: 2, source: "Smart" },
+    ],
+    entities: [
+      { canonical: "Marie Duval", type: "Person names", placeholder: "PERSON_01", variants: ["M. Duval", "Duval", "Marie"] },
+      { canonical: "Meridian Consulting S.a r.l.", type: "Client names", placeholder: "CLIENT_01", variants: ["Meridian", "Meridian Consulting"] },
+      { canonical: "Project Northstar", type: "Project names", placeholder: "PROJECT_01", variants: ["Northstar"] },
+    ],
+    allowTerms: ["CSSF", "CNPD", "Luxembourg", "EUR", "IFRS", "VAT", "Q3"],
+    patterns: [
+      { expr: "\\b[A-Z]{3}-\\d{4}\\b", ok: true },
+      { expr: "INV-\\d{6}", ok: true },
+      { expr: "(?<=ref: )\\w+", ok: false, error: "lookbehind is not supported" },
+    ],
+  };
+
+  set(patch) { this.setState(patch); }
+
+  setCountry(code) {
+    const c = COUNTRIES.find((x) => x.code === code) ?? COUNTRIES[0];
+    this.setState((s) => {
+      const categories = { ...s.categories };
+      for (const k of COUNTRY_IDS) categories[k] = c.ids.includes(k);
+      return { country: code, categories };
+    });
+  }
+
+  labelsFor(code) {
+    const c = COUNTRIES.find((x) => x.code === code) ?? COUNTRIES[0];
+    return {
+      ...LABELS,
+      phone: ["Phone numbers", c.phone],
+      vat: ["VAT numbers", c.vat],
+      matricule: ["National identification numbers", c.matricule],
+    };
+  }
+
+  applyPreset(level) { this.setState({ level, categories: presetCategories(level) }); }
+
+  toggleCat(key) {
+    this.setState((s) => ({ categories: { ...s.categories, [key]: !s.categories[key] } }));
+  }
+
+  setGroup(keys, on) {
+    this.setState((s) => {
+      const categories = { ...s.categories };
+      for (const k of keys) categories[k] = on;
+      return { categories };
+    });
+  }
+
+  currentPreset(categories) {
+    for (const level of ["soft", "medium", "advanced"]) {
+      const p = presetCategories(level);
+      if (ALL.every((c) => !!categories[c] === p[c])) return level;
+    }
+    return "custom";
+  }
+
+  confidenceEffect(pct) {
+    if (pct <= 0) return "Nothing is skipped: every detection is replaced.";
+    if (pct <= 80) return "Nothing is skipped yet at this setting: every detection scores at least 80.";
+    if (pct <= 95) return "Values that only the local AI suggested are skipped. The values you listed and the pattern matches are still replaced.";
+    return "Only pattern matches are replaced. The values you listed yourself and the AI suggestions are both skipped.";
+  }
+
+  renderVals() {
+    const s = this.state;
+    const tab = s.tab ?? this.props.activeTab ?? "suggestions";
+    const ollamaOK = this.props.ollamaAvailable ?? true;
+    const aiOn = s.aiOn && ollamaOK;
+    const pct = s.confidence;
+    const cats = s.categories;
+    const activeCount = ALL.filter((c) => cats[c]).length;
+    const current = this.currentPreset(cats);
+
+    const stepDefs = [
+      { mark: "\u2713", label: "Import", st: "done" },
+      { mark: "2", label: "Identify", st: "on" },
+      { mark: "3", label: "Anonymise", st: "off" },
+      { mark: "4", label: "Export", st: "off" },
+    ];
+    const steps = stepDefs.map((d) => {
+      const on = d.st === "on", done = d.st === "done";
+      return {
+        mark: d.mark, label: d.label,
+        wrapStyle: "display:flex;align-items:center;gap:10px;padding:0 8px;height:100%;border-bottom:2px solid " +
+          (on ? "#FD5108" : "transparent"),
+        circleStyle: "display:grid;place-items:center;width:26px;height:26px;border-radius:50%;border:1.5px solid " +
+          (on ? "#FD5108" : done ? "#54616C" : "#CBD1D6") + ";font-size:13px;color:" +
+          (on ? "#FD5108" : done ? "#54616C" : "#A1A8B3"),
+        labelStyle: "font-size:16px;color:" + (on ? "#000000" : done ? "#54616C" : "#A1A8B3"),
+      };
+    });
+
+    const chipStyle = (active) =>
+      "padding:7px 14px;border-radius:20px;font-size:13px;cursor:pointer;border:1px solid " +
+      (active ? "#000000" : "#DFE3E6") + ";background:" + (active ? "#000000" : "#FFFFFF") +
+      ";color:" + (active ? "#FFFFFF" : "#54616C");
+    const presets = [["soft", "Soft"], ["medium", "Standard"], ["advanced", "Thorough"], ["custom", "Custom"]]
+      .map(([value, label]) => ({
+        label, style: chipStyle(current === value),
+        onPick: () => { if (value !== "custom") this.applyPreset(value); },
+      }));
+
+    const L = this.labelsFor(s.country);
+    const collapsed = s.collapsed ?? {};
+    const groups = GROUPS.map(([title, keys]) => ({
+      title,
+      countLabel: keys.filter((k) => cats[k]).length + "/" + keys.length,
+      chevronStyle: "flex:none;color:#A1A8B3;transition:transform .15s;transform:rotate(" +
+        (collapsed[title] ? "-90deg" : "0deg") + ")",
+      bodyStyle: collapsed[title] ? "display:none" : "display:flex;flex-direction:column",
+      onToggle: () => this.setState((st) => ({
+        collapsed: { ...(st.collapsed ?? {}), [title]: !(st.collapsed ?? {})[title] },
+      })),
+      onAll: (e) => { e.stopPropagation(); this.setGroup(keys, true); },
+      onNone: (e) => { e.stopPropagation(); this.setGroup(keys, false); },
+      rows: keys.map((k) => ({
+        label: L[k][0], example: L[k][1],
+        checked: !!cats[k], onToggle: () => this.toggleCat(k),
+      })),
+    }));
+
+    const q = s.search.trim().toLowerCase();
+    const typeFilter = s.typeFilter ?? "";
+    const sourceFilter = s.sourceFilter ?? "";
+    const sortKey = s.sortKey ?? "count";
+    const sortDir = s.sortDir ?? "desc";
+    const matches = (c) =>
+      (!q || c.text.toLowerCase().includes(q)) &&
+      (!typeFilter || c.type === typeFilter) &&
+      (!sourceFilter || c.source === sourceFilter);
+    const shown = s.suggestions.filter(matches).sort((a, b) => {
+      const dir = sortDir === "asc" ? 1 : -1;
+      if (sortKey === "text") return a.text.localeCompare(b.text) * dir;
+      return (a.count - b.count) * dir;
+    });
+    const shownKeys = new Set(shown.map((c) => c.text));
+    const distinct = (key) => [...new Set(s.suggestions.map((c) => c[key]))].sort();
+    const headBtn = (active) =>
+      "display:flex;align-items:center;gap:4px;padding:0;border:none;background:none;cursor:pointer;font-family:inherit;font-size:11.5px;font-weight:700;letter-spacing:.07em;color:" +
+      (active ? "#000000" : "#717C8D");
+    const arrow = (active, dir) =>
+      "flex:none;transition:transform .15s;opacity:" + (active ? "1" : ".35") +
+      ";transform:rotate(" + (active && dir === "asc" ? "180deg" : "0deg") + ")";
+    const sourceStyle = (src) => {
+      const tone = src === "Local AI" ? ["#5B4B8A", "#EEEAF6"] : src === "Pattern" ? ["#1F5F4A", "#E3F1EC"] : ["#54616C", "#EEEFF1"];
+      return "justify-self:start;font-size:11.5px;letter-spacing:.03em;padding:3px 9px;border-radius:4px;color:" +
+        tone[0] + ";background:" + tone[1];
+    };
+    const suggestions = shown.map((c) => ({
+      text: c.text, type: c.type, count: c.count, source: c.source,
+      sourceStyle: sourceStyle(c.source),
+      onAccept: () => this.setState((st) => ({
+        suggestions: st.suggestions.filter((x) => x.text !== c.text),
+        entities: [...st.entities, {
+          canonical: c.text, type: c.type,
+          placeholder: (c.type === "Person names" ? "PERSON_" : "ORG_") + String(st.entities.length + 1).padStart(2, "0"),
+          variants: [],
+        }],
+      })),
+      onReject: () => this.setState((st) => ({ suggestions: st.suggestions.filter((x) => x.text !== c.text) })),
+    }));
+
+    const entities = s.entities.map((e, i) => ({
+      canonical: e.canonical, type: e.type, placeholder: e.placeholder,
+      onRemove: () => this.setState((st) => ({ entities: st.entities.filter((_, j) => j !== i) })),
+      onPlaceholder: (ev) => {
+        const v = ev.target.value;
+        this.setState((st) => ({
+          entities: st.entities.map((x, j) => j === i ? { ...x, placeholder: v } : x),
+        }));
+      },
+      onAddVariant: () => {},
+      variants: e.variants.map((v, vi) => ({
+        text: v,
+        onRemove: () => this.setState((st) => ({
+          entities: st.entities.map((x, j) => j === i ? { ...x, variants: x.variants.filter((_, k) => k !== vi) } : x),
+        })),
+      })),
+    }));
+
+    const allowTerms = s.allowTerms.map((t, i) => ({
+      text: t,
+      onRemove: () => this.setState((st) => ({ allowTerms: st.allowTerms.filter((_, j) => j !== i) })),
+    }));
+
+    const patterns = s.patterns.map((p, i) => ({
+      expr: p.expr,
+      status: p.ok ? "valid" : p.error,
+      statusStyle: "font-size:12px;padding:2px 8px;border-radius:4px;color:" +
+        (p.ok ? "#1F5F4A" : "#9A2020") + ";background:" + (p.ok ? "#E3F1EC" : "#FBE6E6"),
+      onRemove: () => this.setState((st) => ({ patterns: st.patterns.filter((_, j) => j !== i) })),
+    }));
+
+    const tabStyle = (active) =>
+      "display:flex;align-items:center;gap:8px;padding:12px 0 13px;border:none;background:none;cursor:pointer;font-size:14.5px;color:" +
+      (active ? "#000000" : "#A1A8B3") + ";border-bottom:2px solid " + (active ? "#000000" : "transparent") + ";margin-bottom:-1px";
+    const badge = (active) =>
+      "font-size:11.5px;padding:1px 7px;border-radius:10px;background:" + (active ? "#000000" : "#EEEFF1") +
+      ";color:" + (active ? "#FFFFFF" : "#717C8D");
+    const tabDefs = [
+      ["suggestions", "Suggestions", s.suggestions.length],
+      ["values", "My values", s.entities.length],
+      ["allow", "Never anonymise", s.allowTerms.length],
+      ["patterns", "Patterns", s.patterns.length],
+    ];
+    const tabs = tabDefs.map(([id, label, count]) => ({
+      label, count, style: tabStyle(tab === id), badgeStyle: badge(tab === id),
+      onPick: () => this.setState({ tab: id }),
+    }));
+
+    const cfgChip = (active) =>
+      "padding:6px 11px;border-radius:6px;font-size:12.5px;cursor:pointer;border:1px solid " +
+      (active ? "#000000" : "#DFE3E6") + ";background:" + (active ? "#000000" : "#FFFFFF") +
+      ";color:" + (active ? "#FFFFFF" : "#54616C");
+    const cfgTab = s.cfgTab ?? "scope";
+    const cfgTabs = [["scope", "Scope"], ["smart", "Smart detection"], ["local", "Local AI"], ["cloud", "Cloud AI"]]
+      .map(([id, label]) => ({ label, style: cfgChip(cfgTab === id), onPick: () => this.setState({ cfgTab: id }) }));
+
+    return {
+      steps, presets, groups, tabs, cfgTabs,
+      isCfgScope: cfgTab === "scope",
+      isCfgSmart: cfgTab === "smart",
+      isCfgLocal: cfgTab === "local",
+      isCfgCloud: cfgTab === "cloud",
+      country: s.country,
+      countries: COUNTRIES.map((c) => ({ code: c.code, name: c.name })),
+      onCountry: (e) => this.setCountry(e.target.value),
+      countryHint: "Phone, VAT and national identification patterns follow " +
+        (COUNTRIES.find((c) => c.code === s.country) ?? COUNTRIES[0]).name +
+        " formats. Changing the country switches the matching national identifiers on.",
+      activeCatLabel: activeCount + " of " + ALL.length + " categories on",
+      confidencePct: pct,
+      onConfidence: (e) => this.setState({ confidence: Number(e.target.value) }),
+      confidenceEffect: this.confidenceEffect(pct),
+      aiOn,
+      onToggleAI: () => this.setState({ aiOn: !s.aiOn }),
+      ollamaBadgeStyle: "font-size:11.5px;padding:3px 9px;border-radius:4px;color:" +
+        (ollamaOK ? "#1F5F4A" : "#9A2020") + ";background:" + (ollamaOK ? "#E3F1EC" : "#FBE6E6"),
+      ollamaBadgeText: ollamaOK ? "Ollama detected" : "Ollama not detected",
+      identifySubtitle: s.suggestions.length + " suggestions waiting, " + s.entities.length + " values accepted",
+      search: s.search,
+      onSearch: (e) => this.setState({ search: e.target.value }),
+      onRunDetection: () => {},
+      tuneOpen: s.tuneOpen,
+      tuneStyle: "padding:0 12px;height:32px;border-radius:6px;font-size:13px;cursor:pointer;border:1px solid " +
+        (s.tuneOpen ? "#000000" : "#DFE3E6") + ";background:" + (s.tuneOpen ? "#000000" : "#FFFFFF") +
+        ";color:" + (s.tuneOpen ? "#FFFFFF" : "#000000"),
+      onTune: () => this.setState({ tuneOpen: !s.tuneOpen }),
+      onAcceptAll: () => this.setState((st) => {
+        const keep = st.suggestions.filter((c) => !shownKeys.has(c.text));
+        const taken = st.suggestions.filter((c) => shownKeys.has(c.text));
+        return {
+          suggestions: keep,
+          entities: [...st.entities, ...taken.map((c, i) => ({
+            canonical: c.text, type: c.type,
+            placeholder: (c.type === "Person names" ? "PERSON_" : "ORG_") + String(st.entities.length + i + 1).padStart(2, "0"),
+            variants: [],
+          }))],
+        };
+      }),
+      onRejectAll: () => this.setState((st) => ({
+        suggestions: st.suggestions.filter((c) => !shownKeys.has(c.text)),
+      })),
+      isSuggestions: tab === "suggestions",
+      isValues: tab === "values",
+      isAllow: tab === "allow",
+      isPatterns: tab === "patterns",
+      suggestions, entities, allowTerms, patterns,
+      noSuggestions: suggestions.length === 0,
+      sortValueStyle: headBtn(sortKey === "text"),
+      sortCountStyle: headBtn(sortKey === "count"),
+      sortValueArrow: arrow(sortKey === "text", sortDir),
+      sortCountArrow: arrow(sortKey === "count", sortDir),
+      onSortValue: () => this.setState((st) => ({
+        sortKey: "text",
+        sortDir: (st.sortKey ?? "count") === "text" && (st.sortDir ?? "desc") === "asc" ? "desc" : "asc",
+      })),
+      onSortCount: () => this.setState((st) => ({
+        sortKey: "count",
+        sortDir: (st.sortKey ?? "count") === "count" && (st.sortDir ?? "desc") === "desc" ? "asc" : "desc",
+      })),
+      headSelectStyle: "width:100%;min-width:0;padding:0;border:none;background:none;cursor:pointer;font-family:inherit;font-size:11.5px;font-weight:700;letter-spacing:.07em;color:" +
+        ((typeFilter || sourceFilter) ? "#000000" : "#717C8D"),
+      typeFilter, sourceFilter,
+      typeOptions: [{ value: "", label: "ALL TYPES" },
+        ...distinct("type").map((t) => ({ value: t, label: t.toUpperCase() }))],
+      sourceOptions: [{ value: "", label: "ALL SOURCES" },
+        ...distinct("source").map((t) => ({ value: t, label: t.toUpperCase() }))],
+      onTypeFilter: (e) => this.setState({ typeFilter: e.target.value }),
+      onSourceFilter: (e) => this.setState({ sourceFilter: e.target.value }),
+      draftValue: s.draftValue,
+      onDraftValue: (e) => this.setState({ draftValue: e.target.value }),
+      onAddValue: () => {
+        const v = s.draftValue.trim();
+        if (!v) return;
+        this.setState((st) => ({
+          draftValue: "",
+          entities: [...st.entities, { canonical: v, type: "Client names", placeholder: "CLIENT_" + String(st.entities.length + 1).padStart(2, "0"), variants: [] }],
+        }));
+      },
+      draftAllow: s.draftAllow,
+      onDraftAllow: (e) => this.setState({ draftAllow: e.target.value }),
+      onAddAllow: () => {
+        const v = s.draftAllow.trim();
+        if (!v) return;
+        this.setState((st) => ({ draftAllow: "", allowTerms: [...st.allowTerms, v] }));
+      },
+      draftPattern: s.draftPattern,
+      onDraftPattern: (e) => this.setState({ draftPattern: e.target.value }),
+      onAddPattern: () => {
+        const v = s.draftPattern.trim();
+        if (!v) return;
+        let ok = true, error = "";
+        try { new RegExp(v); } catch (err) { ok = false; error = String(err.message).toLowerCase(); }
+        this.setState((st) => ({ draftPattern: "", patterns: [...st.patterns, { expr: v, ok, error }] }));
+      },
+      readyLabel: s.entities.length + " values ready to replace",
+    };
+  }
+}
+</script>
+</body>
+</html>

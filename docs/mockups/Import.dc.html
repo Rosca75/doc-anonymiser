@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Helvetica,Arial,sans-serif;color:#000000;-webkit-font-smoothing:antialiased}
+  a{color:#000000;text-decoration:none}
+  a:hover{color:#FD5108}
+  .doc-row:hover{background:#F5F7F8 !important}
+  .drop-zone:hover{border-color:#A1A8B3 !important;background:#F5F7F8 !important}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:#CBD1D6;border-radius:6px;border:2px solid transparent;background-clip:content-box}
+</style>
+</helmet>
+<div style="display:flex;flex-direction:column;height:100vh;background:#F5F7F8">
+
+  <header style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 40px;height:80px;background:#FFFFFF;border-bottom:1px solid #DFE3E6;flex:none">
+    <div style="font-family:Helvetica,Arial,sans-serif;font-weight:700;font-size:26px;letter-spacing:-.01em;color:#000000">Doc Anonymiser</div>
+    <nav style="display:flex;align-items:center;gap:44px;font-size:16px">
+      <a href="#" style="color:#000000">Home</a>
+      <a href="#" style="display:flex;flex-direction:column;align-items:center;gap:6px;color:#000000">Anonymise documents
+        <span style="display:block;width:100%;height:2px;background:#A1A8B3;border-radius:2px"></span>
+      </a>
+      <a href="#" style="color:#000000">Documentation</a>
+    </nav>
+    <div style="display:flex;align-items:center;justify-content:flex-end;gap:22px">
+      <button aria-label="Help" style="display:grid;place-items:center;width:32px;height:32px;padding:0;border:none;background:none;cursor:pointer;color:#717C8D">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"></path></svg>
+      </button>
+      <button aria-label="Settings" style="display:grid;place-items:center;width:32px;height:32px;padding:0;border:none;background:none;cursor:pointer;color:#717C8D">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <section aria-label="Anonymisation workflow" style="display:flex;align-items:center;gap:28px;padding:0 40px;height:68px;background:#FFFFFF;border-bottom:1px solid #DFE3E6;flex:none">
+    <a href="#" style="display:flex;align-items:center;gap:12px;color:#000000;font-size:21px;letter-spacing:-.01em">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"></path></svg>
+      Anonymise Flow
+    </a>
+    <span style="width:1px;height:30px;background:#DFE3E6"></span>
+    <nav style="display:flex;align-items:stretch;gap:6px;height:100%">
+      <sc-for list="{{ steps }}" as="s" hint-placeholder-count="5">
+        <a href="#" style="{{ s.wrapStyle }}">
+          <span style="{{ s.circleStyle }}">{{ s.n }}</span>
+          <span style="{{ s.labelStyle }}">{{ s.label }}</span>
+        </a>
+      </sc-for>
+    </nav>
+  </section>
+
+  <main style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(380px,0.9fr) 1.1fr;gap:0;padding:28px 40px 28px;background:#F5F7F8">
+
+    <section style="display:flex;flex-direction:column;min-height:0;background:#FFFFFF;border:1px solid #DFE3E6;border-radius:8px;overflow:hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:22px 24px 18px;border-bottom:1px solid #EEEFF1">
+        <div style="display:flex;align-items:baseline;gap:12px">
+          <h2 style="margin:0;font-size:20px;font-weight:400;letter-spacing:-.01em;color:#000000">Documents</h2>
+          <span style="font-size:14px;color:#A1A8B3">{{ countLabel }}</span>
+        </div>
+        <button onClick="{{ addFiles }}" style="display:inline-flex;align-items:center;gap:9px;padding:11px 20px;border:1px solid #FD5108;border-radius:6px;background:#FD5108;color:#FFFFFF;font-family:Helvetica,Arial,sans-serif;font-size:14px;font-weight:700;letter-spacing:.04em;cursor:pointer">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"></path></svg>
+          ADD FILES
+        </button>
+      </div>
+
+      <div style="flex:1;min-height:0;overflow-y:auto;padding:20px 24px 24px">
+        <div class="drop-zone" onClick="{{ addFiles }}" style="{{ dropStyle }}">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="color:#B5BCC4"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"></path></svg>
+          <div style="font-size:15px;color:#000000">Drag files here to import</div>
+          <div style="font-size:13px;color:#A1A8B3;text-wrap:pretty">or click to browse. Accepts .txt, .csv, .md, .docx, .pptx, .xlsx and .pdf. Your originals are only ever read, never changed.</div>
+        </div>
+
+        <sc-if value="{{ hasDocs }}" hint-placeholder-val="{{ true }}">
+          <ul style="list-style:none;margin:18px 0 0;padding:0;display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ documents }}" as="d" hint-placeholder-count="4">
+              <li class="doc-row" onClick="{{ d.onSelect }}" style="{{ d.rowStyle }}">
+                <span style="{{ d.barStyle }}"></span>
+                <span style="flex:none;display:grid;place-items:center;width:38px;height:38px;border-radius:6px;background:#F5F7F8;color:#717C8D">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"></path></svg>
+                </span>
+                <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">
+                  <span style="font-size:15px;color:#000000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ d.name }}</span>
+                  <span style="display:flex;align-items:center;gap:8px">
+                    <span style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#54616C;background:#EEEFF1;padding:2px 7px;border-radius:4px">{{ d.format }}</span>
+                    <span style="font-size:13px;color:#A1A8B3">{{ d.size }}</span>
+                    <span style="width:3px;height:3px;border-radius:50%;background:#CBD1D6"></span>
+                    <span style="font-size:13px;color:#A1A8B3">{{ d.pagesLabel }}</span>
+                    <sc-if value="{{ d.experimental }}" hint-placeholder-val="{{ false }}">
+                      <span title="PDF text extraction is experimental. Review the preview carefully." style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#946A0B;background:#FBF0CE;padding:2px 7px;border-radius:4px">EXPERIMENTAL</span>
+                    </sc-if>
+                    <sc-if value="{{ d.hasWarn }}" hint-placeholder-val="{{ false }}">
+                      <span title="{{ d.warnText }}" style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#946A0B">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"></path></svg>{{ d.warnCount }}
+                      </span>
+                    </sc-if>
+                  </span>
+                </span>
+                <button onClick="{{ d.onRemove }}" title="Remove from session" style="flex:none;display:grid;place-items:center;width:30px;height:30px;padding:0;border:none;border-radius:6px;background:none;cursor:pointer;color:#A1A8B3">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+                </button>
+              </li>
+            </sc-for>
+          </ul>
+        </sc-if>
+      </div>
+    </section>
+
+    <section style="display:flex;flex-direction:column;min-height:0;margin-left:20px;background:#FFFFFF;border:1px solid #DFE3E6;border-radius:8px;overflow:hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:22px 24px 18px;border-bottom:1px solid #EEEFF1">
+        <div style="display:flex;align-items:baseline;gap:12px;min-width:0">
+          <h2 style="margin:0;font-size:20px;font-weight:400;letter-spacing:-.01em;color:#000000">Preview</h2>
+          <span style="font-size:14px;color:#A1A8B3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ previewName }}</span>
+        </div>
+        <span style="font-size:12px;color:#A1A8B3;letter-spacing:.03em;white-space:nowrap">WORKING FORM</span>
+      </div>
+      <div style="flex:1;min-height:0;overflow:auto;padding:26px 30px;background:#FFFFFF">
+        <pre style="margin:0;font-family:Consolas,'Courier New',monospace;font-size:14px;line-height:1.7;color:#000000;white-space:pre-wrap;word-break:break-word">{{ previewBody }}</pre>
+      </div>
+    </section>
+
+  </main>
+
+  <footer style="display:flex;align-items:center;justify-content:space-between;padding:0 40px;height:60px;background:#FFFFFF;border-top:1px solid #DFE3E6;font-size:15px;color:#A1A8B3;flex:none">
+    <span>Version 0.1.0</span>
+    <span style="display:flex;align-items:center;gap:10px">Local processing only
+      <span style="width:9px;height:9px;border-radius:50%;background:#059669"></span>
+    </span>
+  </footer>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:800},&quot;emptyState&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;State&quot;},&quot;dragActive&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;State&quot;}}">
+class Component extends DCLogic {
+  state = { selected: "services-agreement.docx" };
+
+  baseDocs() {
+    return [
+      { name: "services-agreement.docx", format: "DOCX", size: "48 KB", pages: 6, unit: "page",
+        body: "SERVICES AGREEMENT\n\nThis agreement is made between Meridian Consulting S.a r.l.\nand the client, represented by Marie Duval (marie.duval@meridian.lu,\n+352 621 45 88 12).\n\n1. SCOPE\nThe consultant, Thomas Berger, will deliver the review described in\nAppendix A. Invoices are settled to account\nLU28 0019 4006 4475 0000 within 30 days.\n\n2. CONFIDENTIALITY\nBoth parties agree to protect all personal data exchanged during\nthe engagement, in line with the client's internal policy 4471-B." },
+      { name: "board-minutes.pptx", format: "PPTX", size: "1.2 MB", pages: 12, unit: "slide",
+        body: "# Board meeting, 14 January 2026\n\n## Attendees\n- Sophie Klein (Chair)\n- Daniel Weber\n- Ana Ferreira\n\n## Decisions\n1. Approved the Q4 budget presented by Daniel Weber.\n2. Renewed the contract with Orion Logistics until 2028.\n3. Noted the resignation of Ana Ferreira, effective 31 March." },
+      { name: "client-list.xlsx \u2014 Sheet1", format: "XLSX", size: "320 KB", pages: 48, unit: "row",
+        body: "| Client        | Contact         | Email                      | VAT         |\n| ------------- | --------------- | -------------------------- | ----------- |\n| Aurora Group  | Lena Fischer    | lena.fischer@aurora.eu     | LU19283746  |\n| Novak & Sons  | Petar Novak     | p.novak@novaksons.com      | LU55127390  |\n| Delta Health  | Claire Moreau   | c.moreau@deltahealth.fr    | FR90887654  |" },
+      { name: "q3-report.pdf", format: "PDF", size: "2.4 MB", experimental: true, pages: 24, unit: "page",
+        body: "Quarterly report \u2014 Q3\n\nPrepared by Thomas Berger for the finance committee.\n\nRevenue reached EUR 12,500,000, a rise of 8% on Q2. The largest\nsingle contract was signed with Aurora Group (contact Lena Fischer).\n\nNote: this text was extracted from a PDF. Line breaks and spacing\nmay differ from the original layout. Review before anonymising." },
+      { name: "handover-notes.md", format: "MD", size: "12 KB", pages: 3, unit: "page", warnCount: 1,
+        warnText: "1 unusual character sequence was normalised during import.",
+        body: "# Handover notes\n\nPrimary contact going forward is Sophie Klein\n(sophie.klein@example.com). Escalations go to Daniel Weber.\n\nServer access uses the account at 192.168.1.24; ask IT for the\ncurrent credentials. Do not share the re-identification key outside\nthe project team." },
+    ];
+  }
+
+  select(name) { this.setState({ selected: name }); }
+  remove() {}
+  addFiles() {}
+
+  renderVals() {
+    const empty = this.props.emptyState ?? false;
+    const drag = this.props.dragActive ?? false;
+    const docs = empty ? [] : this.baseDocs();
+    const selected = docs.some((d) => d.name === this.state.selected)
+      ? this.state.selected : (docs[0]?.name ?? null);
+
+    const documents = docs.map((d) => {
+      const isSel = d.name === selected;
+      return {
+        name: d.name, format: d.format, size: d.size,
+        pagesLabel: d.pages + " " + d.unit + (d.pages === 1 ? "" : "s"),
+        experimental: !!d.experimental,
+        hasWarn: !!d.warnCount,
+        warnCount: d.warnCount ?? 0,
+        warnText: d.warnText ?? "",
+        onSelect: () => this.select(d.name),
+        onRemove: (e) => { e.stopPropagation(); this.remove(d.name); },
+        rowStyle: "position:relative;display:flex;align-items:center;gap:14px;padding:12px 14px 12px 16px;border:1px solid " +
+          (isSel ? "#FFCDA8" : "#EEEFF1") + ";border-radius:8px;background:" +
+          (isSel ? "#FFF5ED" : "#FFFFFF") + ";cursor:pointer;transition:background .12s",
+        barStyle: "position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:3px;background:" +
+          (isSel ? "#FD5108" : "transparent"),
+      };
+    });
+
+    const cur = docs.find((d) => d.name === selected);
+    const stepDefs = [
+      { n: 1, label: "Import" }, { n: 2, label: "Configure" },
+      { n: 3, label: "Identify" }, { n: 4, label: "Anonymise" }, { n: 5, label: "Export" },
+    ];
+    const active = 1;
+    const steps = stepDefs.map((s) => {
+      const on = s.n === active;
+      return {
+        n: s.n, label: s.label,
+        wrapStyle: "display:flex;align-items:center;gap:10px;padding:0 8px;height:100%;border-bottom:2px solid " +
+          (on ? "#FD5108" : "transparent"),
+        circleStyle: "display:grid;place-items:center;width:26px;height:26px;border-radius:50%;border:1.5px solid " +
+          (on ? "#FD5108" : "#CBD1D6") + ";font-size:13px;color:" + (on ? "#FD5108" : "#A1A8B3"),
+        labelStyle: "font-size:16px;color:" + (on ? "#000000" : "#A1A8B3"),
+      };
+    });
+
+    return {
+      steps, documents,
+      hasDocs: documents.length > 0,
+      countLabel: documents.length === 1 ? "1 file" : documents.length + " files",
+      addFiles: () => this.addFiles(),
+      dropStyle: "display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;padding:34px 28px;border:2px dashed " +
+        (drag ? "#FD5108" : "#CBD1D6") + ";border-radius:10px;background:" +
+        (drag ? "#FFF5ED" : "#F9FAFB") + ";cursor:pointer;transition:border-color .12s,background .12s",
+      previewName: cur ? cur.name : "no document selected",
+      previewBody: cur ? cur.body : "Select a document on the left to preview its working form.",
+    };
+  }
+}
+</script>
+</body>
+</html>
