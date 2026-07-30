@@ -1026,6 +1026,51 @@ export function denyAllInCategory(category, onlyTexts) {
   return removed;
 }
 
+/**
+ * acceptAllShown(texts) bulk-accepts the candidates whose values are listed,
+ * ACROSS categories (BUILD-05 Phase 6).
+ *
+ * This is the mock-up's "Accept all shown". It differs from
+ * acceptAllInCategory in exactly one way that matters: the suggestions table
+ * sorts and filters across every category at once, so "shown" is not a
+ * category, it is whatever survived the search, the type filter and the source
+ * filter. A per-category button cannot express that, and asking the user to
+ * press it once per category would defeat the point of a bulk action.
+ *
+ * Each accepted candidate keeps its OWN category rather than being coerced into
+ * a shared one: the bulk action is about which rows, not about what they are.
+ *
+ * @param {string[]} texts the values currently visible, in any order
+ * @returns {number} how many entities were added
+ */
+export function acceptAllShown(texts) {
+  const shown = new Set((texts ?? []).map(candidateKey));
+  if (shown.size === 0) return 0;
+  const batch = state.candidates.filter((c) => shown.has(candidateKey(c.text)));
+  if (!batch.length) return 0;
+  const added = addEntities(batch.map((c) => ({ category: c.category, canonical: c.text })));
+  setState({ candidates: state.candidates.filter((c) => !shown.has(candidateKey(c.text))) });
+  return added;
+}
+
+/**
+ * rejectAllShown(texts) is the mirror of acceptAllShown: it DROPS those
+ * candidates instead of promoting them, exactly as rejectCandidate does one at
+ * a time. Nothing is added to the value list and nothing is remembered, so a
+ * rejected suggestion simply stops taking up review space.
+ *
+ * @param {string[]} texts the values currently visible
+ * @returns {number} how many candidates were removed
+ */
+export function rejectAllShown(texts) {
+  const shown = new Set((texts ?? []).map(candidateKey));
+  if (shown.size === 0) return 0;
+  const removed = state.candidates.filter((c) => shown.has(candidateKey(c.text))).length;
+  if (!removed) return 0;
+  setState({ candidates: state.candidates.filter((c) => !shown.has(candidateKey(c.text))) });
+  return removed;
+}
+
 // --- Variant regrouping (BUILD-02 Phase 9d) -----------------------------------
 
 /**

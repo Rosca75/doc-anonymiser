@@ -226,36 +226,52 @@ test("the documentation page styles itself from the brand tokens only", () => {
 
 // --- Variant chip contract (BUILD-04 CR17) --------------------------------
 //
-// Reported symptom: the variant chips looked disabled and could not be
-// dragged. Both were CSS, not markup: the chips inherited the muted
-// colour of the variant area, and nothing said they were draggable. The
-// markup side is asserted in views/values.js by reading the source, since
-// the chip builder is not exported and there is no DOM here.
+// Reported symptom: the variant chips looked disabled and could not be dragged.
+// Both were CSS, not markup: the chips inherited the muted colour of the variant
+// area, and nothing said they were draggable. The markup side is asserted by
+// reading views/identifyworkspace.js, since the chip builder is not exported and
+// there is no DOM here.
 
 const workspaceJS = fs.readFileSync(path.join(staticDir, "views", "identifyworkspace.js"), "utf8");
 
 test("variant chips are rendered draggable", () => {
-  assert.match(workspaceJS, /class="pill variant-chip" draggable="true"/);
+  // BUILD-04 CR17: the chips looked disabled and could not be dragged. BUILD-05
+  // Phase 6 relaid them out as .chip-tag, and the drag survived the relayout:
+  // regrouping a mis-attached spelling has no other home.
+  assert.match(workspaceJS, /class="chip-tag variant-chip" draggable="true"/);
 });
 
-test("the move button inside a chip does not swallow the drag", () => {
-  // A draggable child would start its own (non) drag over most of the
-  // chip's width, which is why the button opts out explicitly.
-  assert.match(workspaceJS, /class="variant-move" draggable="false"/);
+test("the remove button inside a chip does not swallow the drag", () => {
+  // The chip IS the drag handle, so its remove button has to stop the click
+  // reaching it; otherwise removing a spelling would sometimes start a drag
+  // instead.
+  assert.match(workspaceJS, /ev\.stopPropagation\(\);/);
+});
+
+test("a drop onto a value's own card is refused rather than being a no-op move", () => {
+  // Dragging a spelling onto the card it already belongs to must not clear and
+  // re-add it: the reducer would exclude it from the source and add it back to
+  // the same target, which reads as the chip vanishing.
+  assert.match(workspaceJS, /a drop onto its own card would be a no-op/);
 });
 
 test("variant chips are not styled as disabled", () => {
-  const chip = styleCSS.match(/\.variant-list \.variant-chip \{[^}]*\}/);
+  const chip = styleCSS.match(/\n\.variant-chip \{[^}]*\}/);
   assert.ok(chip, "the chip rule must exist");
-  // The chip must override the muted colour its container carries.
+  // The chip must carry the ordinary text colour, not the muted one its
+  // surroundings use: a greyed-out chip reads as disabled (BUILD-04 CR17).
   assert.match(chip[0], /color:\s*var\(--text\)/);
   assert.ok(!/opacity/.test(chip[0]), "a chip must never be dimmed, it is a live control");
   // And it must say it can be dragged before the user tries.
   assert.match(chip[0], /cursor:\s*grab/);
+  // A text selection mid-gesture cancels the drag, so it is suppressed.
+  assert.match(chip[0], /user-select:\s*none/);
 });
 
 test("a drop target is visibly marked", () => {
-  assert.match(styleCSS, /tr\.drop-target > td \{/);
+  // The target is a value CARD now, not a table row: the variant chips moved
+  // from a table into cards with the BUILD-05 Phase 6 relayout.
+  assert.match(styleCSS, /\.value-card\.drop-target \{/);
 });
 
 // =====================================================================

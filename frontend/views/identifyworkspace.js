@@ -1,96 +1,88 @@
 // views/identifyworkspace.js, the WORKSPACE of wizard step 2, Identify
-// (BUILD-02 Phase 9 as views/values.js; renamed by BUILD-05 Phase 2 and
-// relaid out into the mock-up's four tabs by BUILD-05 Phase 6).
+// (BUILD-02 Phase 9 as views/values.js; renamed by BUILD-05 Phase 2 and relaid
+// out into the mock-up's four tabs by BUILD-05 Phase 6).
 //
-// Three discovery
-// methods (cloud placeholder / local AI / Smart detection), ONE unified
-// candidate review list (nothing reaches the value tables without an
-// explicit Accept), live match preview for manual entries, and variant
-// drag-and-drop regrouping. FULLY usable without Ollama: Smart detection
-// and the manual add rows carry the whole flow.
+// Four tabs, each with its item count in the tab itself:
 //
-// Naming note (BUILD-04 CR3, restated by BUILD-05 Phase 0): the visible
-// labels have changed twice now, from "Entities" to "Values" to this half of
-// "Identify". The ENGINE identifiers this module manipulates (the category
-// keys client_names, person_names, ... and the state.entities array) have not
-// changed once, on purpose: a label is a display string, an identifier is a
-// contract.
+//   Suggestions      the review gate. Everything any detection method proposes
+//                    waits here until the user accepts it: NOTHING reaches the
+//                    value list without an explicit accept. Sortable by value
+//                    and by count, filterable by type and by source.
+//   My values        the values that WILL be replaced, one card each, with the
+//                    editable placeholder, the type badge and the variant chips.
+//   Never anonymise  the allowlist, which wins over every pass.
+//   Patterns         user regular expressions, with a valid / error badge.
 //
-// Render-from-state discipline: every mutation goes through a state.js
-// reducer; every Go call goes through api.js.
+// One structural change beyond the layout (BUILD-05 Phase 6): "Run detection" is
+// ONE button in the card header. It used to be a panel with a per-file checkbox
+// list and a separate button per method. Now it runs the offline smart pass
+// always, and the AI pass as well when Local AI is on, over every imported
+// document. The estimateDiscovery pre-check survives; an oversized file becomes
+// a notice rather than a picker the user has to operate before anything happens.
+//
+// Naming note (BUILD-04 CR3, restated by BUILD-05 Phase 0): the visible labels
+// have changed twice now, from "Entities" to "Values" to this half of
+// "Identify". The ENGINE identifiers this module manipulates (the category keys
+// client_names, person_names, ... and the state.entities array) have not changed
+// once, on purpose: a label is a display string, an identifier is a contract.
 
 import {
   runDiscovery, cancelDiscovery, estimateDiscovery, runSmartDetection,
-  countTermMatches, expandVariants, validatePattern, patternMatches,
+  expandVariants, validatePattern, setEntityPlaceholder, entityPlaceholder,
 } from "../api.js";
 import {
   getState, setState, llmEnabled,
-  addEntities, setEntityStatus, editEntity, removeEntity,
-  setEntityVariants, setEntityVariantError, addManualVariant, entityKey,
-  addCandidates, acceptCandidate, rejectCandidate, updateCandidate,
-  acceptAllInCategory, denyAllInCategory, moveVariant,
+  addEntities, removeEntity, entityKey,
+  setEntityVariants, setEntityVariantError, addManualVariant,
+  addCandidates, acceptCandidate, rejectCandidate,
+  acceptAllShown, rejectAllShown, moveVariant,
   addPattern, removePattern,
-  setSmartDetectOptions, smartDetectOptions,
+  smartDetectOptions,
 } from "../state.js";
-import { variantRows, pendingExpansions } from "../entitymodel.js";
+import { pendingExpansions } from "../entitymodel.js";
 import {
-  visibleCandidates, candidateCategoryCounts,
-  toggleCountSort, toggleValueSort, DEFAULT_CANDIDATE_FILTER,
+  visibleCandidates, toggleCountSort, toggleValueSort, DEFAULT_CANDIDATE_FILTER,
 } from "../candidatemodel.js";
 import { escapeHTML } from "../html.js";
-import { panel, wirePanels, button } from "../ui.js";
+import { button, tabbar, icon, toastHTML } from "../ui.js";
 import { llmGateTooltip } from "./identifyrail.js";
-import { renderAllowlistPanel, wireAllowlistPanel } from "./allowlist.js";
+import { renderAllowlistChips, wireAllowlistChips } from "./allowlist.js";
+import { notify, wireNotice } from "../toast.js";
 import { keepScrollPosition } from "../scroll.js";
-import { VALUES } from "../copy.js";
+import { CARDS, WORKSPACE, VALUES, CATEGORY_LABELS } from "../copy.js";
 
-// The reviewable entity categories (CLAUDE.md §5) with display labels.
-const CATEGORIES = [
+// The reviewable entity categories (CLAUDE.md §5) with display labels. These
+// are the categories a user may ADD a value to by hand; the PII categories are
+// detected, not listed.
+export const CATEGORIES = [
   ["client_names", "Clients"],
   ["project_names", "Projects"],
   ["internal_names", "Internal"],
   ["person_names", "Persons"],
 ];
 
-// Rows whose variant list is expanded, keyed by entityKey. View-local UI
-// state (not business state), so it lives here, not in the store.
+// WORKSPACE_TABS is the tab set, in order.
+export const WORKSPACE_TABS = ["suggestions", "values", "allow", "patterns"];
+
+// --- View-local state -----------------------------------------------------
 //
-// The key is (category, canonical), so ANY change to a value's name
-// changes its key. Renaming used to orphan the key and silently collapse
-// the row the user was working in (BUILD-04 CR17), which is why every
-// rename now goes through renameExpanded below.
-const expanded = new Set();
+// None of this belongs in the store: nothing downstream reads it, it must not
+// travel in a session file, and routing a sort click through a reducer would
+// make a view preference part of the application's business state.
 
-/**
- * renameExpanded(category, oldCanonical, newCanonical) carries a row's
- * expanded state across a rename, so editing a value does not fold away
- * the variant list the user just opened (BUILD-04 CR17).
- */
-function renameExpanded(category, oldCanonical, newCanonical) {
-  const oldKey = entityKey(category, oldCanonical);
-  if (!expanded.has(oldKey)) return;
-  expanded.delete(oldKey);
-  expanded.add(entityKey(category, newCanonical));
-}
-
-/**
- * openExpanded(category, canonical) makes sure a row is expanded. Called
- * whenever the user does something to a row's variants, because acting on
- * a list and having it fold shut is the opposite of what they asked for.
- */
-function openExpanded(category, canonical) {
-  expanded.add(entityKey(category, canonical));
-}
-
-// Panels the user toggled away from their default open/collapsed state
-// (BUILD-02 Phase 2f). View-local, same pattern as `expanded`.
-const collapsedPanels = new Set();
-
-// The suggestions table's search / category / sort selection
-// (BUILD-04 CR14). Which column a user is sorting by is a VIEW
-// preference, not application state, so it lives here next to `expanded`
-// rather than in the store. candidatemodel.js turns it into rows.
-let candidateFilter = { ...DEFAULT_CANDIDATE_FILTER };
+let activeTab = "suggestions";
+let candidateFilter = { ...DEFAULT_CANDIDATE_FILTER, source: "" };
+// The draft text of the three add rows, kept across repaints so a state change
+// elsewhere does not empty a half-typed value.
+const drafts = { value: "", valueCategory: "client_names", allow: "", pattern: "" };
+// Per-entity inline feedback (a refused placeholder, a duplicate variant),
+// keyed by entityKey. Cleared for a row as soon as it succeeds at anything.
+const rowFeedback = new Map();
+// The variant chip currently being dragged, or null. It is held here rather than
+// only in the DataTransfer because a dragover handler is not allowed to read
+// DataTransfer contents, and the drop target has to know where the drag started
+// to refuse a drop onto its own card.
+let dragging = null;
 
 /**
  * renderIdentifyWorkspace(container, opts) fills the workspace card.
@@ -102,703 +94,691 @@ let candidateFilter = { ...DEFAULT_CANDIDATE_FILTER };
  */
 export function renderIdentifyWorkspace(container, opts = {}) {
   const s = getState();
-  // Discovery gates on the master AI toggle AND live availability
-  // (BUILD-02 Phase 6d).
-  const aiOK = llmEnabled(s);
+  const shown = visibleCandidates(s.candidates, candidateFilter);
+  const busy = s.discovery?.running === true;
 
-  container.innerHTML = `
-    <div class="values-view">
-      ${discoveryPanel(s, aiOK)}
-      ${candidatesPanel(s)}
-      ${CATEGORIES.map(([cat, label]) => categoryPanel(s, cat, label)).join("")}
-      ${renderAllowlistPanel(s, collapsedPanels)}
-      ${patternsPanel(s)}
-      <div id="values-error"></div>
-    </div>
-    ${opts.footerHTML ?? ""}
-  `;
+  container.innerHTML =
+    head(s, busy) +
+    `<div class="workspace-tabs">${tabs(s)}</div>` +
+    `<div class="card-body stack">${tabBody(s, shown)}</div>` +
+    toastHTML(s.notice) +
+    (opts.footerHTML ?? "");
 
-  wirePanels(container, collapsedPanels, () => setState({}));
-  wireDiscovery(container, s);
-  wireCandidates(container);
-  wireCategoryPanels(container);
-  wireAllowlistPanel(container);
-  wirePatterns(container);
+  wire(container, s, shown);
 }
 
-// --- Discovery methods (BUILD-02 Phase 9a) -------------------------------
+/** head(s, busy) is the card header: the title, the live counts, the search box
+ *  and the one Run detection button. */
+function head(s, busy) {
+  const search =
+    `<label class="search-box">${icon("search")}` +
+    `<input id="workspace-search" value="${escapeHTML(candidateFilter.search)}"` +
+    ` placeholder="${escapeHTML(VALUES.searchPlaceholder)}"` +
+    ` aria-label="${escapeHTML(VALUES.searchPlaceholder)}"/></label>`;
 
-function discoveryPanel(s, aiOK) {
-  const fileOptions = s.documents.map((d) => `
-    <label class="radio-row">
-      <input type="checkbox" class="disc-file" value="${escapeHTML(d.name)}"/>
-      <span>${escapeHTML(d.name)}</span>
-    </label>`).join("");
+  // The run button says what it will DO, which depends on whether the local AI
+  // is on: the offline pass always runs, the AI pass only when it can.
+  const aiOK = llmEnabled(s);
+  const runTitle = aiOK ? WORKSPACE.runWithAI : WORKSPACE.runOffline;
+  const run = busy
+    ? button(WORKSPACE.cancel, { kind: "secondary", id: "btn-detect-cancel", icon: "cancel" })
+    : button(WORKSPACE.runDetection, {
+      kind: "secondary", id: "btn-detect", icon: "smart_toy",
+      disabled: s.documents.length === 0,
+      title: s.documents.length === 0 ? WORKSPACE.runNeedsDocuments : runTitle,
+    });
 
-  // Determinate per-file progress + Cancel while a run is live
-  // (BUILD-02 Phase 7c/7d).
-  // The discovery gate is deliberately `=== true` and nothing else
-  // (BUILD-04 CR17): the Smart button must depend on a run being in
-  // flight, never on a pending variant expansion or a leftover object.
+  return `<div class="card-head with-controls">` +
+    `<div class="card-head-left"><h2>${escapeHTML(CARDS.identify.title)}</h2>` +
+    `<span class="card-sub">${escapeHTML(subtitle(s))}</span></div>` +
+    `<div class="card-head-right">${search}${run}</div>` +
+    `</div>` +
+    progressStrip(s);
+}
+
+/** subtitle(s) is the live count beside the heading. */
+function subtitle(s) {
+  const waiting = s.candidates.length;
+  const accepted = s.entities.filter((e) => e.status === "accepted").length;
+  return WORKSPACE.subtitle(waiting, accepted);
+}
+
+/** progressStrip(s) is the determinate per-file bar shown while a detection run
+ *  is in flight (BUILD-02 Phase 7c/7d). */
+function progressStrip(s) {
   const d = s.discovery;
-  const pct = d?.running === true && d.total ? Math.round(((d.current + 1) / d.total) * 100) : 0;
-  const progressHTML = d?.running === true ? `
-      <div class="progress-bar"><div style="width:${pct}%"></div></div>
-      <p class="hint">Scanning ${escapeHTML(d.file ?? "")} (${d.current + 1}/${d.total})
-        <button id="btn-disc-cancel">Cancel</button></p>` : "";
+  // The gate is deliberately `=== true` and nothing else (BUILD-04 CR17): the
+  // bar must depend on a run being in flight, never on a leftover object.
+  if (d?.running !== true) return "";
+  const pct = d.total ? Math.round(((d.current + 1) / d.total) * 100) : 0;
+  return `<div class="detect-progress">` +
+    `<div class="progress-bar"><div style="width:${pct}%"></div></div>` +
+    `<span class="hint mono">${escapeHTML(WORKSPACE.scanning(d.file ?? "", d.current + 1, d.total))}</span>` +
+    `</div>`;
+}
 
-  // Three methods (Phase 9a). The local-AI method is only VISIBLE when
-  // the master toggle is on; the cloud method is a disabled placeholder.
-  const localAIButton = s.settings.useAI ? `
-      <div class="form-row">
-        <button id="btn-discover" class="primary" ${aiOK && !d?.running ? "" : `disabled title="${escapeHTML(llmGateTooltip(s))}"`}>
-          Auto-discovery with local AI</button>
-        <span class="hint">Reads the selected files with the local Ollama model and suggests names.</span>
-      </div>` : "";
+function tabs(s) {
+  const counts = {
+    suggestions: s.candidates.length,
+    values: s.entities.length,
+    allow: s.allowlist.length,
+    patterns: s.patterns.length,
+  };
+  return tabbar(WORKSPACE_TABS.map((id) => ({
+    id, label: WORKSPACE.tabLabels[id], count: counts[id], active: activeTab === id,
+  })), { attr: "wstab", ariaLabel: WORKSPACE.tabsLabel });
+}
 
-  const content = `
-      <p class="hint">Pick one or more files below, then choose a method. Every suggestion goes
-        to the review list first; nothing is replaced without your approval.</p>
-      ${fileOptions || `<p class="hint">No documents imported.</p>`}
-      <div class="form-row">
-        <button class="btn btn-ghost" disabled title="Not available yet.">Auto-discovery with cloud AI</button>
-        <span class="hint">Not available yet.</span>
-      </div>
-      ${localAIButton}
-      <div class="form-row">
-        <button id="btn-smart" ${d?.running === true ? "disabled" : ""}>Smart detection</button>
-        <span class="hint">Works without any AI. Finds likely names by how they are written.</span>
-      </div>
-      ${smartSettingsHTML(s)}
-      ${progressHTML}
-      <div id="disc-progress" class="hint"></div>`;
-  return panel("panel-discovery", "Find names to replace", content, {
-    collapsible: true, collapsedSet: collapsedPanels,
-  });
+function tabBody(s, shown) {
+  switch (activeTab) {
+    case "values": return valuesTab(s);
+    case "allow": return allowTab(s);
+    case "patterns": return patternsTab(s);
+    default: return suggestionsTab(s, shown);
+  }
+}
+
+// --- Suggestions ----------------------------------------------------------
+
+// The suggestions grid's column template, shared by the header and the rows so
+// the two cannot drift apart.
+const SUGGESTION_COLUMNS = "minmax(0,1fr) minmax(6.5rem,9.5rem) 5.5rem minmax(5.75rem,8rem) 5.25rem";
+
+/** suggestionsTab(s, shown) is the review gate. */
+function suggestionsTab(s, shown) {
+  const bulk =
+    `<div class="bulk-actions">` +
+    button(WORKSPACE.acceptAllShown, {
+      kind: "secondary", id: "btn-accept-shown",
+      disabled: shown.length === 0, title: WORKSPACE.bulkScopeHint,
+    }) +
+    button(WORKSPACE.rejectAllShown, {
+      kind: "secondary", id: "btn-reject-shown",
+      disabled: shown.length === 0, title: WORKSPACE.bulkScopeHint,
+    }) +
+    `</div>`;
+
+  const rows = shown.map((c) => suggestionRow(c)).join("");
+  const body = rows ||
+    `<div class="grid-empty">${escapeHTML(VALUES.noMatchingSuggestions)}</div>`;
+
+  return `<div class="row-between">` +
+    `<p class="hint">${escapeHTML(WORKSPACE.reviewHint)}</p>${bulk}</div>` +
+    `<div class="grid-box">${suggestionHeader(s)}${body}</div>`;
 }
 
 /**
- * smartSettingsHTML(s) renders the Smart-detection tuning controls
- * (BUILD-04 CR13). Smart detection was surfacing far more values than
- * anyone could review, so these four controls each remove a distinct kind
- * of noise. They ship at the stricter defaults; every one of them can be
- * turned off to get the old, exhaustive behaviour back.
+ * suggestionHeader(s) is the sortable header row: VALUE and COUNT are sort
+ * buttons, TYPE and SOURCE are filter selects living IN the header.
+ *
+ * Putting the filters in the header rather than in a row above it is the
+ * mock-up's choice and a good one: a filter belongs to its column, and a
+ * separate filter row costs a whole line of a fixed-height card.
  */
-function smartSettingsHTML(s) {
-  const o = smartDetectOptions(s);
-  return `
-      <details class="smart-settings" id="smart-settings">
-        <summary>${escapeHTML(VALUES.smartSettingsTitle)}</summary>
-        <p class="hint">${escapeHTML(VALUES.smartSettingsHint)}</p>
-        <div class="form-row">
-          <label for="smart-min-length">${escapeHTML(VALUES.smartMinLength)}</label>
-          <input id="smart-min-length" type="number" min="0" max="40" step="1" value="${o.minLength}"/>
-          <span class="hint">${escapeHTML(VALUES.smartMinLengthHint)}</span>
-        </div>
-        <div class="form-row">
-          <label for="smart-min-occurrences">${escapeHTML(VALUES.smartMinOccurrences)}</label>
-          <input id="smart-min-occurrences" type="number" min="0" max="100" step="1" value="${o.minOccurrences}"/>
-          <span class="hint">${escapeHTML(VALUES.smartMinOccurrencesHint)}</span>
-        </div>
-        <label class="radio-row">
-          <input type="checkbox" id="smart-common-words" ${o.excludeCommonWords ? "checked" : ""}/>
-          <span>${escapeHTML(VALUES.smartCommonWords)}
-            <span class="hint">${escapeHTML(VALUES.smartCommonWordsHint)}</span></span>
-        </label>
-        <div class="form-row">
-          <label for="smart-min-confidence">${escapeHTML(VALUES.smartMinConfidence)}</label>
-          <input id="smart-min-confidence" type="range" min="0" max="100" step="5"
-                 value="${Math.round(o.minConfidence * 100)}"/>
-          <output id="smart-min-confidence-value">${Math.round(o.minConfidence * 100)}</output>
-          <span class="hint">${escapeHTML(VALUES.smartMinConfidenceHint)}</span>
-        </div>
-      </details>`;
-}
-
-/** selectedFiles(container) reads the shared file-checkbox list. */
-function selectedFiles(container) {
-  return [...container.querySelectorAll(".disc-file:checked")].map((c) => c.value);
-}
-
-function wireDiscovery(container, s) {
-  container.querySelector("#btn-disc-cancel")?.addEventListener("click", () => cancelDiscovery());
-  wireSmartSettings(container);
-
-  const feedback = (msg) => {
-    const slot = document.querySelector("#disc-progress");
-    if (slot) slot.textContent = msg;
+function suggestionHeader(s) {
+  const sortState = (column) => {
+    const active = candidateFilter.sort.startsWith(column);
+    const asc = candidateFilter.sort.endsWith("-asc");
+    return { active, asc };
+  };
+  const sortButton = (column, label, id, title) => {
+    const { active, asc } = sortState(column);
+    return `<button class="sort-btn${active ? " active" : ""}" id="${id}" title="${escapeHTML(title)}">` +
+      escapeHTML(label) +
+      `<span class="icon sort-arrow${active && asc ? " asc" : ""}" aria-hidden="true">` +
+      icon("expand_more").replace(/^<span class="icon" aria-hidden="true">|<\/span>$/g, "") +
+      `</span></button>`;
   };
 
-  // Local AI discovery: proposals land in the REVIEW list, never
-  // directly in the entity tables (Phase 9b behaviour change).
-  const aiBtn = container.querySelector("#btn-discover");
-  if (aiBtn && !aiBtn.disabled) {
-    aiBtn.addEventListener("click", async () => {
-      let files = selectedFiles(container);
-      const progress = container.querySelector("#disc-progress");
-      if (files.length === 0) {
-        progress.textContent = "Select at least one file first.";
-        return;
-      }
-      // Pre-run size safeguard (Phase 7e): oversized files are excluded
-      // with the actionable message, never a mid-run hard error.
+  // The filter options are whatever is ACTUALLY present, not every category the
+  // engine has: a filter listing twenty types when the run found two is a list
+  // the user has to read past.
+  const typeOptions = distinct(s.candidates, "category")
+    .map((key) => ({ value: key, label: (CATEGORY_LABELS[key]?.[0] ?? key).toUpperCase() }));
+  // Sources render whatever is present (decision 9). "Pattern" is deliberately
+  // absent: deterministic PII matches are applied without review by design and
+  // never enter state.candidates, so offering it as a filter would promise rows
+  // that cannot appear.
+  const sourceOptions = distinct(s.candidates, "source")
+    .map((key) => ({ value: key, label: (WORKSPACE.sourceLabels[key] ?? key).toUpperCase() }));
+
+  const select = (id, label, value, options, title) =>
+    `<select class="head-select${value ? " filtered" : ""}" id="${id}" title="${escapeHTML(title)}"` +
+    ` aria-label="${escapeHTML(title)}">` +
+    `<option value="">${escapeHTML(label)}</option>` +
+    options.map((o) =>
+      `<option value="${escapeHTML(o.value)}"${o.value === value ? " selected" : ""}>` +
+      `${escapeHTML(o.label)}</option>`).join("") +
+    `</select>`;
+
+  return `<div class="grid-head" style="grid-template-columns:${SUGGESTION_COLUMNS}">` +
+    sortButton("value", WORKSPACE.colValue, "sort-value", VALUES.sortValueHint) +
+    select("filter-type", WORKSPACE.allTypes, candidateFilter.category, typeOptions,
+      WORKSPACE.filterTypeTitle) +
+    sortButton("count", WORKSPACE.colCount, "sort-count", VALUES.sortCountHint) +
+    select("filter-source", WORKSPACE.allSources, candidateFilter.source, sourceOptions,
+      WORKSPACE.filterSourceTitle) +
+    `<span class="col-actions">${escapeHTML(WORKSPACE.colActions)}</span>` +
+    `</div>`;
+}
+
+function suggestionRow(c) {
+  const type = CATEGORY_LABELS[c.category]?.[0] ?? c.category;
+  const source = WORKSPACE.sourceLabels[c.source] ?? c.source;
+  return `<div class="grid-row" style="grid-template-columns:${SUGGESTION_COLUMNS}"` +
+    ` data-text="${escapeHTML(c.text)}">` +
+    `<span class="cell-value" title="${escapeHTML(c.text)}">${escapeHTML(c.text)}</span>` +
+    `<span class="cell-type" title="${escapeHTML(type)}">${escapeHTML(type)}</span>` +
+    `<span class="cell-count mono">${escapeHTML(String(c.count ?? 0))}</span>` +
+    `<span class="src-badge src-${escapeHTML(c.source)}">${escapeHTML(source)}</span>` +
+    `<span class="cell-actions">` +
+    button("", {
+      kind: "ghost", cls: "cand-accept icon-action boxed ok", icon: "check_circle",
+      ariaLabel: `Accept ${c.text}`, title: WORKSPACE.accept,
+    }) +
+    button("", {
+      kind: "ghost", cls: "cand-reject icon-action boxed danger", icon: "close",
+      ariaLabel: `Reject ${c.text}`, title: WORKSPACE.reject,
+    }) +
+    `</span></div>`;
+}
+
+/** distinct(rows, field) lists the values of one field, sorted, once each. */
+function distinct(rows, field) {
+  return [...new Set((rows ?? []).map((r) => r[field]).filter(Boolean))].sort();
+}
+
+// --- My values ------------------------------------------------------------
+
+/** valuesTab(s) is one card per value: name, type, editable placeholder,
+ *  variant chips and an add-variant control. */
+function valuesTab(s) {
+  const addRow =
+    `<div class="add-row">` +
+    `<input id="value-draft" class="grow" value="${escapeHTML(drafts.value)}"` +
+    ` placeholder="${escapeHTML(WORKSPACE.addValuePlaceholder)}"` +
+    ` aria-label="${escapeHTML(WORKSPACE.addValueLabel)}"/>` +
+    `<select id="value-category" aria-label="${escapeHTML(WORKSPACE.addValueCategory)}">` +
+    CATEGORIES.map(([key, label]) =>
+      `<option value="${escapeHTML(key)}"${key === drafts.valueCategory ? " selected" : ""}>` +
+      `${escapeHTML(label)}</option>`).join("") +
+    `</select>` +
+    button(WORKSPACE.addValue, { kind: "secondary", id: "btn-add-value" }) +
+    `</div>`;
+
+  const cards = s.entities.map((e) => valueCard(e)).join("") ||
+    `<div class="grid-empty">${escapeHTML(WORKSPACE.noValues)}</div>`;
+
+  return addRow + cards;
+}
+
+/**
+ * valueCard(e) renders one value.
+ *
+ * The placeholder field is editable (BUILD-05 Phase 3). Before the first run
+ * there is nothing to rename, so it renders empty and disabled with a tooltip
+ * saying so rather than showing a guess the engine has not made.
+ */
+function valueCard(e) {
+  const key = entityKey(e.category, e.canonical);
+  const type = CATEGORY_LABELS[e.category]?.[0] ?? e.category;
+  const placeholder = e.placeholder ?? "";
+  const feedback = rowFeedback.get(key);
+
+  const variants = [...(e.variants ?? []), ...(e.manualVariants ?? [])];
+  // The chips are DRAGGABLE onto another value card, which is how a variant is
+  // regrouped when the expansion attached it to the wrong value (BUILD-02
+  // Phase 9d, kept through the BUILD-05 relayout). The mock-up does not show
+  // this, but the capability is real, tested (state.js moveVariant) and has no
+  // other home: dropping it would mean a mis-grouped spelling could only be
+  // fixed by excluding it here and re-typing it there.
+  const chips = variants.map((v) =>
+    `<span class="chip-tag variant-chip" draggable="true" data-variant="${escapeHTML(v)}"` +
+    ` title="${escapeHTML(WORKSPACE.variantDragHint)}">${escapeHTML(v)}` +
+    button("", {
+      kind: "ghost", cls: "chip-remove variant-del", icon: "close",
+      ariaLabel: `Remove variant ${v}`, title: WORKSPACE.removeVariant,
+      data: { variant: v },
+    }) +
+    `</span>`).join("");
+
+  // "pending" is a real state, not an absence: null variants mean an expansion
+  // is in flight, [] means it finished and found none (BUILD-02 Phase 7a).
+  const variantNote = e.variantError
+    ? `<span class="hint bad">${escapeHTML(e.variantError)}</span>`
+    : (e.variants === null || e.variants === undefined)
+      ? `<span class="hint">${escapeHTML(WORKSPACE.variantsPending)}</span>`
+      : (variants.length === 0 ? `<span class="hint">${escapeHTML(WORKSPACE.noVariants)}</span>` : "");
+
+  return `<div class="value-card" data-key="${escapeHTML(key)}"` +
+    ` data-category="${escapeHTML(e.category)}" data-canonical="${escapeHTML(e.canonical)}">` +
+    `<div class="row-between">` +
+    `<div class="value-head">` +
+    `<span class="value-name">${escapeHTML(e.canonical)}</span>` +
+    `<span class="fmt-badge">${escapeHTML(type)}</span>` +
+    `<input class="ph-input mono" value="${escapeHTML(placeholder)}"` +
+    (placeholder ? "" : ` disabled placeholder="${escapeHTML(WORKSPACE.placeholderPending)}"`) +
+    ` title="${escapeHTML(placeholder ? WORKSPACE.placeholderTooltip : WORKSPACE.placeholderPendingTooltip)}"` +
+    ` aria-label="${escapeHTML(WORKSPACE.placeholderLabel)}"/>` +
+    `</div>` +
+    button("", {
+      kind: "ghost", cls: "value-remove icon-action danger", icon: "close",
+      ariaLabel: `Remove ${e.canonical}`, title: WORKSPACE.removeValue,
+    }) +
+    `</div>` +
+    `<div class="chip-row variant-row">` +
+    `<span class="hint">${escapeHTML(WORKSPACE.variants)}</span>${chips}` +
+    button(WORKSPACE.addVariant, { kind: "ghost", cls: "chip-add variant-add", icon: "add" }) +
+    `</div>` +
+    (variantNote ? `<div class="value-note">${variantNote}</div>` : "") +
+    (feedback ? `<div class="value-note"><span class="hint bad">${escapeHTML(feedback)}</span></div>` : "") +
+    `</div>`;
+}
+
+// --- Never anonymise ------------------------------------------------------
+
+function allowTab(s) {
+  return renderAllowlistChips(s, drafts.allow);
+}
+
+// --- Patterns -------------------------------------------------------------
+
+function patternsTab(s) {
+  const addRow =
+    `<div class="add-row">` +
+    `<input id="pattern-draft" class="grow mono" value="${escapeHTML(drafts.pattern)}"` +
+    ` spellcheck="false" placeholder="${escapeHTML(WORKSPACE.addPatternPlaceholder)}"` +
+    ` aria-label="${escapeHTML(WORKSPACE.addPattern)}"/>` +
+    button(WORKSPACE.addPattern, { kind: "secondary", id: "btn-add-pattern" }) +
+    `</div>`;
+
+  const rows = s.patterns.map((p) =>
+    `<div class="pattern-row" data-expr="${escapeHTML(p.expr)}">` +
+    `<span class="mono">${escapeHTML(p.expr)}</span>` +
+    `<span class="state-tag${p.error ? " bad" : ""}">` +
+    `${escapeHTML(p.error ? p.error : WORKSPACE.patternValid)}</span>` +
+    `<span class="spacer"></span>` +
+    button("", {
+      kind: "ghost", cls: "pattern-del icon-action danger", icon: "close",
+      ariaLabel: `Remove pattern ${p.expr}`, title: WORKSPACE.removePattern,
+    }) +
+    `</div>`).join("");
+
+  return `<p class="hint">${escapeHTML(WORKSPACE.patternsHint)}</p>` + addRow +
+    (rows ? `<div class="grid-box">${rows}</div>` : "") +
+    `<div id="pattern-feedback" class="hint"></div>`;
+}
+
+// --- Wiring ---------------------------------------------------------------
+
+function wire(container, s, shown) {
+  for (const tab of container.querySelectorAll("[data-wstab]")) {
+    tab.addEventListener("click", () => {
+      activeTab = tab.dataset.wstab;
+      setState({}); // repaint; the tab is view state
+    });
+  }
+
+  const search = container.querySelector("#workspace-search");
+  search?.addEventListener("input", () => {
+    // Repaint on every keystroke, but keep the caret: the input is re-created,
+    // so its value and selection have to be restored by hand.
+    const caret = search.selectionStart;
+    candidateFilter = { ...candidateFilter, search: search.value };
+    setState({});
+    const again = container.querySelector("#workspace-search");
+    if (again) {
+      again.focus();
+      again.setSelectionRange(caret, caret);
+    }
+  });
+
+  wireDetection(container, s);
+  wireNotice(container);
+
+  if (activeTab === "suggestions") wireSuggestions(container, shown);
+  else if (activeTab === "values") wireValues(container);
+  else if (activeTab === "allow") wireAllowlistChips(container, drafts);
+  else if (activeTab === "patterns") wirePatterns(container);
+}
+
+// --- Run detection --------------------------------------------------------
+
+/**
+ * wireDetection(container, s) wires the ONE Run detection button.
+ *
+ * It folds what used to be two panels and a per-file picker into a single
+ * action over every imported document (BUILD-05 Phase 6):
+ *
+ *   the offline smart pass  always, so the button works with Ollama absent
+ *   the local AI pass       as well, when Local AI is on AND reachable
+ *
+ * The estimateDiscovery pre-check survives, because an oversized file failing
+ * mid-run is a much worse experience than being told up front. What changed is
+ * the shape of the answer: an oversized file becomes a NOTICE naming it, and
+ * the run continues over the rest, instead of a picker the user has to operate
+ * before anything happens at all.
+ */
+function wireDetection(container, s) {
+  container.querySelector("#btn-detect-cancel")?.addEventListener("click", () => cancelDiscovery());
+
+  const btn = container.querySelector("#btn-detect");
+  if (!btn || btn.disabled) return;
+
+  btn.addEventListener("click", async () => {
+    const all = getState().documents.map((d) => d.name);
+    if (all.length === 0) return;
+
+    let files = all;
+    const aiOK = llmEnabled(getState());
+
+    // The size pre-check only matters for the AI pass: the offline pass streams
+    // and has no context window to overflow.
+    if (aiOK) {
       try {
         const estimates = await estimateDiscovery(files);
         const tooLarge = (estimates ?? []).filter((e) => e.tooLarge);
         if (tooLarge.length) {
-          progress.textContent = tooLarge.map((e) => e.message).join(" ");
           const excluded = new Set(tooLarge.map((e) => e.name));
           files = files.filter((f) => !excluded.has(f));
-          if (files.length === 0) return;
+          notify(WORKSPACE.tooLargeNotice(tooLarge.map((e) => e.name)), "warn");
         }
       } catch { /* estimation is advisory; the run still guards itself */ }
+    }
 
-      setState({ discovery: { running: true, current: 0, total: files.length, file: files[0] } });
-      try {
-        const res = await runDiscovery(files, s.allowlist);
-        const added = addCandidates(
-          (res?.proposals ?? []).map((p) => ({ text: p.text, category: p.category })), "local-ai");
-        feedback(`${res?.status ?? "done"}. ${added} new candidate(s) for review below.`);
-      } catch (err) {
-        showError(container, err);
-      } finally {
-        setState({ discovery: null }); // see the Smart path (BUILD-04 CR17)
+    setState({ discovery: { running: true, current: 0, total: all.length, file: all[0] } });
+    let added = 0;
+    try {
+      // The offline pass first, and unconditionally. Its tuning travels with the
+      // call (BUILD-04 CR13), read from the store so the options in force are
+      // exactly the ones the rail shows.
+      const smart = await runSmartDetection(
+        all, getState().allowlist, false, smartDetectOptions(getState()));
+      added += addCandidates(smart?.candidates ?? [], "smart");
+
+      // Then the AI pass, if it can run at all and there is anything left to
+      // read after the size check.
+      if (aiOK && files.length) {
+        const ai = await runDiscovery(files, getState().allowlist);
+        added += addCandidates(
+          (ai?.proposals ?? []).map((p) => ({ text: p.text, category: p.category })), "local-ai");
       }
+      notify(WORKSPACE.detectionDone(added), added ? "ok" : "info");
+    } catch (err) {
+      notify(String(err?.message ?? err), "warn");
+    } finally {
+      // ALWAYS clear the running flag (BUILD-04 CR17). Clearing it only on the
+      // happy paths meant any escape in between left the button disabled forever
+      // with no way back except leaving and re-entering the step.
+      setState({ discovery: null });
+      // Newly accepted nothing yet, but a fresh candidate list is worth looking
+      // at, so land the user on it.
+      activeTab = "suggestions";
+      setState({});
+    }
+  });
+}
+
+// --- Suggestions wiring ---------------------------------------------------
+
+function wireSuggestions(container, shown) {
+  container.querySelector("#sort-value")?.addEventListener("click", () => {
+    candidateFilter = { ...candidateFilter, sort: toggleValueSort(candidateFilter.sort) };
+    setState({});
+  });
+  container.querySelector("#sort-count")?.addEventListener("click", () => {
+    candidateFilter = { ...candidateFilter, sort: toggleCountSort(candidateFilter.sort) };
+    setState({});
+  });
+  container.querySelector("#filter-type")?.addEventListener("change", (ev) => {
+    candidateFilter = { ...candidateFilter, category: ev.target.value };
+    setState({});
+  });
+  container.querySelector("#filter-source")?.addEventListener("change", (ev) => {
+    candidateFilter = { ...candidateFilter, source: ev.target.value };
+    setState({});
+  });
+
+  for (const row of container.querySelectorAll(".grid-row[data-text]")) {
+    const text = row.dataset.text;
+    row.querySelector(".cand-accept")?.addEventListener("click", async () => {
+      keepScrollPosition(() => acceptCandidate(text));
+      await refreshVariants();
+    });
+    row.querySelector(".cand-reject")?.addEventListener("click", () => {
+      keepScrollPosition(() => rejectCandidate(text));
     });
   }
 
-  // Smart detection: always available, no AI required. Categories are
-  // refined by the local AI only when it is enabled AND reachable.
-  container.querySelector("#btn-smart")?.addEventListener("click", async () => {
-    const files = selectedFiles(container);
-    const progress = container.querySelector("#disc-progress");
-    if (files.length === 0) {
-      progress.textContent = "Select at least one file first.";
+  // The two bulk buttons act on exactly the rows on screen, which is why they
+  // are passed the FILTERED list rather than re-deriving it: a bulk action must
+  // never be a surprise.
+  const texts = shown.map((c) => c.text);
+  container.querySelector("#btn-accept-shown")?.addEventListener("click", async () => {
+    const n = acceptAllShown(texts);
+    notify(WORKSPACE.acceptedN(n), n ? "ok" : "info");
+    await refreshVariants();
+  });
+  container.querySelector("#btn-reject-shown")?.addEventListener("click", () => {
+    const n = rejectAllShown(texts);
+    notify(WORKSPACE.rejectedN(n), "info");
+  });
+}
+
+// --- My values wiring -----------------------------------------------------
+
+function wireValues(container) {
+  const draft = container.querySelector("#value-draft");
+  const category = container.querySelector("#value-category");
+  draft?.addEventListener("input", () => { drafts.value = draft.value; });
+  category?.addEventListener("change", () => { drafts.valueCategory = category.value; });
+
+  const add = async () => {
+    const value = (drafts.value ?? "").trim();
+    if (!value) return;
+    const n = addEntities([{ category: drafts.valueCategory, canonical: value }]);
+    drafts.value = "";
+    if (n === 0) notify(WORKSPACE.valueAlreadyThere(value), "info");
+    setState({});
+    await refreshVariants();
+  };
+  container.querySelector("#btn-add-value")?.addEventListener("click", add);
+  draft?.addEventListener("keydown", (ev) => { if (ev.key === "Enter") add(); });
+
+  for (const cardEl of container.querySelectorAll(".value-card")) {
+    const { category: cat, canonical, key } = cardEl.dataset;
+
+    cardEl.querySelector(".value-remove")?.addEventListener("click", () => {
+      rowFeedback.delete(key);
+      keepScrollPosition(() => removeEntity(cat, canonical));
+    });
+
+    // The editable placeholder (BUILD-05 Phase 3). Go validates the shape and
+    // refuses a collision; a refusal is shown ON THE ROW rather than as a
+    // notice, because it is about this value and the fix is in this field.
+    const ph = cardEl.querySelector(".ph-input");
+    if (ph && !ph.disabled) {
+      ph.addEventListener("change", async () => {
+        try {
+          await setEntityPlaceholder(cat, canonical, ph.value);
+          rowFeedback.delete(key);
+          await refreshPlaceholders();
+        } catch (err) {
+          rowFeedback.set(key, String(err?.message ?? err));
+          setState({});
+        }
+      });
+    }
+
+    // The add-variant control reveals an INLINE input rather than opening a
+    // dialog: native dialogs are banned (decision 10), and an inline field is
+    // fewer steps than a dialog anyway.
+    cardEl.querySelector(".variant-add")?.addEventListener("click", () => {
+      revealVariantInput(cardEl, cat, canonical, key);
+    });
+
+    for (const del of cardEl.querySelectorAll(".variant-del")) {
+      del.addEventListener("click", (ev) => {
+        // The chip itself is a drag handle, so the remove button has to stop the
+        // click reaching it.
+        ev.stopPropagation();
+        // Removing a variant is an EXCLUSION, not a deletion: automatic expansion
+        // would put it straight back otherwise. moveVariant is for regrouping;
+        // here the variant simply stops applying.
+        keepScrollPosition(() => excludeVariant(cat, canonical, del.dataset.variant));
+      });
+    }
+  }
+
+  wireVariantDrag(container);
+}
+
+/**
+ * wireVariantDrag(container) makes a variant chip draggable onto another value
+ * card, which regroups it (BUILD-02 Phase 9d).
+ *
+ * The payload is carried in a module-local variable rather than only in the
+ * DataTransfer, because a WebView's dragover handler cannot read DataTransfer
+ * contents (the spec hides them until the drop), and the drop target needs to
+ * know which card the drag STARTED from so it can refuse a drop onto itself.
+ */
+function wireVariantDrag(container) {
+  for (const chip of container.querySelectorAll(".variant-chip")) {
+    chip.addEventListener("dragstart", (ev) => {
+      const card = chip.closest(".value-card");
+      dragging = {
+        variant: chip.dataset.variant,
+        fromCategory: card?.dataset.category,
+        fromCanonical: card?.dataset.canonical,
+      };
+      // Setting the data is still required, or some WebViews cancel the drag.
+      ev.dataTransfer?.setData("text/plain", chip.dataset.variant ?? "");
+      if (ev.dataTransfer) ev.dataTransfer.effectAllowed = "move";
+    });
+    chip.addEventListener("dragend", () => { dragging = null; });
+  }
+
+  for (const card of container.querySelectorAll(".value-card")) {
+    card.addEventListener("dragover", (ev) => {
+      if (!dragging) return;
+      if (card.dataset.canonical === dragging.fromCanonical &&
+          card.dataset.category === dragging.fromCategory) {
+        return; // a drop onto its own card would be a no-op
+      }
+      ev.preventDefault(); // this is what marks the element as a valid target
+      card.classList.add("drop-target");
+    });
+    card.addEventListener("dragleave", () => card.classList.remove("drop-target"));
+    card.addEventListener("drop", async (ev) => {
+      ev.preventDefault();
+      card.classList.remove("drop-target");
+      if (!dragging) return;
+      const moved = moveVariant(
+        dragging.fromCategory, dragging.fromCanonical,
+        card.dataset.category, card.dataset.canonical, dragging.variant);
+      const { variant } = dragging;
+      dragging = null;
+      if (!moved) return; // a stale drop: the reducer refused it, say nothing
+      notify(WORKSPACE.variantMoved(variant, card.dataset.canonical), "ok");
+      await refreshVariants();
+    });
+  }
+}
+
+/**
+ * revealVariantInput(cardEl, category, canonical, key) swaps the "add" chip for
+ * an inline text input, because decision 10 bans prompt() and an inline field is
+ * fewer steps than a dialog anyway.
+ *
+ * It does NOT go through a state change: the input is transient, and a repaint
+ * would destroy it. It commits through addManualVariant, which does repaint.
+ */
+function revealVariantInput(cardEl, category, canonical, key) {
+  const row = cardEl.querySelector(".variant-row");
+  const addChip = row?.querySelector(".variant-add");
+  if (!row || !addChip) return;
+
+  const input = cardEl.ownerDocument.createElement("input");
+  input.className = "variant-input";
+  input.placeholder = WORKSPACE.addVariantPlaceholder;
+  input.setAttribute("aria-label", WORKSPACE.addVariantPlaceholder);
+  addChip.replaceWith(input);
+  input.focus();
+
+  const commit = async () => {
+    const value = input.value.trim();
+    if (!value) {
+      setState({}); // repaint puts the add chip back
       return;
     }
-    setState({ discovery: { running: true, current: 0, total: files.length, file: files[0] } });
-    try {
-      // The tuning travels with the call (BUILD-04 CR13); it is read from
-      // the store, so the options in force are exactly the ones shown.
-      const res = await runSmartDetection(
-        files, s.allowlist, llmEnabled(s), smartDetectOptions(getState()));
-      const added = addCandidates(res?.candidates ?? [], "smart");
-      feedback(`${res?.status ?? "done"}. ${added} new candidate(s) for review below.`);
-    } catch (err) {
-      showError(container, err);
-    } finally {
-      // ALWAYS clear the running flag (BUILD-04 CR17). Clearing it only on
-      // the two happy-ish paths meant any escape in between, an exception
-      // from a reducer for instance, left the button disabled forever with
-      // no way back except leaving and re-entering the step.
-      setState({ discovery: null });
+    const before = variantCount(category, canonical);
+    addManualVariant(category, canonical, value);
+    if (variantCount(category, canonical) === before) {
+      // A duplicate: say so, rather than looking like nothing happened.
+      rowFeedback.set(key, WORKSPACE.variantAlreadyThere(value));
+      setState({});
+      return;
     }
+    rowFeedback.delete(key);
+    await refreshVariants();
+  };
+
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") commit();
+    else if (ev.key === "Escape") setState({});
   });
+  input.addEventListener("blur", commit);
 }
 
 /**
- * wireSmartSettings(container) commits each tuning control to the store
- * (BUILD-04 CR13). Every commit is wrapped in keepScrollPosition, because
- * the settings block sits mid-screen and the re-render would otherwise
- * throw the user back to the top (CR12).
+ * excludeVariant(category, canonical, variant) stops one spelling applying to a
+ * value.
  *
- * The <details> block keeps its open state across re-renders by hand: the
- * store deliberately knows nothing about it, and losing it on every
- * keystroke would make the controls unusable.
+ * It has to be an EXCLUSION rather than a removal: the automatic expansion would
+ * regenerate an automatic variant on the next expansion, so deleting it would
+ * look like the button did nothing. Setting variants back to pending re-expands
+ * this row only.
  */
-function wireSmartSettings(container) {
-  const details = container.querySelector("#smart-settings");
-  if (!details) return;
-  details.open = smartSettingsOpen;
-  details.addEventListener("toggle", () => { smartSettingsOpen = details.open; });
-
-  const commit = (patch) => keepScrollPosition(() => setSmartDetectOptions(patch));
-
-  container.querySelector("#smart-min-length")?.addEventListener("change", (ev) => {
-    commit({ minLength: parseInt(ev.target.value, 10) });
-  });
-  container.querySelector("#smart-min-occurrences")?.addEventListener("change", (ev) => {
-    commit({ minOccurrences: parseInt(ev.target.value, 10) });
-  });
-  container.querySelector("#smart-common-words")?.addEventListener("change", (ev) => {
-    commit({ excludeCommonWords: ev.target.checked });
-  });
-
-  const confidence = container.querySelector("#smart-min-confidence");
-  if (confidence) {
-    const readout = container.querySelector("#smart-min-confidence-value");
-    // Live read-out while dragging, one commit on release.
-    confidence.addEventListener("input", () => {
-      if (readout) readout.textContent = confidence.value;
-    });
-    confidence.addEventListener("change", () => {
-      commit({ minConfidence: Number(confidence.value) / 100 });
-    });
-  }
-}
-
-// Whether the smart-detection settings block is unfolded. View-local, in
-// the same family as `expanded` and `collapsedPanels`.
-let smartSettingsOpen = false;
-
-// --- Candidate review (BUILD-02 Phase 9b) ---------------------------------
-
-const CANDIDATE_CATEGORIES = [
-  ["client_names", "Client"],
-  ["project_names", "Project"],
-  ["internal_names", "Internal"],
-  ["person_names", "Person"],
-];
-
-function candidatesPanel(s) {
-  if (!s.candidates.length) return "";
-
-  // The rows the user can currently SEE, from the tested pure model.
-  // Everything below (the bulk buttons, the empty state, the counts) is
-  // derived from this list, so what a button does always matches what the
-  // table shows (BUILD-04 CR14/CR15).
-  const rows = visibleCandidates(s.candidates, candidateFilter);
-  const counts = candidateCategoryCounts(rows);
-
-  const options = (selected) => CANDIDATE_CATEGORIES.map(([v, l]) =>
-    `<option value="${v}" ${v === selected ? "selected" : ""}>${l}</option>`).join("");
-
-  // Category selector: only the NAME categories the user actually
-  // enabled in Configure (CR14), so the filter reflects their choices
-  // instead of offering categories that cannot appear.
-  const enabled = CANDIDATE_CATEGORIES.filter(([v]) => s.settings.categories?.[v]);
-  const filterCategories = enabled.length ? enabled : CANDIDATE_CATEGORIES;
-  const categoryOptions = [`<option value="">${escapeHTML(VALUES.filterAllTypes)}</option>`]
-    .concat(filterCategories.map(([v, l]) =>
-      `<option value="${v}" ${v === candidateFilter.category ? "selected" : ""}>${escapeHTML(l)}</option>`))
-    .join("");
-
-  // Bulk actions ABOVE the table (CR15), one pair per category present in
-  // the visible rows, each naming exactly how many rows it will touch.
-  const bulk = CANDIDATE_CATEGORIES
-    .filter(([v]) => counts[v] > 0)
-    .map(([v, l]) => `
-      <span class="bulk-pair">
-        <button class="cand-accept-all" data-category="${v}"
-                title="${escapeHTML(VALUES.bulkScopeHint)}">Accept all ${counts[v]} ${escapeHTML(l.toLowerCase())}${counts[v] === 1 ? "" : "s"}</button>
-        <button class="cand-deny-all" data-category="${v}"
-                title="${escapeHTML(VALUES.bulkScopeHint)}">Deny all ${counts[v]} ${escapeHTML(l.toLowerCase())}${counts[v] === 1 ? "" : "s"}</button>
-      </span>`).join(" ");
-
-  const countArrow = candidateFilter.sort === "count-asc" ? "\u25B2"
-    : candidateFilter.sort === "count-desc" ? "\u25BC" : "";
-  const valueArrow = candidateFilter.sort === "value-asc" ? "\u25B2"
-    : candidateFilter.sort === "value-desc" ? "\u25BC" : "";
-
-  const body = rows.length ? rows.map((c) => `
-    <tr data-ctext="${escapeHTML(c.text)}">
-      <td class="ent-name" title="${escapeHTML((c.contexts ?? []).join("\n"))}">
-        <input class="cand-text" value="${escapeHTML(c.text)}"/>
-      </td>
-      <td><select class="cand-category">${options(c.category)}</select></td>
-      <td class="hint">${c.count ? `${c.count}` : ""}</td>
-      <td class="hint">${escapeHTML(c.source)}</td>
-      <td class="ent-actions">
-        <button class="cand-accept">accept</button>
-        <button class="cand-reject">reject</button>
-      </td>
-    </tr>`).join("")
-    : `<tr><td colspan="5" class="hint">${escapeHTML(VALUES.noMatchingSuggestions)}</td></tr>`;
-
-  const content = `
-      <p class="hint">Review each suggestion: fix the value or its type if needed, then accept or
-        reject. Only accepted values are ever replaced.</p>
-      <div class="form-row bulk-row">${bulk}</div>
-      <table class="entity-table candidate-table">
-        <thead>
-          <tr>
-            <th>
-              <button class="cand-sort" data-sort="value" title="${escapeHTML(VALUES.sortValueHint)}">
-                ${escapeHTML(VALUES.colValue)} ${valueArrow}</button>
-            </th>
-            <th>${escapeHTML(VALUES.colType)}</th>
-            <th>
-              <button class="cand-sort" data-sort="count" title="${escapeHTML(VALUES.sortCountHint)}">
-                ${escapeHTML(VALUES.colOccurrences)} ${countArrow}</button>
-            </th>
-            <th>${escapeHTML(VALUES.colFoundBy)}</th>
-            <th>${escapeHTML(VALUES.colActions)}</th>
-          </tr>
-          <tr class="filter-row">
-            <th><input id="cand-search" type="search" placeholder="${escapeHTML(VALUES.searchPlaceholder)}"
-                       value="${escapeHTML(candidateFilter.search)}"/></th>
-            <th><select id="cand-filter-category">${categoryOptions}</select></th>
-            <th colspan="3" class="hint">${escapeHTML(showingLabel(rows.length, s.candidates.length))}</th>
-          </tr>
-        </thead>
-        <tbody>${body}</tbody>
-      </table>`;
-  return panel("panel-candidates", `Suggestions to review (${s.candidates.length})`, content, {
-    collapsible: true, collapsedSet: collapsedPanels,
-  });
-}
-
-/** showingLabel(visible, total) states how much of the list is on screen,
- *  so a filter can never silently hide rows the user forgets about. */
-export function showingLabel(visible, total) {
-  if (visible === total) return `Showing all ${total}.`;
-  return `Showing ${visible} of ${total}.`;
-}
-
-function wireCandidates(container) {
-  for (const row of container.querySelectorAll("tr[data-ctext]")) {
-    const original = row.dataset.ctext;
-    const textInput = row.querySelector(".cand-text");
-    const catSelect = row.querySelector(".cand-category");
-    textInput.addEventListener("change", () => keepScrollPosition(() => {
-      if (!updateCandidate(original, { text: textInput.value })) {
-        textInput.value = original; // collision or blank: revert visibly
-      }
-    }));
-    catSelect.addEventListener("change", () => keepScrollPosition(
-      () => updateCandidate(original, { category: catSelect.value })));
-    row.querySelector(".cand-accept").addEventListener("click", async () => {
-      if (!acceptCandidate(row.dataset.ctext)) return;
-      await refreshVariants();
-      repaintValues();
-    });
-    row.querySelector(".cand-reject").addEventListener("click", () => rejectCandidate(row.dataset.ctext));
-  }
-
-  // Per-column filters (CR14). They change VIEW state only, then ask for
-  // a repaint; the scroll position is carried across it.
-  const search = container.querySelector("#cand-search");
-  if (search) {
-    let timer = null;
-    search.addEventListener("input", () => {
-      // Debounced: retyping a search must not repaint on every keystroke.
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        candidateFilter = { ...candidateFilter, search: search.value };
-        keepScrollPosition(() => setState({}));
-        // The re-render replaced the input, so put the caret back.
-        const next = document.querySelector("#cand-search");
-        if (next) {
-          next.focus();
-          next.setSelectionRange(next.value.length, next.value.length);
-        }
-      }, 200);
-    });
-  }
-  container.querySelector("#cand-filter-category")?.addEventListener("change", (ev) => {
-    candidateFilter = { ...candidateFilter, category: ev.target.value };
-    keepScrollPosition(() => setState({}));
-  });
-  for (const btn of container.querySelectorAll(".cand-sort")) {
-    btn.addEventListener("click", () => {
-      candidateFilter = {
-        ...candidateFilter,
-        sort: btn.dataset.sort === "count"
-          ? toggleCountSort(candidateFilter.sort)
-          : toggleValueSort(candidateFilter.sort),
+function excludeVariant(category, canonical, variant) {
+  const s = getState();
+  setState({
+    entities: s.entities.map((e) => {
+      if (entityKey(e.category, e.canonical) !== entityKey(category, canonical)) return e;
+      const lower = variant.toLowerCase();
+      return {
+        ...e,
+        manualVariants: (e.manualVariants ?? []).filter((x) => x.toLowerCase() !== lower),
+        excludedVariants: [...(e.excludedVariants ?? []), variant],
+        variants: null, // re-expand ONLY this row
+        variantError: null,
       };
-      keepScrollPosition(() => setState({}));
-    });
-  }
-
-  // Bulk accept / deny (CR15). Both act on the VISIBLE rows only, which
-  // is what the button labels count, so a filtered list can never hide
-  // rows a bulk action silently swept up.
-  const visibleTexts = (category) => visibleCandidates(getState().candidates, candidateFilter)
-    .filter((c) => c.category === category)
-    .map((c) => c.text);
-
-  for (const btn of container.querySelectorAll(".cand-accept-all")) {
-    btn.addEventListener("click", async () => {
-      const category = btn.dataset.category;
-      if (acceptAllInCategory(category, visibleTexts(category)) === 0) return;
-      await refreshVariants();
-      repaintValues();
-    });
-  }
-  for (const btn of container.querySelectorAll(".cand-deny-all")) {
-    btn.addEventListener("click", () => {
-      const category = btn.dataset.category;
-      const texts = visibleTexts(category);
-      if (!texts.length) return;
-      if (!confirm(VALUES.denyAllConfirm(texts.length))) return;
-      keepScrollPosition(() => denyAllInCategory(category, texts));
-    });
-  }
-}
-
-// --- Review tables ------------------------------------------------------
-
-function categoryPanel(s, category, label) {
-  // Variant row content comes from the TESTED pure view-model
-  // (entitymodel.js): pending / error / empty / list are explicit states,
-  // so the "expanding" placeholder can never stick forever (Phase 7a).
-  const vrowsByKey = new Map(
-    variantRows(s.entities, expanded).map((r) => [r.key, r]));
-
-  const rows = s.entities.filter((e) => e.category === category).map((e) => {
-    const key = entityKey(e.category, e.canonical);
-    const vrow = vrowsByKey.get(key);
-    const isOpen = !!vrow;
-    const variantCount = e.variants?.length;
-    const countLabel = e.variants === null || e.variants === undefined
-      ? "…" : `${variantCount} variant${variantCount === 1 ? "" : "s"}`;
-
-    let variantBody = "";
-    if (vrow) {
-      // draggable="true" on the chip, and draggable="false" on the button
-      // inside it: a draggable child would otherwise swallow the drag that
-      // starts on the button, which is most of the chip's width
-      // (BUILD-04 CR17, "chips undraggable").
-      const chips = vrow.variants.map((v) => `
-        <span class="pill variant-chip" draggable="true" data-variant="${escapeHTML(v)}"
-              data-category="${escapeHTML(e.category)}" data-canonical="${escapeHTML(e.canonical)}"
-              title="Drag onto another value to move this variant there.">
-          <span class="icon drag-handle" aria-hidden="true">\u283F</span>${escapeHTML(v)}
-          <button class="variant-move" draggable="false"
-                  title="Move this variant to another value">move</button>
-        </span>`).join(" ");
-      const inner =
-        vrow.state === "pending" ? `<span class="hint">expanding…</span>` :
-        vrow.state === "error" ? `<span class="banner error">Variant expansion failed: ${escapeHTML(vrow.error)}</span>` :
-        vrow.state === "empty" ? `<span class="hint">No variants</span>` :
-        `<span class="pill-list">${chips}</span>`;
-      // The variant row carries ITS OWN data attributes; the old
-      // previousElementSibling coupling broke silently on any markup
-      // change between the rows (the Phase 7a bug).
-      variantBody = `
-      <tr class="variant-row" data-key="${escapeHTML(key)}"
-          data-category="${escapeHTML(e.category)}" data-canonical="${escapeHTML(e.canonical)}">
-        <td colspan="3">
-        <div class="variant-list">${inner}</div>
-        <div class="form-row">
-          <input class="variant-input" placeholder="add a spelling, for example a nickname"/>
-          <button class="variant-add">Add variant</button>
-        </div>
-        <div class="variant-note hint"></div>
-      </td></tr>`;
-    }
-
-    return `
-      <tr class="${e.status === "denied" ? "denied" : ""}" data-key="${escapeHTML(key)}"
-          data-category="${escapeHTML(e.category)}" data-canonical="${escapeHTML(e.canonical)}">
-        <td class="ent-name">${escapeHTML(e.canonical)}</td>
-        <td>
-          <button class="ent-variants" title="Show the name variants that will be replaced">
-            ${countLabel} ${isOpen ? "▾" : "▸"}
-          </button>
-        </td>
-        <td class="ent-actions">
-          <button class="ent-accept" ${e.status === "accepted" ? "disabled" : ""}>accept</button>
-          <button class="ent-deny" ${e.status === "denied" ? "disabled" : ""}>deny</button>
-          <button class="ent-edit">edit</button>
-          <button class="ent-delete">✕</button>
-        </td>
-      </tr>${variantBody}`;
-  }).join("");
-
-  const content = `
-    <div data-panel="${category}">
-      <table class="entity-table">
-        <tbody>${rows}</tbody>
-        <tfoot><tr>
-          <td colspan="3">
-            <div class="form-row">
-              <input class="ent-add-input" placeholder="add a ${label.toLowerCase()} entry"/>
-              <button class="ent-add">Add</button>
-            </div>
-            <div class="ent-add-preview hint"></div>
-          </td>
-        </tr></tfoot>
-      </table>
-    </div>`;
-  return panel(`panel-cat-${category}`, label, content, {
-    collapsible: true, collapsedSet: collapsedPanels,
+    }),
   });
+  void refreshVariants();
 }
 
-function wireCategoryPanels(container) {
-  for (const panel of container.querySelectorAll("[data-panel]")) {
-    const category = panel.dataset.panel;
-
-    // Manual add row, the whole flow in no-Ollama mode.
-    const addBtn = panel.querySelector(".ent-add");
-    const addInput = panel.querySelector(".ent-add-input");
-    const add = async () => {
-      const typed = addInput.value.trim();
-      if (!typed) return;
-      if (addEntities([{ category, canonical: typed }]) === 0) return;
-      // Open the new row straight away: its variants are what the user
-      // needs to check, and hiding them behind a second click was half of
-      // the "add works only once" report (BUILD-04 CR17).
-      openExpanded(category, typed);
-      await refreshVariants();
-      repaintValues();
-    };
-    addBtn.addEventListener("click", add);
-    addInput.addEventListener("keydown", (ev) => { if (ev.key === "Enter") add(); });
-
-    // Live match preview (BUILD-02 Phase 9c): debounced count of the
-    // typed term across the loaded documents, shown before committing.
-    const preview = panel.querySelector(".ent-add-preview");
-    let previewTimer = null;
-    addInput.addEventListener("input", () => {
-      clearTimeout(previewTimer);
-      const term = addInput.value.trim();
-      if (!term) { preview.textContent = ""; return; }
-      previewTimer = setTimeout(async () => {
-        try {
-          const info = await countTermMatches(term);
-          preview.textContent = info?.count
-            ? `Found ${info.count} time(s) in ${info.documents} document(s).`
-            : "Not found in the loaded documents.";
-        } catch { preview.textContent = ""; }
-      }, 300);
-    });
-
-    for (const row of panel.querySelectorAll("tr[data-key]")) {
-      const { category: cat, canonical } = row.dataset;
-      row.querySelector(".ent-accept").addEventListener("click", () => setEntityStatus(cat, canonical, "accepted"));
-      row.querySelector(".ent-deny").addEventListener("click", () => setEntityStatus(cat, canonical, "denied"));
-      row.querySelector(".ent-delete").addEventListener("click", () => {
-        expanded.delete(entityKey(cat, canonical)); // no orphan keys behind a deleted row
-        removeEntity(cat, canonical);
-      });
-      row.querySelector(".ent-edit").addEventListener("click", async () => {
-        const next = prompt("Edit the value:", canonical);
-        if (next === null) return;
-        if (!editEntity(cat, canonical, next)) {
-          showError(container, new Error(
-            `"${next.trim()}" cannot be used: it is empty, or another value in this list already has that name.`));
-          return;
-        }
-        // The key changed, so the open row has to follow it (CR17).
-        renameExpanded(cat, canonical, next.trim());
-        await refreshVariants();
-        repaintValues();
-      });
-      row.querySelector(".ent-variants").addEventListener("click", async () => {
-        const key = row.dataset.key;
-        if (expanded.has(key)) expanded.delete(key); else expanded.add(key);
-        // Repaint UNCONDITIONALLY. `expanded` is view-local, so opening a
-        // row whose variants are already known changes nothing the store
-        // would notify about, and the row used to open invisibly until
-        // some unrelated action repainted the step (BUILD-04 CR17).
-        repaintValues();
-        // Then fill in anything still missing; each expansion repaints
-        // again as it settles.
-        await refreshVariants();
-      });
-    }
-
-    for (const vrow of panel.querySelectorAll(".variant-row")) {
-      // Explicit data attributes ON the variant row itself (Phase 7a);
-      // no positional coupling to the entity row above.
-      const { category: cat, canonical } = vrow.dataset;
-      const input = vrow.querySelector(".variant-input");
-      const note = vrow.querySelector(".variant-note");
-      const addVariant = async () => {
-        const typed = input.value.trim();
-        // Say what happened. Adding a blank or a duplicate used to change
-        // no state, so nothing repainted and the button looked broken
-        // (BUILD-04 CR17).
-        if (!typed) {
-          if (note) note.textContent = "Type a spelling first, for example a nickname or an abbreviation.";
-          return;
-        }
-        const before = currentVariantCount(cat, canonical);
-        addManualVariant(cat, canonical, typed);
-        if (currentVariantCount(cat, canonical) === before) {
-          if (note) note.textContent = `"${typed}" is already one of this value's variants.`;
-          return;
-        }
-        // Keep the row open across the re-expansion (CR17).
-        openExpanded(cat, canonical);
-        await refreshVariants();
-        repaintValues();
-      };
-      vrow.querySelector(".variant-add").addEventListener("click", addVariant);
-      input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") addVariant(); });
-    }
-
-    // Variant drag-and-drop regrouping (BUILD-02 Phase 9d): chips are
-    // draggable; value rows are drop targets. The tested moveVariant
-    // reducer does all the work; this is wiring only.
-    for (const chip of panel.querySelectorAll(".variant-chip")) {
-      chip.addEventListener("dragstart", (ev) => {
-        ev.dataTransfer.setData("application/x-variant", JSON.stringify({
-          variant: chip.dataset.variant,
-          fromCategory: chip.dataset.category,
-          fromCanonical: chip.dataset.canonical,
-        }));
-        ev.dataTransfer.effectAllowed = "move";
-      });
-      // Keyboard/mouse fallback so the feature is not drag-only: a
-      // "move" button prompting for the target entity name.
-      chip.querySelector(".variant-move").addEventListener("click", async () => {
-        const target = prompt(
-          "Move this variant to which value? Type its exact name (any category):");
-        if (!target) return;
-        const to = getState().entities.find(
-          (e) => e.canonical.toLowerCase() === target.trim().toLowerCase());
-        if (!to) {
-          showError(container, new Error(`No value named "${target.trim()}" exists. Add it first, then move the variant.`));
-          return;
-        }
-        if (moveVariant(chip.dataset.category, chip.dataset.canonical, to.category, to.canonical, chip.dataset.variant)) {
-          // Both rows re-expand, so keep both open and show the result at
-          // once rather than after the next unrelated repaint (CR17).
-          openExpanded(chip.dataset.category, chip.dataset.canonical);
-          openExpanded(to.category, to.canonical);
-          await refreshVariants();
-          repaintValues();
-        }
-      });
-    }
-  }
-
-  // Drop targets: every value row accepts a dragged variant chip.
-  for (const row of container.querySelectorAll("tr[data-key]:not(.variant-row)")) {
-    row.addEventListener("dragover", (ev) => {
-      if (ev.dataTransfer.types.includes("application/x-variant")) {
-        ev.preventDefault();
-        ev.dataTransfer.dropEffect = "move";
-        // Visible drop feedback: without it the user cannot tell which row
-        // will receive the chip (BUILD-04 CR17).
-        row.classList.add("drop-target");
-      }
-    });
-    row.addEventListener("dragleave", () => row.classList.remove("drop-target"));
-    row.addEventListener("drop", async (ev) => {
-      row.classList.remove("drop-target");
-      const raw = ev.dataTransfer.getData("application/x-variant");
-      if (!raw) return;
-      ev.preventDefault();
-      const { variant, fromCategory, fromCanonical } = JSON.parse(raw);
-      const { category: toCategory, canonical: toCanonical } = row.dataset;
-      if (moveVariant(fromCategory, fromCanonical, toCategory, toCanonical, variant)) {
-        openExpanded(fromCategory, fromCanonical);
-        openExpanded(toCategory, toCanonical);
-        await refreshVariants();
-        repaintValues();
-      }
-    });
-  }
+/** variantCount(category, canonical) is how many spellings a value carries right
+ *  now, automatic and manual together. The add flow compares it before and after
+ *  so a duplicate gets an explanation instead of silence (BUILD-04 CR17). */
+function variantCount(category, canonical) {
+  const e = getState().entities.find(
+    (x) => entityKey(x.category, x.canonical) === entityKey(category, canonical));
+  if (!e) return 0;
+  return (e.variants?.length ?? 0) + (e.manualVariants?.length ?? 0);
 }
 
 /**
- * refreshVariants() asks Go to expand every entity whose variants are
- * PENDING (variants === null: just added, edited, or variant-amended).
- * Settled rows, including "expanded, none found" ([]), are never
- * re-expanded (Phase 7a). Failures surface as a visible inline message
- * with the Go error text instead of being swallowed. Sequential on
- * purpose: the lists are tiny and ordering keeps the UI deterministic.
+ * refreshVariants() asks Go to expand every value whose variants are PENDING
+ * (variants === null: just added, edited, or variant-amended). Settled rows,
+ * including "expanded, none found" ([]), are never re-expanded (Phase 7a).
+ *
+ * Sequential on purpose: the lists are tiny and ordering keeps the UI
+ * deterministic.
  */
 async function refreshVariants() {
-  // The snapshot is taken ONCE, before any await. Every expansion below
-  // writes to the store and therefore repaints, and re-reading the list
-  // mid-loop would mean expanding rows that a repaint had already
-  // settled (BUILD-04 CR17).
+  // The snapshot is taken ONCE, before any await. Every expansion below writes
+  // to the store and therefore repaints, and re-reading the list mid-loop would
+  // mean expanding rows a repaint had already settled (BUILD-04 CR17).
   const pending = pendingExpansions(getState().entities);
   for (const e of pending) {
     try {
@@ -808,106 +788,71 @@ async function refreshVariants() {
       });
       setEntityVariants(e.category, e.canonical, variants ?? []);
     } catch (err) {
-      // A failure becomes a VISIBLE error on the row, and settles it, so
-      // the placeholder cannot spin forever and the row is not retried on
-      // every repaint (BUILD-02 Phase 7a, re-pinned by CR17).
+      // A failure becomes a VISIBLE error on the row, and settles it, so the
+      // placeholder cannot spin forever and the row is not retried on every
+      // repaint (BUILD-02 Phase 7a, re-pinned by CR17).
       setEntityVariantError(e.category, e.canonical, String(err?.message ?? err));
     }
   }
+  await refreshPlaceholders();
   return pending.length;
 }
 
 /**
- * currentVariantCount(category, canonical) is how many spellings a value
- * carries right now, automatic and manual together. The variant-add flow
- * compares it before and after to tell "added" from "already there", so
- * a duplicate gets an explanation instead of silence (BUILD-04 CR17).
- */
-function currentVariantCount(category, canonical) {
-  const e = getState().entities.find(
-    (x) => entityKey(x.category, x.canonical) === entityKey(category, canonical));
-  if (!e) return 0;
-  return (e.variants?.length ?? 0) + (e.manualVariants?.length ?? 0);
-}
-
-/**
- * repaintValues() forces one re-render of the Values step.
+ * refreshPlaceholders() reads the placeholder Go currently has for each value,
+ * so the editable field shows the truth rather than a guess.
  *
- * This is the fix for the headline CR17 symptom, "variants only appear
- * after leaving and coming back to the step". Expanding a row changes the
- * view-local `expanded` set, which the store knows nothing about, so
- * nothing repainted unless the click ALSO happened to make an expansion
- * pending. A row whose variants were already known therefore opened
- * invisibly, and only showed up on the next repaint from an unrelated
- * action, which usually meant switching steps.
+ * Before the first run there are none, and every field renders disabled with a
+ * tooltip saying why. This is a read, so a bridge failure costs the field its
+ * value and nothing else.
  */
-function repaintValues() {
-  setState({});
+async function refreshPlaceholders() {
+  const entities = getState().entities;
+  let changed = false;
+  const next = [];
+  for (const e of entities) {
+    let placeholder = e.placeholder ?? "";
+    try {
+      placeholder = (await entityPlaceholder(e.category, e.canonical)) ?? "";
+    } catch { /* no bridge (plain browser): leave the field empty */ }
+    if (placeholder !== (e.placeholder ?? "")) changed = true;
+    next.push({ ...e, placeholder });
+  }
+  if (changed) setState({ entities: next });
 }
 
-// --- Custom patterns -------------------------------------------------------
-
-function patternsPanel(s) {
-  const rows = s.patterns.map((p) => `
-    <span class="pill ${p.error ? "warn" : ""}" title="${escapeHTML(p.error ?? "valid")}">
-      <code>${escapeHTML(p.expr)}</code>
-      <button class="pattern-del" data-expr="${escapeHTML(p.expr)}" title="Remove">✕</button>
-    </span>`).join("");
-  const content = `
-      <p class="hint">User-defined regular expressions, replaced as [CUSTOM_N]. Validated as you type;
-        the tester shows sample matches from the loaded documents.</p>
-      <div class="pill-list">${rows || `<span class="hint">none</span>`}</div>
-      <div class="form-row">
-        <input id="pattern-input" placeholder="e.g. PRJ-[0-9]+" spellcheck="false"/>
-        <button id="pattern-test">test</button>
-        <button id="pattern-add">Add</button>
-      </div>
-      <div id="pattern-feedback" class="hint"></div>`;
-  // Custom patterns are an advanced feature: collapsed by default
-  // (BUILD-02 Phase 2f).
-  return panel("pattern-panel", "Custom patterns (regex)", content, {
-    collapsible: true, startOpen: false, collapsedSet: collapsedPanels,
-  });
-}
+// --- Patterns wiring ------------------------------------------------------
 
 function wirePatterns(container) {
-  const input = container.querySelector("#pattern-input");
+  const input = container.querySelector("#pattern-draft");
   const feedback = container.querySelector("#pattern-feedback");
-
-  // Live compile validation on every keystroke (cheap round-trip).
-  input.addEventListener("input", async () => {
+  input?.addEventListener("input", async () => {
+    drafts.pattern = input.value;
     const expr = input.value.trim();
-    feedback.textContent = expr ? (await validatePattern(expr)) || "✓ pattern compiles" : "";
+    // Live compile validation (a cheap round-trip), so a broken expression is
+    // visible before it is added rather than after.
+    feedback.textContent = expr
+      ? (await validatePattern(expr)) || WORKSPACE.patternCompiles
+      : "";
   });
 
-  container.querySelector("#pattern-test").addEventListener("click", async () => {
-    try {
-      const samples = await patternMatches(input.value.trim());
-      feedback.textContent = samples?.length
-        ? `matches: ${samples.join(", ")}`
-        : "no matches in the loaded documents";
-    } catch (err) {
-      feedback.textContent = String(err?.message ?? err);
-    }
-  });
-
-  container.querySelector("#pattern-add").addEventListener("click", async () => {
-    const expr = input.value.trim();
+  const add = async () => {
+    const expr = (drafts.pattern ?? "").trim();
     if (!expr) return;
     const error = await validatePattern(expr);
-    if (error) {
-      feedback.textContent = error; // invalid patterns are not added
-      return;
-    }
-    addPattern(expr, null);
-  });
+    // A pattern that does not compile IS added, carrying its error: the mock-up
+    // keeps it visible and never uses it, which beats silently discarding what
+    // the user typed. validPatterns() filters it out of every run.
+    addPattern(expr, error || null);
+    drafts.pattern = "";
+    setState({});
+  };
+  container.querySelector("#btn-add-pattern")?.addEventListener("click", add);
+  input?.addEventListener("keydown", (ev) => { if (ev.key === "Enter") add(); });
 
-  for (const btn of container.querySelectorAll(".pattern-del")) {
-    btn.addEventListener("click", () => removePattern(btn.dataset.expr));
+  for (const row of container.querySelectorAll(".pattern-row")) {
+    row.querySelector(".pattern-del")?.addEventListener("click", () => {
+      keepScrollPosition(() => removePattern(row.dataset.expr));
+    });
   }
-}
-
-function showError(container, err) {
-  container.querySelector("#values-error").innerHTML =
-    `<div class="banner error">${escapeHTML(String(err?.message ?? err))}</div>`;
 }

@@ -274,6 +274,139 @@ export const VALUES = {
   denyAllConfirm: (n) => `Reject ${n} suggestion${n === 1 ? "" : "s"}? They are removed from the review list and nothing is replaced.`,
 };
 
+// The never-anonymise editor (BUILD-05 Phase 6). The list wins over every pass,
+// which is why the hint says so rather than describing the control.
+export const ALLOWLIST = {
+  label: "A term to never anonymise",
+  placeholder: "add a term, e.g. CSSF",
+  add: "Add",
+  importCSV: "Import CSV",
+  template: "Template",
+  remove: "Remove from this list",
+  empty: "The list is empty, so nothing is protected from the passes.",
+  /** alreadyThere(t) explains an add that changed nothing. */
+  alreadyThere(t) {
+    return `${t} is already on the list.`;
+  },
+  /** imported(read, added) answers the question a user has after importing a
+   *  list they already partly had. */
+  imported(read, added) {
+    return `${read} term${read === 1 ? "" : "s"} read, ${added} new.`;
+  },
+  templateSaved: "Template saved. Fill in one term per row and import it back.",
+};
+
+// Identify WORKSPACE copy (BUILD-05 Phase 6): the four tabs, the suggestions
+// table, the value cards and the pattern rows.
+export const WORKSPACE = {
+  tabsLabel: "Identify sections",
+  tabLabels: {
+    suggestions: "Suggestions",
+    values: "My values",
+    allow: "Never anonymise",
+    patterns: "Patterns",
+  },
+
+  /** subtitle(waiting, accepted) is the live count beside the heading. */
+  subtitle(waiting, accepted) {
+    const w = `${waiting} suggestion${waiting === 1 ? "" : "s"} waiting`;
+    const a = `${accepted} value${accepted === 1 ? "" : "s"} accepted`;
+    return `${w}, ${a}`;
+  },
+
+  // Run detection. One button now, so its tooltip has to say what the run will
+  // actually include, which depends on whether the local AI can run.
+  runDetection: "Run detection",
+  runOffline: "Reads every imported document and suggests values, without any AI.",
+  runWithAI: "Reads every imported document twice: the offline pass, then the local AI. Nothing leaves your computer.",
+  runNeedsDocuments: "Import at least one document first.",
+  cancel: "Cancel",
+  /** scanning(file, index, total) is the progress bar's caption. */
+  scanning(file, index, total) {
+    return `Scanning ${file} (${index}/${total})`;
+  },
+  /** detectionDone(n) reports the run's result. */
+  detectionDone(n) {
+    if (n === 0) return "Detection finished. Nothing new to review.";
+    return `Detection finished. ${n} new suggestion${n === 1 ? "" : "s"} to review.`;
+  },
+  /** tooLargeNotice(names) explains which files the AI pass skipped and why. */
+  tooLargeNotice(names) {
+    const list = names.join(", ");
+    return `The local AI cannot read ${list} in one pass, so ${names.length === 1 ? "it was" : "they were"} ` +
+      `left out of the AI pass. The offline pass still covered ${names.length === 1 ? "it" : "them"} in full.`;
+  },
+
+  // The suggestions table.
+  reviewHint: "Nothing is replaced until you accept it. The bulk buttons apply to the rows shown below, so a search or a filter limits them too.",
+  colValue: "VALUE",
+  colCount: "COUNT",
+  colActions: "ACTIONS",
+  allTypes: "ALL TYPES",
+  allSources: "ALL SOURCES",
+  filterTypeTitle: "Filter by type",
+  filterSourceTitle: "Filter by what found the value",
+  accept: "Accept",
+  reject: "Reject",
+  acceptAllShown: "Accept all shown",
+  rejectAllShown: "Reject all shown",
+  bulkScopeHint: "Applies to the rows shown below, so a search or a filter limits it too.",
+  /** acceptedN / rejectedN report a bulk action's result. */
+  acceptedN(n) {
+    return n === 0 ? "Nothing to accept." : `${n} value${n === 1 ? "" : "s"} accepted.`;
+  },
+  rejectedN(n) {
+    return n === 0 ? "Nothing to reject." : `${n} suggestion${n === 1 ? "" : "s"} rejected.`;
+  },
+  // The source badge labels. "Pattern" is deliberately absent (decision 9):
+  // deterministic matches are applied without review and never become
+  // suggestions, so naming a source that cannot appear would promise rows the
+  // table can never show.
+  sourceLabels: {
+    smart: "Smart",
+    "local-ai": "Local AI",
+  },
+
+  // My values.
+  addValueLabel: "A value to replace",
+  addValuePlaceholder: "add a value to replace, e.g. Meridian Consulting",
+  addValueCategory: "The type of value",
+  addValue: "Add value",
+  noValues: "No values yet. Accept a suggestion, or add one above.",
+  /** valueAlreadyThere(v) explains an add that changed nothing. */
+  valueAlreadyThere(v) {
+    return `${v} is already in the list.`;
+  },
+  removeValue: "Remove this value",
+  variants: "Variants",
+  addVariant: "add",
+  addVariantPlaceholder: "another spelling, then Enter",
+  removeVariant: "Stop replacing this spelling",
+  variantDragHint: "Drag this spelling onto another value to regroup it",
+  /** variantMoved(v, target) confirms a regrouping drag. */
+  variantMoved(v, target) {
+    return `${v} now counts as a spelling of ${target}.`;
+  },
+  variantsPending: "working out the other spellings...",
+  noVariants: "no other spellings found",
+  /** variantAlreadyThere(v) explains an add that changed nothing. */
+  variantAlreadyThere(v) {
+    return `${v} is already one of the spellings.`;
+  },
+  placeholderLabel: "The replacement value",
+  placeholderTooltip: "Edit what this value is replaced with. It takes effect on the next run.",
+  placeholderPending: "after the run",
+  placeholderPendingTooltip: "Placeholders are assigned when the anonymisation runs, so there is nothing to rename yet.",
+
+  // Patterns.
+  patternsHint: "Regular expressions are matched in addition to the categories you selected. A pattern that does not compile is kept but never used.",
+  addPattern: "Add pattern",
+  addPatternPlaceholder: "add an expression, e.g. INV-\\d{6}",
+  patternValid: "valid",
+  patternCompiles: "this expression compiles",
+  removePattern: "Remove this pattern",
+};
+
 // Per-category checkbox labels and one-line examples (BUILD-02 Phase 6b).
 // Keys match engine category identifiers.
 //

@@ -926,78 +926,129 @@ input, select {
    visible while reading a long sheet. */
 .grid-table th { background: var(--gray-5); position: sticky; top: 0; }
 
-/* --- Values view ----------------------------------------------------------- */
+/* --- Identify workspace (BUILD-05 Phase 6) ------------------------------- */
 
-.entity-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-.entity-table th, .entity-table td { border-bottom: 1px solid var(--gray-4); padding: 0.4rem 0.5rem; text-align: left; }
+/* The tab row sits between the head and the body, so it does not scroll with
+   the tab's content. */
+.workspace-tabs { flex: none; }
 
-/* Suggestions table (BUILD-04 CR14): a real header row, a filter row
-   under it, and the bulk actions above the whole thing (CR15). */
-.candidate-table thead th { background: var(--gray-6); font-weight: 700; }
-.candidate-table thead th:first-child { border-top-left-radius: 6px; }
-.candidate-table .filter-row th { background: var(--bg); font-weight: 400; padding-top: 0.5rem; }
-.candidate-table .filter-row input,
-.candidate-table .filter-row select { width: 100%; font-size: 0.85rem; }
-/* Sort buttons look like headings, not like actions: the table has enough
-   buttons already. The arrow shows which column is sorted. */
-.candidate-table .cand-sort {
-  border: none; background: none; padding: 0; font-weight: 700;
-  color: var(--text); gap: 0.25rem;
+/* The header's search box: a bordered label wrapping an unstyled input, so the
+   magnifier and the field read as one control. */
+.search-box {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0 0.6rem; height: 2.25rem;
+  border: 1px solid var(--gray-4); border-radius: 6px;
+  color: var(--muted);
 }
-.candidate-table .cand-sort:hover { text-decoration: underline; }
-
-/* Bulk Accept all / Deny all, kept as a pair per category so the two
-   always read together. */
-.bulk-row { gap: 1rem; }
-.bulk-pair { display: inline-flex; gap: 0.25rem; }
-
-/* Smart detection settings (BUILD-04 CR13): a folded block, so the tuning
-   is available without pushing the buttons off the screen. */
-.smart-settings {
-  border: 1px solid var(--gray-4); border-radius: 8px;
-  padding: 0.4rem 0.75rem; margin: 0.5rem 0; background: var(--gray-6);
+.search-box:focus-within { border-color: var(--text); }
+.search-box input {
+  width: 9.5rem; border: none; outline: none; background: none;
+  font-size: 0.85rem; color: var(--text); padding: 0;
 }
-.smart-settings > summary { cursor: pointer; font-size: 0.9rem; padding: 0.15rem 0; }
-.smart-settings[open] > summary { margin-bottom: 0.4rem; }
-.smart-settings input[type="number"] { width: 5rem; }
-.smart-settings input[type="range"] { flex: 1; min-width: 8rem; max-width: 16rem; accent-color: var(--accent); }
-.smart-settings output { font-family: var(--font-mono); font-size: 0.9rem; min-width: 2.5rem; }
-.entity-table tr.denied td { opacity: 0.45; text-decoration: line-through; }
 
-/* The variant area is secondary text, but the CHIPS inside it are live
-   controls and must not inherit the muted colour: greyed-out chips read
-   as disabled, which is exactly what was reported (BUILD-04 CR17). */
-.variant-list { color: var(--muted); font-size: 0.8rem; }
-.variant-list .variant-chip {
-  color: var(--text);
-  background: var(--gray-5);
-  border-color: var(--gray-3);
+/* The detection progress strip, between the head and the tabs so it appears
+   without pushing the tabs around. */
+.detect-progress {
+  flex: none;
+  display: flex; flex-direction: column; gap: 0.4rem;
+  padding: 0.6rem 1.5rem;
+  border-bottom: 1px solid var(--gray-5);
+}
+.detect-progress .hint { margin: 0; font-size: 0.78rem; }
+.progress-bar { height: 6px; background: var(--gray-5); border-radius: 4px; overflow: hidden; }
+.progress-bar > div { height: 100%; background: var(--accent); transition: width 0.2s; }
+
+/* A row with something on the left and controls on the right, wrapping rather
+   than squeezing on a narrow window. */
+.row-between {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.75rem; flex-wrap: wrap;
+}
+.row-between .hint { margin: 0; flex: 1; min-width: 14rem; }
+.bulk-actions { display: flex; gap: 0.5rem; flex: none; }
+
+/* An add row: a growing input, then its fixed-width companions. */
+.add-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.add-row .grow { flex: 1; min-width: 12rem; }
+.add-row input, .add-row select { padding: 0.5rem 0.65rem; font-size: 0.85rem; }
+
+/* --- The suggestions grid ------------------------------------------------ */
+
+.grid-head .col-actions { text-align: right; }
+.cell-value, .cell-type {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cell-type { font-size: 0.8rem; color: var(--ink-2); }
+.cell-count { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-2); }
+.cell-actions { display: flex; align-items: center; justify-content: flex-end; gap: 0.25rem; }
+
+/* --- Value cards -------------------------------------------------------- */
+
+.value-card {
+  display: flex; flex-direction: column; gap: 0.7rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--gray-5); border-radius: var(--card-radius);
+}
+/* The drop target while a variant chip is being dragged over it. */
+.value-card.drop-target { border-color: var(--accent-light); background: var(--tint-orange-3); }
+
+.value-head { display: flex; align-items: center; gap: 0.6rem; min-width: 0; flex-wrap: wrap; }
+.value-name { font-size: 0.95rem; }
+
+/* The editable placeholder. It reads as a read-only chip until focused, which
+   is the right emphasis: it is editable but rarely edited. */
+.ph-input {
+  width: 7.5rem;
+  font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-2);
+  background: var(--gray-6); border: 1px solid var(--gray-5);
+  padding: 0.15rem 0.5rem; border-radius: 4px;
+}
+.ph-input:focus { border-color: var(--text); color: var(--text); background: var(--bg); }
+.ph-input:disabled { color: var(--muted); cursor: not-allowed; }
+
+.variant-row { align-items: center; gap: 0.45rem; }
+.variant-row .hint { margin: 0; font-size: 0.78rem; }
+.value-note { font-size: 0.78rem; }
+.value-note .hint { margin: 0; }
+/* An error on a row: the invalid tint's foreground, no fill, so it reads as a
+   correction rather than as a warning strip inside a card. */
+.hint.bad { color: var(--invalid-fg); }
+
+/* A variant chip is a DRAG HANDLE as well as a label (BUILD-02 Phase 9d): drag
+   it onto another value card to regroup it. The cursor says so before the user
+   tries, and the text selection is suppressed because selecting text cancels a
+   drag mid-gesture. */
+.variant-chip { cursor: grab; user-select: none; color: var(--text); }
+.variant-chip:active { cursor: grabbing; }
+.variant-chip:hover { background: var(--tint-orange-3); border-color: var(--accent-light); }
+
+/* --- The never-anonymise chip box --------------------------------------- */
+
+.chip-box {
+  display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-start;
+  padding: 1rem;
+  border: 1px solid var(--gray-5); border-radius: var(--card-radius);
+}
+.chip-box .hint { margin: 0; }
+
+/* --- Pattern rows ------------------------------------------------------- */
+
+.pattern-row {
+  display: flex; align-items: center; gap: 0.85rem;
+  padding: 0.7rem 1rem;
+  border-top: 1px solid var(--gray-6);
   font-size: 0.85rem;
-  cursor: grab;                 /* says "you can drag this" before you try */
-  user-select: none;            /* a text selection would cancel the drag */
 }
-.variant-list .variant-chip:active { cursor: grabbing; }
-.variant-list .variant-chip:hover { background: var(--tint-orange-3); border-color: var(--accent-light); }
-.variant-list .drag-handle { color: var(--gray-1); cursor: grab; }
-/* The move button is the keyboard and mouse fallback for the drag, so it
-   stays legible rather than fading into the chip. */
-.variant-list .variant-chip .variant-move {
-  color: var(--muted); font-size: 0.75rem; text-decoration: underline;
-  cursor: pointer; border: none; background: none; padding: 0;
-}
-.variant-list .variant-chip .variant-move:hover { color: var(--text); }
-/* Drop target feedback while a chip is being dragged over a value row. */
-.entity-table tr.drop-target > td { background: var(--tint-orange-3); }
-.variant-note:empty { display: none; }
-.variant-note { margin-top: 0.25rem; }
+.pattern-row:first-child { border-top: none; }
+.pattern-row:hover { background: var(--surface-subtle); }
+.pattern-row .spacer { flex: 1; }
 
-.pill-list { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-.pill {
-  display: inline-flex; align-items: center; gap: 0.35rem;
-  background: var(--gray-5); border: 1px solid var(--gray-3);
-  border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.85rem;
+/* An inline input that replaces the "add" chip, so adding a variant never opens
+   a dialog (decision 10). */
+.variant-input {
+  width: 11rem; padding: 0.15rem 0.5rem;
+  font-size: 0.8rem; border-radius: 20px;
 }
-.pill button { border: none; background: none; padding: 0; color: var(--muted); }
 
 /* --- Run view --------------------------------------------------------------- */
 

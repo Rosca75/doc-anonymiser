@@ -157,3 +157,94 @@ test("counts of an empty list are an empty object", () => {
   assert.deepEqual(candidateCategoryCounts([]), {});
   assert.deepEqual(candidateCategoryCounts(undefined), {});
 });
+
+// --- The across-category bulk actions (BUILD-05 Phase 6) ------------------
+//
+// The suggestions table sorts and filters across EVERY category at once, so
+// "shown" is not a category: it is whatever survived the search, the type filter
+// and the source filter. acceptAllInCategory cannot express that, which is why
+// acceptAllShown / rejectAllShown exist beside it rather than replacing it.
+
+import {
+  resetState, getState, subscribe, addCandidates, acceptAllShown, rejectAllShown,
+} from "./state.js";
+
+/** threeCandidates() seeds a list spanning two categories and two sources. */
+function threeCandidates() {
+  resetState();
+  addCandidates([
+    { text: "Marie Duval", category: "person_names", count: 14 },
+    { text: "Thomas Berger", category: "person_names", count: 9 },
+  ], "smart");
+  addCandidates([
+    { text: "Meridian Consulting", category: "organisation_names", count: 6 },
+  ], "local-ai");
+}
+
+test("acceptAllShown promotes rows ACROSS categories in one action", () => {
+  threeCandidates();
+  const added = acceptAllShown(["Marie Duval", "Meridian Consulting"]);
+  assert.equal(added, 2);
+  const s = getState();
+  // Each keeps its OWN category: the bulk action is about which rows, not about
+  // what they are.
+  assert.deepEqual(
+    s.entities.map((e) => `${e.category}:${e.canonical}`).sort(),
+    ["organisation_names:Meridian Consulting", "person_names:Marie Duval"]);
+  // The row that was not shown is still waiting.
+  assert.deepEqual(s.candidates.map((c) => c.text), ["Thomas Berger"]);
+});
+
+test("acceptAllShown ignores values that are not candidates", () => {
+  // The view passes the filtered list; a stale entry in it must not invent an
+  // entity out of nothing.
+  threeCandidates();
+  const added = acceptAllShown(["Marie Duval", "Never Proposed"]);
+  assert.equal(added, 1);
+  assert.equal(getState().entities.length, 1);
+});
+
+test("acceptAllShown on an empty selection changes nothing", () => {
+  threeCandidates();
+  for (const empty of [[], undefined, null]) {
+    assert.equal(acceptAllShown(empty), 0, JSON.stringify(empty));
+    assert.equal(getState().candidates.length, 3);
+    assert.equal(getState().entities.length, 0);
+  }
+});
+
+test("acceptAllShown matches case-insensitively, like every candidate lookup", () => {
+  threeCandidates();
+  assert.equal(acceptAllShown(["marie duval"]), 1);
+  assert.equal(getState().entities[0].canonical, "Marie Duval",
+    "the stored value keeps the spelling that was proposed");
+});
+
+test("rejectAllShown drops rows without promoting any", () => {
+  threeCandidates();
+  const removed = rejectAllShown(["Marie Duval", "Meridian Consulting"]);
+  assert.equal(removed, 2);
+  const s = getState();
+  assert.deepEqual(s.entities, [], "rejecting must add nothing");
+  assert.deepEqual(s.candidates.map((c) => c.text), ["Thomas Berger"]);
+});
+
+test("rejectAllShown remembers nothing, so a later run may propose it again", () => {
+  // A rejection is "stop taking up review space", not a permanent veto: the
+  // alternative would be a hidden deny-list nobody can see or edit.
+  threeCandidates();
+  rejectAllShown(["Marie Duval"]);
+  const added = addCandidates([{ text: "Marie Duval", category: "person_names" }], "smart");
+  assert.equal(added, 1, "a rejected value must be proposable again");
+});
+
+test("the bulk actions repaint once, not once per row", () => {
+  threeCandidates();
+  let paints = 0;
+  const off = subscribe(() => paints++);
+  acceptAllShown(["Marie Duval", "Thomas Berger", "Meridian Consulting"]);
+  // addEntities and the candidate removal are two setState calls; three rows
+  // must not mean six repaints.
+  assert.ok(paints <= 2, `${paints} repaints for a three-row bulk accept`);
+  off();
+});
