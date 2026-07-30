@@ -18,6 +18,8 @@ import {
   addCandidates, acceptCandidate, rejectCandidate, updateCandidate, acceptAllInCategory,
   moveVariant, entityAutocomplete, reassignOriginal,
   applyImportResult,
+  setNotice, clearNotice, NOTICE_TONES,
+  askConfirm, answerConfirm,
 } from "./state.js";
 
 test("setState merges and notifies subscribers", () => {
@@ -913,4 +915,124 @@ test("resetStep(import) clears the error strip but nothing else", () => {
   const s = getState();
   assert.deepEqual(s.importErrors, []);
   assert.equal(s.documents.length, 2);
+});
+
+// --- Notices (BUILD-05 Phase 1) ---------------------------------------
+
+test("setNotice stores the sentence and its tone", () => {
+  resetState();
+  assert.equal(getState().notice, null);
+  const notice = setNotice("Saved report.md to the destination folder.", "ok");
+  assert.deepEqual(notice, { text: "Saved report.md to the destination folder.", tone: "ok" });
+  assert.deepEqual(getState().notice, notice);
+});
+
+test("setNotice defaults to info and degrades an unknown tone to info", () => {
+  resetState();
+  assert.equal(setNotice("a fact").tone, "info");
+  // A typo in the tone must not swallow the sentence: the user still needs to
+  // read it.
+  const bad = setNotice("still shown", "chartreuse");
+  assert.equal(bad.tone, "info");
+  assert.equal(bad.text, "still shown");
+});
+
+test("setNotice keeps only the newest notice", () => {
+  resetState();
+  setNotice("first", "ok");
+  setNotice("second", "warn");
+  assert.deepEqual(getState().notice, { text: "second", tone: "warn" });
+});
+
+test("setNotice trims, and empty text clears rather than showing a blank strip", () => {
+  resetState();
+  assert.deepEqual(setNotice("  padded  "), { text: "padded", tone: "info" });
+  assert.equal(setNotice("   "), null);
+  assert.equal(getState().notice, null);
+  setNotice("something");
+  assert.equal(setNotice(""), null);
+  assert.equal(getState().notice, null);
+});
+
+test("clearNotice dismisses the strip and is a no-op when it is already empty", () => {
+  resetState();
+  let paints = 0;
+  const off = subscribe(() => paints++);
+  clearNotice();
+  assert.equal(paints, 0, "clearing nothing must not repaint");
+  setNotice("x");
+  clearNotice();
+  assert.equal(getState().notice, null);
+  off();
+});
+
+test("NOTICE_TONES is exactly the three tones brand.css defines", () => {
+  assert.deepEqual([...NOTICE_TONES].sort(), ["info", "ok", "warn"]);
+});
+
+// --- The in-app confirm (BUILD-05 decision 10) ------------------------
+
+test("askConfirm stores the question with its defaults filled in", () => {
+  resetState();
+  const answer = askConfirm({ title: "Clear the step", body: "Your documents are kept." });
+  const q = getState().confirm;
+  assert.equal(q.title, "Clear the step");
+  assert.equal(q.body, "Your documents are kept.");
+  assert.equal(q.confirmLabel, "Continue");
+  assert.equal(q.cancelLabel, "Cancel");
+  assert.equal(q.keyBearing, false);
+  answerConfirm(false);
+  return answer; // settle it so the test does not leave a pending promise
+});
+
+test("askConfirm resolves true on confirm and clears the question", async () => {
+  resetState();
+  const pending = askConfirm({ title: "t", body: "b", confirmLabel: "Export CSV", keyBearing: true });
+  assert.equal(getState().confirm.confirmLabel, "Export CSV");
+  assert.equal(getState().confirm.keyBearing, true);
+  assert.equal(answerConfirm(true), true, "there was a question to answer");
+  assert.equal(await pending, true);
+  assert.equal(getState().confirm, null);
+});
+
+test("askConfirm resolves false on cancel", async () => {
+  resetState();
+  const pending = askConfirm({ title: "t", body: "b" });
+  answerConfirm(false);
+  assert.equal(await pending, false);
+  assert.equal(getState().confirm, null);
+});
+
+test("answerConfirm reports that there was nothing to answer", () => {
+  resetState();
+  assert.equal(answerConfirm(true), false);
+  assert.equal(getState().confirm, null);
+});
+
+test("a second question answers the first one no rather than stranding it", async () => {
+  resetState();
+  const first = askConfirm({ title: "first", body: "b" });
+  const second = askConfirm({ title: "second", body: "b" });
+  // The new question is the one on screen...
+  assert.equal(getState().confirm.title, "second");
+  // ...and the old promise settled false instead of hanging forever.
+  assert.equal(await first, false);
+  answerConfirm(true);
+  assert.equal(await second, true);
+});
+
+test("resetState answers a pending question no instead of leaving it hanging", async () => {
+  resetState();
+  const pending = askConfirm({ title: "t", body: "b" });
+  resetState();
+  assert.equal(await pending, false);
+  assert.equal(getState().confirm, null);
+});
+
+test("the notice and the question are cleared by resetState", () => {
+  resetState();
+  setNotice("x", "ok");
+  resetState();
+  assert.equal(getState().notice, null);
+  assert.equal(getState().confirm, null);
 });

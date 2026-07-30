@@ -121,6 +121,19 @@ const initialState = {
   // cleared with the results.
   mapping: null,
 
+  // The notice strip (BUILD-05 Phase 1): {text, tone} or null. ONE notice at
+  // a time, deliberately: a stack of them turns into a log nobody reads, and
+  // the newest statement is always the one that matters. tone is
+  // "ok" | "info" | "warn" (brand.css notice tint pairs).
+  notice: null,
+
+  // The in-app confirm's pending question (BUILD-05 decision 10), or null
+  // when nothing is being asked: {title, body, confirmLabel, cancelLabel,
+  // keyBearing}. The PROMISE that resolves it is module-private below, not
+  // stored here, because state must stay clonable (resetState uses
+  // structuredClone, which cannot copy a function).
+  confirm: null,
+
   // Same-format metadata review state per document (BUILD-02 Phase 12):
   // {docName: {ext, filename, fields: [{part, name, value, proposed,
   // changed, finalValue}]}}. Decisions persist for the session so the
@@ -185,8 +198,17 @@ export function getState() {
   return state;
 }
 
-/** resetState() restores the initial state (used by tests and session load). */
+/** resetState() restores the initial state (used by tests and session load).
+ *
+ *  A question that was on screen is answered "no" first: dropping the state
+ *  without settling the promise would leave whoever awaited askConfirm()
+ *  hanging forever. */
 export function resetState() {
+  if (confirmResolve) {
+    const stale = confirmResolve;
+    confirmResolve = null;
+    stale(false);
+  }
   state = structuredClone(initialState);
   notify();
 }
@@ -208,6 +230,98 @@ export function subscribe(fn) {
 
 function notify() {
   for (const fn of listeners) fn(state);
+}
+
+// --- Notices and the in-app confirm (BUILD-05 Phase 1) ----------------------
+
+// NOTICE_TONES are the only tones there are. An unknown tone is stored as
+// "info" rather than rejected: a notice is the application telling the user
+// something, so a typo in the tone must not swallow the sentence.
+export const NOTICE_TONES = ["ok", "info", "warn"];
+
+/**
+ * setNotice(text, tone) shows one statement in the notice strip, replacing
+ * whatever was there. Empty text CLEARS the strip, so a caller that computes
+ * its message does not need a second branch.
+ * @param {string} text the sentence to show
+ * @param {string} [tone] "ok" | "info" | "warn" (default "info")
+ * @returns {object|null} the stored notice, or null when cleared
+ */
+export function setNotice(text, tone = "info") {
+  const message = (text ?? "").trim();
+  if (!message) {
+    clearNotice();
+    return null;
+  }
+  const notice = { text: message, tone: NOTICE_TONES.includes(tone) ? tone : "info" };
+  setState({ notice });
+  return notice;
+}
+
+/** clearNotice() dismisses the notice strip. */
+export function clearNotice() {
+  if (state.notice) setState({ notice: null });
+}
+
+// confirmResolve holds the resolve function of the promise askConfirm handed
+// out, for exactly as long as the question is on screen. It lives here rather
+// than in the state object because state has to stay structuredClone-able
+// (resetState), and because nothing outside this module should be able to
+// answer a question the user has not answered.
+let confirmResolve = null;
+
+/**
+ * askConfirm(question) shows the in-app confirm and resolves to the user's
+ * answer (BUILD-05 decision 10, replacing every native confirm()).
+ *
+ * Asking while a question is already open ANSWERS THE OLD ONE "no" and then
+ * asks the new one. That is the safe direction: the alternative is either
+ * losing the new question silently or leaving the first promise pending
+ * forever, and a promise that never settles is a caller stuck mid-action.
+ *
+ * @param {object} question
+ * @param {string} question.title the short heading
+ * @param {string} question.body what will happen, in full sentences
+ * @param {string} [question.confirmLabel] the affirmative button (default
+ *   "Continue")
+ * @param {string} [question.cancelLabel] default "Cancel"
+ * @param {boolean} [question.keyBearing] the action exposes the
+ *   re-identification key; tints the dialog accordingly
+ * @returns {Promise<boolean>} true when confirmed, false when cancelled
+ */
+export function askConfirm(question) {
+  if (confirmResolve) {
+    const stale = confirmResolve;
+    confirmResolve = null;
+    stale(false);
+  }
+  return new Promise((resolve) => {
+    confirmResolve = resolve;
+    setState({
+      confirm: {
+        title: question?.title ?? "Confirm",
+        body: question?.body ?? "",
+        confirmLabel: question?.confirmLabel ?? "Continue",
+        cancelLabel: question?.cancelLabel ?? "Cancel",
+        keyBearing: !!question?.keyBearing,
+      },
+    });
+  });
+}
+
+/**
+ * answerConfirm(answer) closes the open question and settles its promise.
+ * modal.js calls it from the two buttons and from the Escape key (which
+ * answers false, the same as Cancel).
+ * @param {boolean} answer
+ * @returns {boolean} whether there was a question to answer
+ */
+export function answerConfirm(answer) {
+  const resolve = confirmResolve;
+  confirmResolve = null;
+  if (state.confirm) setState({ confirm: null });
+  if (resolve) resolve(!!answer);
+  return !!resolve;
 }
 
 // --- Category selection reducers (BUILD-02 Phase 3) --------------------------
