@@ -7,6 +7,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -145,10 +146,30 @@ func TestSessionSaveLoadEquality(t *testing.T) {
 	if _, err := LoadSession([]byte("not json")); err == nil || !strings.Contains(err.Error(), "session file") {
 		t.Errorf("corrupt session error not actionable: %v", err)
 	}
+	// A wrong-version file is REFUSED, not migrated (BUILD-05 decision 1), and
+	// the message has to say which direction the mismatch goes, because the fix
+	// differs: an older file needs re-creating, a newer one needs a newer app.
 	bad, _ := SaveSession(original)
-	badStr := strings.Replace(string(bad), `"version": 1`, `"version": 99`, 1)
-	if _, err := LoadSession([]byte(badStr)); err == nil || !strings.Contains(err.Error(), "version") {
-		t.Errorf("version mismatch error not actionable: %v", err)
+	for _, tt := range []struct {
+		version   int
+		wantFix   string
+		wantWrote string
+	}{
+		{version: 1, wantFix: "start a new session", wantWrote: "an older version"},
+		{version: 99, wantFix: "update the application", wantWrote: "a newer version"},
+	} {
+		badStr := strings.Replace(string(bad),
+			fmt.Sprintf(`"version": %d`, SessionVersion),
+			fmt.Sprintf(`"version": %d`, tt.version), 1)
+		_, err := LoadSession([]byte(badStr))
+		if err == nil {
+			t.Fatalf("version %d must be refused", tt.version)
+		}
+		for _, want := range []string{"version", tt.wantWrote, tt.wantFix, "re-identification key"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("version %d refusal must mention %q, got: %v", tt.version, want, err)
+			}
+		}
 	}
 }
 
@@ -183,14 +204,20 @@ func TestExportFileName(t *testing.T) {
 	}
 }
 
-// TestLoadSessionWithoutBuild04Fields: a session file written BEFORE
-// BUILD-04 has no minConfidence field. It must load, and the missing
-// field must land on 0, the "keep every detection" default. Anything else
-// would mean opening an old session quietly changed what gets replaced
+// TestLoadSessionWithoutOptionalFields: a session file that omits the optional
+// settings blocks must load, and each missing field must land on the value that
+// reproduces the behaviour of a session that never had it. minConfidence in
+// particular must land on 0, the "keep every detection" default: anything else
+// would mean opening a session quietly changed what gets replaced
 // (BUILD-04 CR9, ground rule 5).
-func TestLoadSessionWithoutBuild04Fields(t *testing.T) {
+//
+// The version is the CURRENT one on purpose. BUILD-05 decision 1 refuses a file
+// written by another version outright (see TestSessionSaveLoadEquality), so
+// "field absent" and "file too old" are now two different situations and only
+// the first one is a compatibility question.
+func TestLoadSessionWithoutOptionalFields(t *testing.T) {
 	legacy := []byte(`{
-	  "version": 1,
+	  "version": 2,
 	  "entities": [{"category": "client_names", "canonical": "Alpine Trust"}],
 	  "allowTerms": ["CSSF"],
 	  "patterns": [],
@@ -208,7 +235,7 @@ func TestLoadSessionWithoutBuild04Fields(t *testing.T) {
 
 	s, err := LoadSession(legacy)
 	if err != nil {
-		t.Fatalf("a pre-BUILD-04 session must still load, got: %v", err)
+		t.Fatalf("a session omitting the optional blocks must load, got: %v", err)
 	}
 	if s.Settings.MinConfidence != 0 {
 		t.Errorf("MinConfidence = %v, want 0 so an old session replaces exactly what it always did",
@@ -224,7 +251,7 @@ func TestLoadSessionWithoutBuild04Fields(t *testing.T) {
 	// An entity with no stated confidence is a value the USER listed, and
 	// must stay filterable only as one (see engine/confidence_test.go).
 	if s.Entities[0].Confidence != 0 {
-		t.Errorf("a legacy entity must carry no stated confidence, got %v", s.Entities[0].Confidence)
+		t.Errorf("an entity with no stated confidence must carry none, got %v", s.Entities[0].Confidence)
 	}
 }
 
@@ -250,12 +277,12 @@ func TestSessionRoundTripsMinConfidence(t *testing.T) {
 // turned every filter off" (BUILD-04 CR13). Collapsing the two would
 // silently re-enable filtering for someone who switched it off.
 func TestSessionSmartDetectAbsentVersusExplicitZero(t *testing.T) {
-	legacy, err := LoadSession([]byte(`{"version":1,"settings":{"level":"medium"}}`))
+	absent, err := LoadSession([]byte(`{"version":2,"settings":{"level":"medium"}}`))
 	if err != nil {
-		t.Fatalf("legacy session: %v", err)
+		t.Fatalf("a session with no smartDetect block: %v", err)
 	}
-	if legacy.Settings.SmartDetect != nil {
-		t.Errorf("an absent smartDetect block must load as nil, got %+v", legacy.Settings.SmartDetect)
+	if absent.Settings.SmartDetect != nil {
+		t.Errorf("an absent smartDetect block must load as nil, got %+v", absent.Settings.SmartDetect)
 	}
 
 	off := SmartDetectOptions{}

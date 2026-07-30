@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -270,6 +271,109 @@ func (a *App) ExportAllZip() error {
 	return a.saveWithDialog(fmt.Sprintf("%d_anonymised.zip", n), "Zip archive", "*.zip", data)
 }
 
+// ChooseExportFolder opens the native directory picker and returns the folder
+// the user chose, or "" when they cancelled (BUILD-05 Phase 3).
+//
+// It ONLY picks a folder; nothing is written here. The chosen path is
+// remembered by the frontend rather than stored as a Go setting, because it is
+// a convenience for one batch and does not belong in a session file next to the
+// re-identification key.
+//
+// The folder drives the ZIP export and nothing else (decision 4). Single-file
+// saves, the key, the report and the session all keep their own save dialogs, so
+// no click can put something key-bearing on disk without a dialog naming the
+// exact file.
+//
+// @return the absolute folder path, or "" when cancelled
+func (a *App) ChooseExportFolder() (string, error) {
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Choose where to save the anonymised batch",
+	})
+	if err != nil {
+		return "", fmt.Errorf("the folder picker could not be opened (%v), try again; "+
+			"if it keeps failing, restart the application", err)
+	}
+	return dir, nil
+}
+
+// ExportAllZipTo writes the batch zip straight into a folder the user already
+// chose, with no second dialog (BUILD-05 Phase 3).
+//
+// This is the ONLY method that writes without a dialog, and it is allowed to
+// because the user picked the destination explicitly through
+// ChooseExportFolder and the zip contains no re-identification key: it is the
+// anonymised documents and nothing else.
+//
+// Refusing to overwrite is deliberate. A user who exports twice has almost
+// certainly changed something in between, and silently replacing the first
+// archive would destroy the copy they may still need. Numbering the second one
+// keeps both.
+//
+// @param dir the folder chosen through ChooseExportFolder
+// @return the full path written, so the UI can name it in the notice
+func (a *App) ExportAllZipTo(dir string) (string, error) {
+	if dir == "" {
+		return "", fmt.Errorf("no destination folder was chosen: pick one with Browse first, " +
+			"or use a single-file save button, which asks for a location each time")
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return "", fmt.Errorf("the destination folder %q cannot be reached (%v): "+
+			"check that it still exists and that you are connected to it if it is a network share",
+			dir, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("the destination %q is a file, not a folder: "+
+			"pick a folder with Browse", dir)
+	}
+
+	a.mu.Lock()
+	results := a.results
+	n := 0
+	if results != nil {
+		n = len(results.Documents)
+	}
+	a.mu.Unlock()
+
+	data, err := engine.BuildExportZip(results)
+	if err != nil {
+		return "", err
+	}
+
+	path := filepath.Join(dir, fmt.Sprintf("%d_anonymised.zip", n))
+	path, err = freePath(path)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return "", fmt.Errorf("could not write %q: %v, check that the folder is writable "+
+			"(not a read-only network share) and that you have room on the disk", path, err)
+	}
+	return path, nil
+}
+
+// freePath returns a path that does not exist yet, appending " (2)", " (3)" and
+// so on before the extension when it has to.
+//
+// The loop is bounded because an unbounded one on a folder full of archives
+// would hang the export with no way to tell what it was doing. Fifty is far
+// past any plausible number of repeat exports of one batch.
+func freePath(path string) (string, error) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return path, nil
+	}
+	ext := filepath.Ext(path)
+	stem := path[:len(path)-len(ext)]
+	for i := 2; i <= 50; i++ {
+		candidate := fmt.Sprintf("%s (%d)%s", stem, i, ext)
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("%q already exists, and so do fifty numbered variants of it: "+
+		"choose a different destination folder, or clear the old archives out of this one", path)
+}
+
 // CopyDocument puts one anonymised document's text on the system clipboard.
 func (a *App) CopyDocument(name string) error {
 	rd, err := a.findResultDoc(name)
@@ -344,8 +448,13 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 	settings := a.settings
 	smartDetect := settings.SmartDetect
 	var registry []engine.MappingEntry
+	var overrides map[string]string
 	if a.registry != nil {
 		registry = a.registry.Export()
+		// The placeholders the user renamed (BUILD-05 Phase 3). The renamed
+		// values are already inside `registry`; this records which of them were
+		// deliberate, so re-saving a reloaded session does not demote them.
+		overrides = a.registry.Overrides()
 	}
 	a.mu.Unlock()
 
@@ -364,7 +473,8 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 			MinConfidence: settings.MinConfidence,
 			SmartDetect:   &smartDetect,
 		},
-		Registry: registry,
+		Registry:             registry,
+		PlaceholderOverrides: overrides,
 	})
 	if err != nil {
 		return err
@@ -396,7 +506,12 @@ func (a *App) LoadSessionFromFile() (*engine.Session, error) {
 	}
 
 	a.mu.Lock()
-	a.registry = engine.NewRegistryFromEntries(session.Registry)
+	// Restore the registry AND which placeholders the user had renamed
+	// (BUILD-05 Phase 3). An override that no longer applies is reported as a
+	// report warning rather than failing the load: one stale entry must not
+	// cost the user the other twenty.
+	registry, overrideFailures := engine.NewRegistryFromSession(session)
+	a.registry = registry
 	restored := Settings{
 		Level:       session.Settings.Level,
 		Categories:  session.Settings.Categories,
@@ -405,8 +520,10 @@ func (a *App) LoadSessionFromFile() (*engine.Session, error) {
 		ContextSize: session.Settings.ContextSize,
 		UseAI:       session.Settings.UseAI,
 	}
-	// v1 sessions predate these fields: zero values mean "keep the
-	// current settings" instead of silently resetting them.
+	// An omitted optional block means "keep the current setting" rather than
+	// silently resetting it. This is NOT version compatibility (a file from
+	// another version is refused outright, BUILD-05 decision 1): it is a file
+	// this version wrote that simply had nothing to say about these fields.
 	if restored.Categories == nil {
 		restored.Categories = a.settings.Categories
 	}
@@ -415,6 +532,11 @@ func (a *App) LoadSessionFromFile() (*engine.Session, error) {
 	}
 	a.settings = restored
 	a.mu.Unlock()
+
+	for _, failure := range overrideFailures {
+		a.appendReportWarning(fmt.Sprintf(
+			"a saved placeholder override could not be restored: %v", failure))
+	}
 	// Apply the (possibly different) Ollama port/model through the same
 	// validated path the settings screen uses.
 	if _, err := a.ApplySettings(a.GetSettings()); err != nil {

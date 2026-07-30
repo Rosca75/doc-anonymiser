@@ -39,6 +39,14 @@ what shape it comes back in, **without opening any Go**.
 | `removeDocument(name)` | `name` | `ImportResult` |
 | `listDocuments()` | — | current `DocumentInfo[]` |
 
+`DocumentInfo` carries `unitCount` and `unit` (BUILD-05 Phase 3): the document's
+size in its OWN terms, so the import list can say "6 pages" or "12 slides"
+rather than only a byte count. `unit` is SINGULAR (`"page"`, `"slide"`, `"row"`,
+`"line"`) and the frontend pluralises, because only the side printing the number
+knows which form it needs. `"line"` is the common fallback, not an error: a page
+count can only come from what the writing application cached in
+`docProps/app.xml`, and that part is optional.
+
 ## Settings
 
 | `api.js` wrapper | Args | Resolves to |
@@ -66,6 +74,8 @@ what shape it comes back in, **without opening any Go**.
 | `countTermMatches(term)` | term | `{count, documents}` (live manual-entry preview) |
 | `validatePattern(expr)` | regex | `""` (valid) or the error message |
 | `patternMatches(expr)` | regex | up to 20 sample matches across the loaded documents |
+| `entityPlaceholder(category, canonical)` | engine category id, value | the placeholder currently assigned to that value, or `""` before the first run |
+| `setEntityPlaceholder(category, canonical, placeholder)` | engine category id, value, `[NAME_N]` | resolves on success; REJECTS with an actionable message when the shape is wrong or the placeholder already belongs to another value. Takes effect on the next run or fast re-run, never retroactively (BUILD-05 Phase 3) |
 
 ## Run screen (pipeline)
 
@@ -85,7 +95,9 @@ what shape it comes back in, **without opening any Go**.
 | `saveDocument(name, ext)` | name, ext | opens a save dialog for one document |
 | `getSameFormatMetadata(name, ext)` | name, ext | `{fields, filename}`: document properties with proposed replacements + proposed anonymised filename, for the review panel |
 | `saveSameFormat(name, ext, fields, filename)` | name, ext, reviewed fields, filename | writes the same-format copy with the REVIEWED metadata and filename |
-| `exportAllZip()` | — | saves every anonymised document into one zip |
+| `exportAllZip()` | — | saves every anonymised document into one zip, via the native save dialog |
+| `chooseExportFolder()` | — | opens the native FOLDER picker and resolves to the chosen path, or `""` when cancelled. Picks only; writes nothing (BUILD-05 Phase 3) |
+| `exportAllZipTo(dir)` | folder path | writes the batch zip into that folder with NO second dialog and resolves to the full path written. The only dialog-free write in the contract, allowed because the folder was chosen explicitly and the zip carries no re-identification key (decision 4). An existing archive is never overwritten, the new one is numbered |
 | `copyDocument(name)` | name | puts the anonymised text on the clipboard |
 | `exportMapping(format)` | `"csv"`/`"json"` | saves the re-identification key. Call ONLY after the user confirmed the sensitivity warning |
 | `exportReport(format)` | `"json"`/`"md"` | saves the run report |

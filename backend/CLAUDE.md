@@ -10,7 +10,7 @@ owns the backend detail.
 
 All Go business logic and the Wails bound-app layer, as **package `backend`**
 (plus the sub-packages `engine`, `engine/convert`, `engine/exportfmt`,
-`ollama`). Pure Go, **no CGo, ever** (pattern P0). Standard library first; no
+`engine/ooxml`, `ollama`). Pure Go, **no CGo, ever** (pattern P0). Standard library first; no
 new dependency without adding it to the pinned-versions table in the root
 `CLAUDE.md`.
 
@@ -64,11 +64,30 @@ Allowlisted terms are never replaced, by any pass. Placeholders are stable
 per session, format `[CATEGORY_N]`; the registry maps original → placeholder
 and is exportable as the re-identification key.
 
+A user may RENAME one placeholder (`Registry.SetPlaceholder`, BUILD-05
+Phase 3). The shape is enforced and a collision is refused, because two
+originals sharing one placeholder makes the key ambiguous and silently ends the
+ability to reverse the anonymisation. Automatic assignment then skips any number
+an override took. The renames a user made are recorded rather than inferred
+(`Registry.Overrides`) and persist in the session file; **session files are read
+only by the version that wrote them**, so a file whose `SessionVersion` this
+build does not know is refused with an actionable message instead of
+half-migrated (BUILD-05 decision 1).
+
 ## Converters (`engine/convert/`) and same-format export (`engine/exportfmt/`)
 
 - Converters are **pure Go and one-way**: binary formats convert TO markdown
   on import (docx, pptx, xlsx via excelize, pdf via ledongthuc/pdf —
   experimental). Only the standard library + the pinned excelize / pdf libs.
+- `engine/ooxml/` holds the plumbing docx, pptx and xlsx share: pulling a named
+  `docProps/` part out of the archive, token-scanning named elements out of an
+  XML part, and reading the cached counts (`<Pages>`, `<Slides>`). Both
+  `engine/convert/unitcount.go` (the import list's "6 pages") and
+  `engine/exportfmt/metadata.go` (the properties review) read through it, so
+  the zip walk exists once. An ABSENT part is never an error there: every
+  `docProps` part is optional and the repo's own fixtures omit them, so the
+  callers degrade (a page count falls back to a line count) rather than
+  reporting "0 pages".
 - `exportfmt/` writes a NEW anonymised copy in the source format by rewriting
   a copy of the original bytes held in memory. The source file on disk is read
   once at import and never written, moved or modified. If pure-Go PDF quality
