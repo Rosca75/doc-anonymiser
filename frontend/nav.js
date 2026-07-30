@@ -129,16 +129,16 @@ export function followingStep(s = getState()) {
  * @param {string} [opts.nextTitle] tooltip, normally why it is disabled
  * @param {boolean} [opts.standalone] render as a card of its own rather than as
  *   the foot of the screen's workspace card
+ * @param {string} [opts.rightHTML] trusted markup replacing the primary button.
+ *   The LAST step uses it: there is nothing to continue to, and Export's
+ *   right-hand action is "start a new batch", which must not look like the
+ *   CONTINUE button of the other three screens.
  * @param {object} [s] state (defaults to the live state)
  * @returns {string} safe HTML
  */
 export function stepFooterHTML(opts = {}, s = getState()) {
   const previous = previousStep(s);
   const following = followingStep(s);
-  // The last step has nothing to continue to. No screen is in that position
-  // today (Export renders its own "start a new batch" action instead of a
-  // footer primary), but returning a footer with a dead button would be worse
-  // than returning one whose primary is disabled and says why.
   const nextDisabled = opts.nextDisabled ?? (following ? !canGoTo(following, s) : true);
   return stepFooter({
     backLabel: previous ? NAV.back(previous) : "",
@@ -149,6 +149,7 @@ export function stepFooterHTML(opts = {}, s = getState()) {
     nextDisabled,
     nextTitle: opts.nextTitle,
     standalone: opts.standalone,
+    rightHTML: opts.rightHTML,
   });
 }
 

@@ -26,6 +26,7 @@ import {
   setDocumentCountry,
   addPendingValue, removePendingValue, clearPendingValues,
   dismissWarning, visibleWarnings,
+  setExportDir, startNewBatch, setMetaReview,
   askConfirm, answerConfirm,
 } from "./state.js";
 
@@ -1273,4 +1274,125 @@ test("visibleWarnings copes with no run and no report", () => {
   assert.deepEqual(visibleWarnings(), []);
   setState({ results: {} });
   assert.deepEqual(visibleWarnings(), []);
+});
+
+// --- startNewBatch (BUILD-05 Phase 8) ------------------------------------
+//
+// The SPLIT is the whole point of this button, so both halves are pinned: what
+// it clears, and just as importantly what it keeps. Getting the second half
+// wrong would make the button useless (the user re-enters their settings every
+// batch) or unsafe (the previous batch's key stays in memory).
+
+/** finishedBatch() is the state at the end of a completed batch. */
+function finishedBatch() {
+  resetState();
+  setState({
+    step: "export",
+    documents: [{ name: "a.docx" }, { name: "b.pptx" }],
+    previewDoc: "a.docx",
+    importErrors: ["a stale error"],
+    results: { documents: [{ name: "a.docx" }], report: { warnings: ["w"] } },
+    mapping: { "[PERSON_1]": { original: "Marie Duval", category: "person_names" } },
+    resultDoc: "a.docx",
+    metaReview: { "a.docx": { ext: "docx", filename: "a_anon.docx", fields: [] } },
+    exportDir: "C:\\Users\\o\\anonymised",
+  });
+  addEntities([{ category: "person_names", canonical: "Marie Duval" }]);
+  addCandidates([{ text: "Thomas Berger", category: "person_names" }], "smart");
+  addPattern("INV-\\d{6}");
+  addSimpleRule({ find: "4471-B", replace: "[CUSTOM_1]", caseSensitive: true });
+  addPendingValue("client_names", "Aurora Group");
+  dismissWarning("w");
+  addAllowTerm("CSSF");
+  setDocumentCountry("DE");
+  setMinConfidence(0.9);
+}
+
+test("startNewBatch clears everything about THIS batch", () => {
+  finishedBatch();
+  startNewBatch();
+  const s = getState();
+  assert.deepEqual(s.documents, []);
+  assert.equal(s.previewDoc, null);
+  assert.deepEqual(s.importErrors, []);
+  assert.deepEqual(s.entities, []);
+  assert.deepEqual(s.candidates, []);
+  assert.deepEqual(s.patterns, []);
+  assert.deepEqual(s.simpleRules, []);
+  assert.deepEqual(s.pendingValues, []);
+  assert.deepEqual(s.dismissedWarnings, []);
+  assert.deepEqual(s.metaReview, {});
+  assert.equal(s.results, null);
+  assert.equal(s.resultDoc, null);
+  assert.equal(s.running, false);
+  assert.equal(s.progress, null);
+  assert.equal(s.discovery, null);
+});
+
+test("startNewBatch clears the MAPPING, which is the previous batch's key", () => {
+  // Not tidiness: leaving it in memory across an explicit "start again" keeps
+  // sensitive data alive with nothing on screen referring to it.
+  finishedBatch();
+  assert.ok(getState().mapping, "the fixture must have a mapping to clear");
+  startNewBatch();
+  assert.equal(getState().mapping, null);
+});
+
+test("startNewBatch KEEPS the settings, the country and the allowlist", () => {
+  // All of it describes how this user works. Re-entering it for every batch is
+  // exactly the tedium the button exists to avoid.
+  finishedBatch();
+  const before = {
+    categories: { ...getState().settings.categories },
+    minConfidence: getState().settings.minConfidence,
+    smartDetect: { ...getState().settings.smartDetect },
+    ollamaPort: getState().settings.ollamaPort,
+    country: getState().documentCountry,
+    allowlist: [...getState().allowlist],
+    exportDir: getState().exportDir,
+  };
+  startNewBatch();
+  const s = getState();
+  assert.deepEqual(s.settings.categories, before.categories);
+  assert.equal(s.settings.minConfidence, before.minConfidence);
+  assert.deepEqual(s.settings.smartDetect, before.smartDetect);
+  assert.equal(s.settings.ollamaPort, before.ollamaPort);
+  assert.equal(s.documentCountry, before.country, "the country is a setting, not batch data");
+  assert.deepEqual(s.allowlist, before.allowlist, "the never-anonymise list is curated across batches");
+  assert.equal(s.exportDir, before.exportDir, "the destination folder is a convenience worth keeping");
+});
+
+test("startNewBatch returns the wizard to Import", () => {
+  // It is the only step a cleared batch can stand on: every guard past it needs
+  // documents.
+  finishedBatch();
+  startNewBatch();
+  assert.equal(getState().step, "import");
+  assert.deepEqual(WIZARD_STEPS.filter((step) => canGoTo(step)), ["import"]);
+});
+
+test("startNewBatch reports what it cleared", () => {
+  finishedBatch();
+  const cleared = startNewBatch();
+  assert.equal(cleared.documents, 2);
+  assert.equal(cleared.rules, 1);
+  assert.ok(cleared.values >= 1);
+});
+
+test("startNewBatch dismisses any notice on screen", () => {
+  // A notice about the batch that just ended would read as being about the empty
+  // screen that replaced it.
+  finishedBatch();
+  setNotice("Batch exported to C:\\out.zip", "ok");
+  startNewBatch();
+  assert.equal(getState().notice, null);
+});
+
+test("setExportDir stores and trims, and can forget the folder", () => {
+  resetState();
+  assert.equal(setExportDir("  C:\\out  "), "C:\\out");
+  assert.equal(getState().exportDir, "C:\\out");
+  assert.equal(setExportDir(""), "");
+  assert.equal(getState().exportDir, "");
+  assert.equal(setExportDir(undefined), "");
 });

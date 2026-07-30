@@ -1228,3 +1228,81 @@ mark[data-original]:hover::after {
    mark inside a scrolling pane, so it drifted away from its own mark the moment
    the pane scrolled, and it could not be reached from the keyboard at all. The
    Selected placeholder card in the left column replaced it. */
+
+/* --- Export screen (BUILD-05 Phase 8) ------------------------------------ */
+
+/* Same column shape as Anonymise: the two-column workspace, then the footer. */
+.export-view {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; gap: 1rem;
+}
+.export-view > .workspace { flex: 1; min-height: 0; }
+
+/* A pair of equal-width buttons (CSV / JSON, Save / Load). A grid rather than
+   flex, so the two are the same width whatever their labels say. */
+.button-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+
+/* The key-bearing card's header wears the key tint, which is the ONE place in
+   the application the orange family is used as a fill rather than as the hero
+   button. It is doing real work there: it marks the two exports that can
+   re-identify people. */
+.fold-card.key-bearing > .cgroup > .cgroup-head {
+  background: var(--key-bg);
+  border-bottom-color: var(--key-edge-soft);
+}
+.fold-card.key-bearing .cgroup-count {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; color: var(--key-fg);
+}
+
+/* --- Document rows ------------------------------------------------------- */
+
+.export-row {
+  display: flex; align-items: center; gap: 0.85rem;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--gray-6);
+}
+.export-name { display: flex; flex-direction: column; gap: 2px; width: 13rem; flex: none; min-width: 0; }
+.export-out {
+  font-size: 0.85rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.export-name .hint { margin: 0; font-size: 0.72rem; }
+.export-formats { display: flex; flex-wrap: wrap; gap: 0.4rem; flex: 1; min-width: 0; }
+
+/* A format button. The MONOSPACED label is deliberate: ".docx (same format)" is
+   a file extension, and reading it as one is the point. */
+.fmt-btn {
+  padding: 0 0.7rem; height: 1.75rem;
+  font-family: var(--font-mono); font-size: 0.72rem;
+  white-space: nowrap;
+  border-color: var(--gray-4); color: var(--ink-2);
+}
+/* A same-format button wears the key tint, because a same-format copy LOOKS like
+   the original: the tint is the only warning the user gets before they have a
+   file on disk that is easy to mistake for the source document. */
+.fmt-btn.same-format {
+  border-color: var(--key-edge); background: var(--key-bg); color: var(--text);
+}
+
+/* --- The properties review ---------------------------------------------- */
+
+.meta-review { margin: 1rem 0 0.5rem; }
+.meta-review .card-head h2 { font-size: 0.95rem; }
+.meta-grid {
+  display: grid; grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 0.4rem 0.75rem; align-items: center;
+}
+.meta-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.meta-name .hint { margin: 0; font-size: 0.7rem; }
+.meta-current {
+  font-size: 0.78rem; color: var(--ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.meta-value { min-width: 0; font-size: 0.75rem; padding: 0.3rem 0.5rem; }
+.meta-keep { font-size: 0.72rem; padding: 0 0.6rem; height: 1.75rem; white-space: nowrap; }
+.meta-unchanged { font-size: 0.72rem; white-space: nowrap; }
+
+/* The footer's right-hand action on the LAST step. It is a neutral button, not
+   the accent primary the other three screens use: nothing about finishing should
+   invite the same reflex click as CONTINUE. */
+.new-batch { font-weight: 700; }

@@ -1,32 +1,52 @@
-// views/export.js, wizard step 5: every egress path (Phase 9), all behind
-// explicit user actions:
-//   - per-document save with per-format buttons (CSV round-trip for
-//     grid-origin documents, .md/.txt/.json per the format rules),
-//   - export-all zip,
-//   - copy to clipboard per document,
-//   - entity-mapping export behind a confirmation warning (it is the
-//     re-identification key),
-//   - report export (JSON + human-readable markdown),
-//   - session save/load with the same sensitivity warning.
+// views/export.js, wizard step 4: every egress path (Phase 9; relaid out to
+// match Export.dc.html by BUILD-05 Phase 8).
+//
+// A column of cards on the left, the document list on the right:
+//
+//   Export         the destination folder, Browse, and EXPORT ALL AS ZIP. The
+//                  folder drives the ZIP AND NOTHING ELSE (decision 4): every
+//                  other export keeps its own save dialog, so nothing
+//                  key-bearing can land on disk from a single click.
+//   Value mapping  the re-identification key, as CSV or JSON, behind the
+//                  key-bearing modal. Wears the key tint.
+//   Report         counts per category and the settings used. Contains no
+//                  original values, so no warning and no tint.
+//   Session        save and load, so a follow-up batch reuses the same
+//                  placeholders. Contains the key, so it wears the same gate.
+//   Documents      one row per anonymised document with its _anon output name,
+//                  its counts, its per-format buttons and a copy button. The
+//                  properties review for a same-format save opens inline here,
+//                  because that is where the button that opened it lives.
+//
+// Every native confirm() is gone (decision 10): the key warning is the in-app
+// modal, and so is the confirmation on START A NEW BATCH.
 
 import {
-  exportDocumentFormats, saveDocument, exportAllZip, copyDocument,
-  exportMapping, exportReport, saveSession, loadSession,
+  exportDocumentFormats, saveDocument, exportAllZipTo, chooseExportFolder,
+  copyDocument, exportMapping, exportReport, saveSession, loadSession,
   getSameFormatMetadata, saveSameFormat,
 } from "../api.js";
-import { getState, setState, buildRunRequest, addEntities, presetCategories, setMetaReview, SMART_DETECT_DEFAULTS } from "../state.js";
+import {
+  getState, setState, buildRunRequest, addEntities, presetCategories,
+  setMetaReview, setExportDir, startNewBatch, setDocumentCountry,
+  SMART_DETECT_DEFAULTS,
+} from "../state.js";
 import { escapeHTML } from "../html.js";
-import { panel, wirePanels, button } from "../ui.js";
+import { button, card, collapsibleGroup, wireGroups, sectionLabel, toastHTML } from "../ui.js";
+import { askConfirm } from "../modal.js";
+import { notify, wireNotice } from "../toast.js";
+import { stepFooterHTML, wireStepFooter } from "../nav.js";
+import { CARDS, EXPORT } from "../copy.js";
+import { DEFAULT_COUNTRY } from "../countries.js";
 
-// Panels the user toggled away from their default state (BUILD-02 Phase 2f).
-const collapsedPanels = new Set();
+// Native Office extensions are the same-format copies (BUILD-02 Phase 11): they
+// keep the original layout and never touch the source file.
+const NATIVE_EXTS = new Set(["docx", "pptx", "xlsx", "pdf"]);
 
-// The wording of the sensitivity warning, shared by mapping export and
-// session save (CLAUDE.md §5).
-const KEY_WARNING =
-  "This file contains the RE-IDENTIFICATION KEY: anyone holding it can map " +
-  "every placeholder back to the real name. Store it as carefully as the " +
-  "original documents. Continue?";
+// Which of the three foldable cards are shut. Value mapping starts OPEN because
+// it is the one a user is most likely to be looking for and the one that needs
+// its warning read; the other two start shut.
+const collapsed = new Set(["report", "session"]);
 
 // Per-document format lists, fetched once per render (name → [ext...]).
 const formatCache = new Map();
@@ -35,194 +55,458 @@ export function renderExport(container) {
   const s = getState();
   const docs = s.results?.documents ?? [];
 
-  // Native Office extensions are the same-format copies (BUILD-02
-  // Phase 11): keep the layout, never touch the source file.
-  const NATIVE_EXTS = new Set(["docx", "pptx", "xlsx", "pdf"]);
-  const NATIVE_CAPTION = "Keeps the original layout. Your source file is not changed.";
-  const PDF_CAPTION = "Experimental. Produces a simplified layout, not a copy of the original design. Your source file is not changed.";
-
-  const rows = docs.map((d) => {
-    const formats = formatCache.get(d.name) ?? [];
-    const buttons = formats.map((ext) => {
-      if (!NATIVE_EXTS.has(ext)) {
-        return `<button class="doc-save" data-name="${escapeHTML(d.name)}" data-ext="${ext}">.${ext}</button>`;
-      }
-      if (ext === "pdf") {
-        return `<button class="doc-save" data-name="${escapeHTML(d.name)}" data-ext="pdf" title="${PDF_CAPTION}">.pdf (same format) <span class="tag warn">EXPERIMENTAL</span></button>`;
-      }
-      return `<button class="doc-save" data-name="${escapeHTML(d.name)}" data-ext="${ext}" title="${NATIVE_CAPTION}">.${ext} (same format)</button>`;
-    }).join(" ");
-    return `
-      <tr>
-        <td class="ent-name">${escapeHTML(d.name)}</td>
-        <td>${buttons || "…"}</td>
-        <td><button class="doc-copy" data-name="${escapeHTML(d.name)}">copy</button></td>
-      </tr>`;
-  }).join("");
-
-  const docsContent = `
-        <p class="hint">Each file saves with an _anon suffix. Nothing is ever written back to the original files.</p>
-        <table class="entity-table"><tbody>${rows || `<tr><td class="hint">No results yet. Run the pipeline first.</td></tr>`}</tbody></table>`;
-
-  const mappingContent = `
-        <p class="hint">Maps every placeholder back to the original value. Handle it like the originals themselves.</p>
-        <div class="form-row">
-          <button id="map-csv">Export as CSV</button>
-          <button id="map-json">Export as JSON</button>
-        </div>`;
-
-  const reportContent = `
-        <div class="form-row">
-          <button id="rep-json">Export report as JSON</button>
-          <button id="rep-md">Export report as Markdown</button>
-        </div>`;
-
-  const sessionContent = `
-        <p class="hint">Saves values, allowlist, patterns, rules, settings and the placeholder registry, so a
-          follow-up batch reuses the same placeholders. The file contains the re-identification key.</p>
-        <div class="form-row">
-          <button id="ses-save">Save session</button>
-          <button id="ses-load">Load session</button>
-        </div>`;
-
-  const metaPanels = Object.entries(s.metaReview ?? {}).map(([docName, review]) =>
-    metaReviewPanel(docName, review)).join("");
-
   container.innerHTML = `
     <div class="export-view">
-      ${panel("export-docs-panel", "Export documents", docsContent, {
-        collapsible: true, collapsedSet: collapsedPanels,
-        headExtraHTML: button("Export all as zip", { kind: "primary", id: "btn-zip", icon: "download" }),
-      })}
-      ${metaPanels}
-      ${panel("export-mapping-panel", "Value mapping (re-identification key)", mappingContent, {
-        collapsible: true, collapsedSet: collapsedPanels,
-      })}
-      ${panel("export-report-panel", "Report", reportContent, {
-        collapsible: true, startOpen: false, collapsedSet: collapsedPanels,
-      })}
-      ${panel("export-session-panel", "Session", sessionContent, {
-        collapsible: true, collapsedSet: collapsedPanels,
-      })}
+      <div class="workspace workspace-side">
+        <div class="card-column">
+          ${exportCard(s, docs)}
+          ${mappingCard()}
+          ${reportCard(s)}
+          ${sessionCard()}
+        </div>
+        ${documentsCard(s, docs)}
+      </div>
+      ${footerBar(s)}
       <div id="export-msg"></div>
     </div>
   `;
 
-  wirePanels(container, collapsedPanels, () => setState({}));
   ensureFormats(docs);
-  wire(container);
-  wireMetaReview(container);
+  wire(container, s);
 }
 
-// --- Same-format metadata review (BUILD-02 Phase 12c) -----------------------
+// --- The Export card ------------------------------------------------------
 
-/**
- * metaReviewPanel renders one document's properties review: current value,
- * editable proposed value, keep-original per field, the filename proposal,
- * and the final export button. Nothing is rewritten without this review.
- */
-function metaReviewPanel(docName, review) {
-  const rows = review.fields.map((f, i) => `
-    <tr data-idx="${i}">
-      <td class="ent-name">${escapeHTML(f.name)} <span class="hint">${escapeHTML(f.part)}</span></td>
-      <td>${escapeHTML(f.value)}</td>
-      <td><input class="meta-value" value="${escapeHTML(f.finalValue)}"/></td>
-      <td>${f.changed
-        ? `<button class="meta-keep" title="Keep the original value">keep original</button>`
-        : `<span class="hint">unchanged</span>`}</td>
-    </tr>`).join("");
+function exportCard(s, docs) {
+  const total = docs.reduce(
+    (sum, d) => sum + Object.values(d.byCategory ?? {}).reduce((a, b) => a + b, 0), 0);
 
-  const content = `
-      <p class="hint">These document properties travel inside the file. Review each value:
-        edit it, keep the proposal, or keep the original. Nothing is rewritten without your review.</p>
-      <table class="entity-table">
-        <thead><tr><th>Property</th><th>Current</th><th>Will become</th><th></th></tr></thead>
-        <tbody>${rows || `<tr><td colspan="4" class="hint">This file has no document properties.</td></tr>`}</tbody>
-      </table>
-      <div class="form-row">
-        <label>File name</label>
-        <input class="meta-filename" value="${escapeHTML(review.filename)}"/>
-      </div>
-      <div class="form-row">
-        <button class="meta-export primary">Export .${escapeHTML(review.ext)} copy</button>
-        <button class="meta-cancel">Close</button>
-      </div>`;
-  return panel(`meta-review-${docName}`, `Properties review: ${docName}`, content, {
-    collapsible: false, headExtraHTML: `<span class="tag">${escapeHTML(review.ext)}</span>`,
+  const destination =
+    sectionLabel(EXPORT.destination) +
+    `<div class="add-row">` +
+    `<input id="export-dir" class="grow mono" value="${escapeHTML(s.exportDir)}"` +
+    ` placeholder="${escapeHTML(EXPORT.destinationPlaceholder)}"` +
+    ` aria-label="${escapeHTML(EXPORT.destination)}"/>` +
+    button(EXPORT.browse, { kind: "secondary", id: "btn-browse", icon: "folder_open" }) +
+    `</div>`;
+
+  return card({
+    id: "export-card",
+    title: CARDS.export.title,
+    subtitle: EXPORT.subtitle(total, docs.length),
+    bodyCls: "stack",
+    bodyHTML: destination +
+      button(EXPORT.zip, {
+        kind: "primary", id: "btn-zip", icon: "download",
+        disabled: docs.length === 0,
+        title: docs.length === 0 ? EXPORT.needsRun : EXPORT.zipTooltip,
+      }) +
+      `<p class="hint">${escapeHTML(EXPORT.anonSuffixHint)}</p>`,
   });
 }
 
-function wireMetaReview(container) {
-  const s = getState();
-  for (const [docName, review] of Object.entries(s.metaReview ?? {})) {
-    const root = container.querySelector(`[id="meta-review-${CSS.escape(docName)}"]`)
-      ?? [...container.querySelectorAll("section.panel")].find((p) => p.id === `meta-review-${docName}`);
-    if (!root) continue;
+// --- The three foldable cards --------------------------------------------
 
-    for (const row of root.querySelectorAll("tr[data-idx]")) {
-      const i = parseInt(row.dataset.idx, 10);
-      const input = row.querySelector(".meta-value");
-      input?.addEventListener("change", () => {
-        review.fields[i].finalValue = input.value;
-        setMetaReview(docName, review);
-      });
-      row.querySelector(".meta-keep")?.addEventListener("click", () => {
-        review.fields[i].finalValue = review.fields[i].value;
-        setMetaReview(docName, review);
-      });
-    }
-    root.querySelector(".meta-filename")?.addEventListener("change", (ev) => {
-      review.filename = ev.target.value;
-      setMetaReview(docName, review);
-    });
-    root.querySelector(".meta-cancel")?.addEventListener("click", () => setMetaReview(docName, null));
-    root.querySelector(".meta-export")?.addEventListener("click", async () => {
-      const reviewed = review.fields.map((f) => ({ part: f.part, name: f.name, value: f.finalValue }));
-      try {
-        await saveSameFormat(docName, review.ext, reviewed, review.filename);
-        container.querySelector("#export-msg").innerHTML =
-          `<div class="banner warn">Same-format copy of ${escapeHTML(docName)} exported. Your source file was not changed.</div>`;
-      } catch (err) {
-        container.querySelector("#export-msg").innerHTML =
-          `<div class="banner error">${escapeHTML(String(err?.message ?? err))}</div>`;
-      }
-    });
-  }
+/** mappingCard() is the re-identification key. It wears the key tint, which is
+ *  the only place in the application the orange family is used as a fill. */
+function mappingCard() {
+  const body =
+    `<p class="hint">${escapeHTML(EXPORT.mappingHint)}</p>` +
+    `<div class="button-pair">` +
+    button("CSV", { kind: "secondary", id: "map-csv" }) +
+    button("JSON", { kind: "secondary", id: "map-json" }) +
+    `</div>`;
+  return foldCard("mapping", EXPORT.mappingTitle, EXPORT.keyTag, body, true);
 }
 
-/** ensureFormats() lazily fetches each document's offered extensions and
+/** reportCard(s) contains NO original values, which is why it has no warning and
+ *  no tint: it is the one artefact here that is safe to circulate. */
+function reportCard(s) {
+  const categories = Object.keys(s.results?.report?.byCategory ?? {}).length;
+  const body =
+    `<p class="hint">${escapeHTML(EXPORT.reportHint)}</p>` +
+    `<div class="button-pair">` +
+    button("JSON", { kind: "secondary", id: "rep-json" }) +
+    button(EXPORT.markdown, { kind: "secondary", id: "rep-md" }) +
+    `</div>`;
+  return foldCard("report", EXPORT.reportTitle, EXPORT.reportSummary(categories), body);
+}
+
+function sessionCard() {
+  const body =
+    `<p class="hint">${escapeHTML(EXPORT.sessionHint)}</p>` +
+    `<div class="button-pair">` +
+    button(EXPORT.save, { kind: "secondary", id: "ses-save" }) +
+    button(EXPORT.load, { kind: "secondary", id: "ses-load" }) +
+    `</div>`;
+  return foldCard("session", EXPORT.sessionTitle, EXPORT.sessionSummary, body);
+}
+
+/**
+ * foldCard(id, title, summary, bodyHTML, keyBearing) is the shape the three
+ * foldable cards share. Like the Anonymise screen's, they do NOT scroll
+ * individually: the left column is one scroller.
+ */
+function foldCard(id, title, summary, bodyHTML, keyBearing = false) {
+  return `<section class="card fold-card${keyBearing ? " key-bearing" : ""}">` +
+    collapsibleGroup(id, title, `<div class="fold-body">${bodyHTML}</div>`, {
+      open: !collapsed.has(id),
+      countLabel: summary,
+      cls: keyBearing ? "key-group" : "",
+    }) +
+    `</section>`;
+}
+
+// --- The Documents card ---------------------------------------------------
+
+function documentsCard(s, docs) {
+  const total = docs.reduce(
+    (sum, d) => sum + Object.values(d.byCategory ?? {}).reduce((a, b) => a + b, 0), 0);
+
+  const rows = docs.map((d) => documentRow(s, d)).join("") ||
+    `<div class="grid-empty">${escapeHTML(EXPORT.noResults)}</div>`;
+
+  // The properties review opens INSIDE this card, under the rows, because the
+  // button that opened it is in one of those rows.
+  const reviews = Object.entries(s.metaReview ?? {})
+    .map(([docName, review]) => metaReviewPanel(docName, review)).join("");
+
+  return `<section class="card" id="export-documents">` +
+    `<div class="card-head">` +
+    `<div class="card-head-left"><h2>${escapeHTML(EXPORT.documentsTitle)}</h2>` +
+    `<span class="card-sub">${escapeHTML(EXPORT.documentsSummary(total))}</span></div>` +
+    `<span class="card-caption">${escapeHTML(EXPORT.oneAtATime)}</span>` +
+    `</div>` +
+    `<div class="card-body">${rows}${reviews}</div>` +
+    toastHTML(s.notice) +
+    `</section>`;
+}
+
+function documentRow(s, d) {
+  const formats = formatCache.get(d.name) ?? [];
+  const replacements = Object.values(d.byCategory ?? {}).reduce((a, b) => a + b, 0);
+  // The property count is only known once a review has been loaded for this
+  // document. Fetching the metadata of every file up front would mean one bridge
+  // round-trip per document on entering the screen, to show a number the user
+  // has not asked for yet.
+  const properties = s.metaReview?.[d.name]?.fields?.length;
+
+  const buttons = formats.map((ext) => {
+    const native = NATIVE_EXTS.has(ext);
+    const label = native ? EXPORT.sameFormatLabel(ext) : `.${ext}`;
+    const title = ext === "pdf" ? EXPORT.pdfCaption
+      : native ? EXPORT.nativeCaption : EXPORT.plainCaption;
+    return button(label, {
+      kind: "secondary", cls: `fmt-btn${native ? " same-format" : ""}`,
+      title, data: { name: d.name, ext },
+    });
+  }).join("");
+
+  return `<div class="export-row">` +
+    `<span class="export-name">` +
+    `<span class="export-out" title="${escapeHTML(outputName(d.name))}">` +
+    `${escapeHTML(outputName(d.name))}</span>` +
+    `<span class="hint">${escapeHTML(EXPORT.rowMeta(replacements, properties))}</span>` +
+    `</span>` +
+    `<span class="export-formats">${buttons || `<span class="hint">${escapeHTML(EXPORT.loadingFormats)}</span>`}</span>` +
+    button("", {
+      kind: "ghost", cls: "doc-copy icon-action boxed", icon: "content_copy",
+      ariaLabel: `Copy ${d.name}`, title: EXPORT.copyTooltip,
+      data: { name: d.name },
+    }) +
+    `</div>`;
+}
+
+/**
+ * outputName(name) is the file name an export suggests: the original with an
+ * _anon suffix before its extension.
+ *
+ * It mirrors Go's engine.ExportFileName for DISPLAY only. The name that is
+ * actually written still comes from Go, so this is a preview rather than a second
+ * implementation of the rule: showing the user "services-agreement_anon.docx"
+ * before they press anything is worth the duplication.
+ */
+export function outputName(name) {
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0) return `${name}_anon`;
+  return `${name.slice(0, dot)}_anon${name.slice(dot)}`;
+}
+
+// --- The properties review (BUILD-02 Phase 12c) --------------------------
+
+/**
+ * metaReviewPanel(docName, review) renders one document's properties review:
+ * the current value, the editable proposed value, keep-original per field, the
+ * filename proposal, and the export button.
+ *
+ * Nothing is rewritten without this review. These properties travel INSIDE the
+ * file, so a document whose body is anonymised but whose Author field still names
+ * the person is not anonymised at all, and that is a failure the user cannot see
+ * by reading the document.
+ */
+function metaReviewPanel(docName, review) {
+  const rows = review.fields.map((f, i) => {
+    const changed = f.finalValue !== f.value;
+    return `<span class="meta-name">` +
+      `<span>${escapeHTML(f.name)}</span>` +
+      `<span class="hint">${escapeHTML(f.part)}</span>` +
+      `</span>` +
+      `<span class="meta-current" title="${escapeHTML(f.value)}">${escapeHTML(f.value)}</span>` +
+      `<input class="meta-value mono" data-idx="${i}" value="${escapeHTML(f.finalValue)}"` +
+      ` aria-label="${escapeHTML(EXPORT.willBecome)}: ${escapeHTML(f.name)}"/>` +
+      (changed
+        ? button(EXPORT.keepOriginal, {
+          kind: "secondary", cls: "meta-keep", data: { idx: String(i) },
+          title: EXPORT.keepOriginalTooltip,
+        })
+        : `<span class="hint meta-unchanged">${escapeHTML(EXPORT.unchanged)}</span>`);
+  }).join("");
+
+  const grid = rows
+    ? `<div class="meta-grid">` +
+      sectionLabel(EXPORT.property, { mini: true }) +
+      sectionLabel(EXPORT.current, { mini: true }) +
+      sectionLabel(EXPORT.willBecome, { mini: true }) +
+      `<span></span>` + rows +
+      `</div>`
+    : `<p class="hint">${escapeHTML(EXPORT.noProperties)}</p>`;
+
+  return `<section class="card key-bearing meta-review" data-doc="${escapeHTML(docName)}">` +
+    `<div class="card-head">` +
+    `<div class="card-head-left">` +
+    `<h2>${escapeHTML(EXPORT.reviewTitle(docName))}</h2></div>` +
+    `<span class="key-tag">${escapeHTML(review.ext.toUpperCase())}</span>` +
+    `</div>` +
+    `<div class="card-body stack">` +
+    `<p class="hint">${escapeHTML(EXPORT.reviewHint)}</p>` +
+    grid +
+    `<div class="add-row">` +
+    `<span class="hint">${escapeHTML(EXPORT.fileName)}</span>` +
+    `<input class="meta-filename grow mono" value="${escapeHTML(review.filename)}"` +
+    ` aria-label="${escapeHTML(EXPORT.fileName)}"/>` +
+    button(EXPORT.close, { kind: "secondary", cls: "meta-cancel" }) +
+    button(EXPORT.exportCopy(review.ext), { kind: "primary", cls: "meta-export" }) +
+    `</div></div></section>`;
+}
+
+// --- The footer -----------------------------------------------------------
+
+/**
+ * footerBar(s) is Export's footer. It has no CONTINUE: this is the last step, so
+ * the right-hand action is START A NEW BATCH, and it deliberately does NOT look
+ * like the primary of the other three screens. Nothing about finishing should
+ * invite a reflex click.
+ */
+function footerBar(s) {
+  const finished = (s.results?.documents?.length ?? 0) > 0;
+  return stepFooterHTML({
+    hint: EXPORT.finishHint,
+    standalone: true,
+    // NOT the shared primary: nothing about finishing should invite the same
+    // reflex click as CONTINUE on the other three screens.
+    rightHTML: button(EXPORT.newBatch, {
+      kind: "secondary", id: "btn-new-batch", icon: "refresh", cls: "step-next new-batch",
+      disabled: !finished, title: finished ? EXPORT.newBatchTooltip : EXPORT.needsRun,
+    }),
+  }, s);
+}
+
+// --- Formats --------------------------------------------------------------
+
+/** ensureFormats(docs) lazily fetches each document's offered extensions and
  *  re-renders (via state notify) once known. */
 function ensureFormats(docs) {
   for (const d of docs) {
     if (formatCache.has(d.name)) continue;
-    formatCache.set(d.name, []); // mark as pending to avoid refetch loops
+    formatCache.set(d.name, []); // mark as pending to avoid a refetch loop
     exportDocumentFormats(d.name)
       .then((formats) => {
         formatCache.set(d.name, formats ?? []);
-        setState({}); // trigger a re-render with the buttons filled in
+        setState({}); // re-render with the buttons filled in
       })
       .catch(() => formatCache.delete(d.name));
   }
 }
 
-function wire(container) {
-  const feedback = (msg, isError) => {
-    container.querySelector("#export-msg").innerHTML =
-      `<div class="banner ${isError ? "error" : "warn"}">${escapeHTML(msg)}</div>`;
-  };
-  const guard = (promise, okMsg) =>
-    promise.then(() => okMsg && feedback(okMsg, false))
-      .catch((err) => feedback(String(err?.message ?? err), true));
+// --- Wiring ---------------------------------------------------------------
 
-  for (const btn of container.querySelectorAll(".doc-save")) {
+function wire(container, s) {
+  wireGroups(container, (id) => {
+    if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
+    setState({});
+  });
+
+  wireDestination(container);
+  wireKeyBearing(container);
+  wireReport(container);
+  wireSession(container);
+  wireDocuments(container);
+  wireMetaReview(container, s);
+  wireNewBatch(container);
+  wireNotice(container);
+  wireStepFooter(container);
+}
+
+function wireDestination(container) {
+  const input = container.querySelector("#export-dir");
+  input?.addEventListener("change", () => setExportDir(input.value));
+
+  container.querySelector("#btn-browse")?.addEventListener("click", async () => {
+    try {
+      const dir = await chooseExportFolder();
+      if (!dir) return; // cancelled: nothing happened, so say nothing
+      setExportDir(dir);
+    } catch (err) {
+      notify(String(err?.message ?? err), "warn");
+    }
+  });
+
+  container.querySelector("#btn-zip")?.addEventListener("click", async () => {
+    // The input is read from the store rather than the element, so a path typed
+    // and not blurred is still committed by the change handler above first.
+    const dir = getState().exportDir || (input?.value ?? "").trim();
+    if (!dir) {
+      notify(EXPORT.zipNeedsFolder, "info");
+      return;
+    }
+    setExportDir(dir);
+    try {
+      const path = await exportAllZipTo(dir);
+      notify(EXPORT.zipDone(path), "ok");
+    } catch (err) {
+      notify(String(err?.message ?? err), "warn");
+    }
+  });
+}
+
+/**
+ * wireKeyBearing(container) gates the two key-bearing exports behind the in-app
+ * modal (decision 10, replacing the native confirm()).
+ *
+ * The confirm button names the ACTION ("Export CSV") rather than saying "OK", so
+ * the last thing the user reads before the key leaves the application is what is
+ * about to happen.
+ */
+function wireKeyBearing(container) {
+  const gate = async (title, confirmLabel, run, done) => {
+    const ok = await askConfirm({
+      title, body: EXPORT.keyWarningBody, confirmLabel, keyBearing: true,
+    });
+    if (!ok) return;
+    try {
+      await run();
+      notify(done, "warn"); // "it worked AND the result needs care"
+    } catch (err) {
+      notify(String(err?.message ?? err), "warn");
+    }
+  };
+
+  container.querySelector("#map-csv")?.addEventListener("click", () =>
+    gate(EXPORT.mappingCsvTitle, EXPORT.mappingCsvConfirm,
+      () => exportMapping("csv"), EXPORT.mappingCsvDone));
+  container.querySelector("#map-json")?.addEventListener("click", () =>
+    gate(EXPORT.mappingJsonTitle, EXPORT.mappingJsonConfirm,
+      () => exportMapping("json"), EXPORT.mappingJsonDone));
+  container.querySelector("#ses-save")?.addEventListener("click", () =>
+    gate(EXPORT.sessionSaveTitle, EXPORT.sessionSaveConfirm,
+      () => saveSession(buildRunRequest(false)), EXPORT.sessionSaveDone));
+}
+
+function wireReport(container) {
+  const save = async (format, done) => {
+    try {
+      await exportReport(format);
+      notify(done, "ok");
+    } catch (err) {
+      notify(String(err?.message ?? err), "warn");
+    }
+  };
+  container.querySelector("#rep-json")?.addEventListener("click", () =>
+    save("json", EXPORT.reportJsonDone));
+  container.querySelector("#rep-md")?.addEventListener("click", () =>
+    save("md", EXPORT.reportMdDone));
+}
+
+function wireSession(container) {
+  container.querySelector("#ses-load")?.addEventListener("click", async () => {
+    try {
+      const session = await loadSession();
+      if (!session) return; // cancelled
+      applySession(session);
+      notify(EXPORT.sessionLoadDone, "ok");
+    } catch (err) {
+      // A refused session file (a version this build does not read) lands here
+      // with Go's actionable message, and the user needs the whole of it.
+      notify(String(err?.message ?? err), "warn");
+    }
+  });
+}
+
+/**
+ * applySession(session) restores the frontend state from a loaded session.
+ *
+ * Go has already restored the registry and the settings; this is the other half.
+ * The per-field `?? default` fallbacks that used to be here are GONE
+ * (BUILD-05 decision 1): they existed to read files written by older versions,
+ * and the loader now refuses those outright, so a session that reaches here was
+ * written by this build and has every field. What remains are two genuine cases:
+ * a field that is legitimately absent because the user never set it, and the
+ * settings that describe the MACHINE rather than the batch.
+ */
+function applySession(session) {
+  const settings = session.settings ?? {};
+  const current = getState().settings;
+  setState({
+    entities: [],
+    allowlist: session.allowTerms ?? [],
+    patterns: (session.patterns ?? []).map((p) => ({ expr: p.expr, error: null })),
+    simpleRules: session.simpleRules ?? [],
+    settings: {
+      level: settings.level,
+      // `categories` is omitted from the file when it equals nothing at all,
+      // which cannot happen for a session this build wrote; the preset is the
+      // safe reading either way and beats an empty selection that silently
+      // anonymises nothing.
+      categories: settings.categories ?? presetCategories(settings.level),
+      ollamaPort: settings.ollamaPort,
+      model: settings.model,
+      contextSize: settings.contextSize,
+      useAI: settings.useAI,
+      minConfidence: settings.minConfidence ?? 0,
+      // A session that deliberately turned every smart-detection filter off
+      // writes zeroes, which must be obeyed; a session that says nothing about
+      // them gets the shipped defaults. The pointer on the Go side is what keeps
+      // those two apart, and the spread preserves the distinction here.
+      smartDetect: { ...SMART_DETECT_DEFAULTS, ...(settings.smartDetect ?? {}) },
+    },
+  });
+  // The document country is not part of a session file: it is a frontend-only
+  // display choice (decision 2). Re-applying the default keeps the rail's
+  // country and its identifier switches agreeing after a load, which is the one
+  // way they could otherwise drift.
+  setDocumentCountry(DEFAULT_COUNTRY);
+  // Loaded values arrive ACCEPTED: a session records what the user decided to
+  // replace, not what was once proposed to them.
+  addEntities((session.entities ?? []).map((e) => ({
+    category: e.category, canonical: e.canonical, manualVariants: e.manualVariants ?? [],
+  })));
+  if (current.contextSize && !settings.contextSize) {
+    // Go treats 0 as "keep the current setting"; mirror that here rather than
+    // dropping the connection setting to zero.
+    setState({ settings: { ...getState().settings, contextSize: current.contextSize } });
+  }
+}
+
+function wireDocuments(container) {
+  for (const btn of container.querySelectorAll(".fmt-btn")) {
     btn.addEventListener("click", async () => {
       const { name, ext } = btn.dataset;
-      // Native Office extensions go through the metadata review first
-      // (BUILD-02 Phase 12c); decisions persist per document.
-      if (["docx", "pptx", "xlsx", "pdf"].includes(ext)) {
-        const s2 = getState();
-        if (s2.metaReview?.[name]?.ext === ext) {
-          setState({}); // review panel already present; repaint focuses it
+      if (NATIVE_EXTS.has(ext)) {
+        // A same-format save goes through the properties review FIRST
+        // (BUILD-02 Phase 12c). Decisions persist per document for the session,
+        // so the review only happens before the first such save of a file.
+        if (getState().metaReview?.[name]?.ext === ext) {
+          notify(EXPORT.reviewAlreadyOpen(name), "info");
           return;
         }
         try {
@@ -233,69 +517,85 @@ function wire(container) {
             fields: (meta?.fields ?? []).map((f) => ({ ...f, finalValue: f.proposed })),
           });
         } catch (err) {
-          feedback(String(err?.message ?? err), true);
+          notify(String(err?.message ?? err), "warn");
         }
         return;
       }
-      guard(saveDocument(name, ext));
+      try {
+        await saveDocument(name, ext);
+        notify(EXPORT.savedPlain(name, ext), "ok");
+      } catch (err) {
+        notify(String(err?.message ?? err), "warn");
+      }
     });
   }
+
   for (const btn of container.querySelectorAll(".doc-copy")) {
-    btn.addEventListener("click", () =>
-      guard(copyDocument(btn.dataset.name), `Copied ${btn.dataset.name} to the clipboard.`));
+    btn.addEventListener("click", async () => {
+      try {
+        await copyDocument(btn.dataset.name);
+        notify(EXPORT.copied(btn.dataset.name), "ok");
+      } catch (err) {
+        notify(String(err?.message ?? err), "warn");
+      }
+    });
   }
-  container.querySelector("#btn-zip").addEventListener("click", () => guard(exportAllZip()));
+}
 
-  // Mapping + session exports sit behind the explicit key warning.
-  container.querySelector("#map-csv").addEventListener("click", () => {
-    if (confirm(KEY_WARNING)) guard(exportMapping("csv"));
-  });
-  container.querySelector("#map-json").addEventListener("click", () => {
-    if (confirm(KEY_WARNING)) guard(exportMapping("json"));
-  });
+function wireMetaReview(container, s) {
+  for (const panel of container.querySelectorAll(".meta-review")) {
+    const docName = panel.dataset.doc;
+    const review = s.metaReview?.[docName];
+    if (!review) continue;
 
-  container.querySelector("#rep-json").addEventListener("click", () => guard(exportReport("json")));
-  container.querySelector("#rep-md").addEventListener("click", () => guard(exportReport("md")));
-
-  container.querySelector("#ses-save").addEventListener("click", () => {
-    if (confirm(KEY_WARNING)) guard(saveSession(buildRunRequest(false)));
-  });
-  container.querySelector("#ses-load").addEventListener("click", async () => {
-    try {
-      const session = await loadSession();
-      if (!session) return; // user cancelled
-      // Restore the frontend state from the session (Go already restored
-      // registry + settings). Denied/accepted review states are not part
-      // of a session, loaded entities arrive accepted.
-      setState({
-        entities: [],
-        allowlist: session.allowTerms ?? [],
-        patterns: (session.patterns ?? []).map((p) => ({ expr: p.expr, error: null })),
-        simpleRules: session.simpleRules ?? [],
-        settings: {
-          level: session.settings?.level ?? "medium",
-          // v1 sessions predate these fields; fall back to the preset /
-          // current defaults rather than dropping them to zero values.
-          categories: session.settings?.categories ?? presetCategories(session.settings?.level ?? "medium"),
-          ollamaPort: session.settings?.ollamaPort ?? 11434,
-          model: session.settings?.model ?? "",
-          contextSize: session.settings?.contextSize || getState().settings.contextSize,
-          useAI: session.settings?.useAI ?? getState().settings.useAI,
-          // BUILD-04 CR9: absent in every session file written before
-          // BUILD-04, where 0 is exactly the right default (keep every
-          // detection), so an older session behaves as it always did.
-          minConfidence: session.settings?.minConfidence ?? 0,
-          // BUILD-04 CR13: absent in older files, where the shipped
-          // defaults are the right thing to fall back to.
-          smartDetect: { ...SMART_DETECT_DEFAULTS, ...(session.settings?.smartDetect ?? {}) },
-        },
+    for (const input of panel.querySelectorAll(".meta-value")) {
+      input.addEventListener("change", () => {
+        const i = parseInt(input.dataset.idx, 10);
+        review.fields[i].finalValue = input.value;
+        setMetaReview(docName, review);
       });
-      addEntities((session.entities ?? []).map((e) => ({
-        category: e.category, canonical: e.canonical, manualVariants: e.manualVariants ?? [],
-      })));
-      feedback("Session loaded. Values, allowlist, patterns, rules and settings were restored.", false);
-    } catch (err) {
-      feedback(String(err?.message ?? err), true);
     }
+    for (const keep of panel.querySelectorAll(".meta-keep")) {
+      keep.addEventListener("click", () => {
+        const i = parseInt(keep.dataset.idx, 10);
+        review.fields[i].finalValue = review.fields[i].value;
+        setMetaReview(docName, review);
+      });
+    }
+    panel.querySelector(".meta-filename")?.addEventListener("change", (ev) => {
+      review.filename = ev.target.value;
+      setMetaReview(docName, review);
+    });
+    panel.querySelector(".meta-cancel")?.addEventListener("click", () =>
+      setMetaReview(docName, null));
+
+    panel.querySelector(".meta-export")?.addEventListener("click", async () => {
+      const reviewed = review.fields.map((f) => ({
+        part: f.part, name: f.name, value: f.finalValue,
+      }));
+      const filename = review.filename;
+      try {
+        await saveSameFormat(docName, review.ext, reviewed, filename);
+        setMetaReview(docName, null);
+        // "warn" rather than "ok": it worked AND the result needs care, because a
+        // same-format copy looks exactly like the original.
+        notify(EXPORT.sameFormatDone(filename), "warn");
+      } catch (err) {
+        notify(String(err?.message ?? err), "warn");
+      }
+    });
+  }
+}
+
+function wireNewBatch(container) {
+  container.querySelector("#btn-new-batch")?.addEventListener("click", async () => {
+    const ok = await askConfirm({
+      title: EXPORT.newBatchTitle,
+      body: EXPORT.newBatchBody,
+      confirmLabel: EXPORT.newBatchConfirm,
+    });
+    if (!ok) return;
+    startNewBatch();
+    notify(EXPORT.newBatchDone, "info");
   });
 }

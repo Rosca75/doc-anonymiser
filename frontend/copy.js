@@ -538,6 +538,131 @@ export const ANONYMISE = {
   },
 };
 
+// Export screen copy (BUILD-05 Phase 8).
+export const EXPORT = {
+  /** subtitle(total, docs) is the Export card's read-out. */
+  subtitle(total, docs) {
+    if (docs === 0) return "Nothing to export yet.";
+    return `${total} replacement${total === 1 ? "" : "s"} across ` +
+      `${docs} document${docs === 1 ? "" : "s"}. Choose what leaves this machine.`;
+  },
+  needsRun: "Run the anonymisation first.",
+
+  destination: "Destination folder",
+  destinationPlaceholder: "choose a folder for the batch",
+  browse: "Browse",
+  zip: "EXPORT ALL AS ZIP",
+  zipTooltip: "Writes one zip into the destination folder, with no further dialog. The zip holds the anonymised documents only, never the key.",
+  zipNeedsFolder: "Choose a destination folder first, with Browse.",
+  /** zipDone(path) names the file that was written. */
+  zipDone(path) {
+    return `Batch exported to ${path}.`;
+  },
+  anonSuffixHint: "Every file saves with an _anon suffix. Your source files are never changed.",
+
+  // Value mapping: the re-identification key.
+  mappingTitle: "Value mapping",
+  keyTag: "RE-IDENTIFICATION KEY",
+  mappingHint: "Maps every placeholder back to its original value. Handle it like the originals themselves.",
+  keyWarningBody: "This file contains the re-identification key: anyone holding it can map every placeholder back to the real value. Store it as carefully as the original documents.",
+  mappingCsvTitle: "Export the value mapping as CSV",
+  mappingCsvConfirm: "Export CSV",
+  mappingCsvDone: "Value mapping exported as CSV. Keep it with the originals.",
+  mappingJsonTitle: "Export the value mapping as JSON",
+  mappingJsonConfirm: "Export JSON",
+  mappingJsonDone: "Value mapping exported as JSON. Keep it with the originals.",
+
+  // Report: contains no original values, so no warning and no tint.
+  reportTitle: "Report",
+  reportHint: "Counts per category, the settings used and any skipped files. Contains no original values.",
+  markdown: "Markdown",
+  /** reportSummary(n) is the folded card's read-out. */
+  reportSummary(n) {
+    return `${n} categor${n === 1 ? "y" : "ies"}`;
+  },
+  reportJsonDone: "Report exported as JSON.",
+  reportMdDone: "Report exported as Markdown.",
+
+  // Session.
+  sessionTitle: "Session",
+  sessionSummary: "reuse placeholders",
+  sessionHint: "Saves values, allowlist, patterns, rules and the placeholder registry, so a follow-up batch reuses the same placeholders. Contains the key.",
+  save: "Save",
+  load: "Load",
+  sessionSaveTitle: "Save the session file",
+  sessionSaveConfirm: "Save session",
+  sessionSaveDone: "Session saved. A follow-up batch will reuse these placeholders.",
+  sessionLoadDone: "Session loaded: values, allowlist, patterns and rules restored.",
+
+  // The document list.
+  documentsTitle: "Documents",
+  /** documentsSummary(total) is the read-out beside the heading. */
+  documentsSummary(total) {
+    return `${total} replacement${total === 1 ? "" : "s"}, _anon suffix`;
+  },
+  oneAtATime: "SAVE ONE FILE AT A TIME",
+  noResults: "No results yet. Run the anonymisation first.",
+  loadingFormats: "reading the formats...",
+  /** rowMeta(replacements, properties) is one row's second line. */
+  rowMeta(replacements, properties) {
+    const base = `${replacements} replacement${replacements === 1 ? "" : "s"}`;
+    if (!properties) return base;
+    return `${base}, ${properties} propert${properties === 1 ? "y" : "ies"}`;
+  },
+  /** sameFormatLabel(ext) labels a same-format button. */
+  sameFormatLabel(ext) {
+    return `.${ext} (same format)`;
+  },
+  nativeCaption: "Keeps the original layout. Your source file is not changed.",
+  pdfCaption: "Experimental: a simplified layout, not a copy of the original design. Your source file is not changed.",
+  plainCaption: "A plain export of the anonymised text.",
+  copyTooltip: "Copy the anonymised text",
+  /** savedPlain / copied report a per-document action. */
+  savedPlain(name, ext) {
+    return `${name} saved as .${ext}.`;
+  },
+  copied(name) {
+    return `${name} copied to the clipboard as anonymised text.`;
+  },
+
+  // The properties review.
+  /** reviewTitle(doc) names the file under review. */
+  reviewTitle(doc) {
+    return `Properties review: ${doc}`;
+  },
+  reviewHint: "These properties travel inside the file, so a document whose text is anonymised but whose Author field still names the person is not anonymised. Edit a value, or keep the original. Nothing is rewritten without your review.",
+  property: "Property",
+  current: "Current",
+  willBecome: "Will become",
+  keepOriginal: "keep original",
+  keepOriginalTooltip: "Put the original value back in this field",
+  unchanged: "unchanged",
+  noProperties: "This file carries no document properties to review.",
+  fileName: "File name",
+  close: "Close",
+  /** exportCopy(ext) labels the review's own export button. */
+  exportCopy(ext) {
+    return `Export .${ext} copy`;
+  },
+  /** reviewAlreadyOpen(doc) explains a second click on the same button. */
+  reviewAlreadyOpen(doc) {
+    return `The properties review for ${doc} is already open below.`;
+  },
+  /** sameFormatDone(filename) confirms a same-format write. */
+  sameFormatDone(filename) {
+    return `${filename} written. It looks exactly like the original, so store it accordingly. Your source file was not changed.`;
+  },
+
+  // The footer.
+  finishHint: "Exports are written only when you press a save button",
+  newBatch: "START A NEW BATCH",
+  newBatchTooltip: "Clear this batch and keep your settings",
+  newBatchTitle: "Start a new batch?",
+  newBatchBody: "This clears the imported documents, the run and its result, the values, the suggestions, the patterns and the find and replace rules. Your settings, your document country and your never anonymise list are kept, and so is the placeholder registry, so a follow-up batch reuses the same placeholders for the same values.",
+  newBatchConfirm: "Clear the batch",
+  newBatchDone: "Batch cleared. Drop new files on the Import step; your settings were kept.",
+};
+
 // Per-category checkbox labels and one-line examples (BUILD-02 Phase 6b).
 // Keys match engine category identifiers.
 //

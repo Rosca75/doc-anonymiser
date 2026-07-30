@@ -165,6 +165,13 @@ const initialState = {
   // structuredClone, which cannot copy a function).
   confirm: null,
 
+  // The destination folder for the batch zip (BUILD-05 Phase 3, decision 4), or
+  // "" when none has been chosen. It is FRONTEND state, not a Go setting: it is
+  // a convenience for one batch and has no business sitting in a session file
+  // next to the re-identification key. It drives the zip and nothing else;
+  // every other export keeps its own save dialog.
+  exportDir: "",
+
   // Same-format metadata review state per document (BUILD-02 Phase 12):
   // {docName: {ext, filename, fields: [{part, name, value, proposed,
   // changed, finalValue}]}}. Decisions persist for the session so the
@@ -1278,6 +1285,78 @@ export function setMetaReview(docName, review) {
   if (review === null) delete next[docName];
   else next[docName] = review;
   setState({ metaReview: next });
+}
+
+/**
+ * setExportDir(dir) remembers the folder the batch zip will be written to.
+ * @param {string} dir an absolute path, or "" to forget it
+ * @returns {string} the stored value
+ */
+export function setExportDir(dir) {
+  const value = (dir ?? "").trim();
+  setState({ exportDir: value });
+  return value;
+}
+
+/**
+ * startNewBatch() clears THIS batch and keeps the setup (BUILD-05 Phase 8).
+ *
+ * The split is the whole point, so it is spelled out rather than left to a
+ * reader of the object literal:
+ *
+ *   CLEARED   the documents, the run and everything it produced (results, the
+ *             mapping, the pending values, the dismissed warnings), the values
+ *             and suggestions, the custom patterns, the find-and-replace rules,
+ *             and the per-document metadata review decisions. All of it is about
+ *             the batch that just finished.
+ *   KEPT      the settings (categories, confidence, smart-detection tuning, the
+ *             Ollama connection), the document country, and the never-anonymise
+ *             list. All of it is about HOW this user works, and re-entering it
+ *             for every batch is exactly the tedium the button exists to avoid.
+ *
+ * The MAPPING is cleared, and that matters for more than tidiness: it is the
+ * re-identification key of the previous batch, and leaving it in memory across
+ * an explicit "start again" would keep sensitive data alive with nothing on
+ * screen referring to it.
+ *
+ * The Go-side registry is deliberately NOT reset here. A follow-up batch reusing
+ * the same placeholders for the same real-world values is the documented
+ * behaviour of a session (CLAUDE.md §5), and this button starts a new batch
+ * within a session rather than a new session.
+ *
+ * The wizard returns to Import, because that is the only step a cleared batch can
+ * stand on.
+ *
+ * @returns {object} what was cleared, for the confirming caller's notice
+ */
+export function startNewBatch() {
+  const cleared = {
+    documents: state.documents.length,
+    values: state.entities.length,
+    rules: state.simpleRules.length,
+  };
+  setState({
+    step: "import",
+    documents: [],
+    previewDoc: null,
+    importErrors: [],
+    entities: [],
+    candidates: [],
+    patterns: [],
+    simpleRules: [],
+    discovery: null,
+    running: false,
+    progress: null,
+    results: null,
+    mapping: null,
+    resultDoc: null,
+    pendingValues: [],
+    dismissedWarnings: [],
+    metaReview: {},
+    exportDir: state.exportDir,
+    notice: null,
+  });
+  return cleared;
 }
 
 // --- Allowlist / pattern reducers ---------------------------------------------

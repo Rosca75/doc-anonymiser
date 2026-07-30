@@ -378,6 +378,9 @@ export function wireGroups(container, onToggle) {
  * @param {string} [opts.nextTitle] tooltip, normally why it is disabled
  * @param {boolean} [opts.standalone] render as a card of its own rather than
  *   as the foot of the workspace card
+ * @param {string} [opts.rightHTML] trusted markup REPLACING the primary button.
+ *   The last step of the wizard uses it: there is nothing to continue to, and
+ *   its right-hand action must not look like the other screens' CONTINUE.
  * @returns {string} safe HTML
  */
 export function stepFooter(opts = {}) {
@@ -386,7 +389,7 @@ export function stepFooter(opts = {}) {
       kind: "ghost", id: opts.backId, icon: "arrow_back", cls: "step-back",
     })
     : `<span></span>`; // keeps the primary button justified right on step 1
-  const next = button(opts.nextLabel ?? "", {
+  const next = opts.rightHTML ?? button(opts.nextLabel ?? "", {
     kind: "primary", id: opts.nextId, icon: "arrow_forward",
     cls: "step-next", disabled: !!opts.nextDisabled, title: opts.nextTitle,
   });
