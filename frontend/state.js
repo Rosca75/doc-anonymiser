@@ -10,6 +10,10 @@
 // unit-testable with `node --test` (state.test.js), the reason views must
 // stay logic-free (BUILD.md Phase 6).
 
+import {
+  COUNTRIES, DEFAULT_COUNTRY, countryIDCategories, COUNTRY_ID_CATEGORIES,
+} from "./countries.js";
+
 // WIZARD_STEPS defines the fixed wizard order (CLAUDE.md wizard flow).
 //
 // BUILD-05 cut five steps to four: Configure stopped being a screen and
@@ -63,6 +67,13 @@ const initialState = {
 
   // Name of the document selected in the preview pane (or null).
   previewDoc: null,
+
+  // The DOCUMENT COUNTRY (BUILD-05 Phase 5, decision 2), an entry code from
+  // countries.js. It is frontend-only and does exactly two things: it swaps the
+  // example strings beside the phone / VAT / national identification labels,
+  // and it switches the three country-specific ID categories. There is no
+  // locale-aware engine behind it and engine/pii.go is untouched.
+  documentCountry: DEFAULT_COUNTRY,
 
   // Settings mirror (source of truth lives in Go; this copy renders the
   // Configure screen): {level, categories, ollamaPort, model}. level is
@@ -159,6 +170,9 @@ const initialState = {
 // Category keys, split by preset tier. Must stay in sync with the Go side
 // (engine/pipeline.go AllPIICategories / AllEntityCategories).
 export const HARD_PII_CATEGORIES = ["email", "url", "iban", "vat", "matricule", "phone"];
+// COUNTRIES_BY_CODE is the membership check setDocumentCountry needs: a Set
+// rather than a repeated find(), and built once at module load.
+const COUNTRIES_BY_CODE = new Set(COUNTRIES.map((c) => c.code));
 // The extended recognizers BUILD-03 added to the engine. They are HARD
 // PII exactly like the group above, so every preset switches them on
 // (engine/pipeline.go PresetSelection). BUILD-04 CR9 finally surfaces
@@ -345,7 +359,20 @@ export function answerConfirm(answer) {
  */
 export function applyPreset(level) {
   setState({
-    settings: { ...state.settings, level, categories: presetCategories(level) },
+    settings: {
+      ...state.settings,
+      level,
+      // The preset, then the CURRENT COUNTRY's identifier switches on top of it
+      // (BUILD-05 Phase 5). Every preset switches all three country-specific
+      // identifiers on, because to the engine they are hard PII; re-applying the
+      // country here is what stops picking a preset silently re-enabling the
+      // German tax identifier on a French document. The country is an
+      // orthogonal choice, so a preset must not overrule it.
+      categories: {
+        ...presetCategories(level),
+        ...countryIDCategories(state.documentCountry),
+      },
+    },
   });
 }
 
@@ -394,6 +421,48 @@ export function setCategoryGroup(keys, on) {
   }
   if (changed) setState({ settings: { ...state.settings, categories } });
   return changed;
+}
+
+/**
+ * setDocumentCountry(code) records the document country and applies its
+ * consequence: the three country-specific ID categories are switched to match
+ * (BUILD-05 Phase 5, decision 2).
+ *
+ * Both halves happen in ONE state change, so the country selector repaints once
+ * rather than three times, and so the country and the switches can never be
+ * observed disagreeing.
+ *
+ * The switch set is applied WHOLE, not additively: picking France turns the
+ * German and Spanish identifiers OFF rather than leaving them on beside
+ * nothing. That is the behaviour the mock-up's script has, and it is the only
+ * one that makes the control mean anything.
+ *
+ * An unknown code is REJECTED rather than stored, because the country drives
+ * which categories are on: silently accepting a code the table does not know
+ * would leave the selector showing one country and the switches set for
+ * another.
+ *
+ * @param {string} code a country code from countries.js
+ * @returns {string|null} the stored code, or null when rejected
+ */
+export function setDocumentCountry(code) {
+  const applies = countryIDCategories(code);
+  // countryIDCategories falls back to the default for an unknown code, so the
+  // membership check has to happen here rather than being inferred from it.
+  if (!COUNTRIES_BY_CODE.has(code)) return null;
+
+  const categories = { ...state.settings.categories };
+  for (const key of COUNTRY_ID_CATEGORIES) {
+    // Guard against a table that drifts ahead of ALL_CATEGORIES: a switch for a
+    // category the engine does not know does nothing, so do not invent one.
+    if (!ALL_CATEGORIES.includes(key)) continue;
+    categories[key] = applies[key];
+  }
+  setState({
+    documentCountry: code,
+    settings: { ...state.settings, categories },
+  });
+  return code;
 }
 
 /**
@@ -469,7 +538,15 @@ export function smartDetectOptions(s = state) {
 export function selectionPresetName(categories) {
   for (const level of ["soft", "medium", "advanced"]) {
     const preset = presetCategories(level);
-    if (ALL_CATEGORIES.every((c) => !!categories?.[c] === preset[c])) return level;
+    // The three country-specific identifiers are EXCLUDED from the comparison
+    // (BUILD-05 Phase 5). They are driven by the country selector, not by the
+    // preset, so a Luxembourg document (all three off) would otherwise read as
+    // "Custom" the instant the user picked Standard, which makes the preset
+    // chips look broken. The country is a separate axis and the chip reports
+    // the preset axis only.
+    const matches = ALL_CATEGORIES.every((c) =>
+      COUNTRY_ID_CATEGORIES.includes(c) || !!categories?.[c] === preset[c]);
+    if (matches) return level;
   }
   return "custom";
 }
@@ -601,9 +678,19 @@ export const STEP_RESETS = {
   // because that is now one screen: resetting half of it would leave a
   // category selection that no longer matches the values it produced.
   identify: () => ({
+    documentCountry: DEFAULT_COUNTRY,
     settings: {
       ...state.settings,
-      categories: presetCategories(state.settings.level),
+      // The preset first, then the DEFAULT COUNTRY's identifier switches on top
+      // of it. Order matters: every preset switches all three country-specific
+      // identifiers on (they are hard PII to the engine), so applying the
+      // preset alone would leave the rail showing Luxembourg with the German
+      // and Spanish tax identifiers active, which is precisely the disagreement
+      // setDocumentCountry exists to prevent.
+      categories: {
+        ...presetCategories(state.settings.level),
+        ...countryIDCategories(DEFAULT_COUNTRY),
+      },
       minConfidence: 0,
       smartDetect: { ...SMART_DETECT_DEFAULTS },
     },

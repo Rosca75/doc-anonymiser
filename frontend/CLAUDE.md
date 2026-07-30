@@ -123,7 +123,10 @@ Windows it steals focus from the window it belongs to.
 - `countries.js` — pure document-country table: the per-country example
   strings for the phone / VAT / national-identification labels and the three
   country-specific ID categories. Frontend only; there is no locale-aware
-  engine behind it (BUILD-05 decision 2).
+  engine behind it (BUILD-05 decision 2). The country is an ORTHOGONAL axis to
+  the preset: `applyPreset` re-applies it, and `selectionPresetName` excludes
+  the three country-driven categories from its comparison, so picking Standard
+  on a Luxembourg document does not read as "Custom".
 - `toast.js` — the state-backed notice strip (`state.notice`).
 - `modal.js` — the in-app confirm, returning `Promise<boolean>`.
 - `scroll.js` — scroll-position preservation across re-renders.

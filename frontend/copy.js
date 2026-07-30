@@ -190,6 +190,60 @@ export const CONFIGURE = {
   confidenceScale: "Above 80, the values that only the local AI suggested are left alone. Above 95, the values you listed yourself are left alone too, and only pattern matches remain.",
 };
 
+/**
+ * categoryLabels(examples) returns CATEGORY_LABELS with the country-dependent
+ * examples replaced (BUILD-05 Phase 5).
+ *
+ * @param {Record<string,string>} examples category key to example string, as
+ *   countries.js examplesFor() produces
+ * @returns {Record<string,string[]>} a fresh label table, never a mutated one
+ */
+export function categoryLabels(examples = {}) {
+  const out = { ...CATEGORY_LABELS };
+  for (const [key, example] of Object.entries(examples)) {
+    const existing = out[key];
+    if (!existing) continue; // an example for a category with no label is a no-op
+    out[key] = [existing[0], `For example ${example}`];
+  }
+  return out;
+}
+
+// Identify RAIL copy (BUILD-05 Phase 5): the four tabs and the Scope tab's
+// section labels. The category labels and the confidence copy stay in CONFIGURE
+// below, which is where they were and where the parity guard looks.
+export const RAIL = {
+  tabsLabel: "Configure sections",
+  tabScope: "Scope",
+  tabSmart: "Smart detection",
+  tabLocalAI: "Local AI",
+  tabCloudAI: "Cloud AI",
+
+  country: "Document country",
+  countryHint: "The phone, VAT and national identification examples follow this country's formats, and the matching national identifiers are switched on. It changes nothing else about how detection works.",
+  preset: "Preset",
+  whatToAnonymise: "What to anonymise",
+
+  /** activeCount(n, total) is the rail heading's read-out. */
+  activeCount(n, total) {
+    return `${n} of ${total} categories on`;
+  },
+
+  ollamaDetected: "Ollama detected",
+  ollamaMissing: "Ollama not detected",
+  hostLocked: "The host is locked to 127.0.0.1; only the port can be changed.",
+  port: "Port",
+  model: "Model",
+  contextSize: "Context",
+  noModels: "(no models found)",
+  reprobe: "Check again",
+
+  // The Cloud AI placeholder (decision 8). It commits only to the thing that
+  // will not change about the feature: nothing leaves the machine until the user
+  // has said in writing what may.
+  cloudNotYet: "Not available yet",
+  cloudBody: "Connecting to a cloud endpoint is not built yet. When it is, this is where you will pick the provider, the model and the endpoint, and confirm in writing what may leave this machine before anything is sent.",
+};
+
 // Values step copy (BUILD-04 Phase 5): the smart-detection tuning block
 // (CR13) and the suggestions table (CR14/CR15).
 export const VALUES = {
@@ -222,6 +276,17 @@ export const VALUES = {
 
 // Per-category checkbox labels and one-line examples (BUILD-02 Phase 6b).
 // Keys match engine category identifiers.
+//
+// THE DECLARATION SHAPE MATTERS: ../category_parity_test.go matches on
+// "\n  key: [", so every entry must stay a two-element array literal opening on
+// its own line with exactly two spaces of indent. That guard is what catches a
+// recognizer added to the engine and forgotten here.
+//
+// Three of the examples are country-dependent (phone, vat, matricule). They
+// carry a Luxembourg default here and are OVERLAID at render time by
+// countries.js examplesFor(), so the rail shows a French number for a French
+// document (BUILD-05 Phase 5, decision 2). Overlaying rather than storing five
+// variants keeps this table one row per category and keeps the guard working.
 export const CATEGORY_LABELS = {
   email: ["Email addresses", "For example jean.muller@example.com"],
   phone: ["Phone numbers", "For example +352 621 123 456"],

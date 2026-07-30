@@ -10,6 +10,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  COUNTRIES, DEFAULT_COUNTRY, countryIDCategories, COUNTRY_ID_CATEGORIES,
+} from "./countries.js";
+
+import {
   getState, setState, resetState, subscribe,
   WIZARD_STEPS, canGoTo, goTo, nextStep, prevStep,
   goToScreen,
@@ -19,6 +23,7 @@ import {
   moveVariant, entityAutocomplete, reassignOriginal,
   applyImportResult,
   setNotice, clearNotice, NOTICE_TONES,
+  setDocumentCountry,
   askConfirm, answerConfirm,
 } from "./state.js";
 
@@ -286,7 +291,12 @@ test("buildRunRequest carries the category selection", () => {
   resetState();
   applyPreset("soft");
   const req = buildRunRequest(false);
-  assert.deepEqual(req.categories, presetCategories("soft"));
+  // The preset plus the country's identifier switches, which is what the rail
+  // actually shows and therefore what the pipeline must obey.
+  assert.deepEqual(req.categories, {
+    ...presetCategories("soft"),
+    ...countryIDCategories(DEFAULT_COUNTRY),
+  });
   toggleCategory("iban", false);
   assert.equal(buildRunRequest(false).categories.iban, false);
 });
@@ -828,7 +838,15 @@ test("resetStep(identify) restores the preset and the detection defaults", () =>
 
   assert.equal(resetStep("identify"), true);
   const s = getState();
-  assert.deepEqual(s.settings.categories, presetCategories(s.settings.level));
+  // The preset, with the DEFAULT COUNTRY's identifier switches on top. Every
+  // preset switches all three country-specific identifiers on, because to the
+  // engine they are hard PII, so the reset has to re-apply the country or the
+  // rail would show Luxembourg beside an active German tax identifier.
+  assert.deepEqual(s.settings.categories, {
+    ...presetCategories(s.settings.level),
+    ...countryIDCategories(DEFAULT_COUNTRY),
+  });
+  assert.equal(s.documentCountry, DEFAULT_COUNTRY);
   assert.equal(s.settings.minConfidence, 0);
   assert.deepEqual(s.settings.smartDetect, SMART_DETECT_DEFAULTS);
 });
@@ -1024,4 +1042,109 @@ test("the notice and the question are cleared by resetState", () => {
   resetState();
   assert.equal(getState().notice, null);
   assert.equal(getState().confirm, null);
+});
+
+// --- The document country (BUILD-05 Phase 5, decision 2) ----------------
+
+test("setDocumentCountry records the country and switches its identifiers", () => {
+  resetState();
+  assert.equal(getState().documentCountry, DEFAULT_COUNTRY);
+
+  assert.equal(setDocumentCountry("DE"), "DE");
+  let s = getState();
+  assert.equal(s.documentCountry, "DE");
+  assert.equal(s.settings.categories.de_steuer_id, true);
+  assert.equal(s.settings.categories.es_nif, false);
+  assert.equal(s.settings.categories.uk_nhs, false);
+});
+
+test("switching country turns the previous country's identifier OFF", () => {
+  // The whole point of the control: Germany then France must not leave the
+  // German tax identifier active beside nothing.
+  resetState();
+  setDocumentCountry("DE");
+  assert.equal(getState().settings.categories.de_steuer_id, true);
+  setDocumentCountry("FR");
+  const s = getState();
+  assert.equal(s.documentCountry, "FR");
+  for (const key of COUNTRY_ID_CATEGORIES) {
+    assert.equal(s.settings.categories[key], false, `${key} must be off for France`);
+  }
+});
+
+test("setDocumentCountry touches NOTHING but the three identifiers", () => {
+  resetState();
+  const before = { ...getState().settings.categories };
+  setDocumentCountry("UK");
+  const after = getState().settings.categories;
+  for (const key of Object.keys(before)) {
+    if (COUNTRY_ID_CATEGORIES.includes(key)) continue;
+    assert.equal(after[key], before[key],
+      `${key} changed, but the country only decides the three national identifiers`);
+  }
+});
+
+test("setDocumentCountry rejects an unknown code instead of storing it", () => {
+  // Storing a code the table does not know would leave the selector showing one
+  // country and the switches set for another.
+  resetState();
+  setDocumentCountry("ES");
+  const snapshot = { ...getState().settings.categories };
+  for (const bad of ["ZZ", "", undefined, null, "de"]) {
+    assert.equal(setDocumentCountry(bad), null, JSON.stringify(bad));
+    assert.equal(getState().documentCountry, "ES", "the stored country must not change");
+    assert.deepEqual(getState().settings.categories, snapshot);
+  }
+});
+
+test("setDocumentCountry repaints exactly once", () => {
+  // Both halves of the change land in ONE setState, so the country and its
+  // switches can never be observed disagreeing, and a long category list is not
+  // re-rendered four times.
+  resetState();
+  let paints = 0;
+  const off = subscribe(() => paints++);
+  setDocumentCountry("DE");
+  assert.equal(paints, 1);
+  off();
+});
+
+test("a preset does not overrule the country's identifier choice", () => {
+  // presetCategories() switches all three national identifiers ON, because to
+  // the engine they are hard PII. The country is an ORTHOGONAL choice, so
+  // applyPreset re-applies it: picking Soft on a German document must not
+  // silently start looking for Spanish tax numbers.
+  resetState();
+  setDocumentCountry("DE");
+  for (const level of ["soft", "medium", "advanced"]) {
+    applyPreset(level);
+    const categories = getState().settings.categories;
+    assert.equal(categories.de_steuer_id, true, `${level}: Germany's identifier stays on`);
+    assert.equal(categories.es_nif, false, `${level}: Spain's must not come back`);
+    assert.equal(categories.uk_nhs, false, `${level}: the UK's must not come back`);
+  }
+});
+
+test("the preset chip does not read Custom just because of the country", () => {
+  // The three country-driven identifiers are excluded from the preset
+  // comparison. Otherwise a Luxembourg document, where all three are off, would
+  // show "Custom" the instant the user picked Standard, which makes the chips
+  // look broken.
+  resetState();
+  for (const code of COUNTRIES.map((c) => c.code)) {
+    setDocumentCountry(code);
+    for (const level of ["soft", "medium", "advanced"]) {
+      applyPreset(level);
+      assert.equal(selectionPresetName(getState().settings.categories), level,
+        `${code} + ${level} must still read as ${level}`);
+    }
+  }
+});
+
+test("a real category change still reads as Custom", () => {
+  // The exclusion must not swallow genuine divergence.
+  resetState();
+  applyPreset("medium");
+  toggleCategory("email", false);
+  assert.equal(selectionPresetName(getState().settings.categories), "custom");
 });

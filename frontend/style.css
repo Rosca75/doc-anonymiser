@@ -719,24 +719,81 @@ input, select {
 .banner.warn  { background: var(--gray-6); border: 1px solid var(--warn); color: var(--text); }
 .banner .dismiss { border: none; background: none; font-weight: 700; }
 
-/* --- Configure sub-tabs (BUILD-02 Phase 6a) -------------------------------- */
+/* --- Identify rail (BUILD-05 Phase 5) ------------------------------------ */
 
-.subtabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+/* The rail's own tab row sits between the head and the body, so it does not
+   scroll with the tab's content. */
+.rail-tabs {
+  flex: none;
+  padding: 0.75rem 1.4rem;
+  border-bottom: 1px solid var(--gray-5);
+}
 
-/* Panel-header actions (BUILD-04 CR10 select-all, CR11 clear-all). They
-   stay quiet ghost buttons: a bulk action is not the hero of the view. */
-.panel-head-right .btn-ghost { font-size: 0.85rem; padding: 0.2rem 0.5rem; }
+/* One block of the Scope tab: a section label, its control, and its hint. The
+   rail's card-body already spaces the blocks apart, so a block only has to
+   space its own parts. */
+.rail-block { display: flex; flex-direction: column; gap: 0.6rem; }
+.rail-block .hint { margin: 0; line-height: 1.5; }
 
-/* Detection confidence slider (BUILD-04 CR9). The read-out sits next to
-   the track so the number and its plain-language effect are read
-   together. */
-#min-confidence { flex: 1; min-width: 12rem; max-width: 24rem; accent-color: var(--accent); }
-#min-confidence-value {
-  font-family: var(--font-mono); font-size: 0.9rem;
+.rail-select { width: 100%; padding: 0.5rem; cursor: pointer; }
+
+/* A labelled field: the label keeps a fixed measure so the inputs of a tab line
+   up in a column, which is what makes a stack of them read as one form. */
+.rail-field {
+  display: grid; grid-template-columns: 1fr 6rem; gap: 0.6rem;
+  align-items: center; font-size: 0.85rem;
+}
+.rail-field-label { color: var(--text); }
+.rail-field input, .rail-field select { width: 100%; min-width: 0; }
+
+.rail-status { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.rail-status .hint { font-size: 0.78rem; }
+
+/* The confidence slider and its read-out sit on one line, so the number and the
+   sentence explaining it are read together. */
+.rail-slider { display: flex; align-items: center; gap: 0.75rem; }
+.rail-slider input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.rail-slider output {
+  font-family: var(--font-mono); font-size: 0.85rem;
   min-width: 2.5rem; text-align: right;
 }
-.preset-chip { cursor: pointer; }
-.preset-chip.active { border-bottom-color: var(--accent); background: var(--gray-6); font-weight: 700; }
+
+/* One category row: a checkbox, its label, and its example right-aligned and
+   truncated. The example is a reminder of the FORMAT, so losing its tail to an
+   ellipsis costs nothing (the full string is the title attribute). */
+.cat-row {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.4rem 0.8rem;
+  border-top: 1px solid var(--gray-6);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.cat-row:first-child { border-top: none; }
+.cat-row:hover { background: var(--surface-subtle); }
+.cat-row input[type="checkbox"] { flex: none; accent-color: var(--text); }
+.cat-label { flex: 1; min-width: 0; }
+.cat-example {
+  flex: none; max-width: 58%;
+  text-align: right; font-size: 0.78rem; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* The Cloud AI placeholder: dashed, because a dashed border is the standard
+   visual language for "this will hold something later" and it stops the panel
+   reading as a control that is merely disabled. */
+.placeholder-panel {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0.75rem;
+  padding: 1.4rem 1.1rem;
+  border: 1px dashed var(--gray-3); border-radius: var(--card-radius);
+  background: var(--surface-subtle);
+}
+.placeholder-panel .hint { margin: 0; line-height: 1.55; }
+
+/* The settings error strip lives at the rail's foot, outside the scrolling
+   body, so a rejected setting cannot scroll out of sight. */
+#settings-error { flex: none; }
+#settings-error:empty { display: none; }
+#settings-error .banner { margin: 0; border-radius: 0; }
 
 /* --- Home / documentation screens ---------------------------------------- */
 
