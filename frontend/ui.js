@@ -70,63 +70,12 @@ export function button(label, opts = {}) {
 // fixed-height card workspace needs. Its copy is card subtitles now
 // (card() below, and copy.js CARDS).
 
-/**
- * panel(id, title, contentHTML, opts) renders a <section class="panel">.
- * When collapsible, the header row carries data-panel-toggle and the
- * section a data-collapsed attribute; wirePanels() (below) attaches the
- * click handler after the view sets innerHTML. Collapsed state is
- * view-local: pass the view's own Set of collapsed panel ids via
- * opts.collapsedSet at render time.
- *
- * contentHTML is trusted view markup (already escaped by its builder);
- * id and title are escaped here.
- *
- * @param {string} id stable panel id (used for state + wiring)
- * @param {string} title panel heading
- * @param {string} contentHTML panel body markup (trusted, pre-escaped)
- * @param {object} [opts]
- * @param {boolean} [opts.collapsible] header toggles the body
- * @param {boolean} [opts.startOpen] initial state when the set has no entry (default true)
- * @param {Set<string>} [opts.collapsedSet] the view's collapsed-panel id set
- * @param {string} [opts.headExtraHTML] trusted markup rendered right of the title (buttons)
- * @returns {string} safe HTML
- */
-export function panel(id, title, contentHTML, opts = {}) {
-  const collapsible = !!opts.collapsible;
-  const startOpen = opts.startOpen ?? true;
-  // The Set records panels the user toggled AWAY from their default.
-  const toggled = opts.collapsedSet?.has(id) ?? false;
-  const collapsed = collapsible && (startOpen ? toggled : !toggled);
-  const chevron = collapsed ? icon("expand_more") : icon("expand_less");
-  return `<section class="panel" id="${escapeHTML(id)}" ${collapsible ? `data-collapsed="${collapsed}"` : ""}>` +
-    `<div class="panel-head${collapsible ? " collapsible" : ""}" ${collapsible ? `data-panel-toggle="${escapeHTML(id)}"` : ""}>` +
-    `<h2>${escapeHTML(title)}</h2>` +
-    `<div class="panel-head-right">${opts.headExtraHTML ?? ""}${collapsible ? `<span class="panel-toggle">${chevron}</span>` : ""}</div>` +
-    `</div>` +
-    `<div class="panel-body">${contentHTML}</div>` +
-    `</section>`;
-}
-
-/**
- * wirePanels(container, collapsedSet, rerender) attaches the collapse
- * toggle to every collapsible panel rendered by panel(). The toggle flips
- * the panel id in the view's Set and calls rerender() so the chevron and
- * body state repaint. Buttons INSIDE the header (headExtraHTML) do not
- * toggle: their clicks are ignored here so actions stay actions.
- * @param {HTMLElement} container the view container after innerHTML
- * @param {Set<string>} collapsedSet the view-local toggled-panel id set
- * @param {Function} rerender re-render callback
- */
-export function wirePanels(container, collapsedSet, rerender) {
-  for (const head of container.querySelectorAll("[data-panel-toggle]")) {
-    head.addEventListener("click", (ev) => {
-      if (ev.target.closest("button, select, input, label") && !ev.target.closest(".panel-toggle")) return;
-      const id = head.dataset.panelToggle;
-      if (collapsedSet.has(id)) collapsedSet.delete(id); else collapsedSet.add(id);
-      rerender();
-    });
-  }
-}
+// panel() and wirePanels() are GONE (BUILD-05 Phase 9). They rendered the
+// collapsible <section class="panel"> that every screen was built from before
+// the relayout. Two things replaced them, and each does one of the two jobs the
+// panel was doing at once: card() is the fixed-height surface with a head that
+// stays put and a body that scrolls, and collapsibleGroup() is the foldable
+// block. Keeping panel() as well would have left three ways to draw a box.
 
 // ===========================================================================
 // The BUILD-05 card kit.

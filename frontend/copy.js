@@ -162,8 +162,6 @@ export const IMPORT = {
 // Configure step copy (BUILD-02 Phase 6). Plain language: no "PII", no
 // abbreviations without an example, full sentences.
 export const CONFIGURE = {
-  tabWhat: "What to anonymise",
-  tabAI: "AI and advanced settings",
   presetHint: "Start from a preset, then adjust the checkboxes if you need to. Changing any checkbox switches the preset to Custom.",
   groupContact: "Contact and account details",
   groupNames: "Names",
@@ -172,22 +170,23 @@ export const CONFIGURE = {
   useAIHint: "When enabled, a language model running on this machine can suggest names to replace and double-check the result. Nothing leaves your computer.",
   contextSizeHint: "Higher values let the AI read longer documents at once but use more memory.",
   aiOffTooltip: "Local AI is turned off. Enable it under Configure, AI and advanced settings.",
-  allowTitle: "Never anonymise these terms",
   allowHint: "Terms in this list survive every pass, even when they also appear as names to replace.",
   // BUILD-04 CR9: the group that surfaces the BUILD-03 recognizers.
   groupTechnical: "Payment, tax and technical identifiers",
   // BUILD-04 CR10: the per-group bulk buttons.
   selectAll: "Select all",
   deselectAll: "Deselect all",
-  // BUILD-04 CR11: the allowlist bulk button.
-  clearAll: "Clear all",
-  clearAllConfirm: "Remove every term from the never anonymise list? The terms the application seeds at startup can be added back by restarting it, or from a CSV.",
   // BUILD-04 CR9: the detection-confidence control. Plain language, with
   // the two thresholds that actually change something spelled out.
   confidenceTitle: "Detection confidence",
   confidenceLabel: "Minimum confidence",
   confidenceHint: "Every detection carries a score for how certain it is. Anything below the minimum you set here is left alone. Keep it at 0 to replace everything that is found, which is how the application behaves by default.",
-  confidenceScale: "Above 80, the values that only the local AI suggested are left alone. Above 95, the values you listed yourself are left alone too, and only pattern matches remain.",
+  // confidenceScale is GONE (BUILD-05 decision 3). It described a source-tiered
+  // rule ("above 80, the values that only the local AI suggested are left
+  // alone") that the engine does not implement: the setting is a floor on a
+  // score, not a rule about who proposed a value. What the floor actually does
+  // at each position is views/identifyrail.js confidenceEffect(), which is
+  // tested for exactly that.
 };
 
 /**
@@ -247,8 +246,9 @@ export const RAIL = {
 // Values step copy (BUILD-04 Phase 5): the smart-detection tuning block
 // (CR13) and the suggestions table (CR14/CR15).
 export const VALUES = {
-  // Smart detection tuning.
-  smartSettingsTitle: "Smart detection settings",
+  // Smart detection tuning. It moved to the Identify RAIL's own tab
+  // (BUILD-05 Phase 5), which RAIL.tabSmart titles, so the block no longer
+  // needs a heading of its own.
   smartSettingsHint: "Smart detection guesses which words are names from how they are written, so it always proposes some things that are not names. These settings decide how strict it is. Set them all to zero, and untick the box, to see everything it can find.",
   smartMinLength: "Shortest value",
   smartMinLengthHint: "Suggestions shorter than this many letters are skipped.",
@@ -259,19 +259,13 @@ export const VALUES = {
   smartMinConfidence: "Minimum certainty",
   smartMinConfidenceHint: "Higher values keep only the strongest suggestions, such as a name followed by a company form or introduced by a title.",
 
-  // Suggestions table.
-  colValue: "Value",
-  colType: "Type",
-  colOccurrences: "Occurrences",
-  colFoundBy: "Found by",
-  colActions: "Actions",
+  // The suggestions table's search box and its two sort tooltips. The column
+  // HEADINGS moved to WORKSPACE (BUILD-05 Phase 6), where they are upper-case
+  // because they sit in a header strip rather than above a form.
   searchPlaceholder: "search values",
-  filterAllTypes: "All types",
   sortValueHint: "Sort by value, A to Z or Z to A.",
   sortCountHint: "Sort by how often the value occurs.",
   noMatchingSuggestions: "No suggestion matches the current search and type filter.",
-  bulkScopeHint: "Applies to the rows shown below, so a search or a type filter limits it too.",
-  denyAllConfirm: (n) => `Reject ${n} suggestion${n === 1 ? "" : "s"}? They are removed from the review list and nothing is replaced.`,
 };
 
 // The never-anonymise editor (BUILD-05 Phase 6). The list wins over every pass,

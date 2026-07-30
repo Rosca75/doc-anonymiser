@@ -15,11 +15,11 @@ import {
 
 import {
   getState, setState, resetState, subscribe,
-  WIZARD_STEPS, canGoTo, goTo, nextStep, prevStep,
+  WIZARD_STEPS, canGoTo, goTo, nextStep,
   goToScreen,
   applyPreset, toggleCategory, selectionPresetName, presetCategories,
   setUseAI, defaultUseAIFromProbe, llmEnabled,
-  addCandidates, acceptCandidate, rejectCandidate, updateCandidate, acceptAllInCategory,
+  addCandidates, acceptCandidate, rejectCandidate,
   moveVariant, entityAutocomplete, reassignOriginal,
   applyImportResult,
   setNotice, clearNotice, NOTICE_TONES,
@@ -64,15 +64,19 @@ test("guards: unknown step is rejected", () => {
   assert.equal(canGoTo("teleport"), false);
 });
 
-test("next/prev walk the wizard linearly and respect guards", () => {
+test("nextStep walks the wizard forward and respects the guards", () => {
+  // There is no prevStep() any more (BUILD-05 Phase 9): moving BACK goes through
+  // nav.js goBack(), which asks the reset question first. A reducer that moved
+  // back without asking was a way around that rule.
   resetState();
   assert.equal(nextStep(), false, "cannot advance with no documents");
   setState({ documents: [{ name: "a.txt" }] });
   assert.equal(nextStep(), true);
   assert.equal(getState().step, "identify");
-  assert.equal(prevStep(), true);
-  assert.equal(getState().step, "import");
-  assert.equal(prevStep(), false, "cannot go back from the first step");
+  assert.equal(nextStep(), true);
+  assert.equal(getState().step, "anonymise");
+  assert.equal(nextStep(), false, "export needs results");
+  assert.equal(getState().step, "anonymise");
 });
 
 test("applyImportResult updates documents, errors and preview selection", () => {
@@ -98,7 +102,7 @@ test("applyImportResult updates documents, errors and preview selection", () => 
 // --- Phase 7: entity review reducers -----------------------------------------
 
 import {
-  addEntities, setEntityStatus, editEntity, removeEntity,
+  addEntities, removeEntity,
   setEntityVariants, addManualVariant, acceptedEntities,
   addAllowTerm, removeAllowTerm, addPattern, removePattern, validPatterns,
 } from "./state.js";
@@ -117,28 +121,19 @@ test("addEntities dedupes case-insensitively and defaults to accepted", () => {
   assert.equal(s.entities[0].status, "accepted");
 });
 
-test("accept/deny reducers flip status; acceptedEntities filters", () => {
+test("acceptedEntities filters on status, as the belt to a removed brace", () => {
+  // setEntityStatus() is gone (BUILD-05 Phase 9): the redesign has no denied
+  // state, so nothing can produce one. The filter stays, because a row that
+  // somehow arrived denied must still not reach the pipeline, and asserting it
+  // directly is the only way to keep that guard honest now that no reducer
+  // exercises it.
   resetState();
   addEntities([{ category: "client_names", canonical: "Alpine Trust" }]);
-  setEntityStatus("client_names", "Alpine Trust", "denied");
-  assert.equal(getState().entities[0].status, "denied");
-  assert.equal(acceptedEntities().length, 0, "denied entities never reach the pipeline");
-  setEntityStatus("client_names", "ALPINE trust", "accepted"); // case-insensitive key
+  assert.equal(getState().entities[0].status, "accepted", "every new value is accepted");
   assert.equal(acceptedEntities().length, 1);
-});
 
-test("editEntity renames, clears variants, and rejects collisions", () => {
-  resetState();
-  addEntities([
-    { category: "client_names", canonical: "Alpine", variants: ["Alpine"] },
-    { category: "client_names", canonical: "Borealis" },
-  ]);
-  assert.equal(editEntity("client_names", "Alpine", "Alpine Trust"), true);
-  const e = getState().entities[0];
-  assert.equal(e.canonical, "Alpine Trust");
-  assert.equal(e.variants, null, "variants must be back to pending (null) after a rename");
-  assert.equal(editEntity("client_names", "Alpine Trust", "borealis"), false, "collision rejected");
-  assert.equal(editEntity("client_names", "Alpine Trust", "   "), false, "blank rejected");
+  setState({ entities: getState().entities.map((e) => ({ ...e, status: "denied" })) });
+  assert.equal(acceptedEntities().length, 0, "a denied entity never reaches the pipeline");
 });
 
 test("manual variants dedupe and clear the expansion cache", () => {
@@ -205,7 +200,12 @@ test("buildRunRequest assembles only pipeline-ready inputs", () => {
     { category: "client_names", canonical: "Alpine" },
     { category: "person_names", canonical: "Denied Person" },
   ]);
-  setEntityStatus("person_names", "Denied Person", "denied");
+  // No reducer can deny a value any more (BUILD-05 Phase 9), so the state is set
+  // directly: the point of the test is that buildRunRequest FILTERS on status.
+  setState({
+    entities: getState().entities.map((e) =>
+      e.canonical === "Denied Person" ? { ...e, status: "denied" } : e),
+  });
   addAllowTerm("CSSF");
   addPattern("PRJ-[0-9]+", null);
   addPattern("[", "broken");
@@ -362,33 +362,6 @@ test("reject removes, duplicates and existing entities are skipped", () => {
   assert.equal(getState().entities.length, 1, "reject never touches entities");
 });
 
-test("edit then accept uses the edited text and category", () => {
-  resetState();
-  addCandidates([{ text: "alpin trust", category: "person_names" }], "smart");
-  assert.equal(updateCandidate("alpin trust", { text: "Alpine Trust", category: "client_names" }), true);
-  // A collision with another candidate is rejected.
-  addCandidates([{ text: "Other Co", category: "client_names" }], "smart");
-  assert.equal(updateCandidate("Other Co", { text: "Alpine Trust" }), false);
-
-  acceptCandidate("Alpine Trust");
-  const e = getState().entities[0];
-  assert.equal(e.canonical, "Alpine Trust");
-  assert.equal(e.category, "client_names");
-});
-
-test("bulk accept drains one category only", () => {
-  resetState();
-  addCandidates([
-    { text: "C One", category: "client_names" },
-    { text: "C Two", category: "client_names" },
-    { text: "P One", category: "person_names" },
-  ], "smart");
-  assert.equal(acceptAllInCategory("client_names"), 2);
-  assert.equal(getState().entities.length, 2);
-  assert.equal(getState().candidates.length, 1);
-  assert.equal(getState().candidates[0].text, "P One");
-});
-
 // --- Variant regrouping (BUILD-02 Phase 9d) ------------------------------------
 
 test("moveVariant happy path: source excludes, target gains, both re-pend", () => {
@@ -528,7 +501,7 @@ test("a failed documentation open is recorded as a dismissible shell error", () 
 
 import {
   EXTENDED_PII_CATEGORIES, ALL_CATEGORIES,
-  setCategoryGroup, setMinConfidence, clearAllowlist,
+  setCategoryGroup, setMinConfidence,
 } from "./state.js";
 import { CATEGORY_LABELS } from "./copy.js";
 
@@ -631,30 +604,10 @@ test("minConfidence rejects values outside 0 to 1 (CR9)", () => {
   assert.equal(getState().settings.minConfidence, 0, "a rejected value changes nothing");
 });
 
-test("clearAllowlist empties the list and reports the count (CR11)", () => {
-  resetState();
-  for (const term of ["CSSF", "EUR", "GDPR"]) addAllowTerm(term);
-  assert.equal(getState().allowlist.length, 3);
-  assert.equal(clearAllowlist(), 3);
-  assert.deepEqual(getState().allowlist, []);
-  // Clearing an empty list is a no-op that reports zero.
-  assert.equal(clearAllowlist(), 0);
-});
-
-test("clearAllowlist touches nothing but the allowlist (CR11)", () => {
-  resetState();
-  setState({ documents: [{ name: "a.txt" }] });
-  addAllowTerm("CSSF");
-  addEntities([{ category: "client_names", canonical: "Alpine Trust" }]);
-  clearAllowlist();
-  assert.equal(getState().entities.length, 1);
-  assert.equal(getState().documents.length, 1);
-});
-
 // --- BUILD-04 Phase 5: smart-detection tuning and bulk deny ----------------
 
 import {
-  denyAllInCategory, setSmartDetectOptions, smartDetectOptions,
+  setSmartDetectOptions, smartDetectOptions,
   SMART_DETECT_DEFAULTS,
 } from "./state.js";
 
@@ -667,47 +620,6 @@ function seedCandidates() {
     { text: "Alpine Trust", category: "client_names", count: 3 },
   ], "smart");
 }
-
-test("denyAllInCategory drops that category and adds no entity (CR15)", () => {
-  seedCandidates();
-  assert.equal(denyAllInCategory("person_names"), 2);
-  const s = getState();
-  assert.deepEqual(s.candidates.map((c) => c.text), ["Alpine Trust"]);
-  assert.equal(s.entities.length, 0, "denying must never promote anything");
-});
-
-test("denyAllInCategory on an absent category is a no-op (CR15)", () => {
-  seedCandidates();
-  assert.equal(denyAllInCategory("project_names"), 0);
-  assert.equal(getState().candidates.length, 3);
-});
-
-test("bulk actions restricted to the visible rows touch only those (CR15)", () => {
-  // This is the filtered-set semantics the Values table relies on: a
-  // search hiding a row must also protect it from a bulk button.
-  seedCandidates();
-  assert.equal(denyAllInCategory("person_names", ["Anouk Berger"]), 1);
-  assert.deepEqual(getState().candidates.map((c) => c.text), ["Marie Duval", "Alpine Trust"]);
-
-  seedCandidates();
-  assert.equal(acceptAllInCategory("person_names", ["Marie Duval"]), 1);
-  const s = getState();
-  assert.deepEqual(s.entities.map((e) => e.canonical), ["Marie Duval"]);
-  assert.deepEqual(s.candidates.map((c) => c.text), ["Anouk Berger", "Alpine Trust"]);
-});
-
-test("a restriction listing nothing visible changes nothing (CR15)", () => {
-  seedCandidates();
-  assert.equal(denyAllInCategory("person_names", []), 0);
-  assert.equal(acceptAllInCategory("person_names", []), 0);
-  assert.equal(getState().candidates.length, 3);
-});
-
-test("bulk restrictions match case-insensitively, like every candidate key", () => {
-  seedCandidates();
-  assert.equal(denyAllInCategory("person_names", ["marie duval"]), 1);
-  assert.deepEqual(getState().candidates.map((c) => c.text), ["Anouk Berger", "Alpine Trust"]);
-});
 
 test("smart detection ships with the stricter defaults (CR13)", () => {
   resetState();

@@ -30,7 +30,7 @@ import assert from "node:assert/strict";
 
 import {
   getState, setState, resetState,
-  WIZARD_STEPS, canGoTo, goTo, nextStep, prevStep,
+  WIZARD_STEPS, canGoTo, goTo, nextStep,
   isBackward, resetStep, STEP_RESETS,
   addEntities, addCandidates, applyPreset, setMinConfidence,
   addAllowTerm, presetCategories,
@@ -164,18 +164,22 @@ test("matrix: the guards cannot be bypassed by walking forward repeatedly", () =
 
 // --- Backward moves and their resets --------------------------------------
 
-test("matrix: prevStep walks back one step from anywhere it can stand", () => {
-  for (const name of SHAPE_NAMES) {
-    for (let i = 0; i < WIZARD_STEPS.length; i++) {
-      const step = WIZARD_STEPS[i];
-      SHAPES[name]();
-      if (!canGoTo(step)) continue;
-      goTo(step);
-      const moved = prevStep();
-      assert.equal(moved, i > 0, `shape "${name}": prevStep from ${step}`);
-      assert.equal(getState().step, i > 0 ? WIZARD_STEPS[i - 1] : "import");
-    }
-  }
+test("matrix: there is no reducer that moves BACK without asking", async () => {
+  // prevStep() is gone (BUILD-05 Phase 9). Backward movement resets the step
+  // being left, and the user is asked first (nav.js goBack), so a reducer that
+  // stepped back silently was a way around a rule the whole screen depends on.
+  //
+  // The guard is asserted rather than described, because "we deleted it" is only
+  // true until someone adds it back for convenience.
+  const state = await import("./state.js");
+  assert.equal(state.prevStep, undefined,
+    "moving back must go through nav.js goBack(), which asks the reset question");
+  // goTo() itself is still free to move backward: it is what nav.js calls AFTER
+  // the question has been answered and the reset applied.
+  SHAPES.values();
+  goTo("anonymise");
+  assert.equal(goTo("import"), true);
+  assert.equal(getState().step, "import");
 });
 
 test("matrix: isBackward agrees with the step order for every pair", () => {

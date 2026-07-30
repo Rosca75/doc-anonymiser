@@ -215,8 +215,6 @@ main#view.page { overflow-y: auto; }
   display: grid; gap: 1.25rem;
   grid-template-columns: 1fr 2fr;
 }
-/* A single full-width card (no rail). */
-.workspace-single { grid-template-columns: minmax(0, 1fr); }
 /* Import: a narrower list column beside a wider preview. */
 .workspace-import { grid-template-columns: minmax(23rem, 0.9fr) 1.1fr; }
 /* Anonymise and Export: a fixed-measure column of cards beside one big card.
@@ -298,8 +296,7 @@ main#view.page { overflow-y: auto; }
    session file, a properties review). The tint is functional, not
    decorative: it marks "this is the key". */
 .card.key-bearing { border-color: var(--key-edge); }
-.card.key-bearing > .card-head,
-.key-strip {
+.card.key-bearing > .card-head {
   background: var(--key-bg);
   border-bottom: 1px solid var(--key-edge-soft);
 }
@@ -658,34 +655,20 @@ input, select {
   background: var(--bg); color: var(--text);
 }
 
-.form-row { display: flex; align-items: center; gap: 0.6rem; margin: 0.5rem 0; flex-wrap: wrap; }
-.form-row label { min-width: 4.5rem; color: var(--muted); font-size: 0.9rem; }
-
-.radio-row { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.3rem 0; cursor: pointer; }
+/* .form-row and .radio-row are GONE (BUILD-05 Phase 9). They were the generic
+   "label plus control" and "checkbox plus label" rows every panel used. Three
+   named rules replaced them, because the three cases they were serving want
+   different things: .add-row (a growing input beside fixed companions),
+   .cat-row (a checkbox, a label and a right-aligned example) and .rail-field
+   (a fixed-measure label so a column of inputs lines up). */
 
 /* --- Generic building blocks -------------------------------------------- */
 
-.panel {
-  background: var(--bg);
-  border: 1px solid var(--gray-4);
-  border-radius: 8px;
-  padding: 1rem 1.25rem;
-  margin-bottom: 1rem;
-}
-
-.panel-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-  margin-bottom: 0.6rem;
-}
-.panel-head h2 { margin: 0; font-size: 1.15rem; }
-.panel-head-right { display: flex; align-items: center; gap: 0.5rem; }
-
-/* Collapsible panels (ui.js panel helper): the header row toggles
-   data-collapsed on the section; the body then hides. */
-.panel > .panel-head.collapsible { cursor: pointer; user-select: none; }
-.panel[data-collapsed="true"] > .panel-body { display: none; }
-.panel[data-collapsed="true"] { padding-bottom: 0.6rem; }
-.panel-toggle { border: none; background: none; padding: 0.1rem; color: var(--muted); }
+/* The .panel system is GONE (BUILD-05 Phase 9), with ui.js panel() and
+   wirePanels(). It was the collapsible box every screen was built from before the
+   relayout. Two rules replaced it, each doing one of the two jobs it did at once:
+   .card is the fixed-height surface whose body is the only scroll owner, and
+   .cgroup is the foldable block. */
 
 .hint { color: var(--muted); font-size: 0.85rem; }
 /* Muted hint text still sits on light surfaces; keep it readable. */

@@ -27,7 +27,7 @@
 import { ping, probeOllama, onEvent, defaultAllowlist } from "./api.js";
 import {
   getState, setState, subscribe,
-  WIZARD_STEPS, canGoTo, goTo, goToScreen,
+  WIZARD_STEPS, canGoTo, goTo, goToScreen, knownStep,
   applyImportResult, defaultUseAIFromProbe,
 } from "./state.js";
 import { escapeHTML } from "./html.js";
@@ -204,9 +204,15 @@ function paint(root) {
   // "Anonymise Flow" points back at. Wizard state is untouched (goToScreen).
   root.querySelector("#stepbar-back").addEventListener("click", () => goToScreen("home"));
 
-  // The active view fills the workspace. Each screen renders its own footer,
-  // so there is nothing between the step bar and the screen itself.
-  VIEWS[s.step](view);
+  // The active view fills the workspace. Each screen renders its own footer, so
+  // there is nothing between the step bar and the screen itself.
+  //
+  // knownStep() is THE one call site of the unknown-token fallback (BUILD-05
+  // decision 1). VIEWS is looked up unconditionally, so a token the store should
+  // never hold (a corrupted persisted value, a typo in a caller) would otherwise
+  // throw here and leave a blank screen with an exception behind it. Falling back
+  // to Import costs nothing and is always a usable answer.
+  VIEWS[knownStep(s.step)](view);
 }
 
 /** shellErrorBanner(s) renders the dismissible chrome-level error strip. */

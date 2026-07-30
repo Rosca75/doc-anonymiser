@@ -237,7 +237,8 @@ function categoryGroups(s) {
  */
 function confidenceControl(s) {
   const percent = Math.round((s.settings.minConfidence ?? 0) * 100);
-  return `<div class="rail-slider">` +
+  return `<p class="hint">${escapeHTML(CONFIGURE.confidenceHint)}</p>` +
+    `<div class="rail-slider">` +
     `<input id="min-confidence" type="range" min="0" max="100" step="5" value="${percent}"` +
     ` aria-label="${escapeHTML(CONFIGURE.confidenceLabel)}"/>` +
     `<output id="min-confidence-value" for="min-confidence">${percent}</output>` +

@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  button, panel, icon,
+  button, icon,
   card, countBadge, tabbar, chipRow, sectionLabel, statTile,
   collapsibleGroup, stepFooter, toastHTML, modalHTML,
 } from "./ui.js";
@@ -57,38 +57,6 @@ test("button renders data attributes escaped", () => {
 test("icon returns svg for known names and empty string for unknown", () => {
   assert.ok(icon("home").includes("<svg"));
   assert.equal(icon("no_such_icon"), "");
-});
-
-// --- panel --------------------------------------------------------------
-
-test("panel renders title, body and id", () => {
-  const html = panel("p1", "Allowlist", "<p>body</p>");
-  assert.ok(html.includes('id="p1"'));
-  assert.ok(html.includes("Allowlist"));
-  assert.ok(html.includes("<p>body</p>"));
-  // Non-collapsible panels carry no data-collapsed attribute.
-  assert.ok(!html.includes("data-collapsed"));
-});
-
-test("collapsible panel renders data-collapsed per default and toggle set", () => {
-  const none = new Set();
-  // startOpen default: open until toggled.
-  assert.ok(panel("p1", "T", "b", { collapsible: true, collapsedSet: none })
-    .includes('data-collapsed="false"'));
-  // toggled away from open default: collapsed.
-  assert.ok(panel("p1", "T", "b", { collapsible: true, collapsedSet: new Set(["p1"]) })
-    .includes('data-collapsed="true"'));
-  // startOpen false: collapsed until toggled.
-  assert.ok(panel("p2", "T", "b", { collapsible: true, startOpen: false, collapsedSet: none })
-    .includes('data-collapsed="true"'));
-  assert.ok(panel("p2", "T", "b", { collapsible: true, startOpen: false, collapsedSet: new Set(["p2"]) })
-    .includes('data-collapsed="false"'));
-});
-
-test("panel escapes id and title", () => {
-  const html = panel(`x"y`, "<b>t</b>", "");
-  assert.ok(html.includes('id="x&quot;y"'));
-  assert.ok(html.includes("&lt;b&gt;t&lt;/b&gt;"));
 });
 
 // --- Icon alignment contract (BUILD-04 CR5) --------------------------------

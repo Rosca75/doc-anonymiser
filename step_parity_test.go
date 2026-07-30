@@ -27,7 +27,9 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -280,5 +282,69 @@ func TestWizardStepTokensAreUniqueAndOrdered(t *testing.T) {
 	if len(steps) == 0 || steps[len(steps)-1] != "export" {
 		t.Errorf("WIZARD_STEPS must end with \"export\": nothing follows saving the output. Got [%s]",
 			strings.Join(steps, ", "))
+	}
+}
+
+func TestNoNativeDialogsInTheFrontend(t *testing.T) {
+	// BUILD-05 decision 10: every native confirm() goes, replaced by the in-app
+	// modal. alert() and prompt() are covered by the same rule; neither was in
+	// use, and this keeps them out.
+	//
+	// The reason is not aesthetic. A native dialog in a WebView is unstyled and
+	// unbranded, it cannot carry more than one cramped line of explanation, and
+	// on Windows it steals focus from the window it belongs to. The replacements
+	// are modal.js askConfirm() for a question and toast.js for a statement.
+	//
+	// Test files are scanned too: a test that called confirm() would be asserting
+	// behaviour the application must not have.
+	nativeDialogRe := regexp.MustCompile(`(^|[^.\w])(confirm|alert|prompt)\s*\(`)
+
+	var hits []string
+	scan := func(dir, name string) {
+		path := filepath.Join(dir, name)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("could not read %s: %v", path, err)
+		}
+		for i, line := range strings.Split(string(raw), "\n") {
+			trimmed := strings.TrimSpace(line)
+			// Comment lines are skipped: prose ABOUT the rule, including the
+			// several places that explain what was removed and why, is not a
+			// violation of it.
+			if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "*") {
+				continue
+			}
+			// A line embedding a <script> tag is an XSS-escaping FIXTURE, not a
+			// call: highlight.test.js feeds `<script>alert(1)</script>` through
+			// the renderer to prove it comes back escaped. Skipping the whole
+			// line is narrower than trying to tell a string literal from code,
+			// and there is no reason for production markup to contain the tag.
+			if strings.Contains(line, "<script") {
+				continue
+			}
+			if nativeDialogRe.MatchString(line) {
+				hits = append(hits, fmt.Sprintf("%s:%d: %s", path, i+1, trimmed))
+			}
+		}
+	}
+
+	for _, dir := range []string{"frontend", "frontend/views"} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("could not read %s: %v", dir, err)
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".js") {
+				scan(dir, entry.Name())
+			}
+		}
+	}
+
+	if len(hits) > 0 {
+		t.Errorf("native browser dialogs found in the frontend (BUILD-05 decision 10):\n%s\n"+
+			"Use modal.js askConfirm() for a question and toast.js for a statement. A native "+
+			"dialog in the WebView is unstyled, cannot explain itself in more than a line, and "+
+			"on Windows steals focus from the window it belongs to.",
+			strings.Join(hits, "\n"))
 	}
 }

@@ -505,6 +505,60 @@ csv, md, txt, plus the French fixture):
 6. Hand the app a session file written by the pre-BUILD-05 build: it must be
    refused with the actionable message, not partially loaded (decision 1).
 
+## 6b. Implementation notes: deviations from this plan
+
+Every deviation below is recorded here because §7 requires it. None changes a
+numbered decision; each is a smaller judgement the plan did not reach.
+
+1. **Identify is three modules, not two.** The plan's critical-files table names
+   `views/identify.js` and `views/identifyrail.js`. The workspace half is ~700
+   lines on its own, so it lives in `views/identifyworkspace.js`:
+   `identify.js` owns the two-column layout and the footer, and each half wires
+   its own handlers. Both charters name all three.
+2. **`frontend/nav.js` is new.** Phase 2 gave every screen its own footer, so
+   the step bar and four footers all move the wizard. The backward-reset rule
+   lives in `nav.js` once rather than in five places, and the module is separate
+   from `main.js` only to keep the graph acyclic (`main.js` imports the views).
+   It also builds the footer, so a step rename reaches all four screens through
+   `copy.js NAV`.
+3. **The module renames happened in Phase 2, not 5 and 7.** `configure.js` to
+   `identifyrail.js`, `values.js` to `identifyworkspace.js` and `run.js` to
+   `anonymise.js` all landed with the step rename, so no phase shipped a step
+   token whose module name contradicted it. Their contents were relaid out in
+   Phases 5 to 7 as planned.
+4. **Variant drag-to-regroup is kept.** `Identify.dc.html` shows variant chips
+   with a remove button only. `state.js moveVariant` is a real, tested capability
+   with no other home: without it a spelling attached to the wrong value could
+   only be fixed by excluding it on one card and retyping it on another. The
+   chips stay draggable and the value cards are drop targets.
+5. **The allowlist "Clear all" button is gone.** It lived in the panel header
+   that the chip layout does not have, and it was the last native `confirm()` on
+   that screen (decision 10). Terms are removable one chip at a time and the
+   engine defaults are still seeded at startup.
+6. **The preset and the country interact, and the country wins.** Every preset
+   switches all three country-specific identifiers on, because to the engine they
+   are hard PII. `applyPreset` therefore re-applies the country, and
+   `selectionPresetName` excludes those three from its comparison. Without the
+   first, picking Soft on a German document would start looking for Spanish tax
+   numbers; without the second, a Luxembourg document would read as "Custom" the
+   instant the user picked Standard.
+7. **Export's footer has no CONTINUE.** It is the last step, so `ui.js
+   stepFooter` gained a `rightHTML` slot and START A NEW BATCH is a neutral
+   button rather than the accent primary of the other three screens.
+8. **`SessionVersion` is bumped to 2.** Decision 1 says a file this build does
+   not know is refused. That only bites if the version changes, so it does, and
+   the refusal message says which direction the mismatch goes because the fix
+   differs.
+9. **Phase 9 deleted more than the plan lists.** Beyond `STEP_BANNERS`,
+   `.navbar`, `importSplit`, the reassign popover and `migrateStep`:
+   `ui.js panel()` / `wirePanels()` (superseded by `card` and
+   `collapsibleGroup`), `entitymodel.js variantRows()` (no expanded-row set
+   exists any more), `state.js prevStep()` (it moved back without the reset
+   question, which is a way around the rule `nav.js` enforces),
+   `setEntityStatus` / `editEntity` / `updateCandidate` /
+   `acceptAllInCategory` / `denyAllInCategory` / `clearAllowlist`, the
+   `.panel*` / `.form-row` / `.radio-row` CSS, and the retired `copy.js` keys.
+
 ## 7. Definition of done (whole plan)
 
 - All four screens match their mock-up in layout, copy and behaviour, with

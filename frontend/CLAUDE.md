@@ -112,8 +112,11 @@ Windows it steals focus from the window it belongs to.
 - `api.js` — THE ONLY bridge caller (see above and `BRIDGE.md`).
 - `state.js` — the store; single source of truth for frontend state.
 - `copy.js` — all user-visible strings + `CATEGORY_LABELS`.
-- `ui.js` — shared UI toolkit: the card kit (card, tabbar, chipRow,
-  collapsibleGroup, stepFooter, toastHTML, modalHTML) plus button/panel/icon.
+- `ui.js` — shared UI toolkit: the card kit (`card`, `tabbar`, `countBadge`,
+  `chipRow`, `sectionLabel`, `statTile`, `collapsibleGroup`, `stepFooter`,
+  `toastHTML`, `modalHTML`) plus `button` and `icon`. There is exactly ONE way
+  to draw each thing: `card` is the fixed-height surface, `collapsibleGroup` the
+  foldable block. The BUILD-02 `panel()` did both at once and is gone.
 - `html.js` — tiny shared HTML helpers (`escapeHTML`).
 - `icons.js` — vendored Material Symbols SVG map.
 - `highlight.js` — renders placeholders as category-coloured `<mark>` with

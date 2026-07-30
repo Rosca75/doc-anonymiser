@@ -757,15 +757,18 @@ export function isBackward(from, to) {
   return toIndex < fromIndex;
 }
 
-/** nextStep()/prevStep() move linearly through the wizard. */
+/**
+ * nextStep() moves one step forward. Forward moves never ask anything, so this
+ * is the whole of the operation.
+ *
+ * There is no prevStep() any more (BUILD-05 Phase 9). It moved one step BACK
+ * without the reset question, which made it a way around the rule nav.js exists
+ * to enforce: an accidental caller would silently skip the confirmation the user
+ * is owed. Backward movement goes through nav.js goBack().
+ */
 export function nextStep() {
   const idx = WIZARD_STEPS.indexOf(state.step);
   return idx < WIZARD_STEPS.length - 1 && goTo(WIZARD_STEPS[idx + 1]);
-}
-
-export function prevStep() {
-  const idx = WIZARD_STEPS.indexOf(state.step);
-  return idx > 0 && goTo(WIZARD_STEPS[idx - 1]);
 }
 
 // --- Document reducers -------------------------------------------------------
@@ -825,37 +828,20 @@ export function addEntities(items) {
   return added.length;
 }
 
-/** setEntityStatus(category, canonical, status), accept or deny a row. */
-export function setEntityStatus(category, canonical, status) {
-  setState({
-    entities: state.entities.map((e) =>
-      entityKey(e.category, e.canonical) === entityKey(category, canonical)
-        ? { ...e, status }
-        : e),
-  });
-}
-
-/**
- * editEntity(category, oldCanonical, newCanonical) renames a row (the
- * "edit" action of the review table). A rename that would collide with an
- * existing row is rejected (returns false).
- */
-export function editEntity(category, oldCanonical, newCanonical) {
-  const next = (newCanonical ?? "").trim();
-  if (!next) return false;
-  const collision = state.entities.some((e) =>
-    entityKey(e.category, e.canonical) === entityKey(category, next) &&
-    entityKey(e.category, e.canonical) !== entityKey(category, oldCanonical));
-  if (collision) return false;
-  setState({
-    entities: state.entities.map((e) =>
-      entityKey(e.category, e.canonical) === entityKey(category, oldCanonical)
-        // variants: null = pending; ONLY this row re-expands (Phase 7a).
-        ? { ...e, canonical: next, variants: null, variantError: null }
-        : e),
-  });
-  return true;
-}
+// setEntityStatus() and editEntity() are GONE (BUILD-05 Phase 9).
+//
+// setEntityStatus flipped a row between "accepted" and "denied". The redesign
+// has no denied state: a suggestion is accepted or rejected in the Suggestions
+// tab, and a value that reaches My values is a value that will be replaced. The
+// `status` field and the filter in acceptedEntities() below survive as the belt
+// to that brace, because a row that somehow arrived denied must still not reach
+// the pipeline.
+//
+// editEntity renamed a value in place, an action the review TABLE offered.
+// The value cards that replaced it do not: a value is keyed by (category,
+// canonical), so a rename is a remove and an add, which is what the card's two
+// controls already do and what the registry needs anyway to keep its
+// placeholder mapping honest.
 
 /** removeEntity(category, canonical) deletes a row outright. */
 export function removeEntity(category, canonical) {
@@ -972,73 +958,21 @@ export function rejectCandidate(text) {
   setState({ candidates: state.candidates.filter((c) => candidateKey(c.text) !== key) });
 }
 
-/**
- * updateCandidate(text, patch) edits a candidate in place (inline text
- * or category change before accepting). A text edit that collides with
- * another row is rejected (returns false).
- */
-export function updateCandidate(text, patch) {
-  const key = candidateKey(text);
-  const next = (patch.text ?? text).trim();
-  if (!next) return false;
-  if (candidateKey(next) !== key &&
-      state.candidates.some((c) => candidateKey(c.text) === candidateKey(next))) {
-    return false;
-  }
-  setState({
-    candidates: state.candidates.map((c) =>
-      candidateKey(c.text) === key ? { ...c, ...patch, text: next } : c),
-  });
-  return true;
-}
+// updateCandidate() is GONE (BUILD-05 Phase 9). It edited a suggestion's text or
+// category in place, before accepting it. The suggestions table is now a review
+// gate with exactly two answers per row, accept or reject: editing a suggestion
+// meant deciding what it should have been, which is what My values is for, and
+// having it in both places meant two ways to create the same value.
 
-/**
- * bulkSelection(category, onlyTexts) is the shared row picker for the two
- * bulk actions (BUILD-04 CR15). Returns a predicate over candidates.
- *
- * onlyTexts, when given, restricts the action to those exact values. The
- * Values screen always passes the currently FILTERED set, so a bulk
- * button acts on exactly the rows the user can see and never on rows a
- * search box is hiding. Omitting it keeps the original whole-category
- * behaviour, which is what a caller with no filter wants.
- */
-function bulkSelection(category, onlyTexts) {
-  const allowed = onlyTexts ? new Set(onlyTexts.map(candidateKey)) : null;
-  return (c) => c.category === category && (!allowed || allowed.has(candidateKey(c.text)));
-}
-
-/**
- * acceptAllInCategory(category, onlyTexts) bulk-accepts candidates of a
- * category, optionally restricted to onlyTexts; returns how many entities
- * were added.
- */
-export function acceptAllInCategory(category, onlyTexts) {
-  const inBatch = bulkSelection(category, onlyTexts);
-  const batch = state.candidates.filter(inBatch);
-  if (!batch.length) return 0;
-  const added = addEntities(batch.map((c) => ({ category: c.category, canonical: c.text })));
-  setState({ candidates: state.candidates.filter((c) => !inBatch(c)) });
-  return added;
-}
-
-/**
- * denyAllInCategory(category, onlyTexts) is the mirror of
- * acceptAllInCategory (BUILD-04 CR15): it DROPS the candidates instead of
- * promoting them, exactly as rejectCandidate does one at a time. Nothing
- * is added to the entity list and nothing is remembered, so a denied
- * suggestion simply stops taking up review space.
- *
- * @param {string} category the engine category key
- * @param {string[]} [onlyTexts] restrict to these values (the filtered set)
- * @returns {number} how many candidates were removed
- */
-export function denyAllInCategory(category, onlyTexts) {
-  const inBatch = bulkSelection(category, onlyTexts);
-  const removed = state.candidates.filter(inBatch).length;
-  if (!removed) return 0;
-  setState({ candidates: state.candidates.filter((c) => !inBatch(c)) });
-  return removed;
-}
+// acceptAllInCategory() and denyAllInCategory() are GONE (BUILD-05 Phase 9),
+// along with the bulkSelection() picker they shared.
+//
+// They bulk-acted on ONE category at a time, because the BUILD-04 suggestions
+// table grouped its bulk buttons per category. The BUILD-05 table sorts and
+// filters across every category at once, so "the rows shown" is not a category,
+// and acceptAllShown() / rejectAllShown() below take the visible values directly.
+// Keeping the per-category pair as well would have meant two bulk paths with
+// different notions of what a bulk action covers.
 
 /**
  * acceptAllShown(texts) bulk-accepts the candidates whose values are listed,
@@ -1372,18 +1306,12 @@ export function removeAllowTerm(term) {
   setState({ allowlist: state.allowlist.filter((x) => x.toLowerCase() !== term.toLowerCase()) });
 }
 
-/**
- * clearAllowlist() empties the never-anonymise list in one step
- * (BUILD-04 CR11). The engine defaults are NOT re-seeded: they are
- * available again through the panel's import and the startup seeding, so
- * clearing stays a clear rather than a reset to something else.
- * @returns {number} how many terms were removed
- */
-export function clearAllowlist() {
-  const removed = state.allowlist.length;
-  if (removed) setState({ allowlist: [] });
-  return removed;
-}
+// clearAllowlist() is GONE (BUILD-05 Phase 9). It emptied the never-anonymise
+// list in one action, from a button in the panel header that the chip layout no
+// longer has, and it was the last thing on that screen behind a native confirm()
+// (decision 10). Removing terms one chip at a time is the ordinary case, and a
+// list of a dozen seeded terms is not one anyone needs to empty in a single
+// press. The engine defaults are still seeded at startup and still removable.
 
 /** addPattern(expr, error) stores a custom regex with its validation state. */
 export function addPattern(expr, error = null) {
