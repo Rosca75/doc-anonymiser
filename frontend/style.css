@@ -1050,24 +1050,170 @@ input, select {
   font-size: 0.8rem; border-radius: 20px;
 }
 
-/* --- Run view --------------------------------------------------------------- */
+/* --- Anonymise screen (BUILD-05 Phase 7) --------------------------------- */
 
-.progress-bar { height: 8px; background: var(--gray-5); border-radius: 4px; overflow: hidden; }
-.progress-bar > div { height: 100%; background: var(--accent); transition: width 0.2s; }
+/* The screen is a column: the two-column workspace, then its own footer card.
+   min-height: 0 on the workspace is what keeps the footer visible rather than
+   pushed off the bottom by a long left column. */
+.anonymise-view {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; gap: 1rem;
+}
+.anonymise-view > .workspace { flex: 1; min-height: 0; }
 
-.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.run-actions { display: flex; gap: 0.6rem; }
+.run-actions .btn { flex: 1; }
+.run-progress { display: flex; flex-direction: column; gap: 0.4rem; }
+.run-progress .hint { margin: 0; font-size: 0.78rem; }
 
-/* Highlight tints per category family: black text on every fill
-   (BUILD-02 section 5 remapping). */
+/* A foldable card in the left column. It reuses the collapsible-group markup
+   rather than the card head/body split, because these cards do NOT scroll
+   individually: the whole column is one scroller, and a scroller inside a
+   scroller is how a user loses their place. */
+.fold-card { flex: none; }
+.fold-card > .cgroup { border: none; border-radius: inherit; }
+.fold-card > .cgroup > .cgroup-head { padding: 0.7rem 1.1rem; background: var(--bg); }
+.fold-card > .cgroup > .cgroup-head .cgroup-title { font-size: 1rem; }
+.fold-card .fold-body {
+  display: flex; flex-direction: column; gap: 0.8rem;
+  padding: 1rem 1.1rem;
+}
+.fold-card .fold-body > .hint { margin: 0; line-height: 1.5; }
+
+/* --- The selected-placeholder card -------------------------------------- */
+
+.selected-pair { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.selected-pair .hint { margin: 0; }
+.selected-original { font-size: 0.875rem; }
+/* A label above its input rather than beside it: the rail's two-column field
+   grid is too tight for a sentence-length label. */
+.rail-field-stack { display: flex; flex-direction: column; gap: 0.4rem; }
+.rail-field-stack .hint { margin: 0; font-size: 0.8rem; }
+.reassign-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.reassign-list .btn {
+  justify-content: space-between; width: 100%;
+  background: var(--bg); border-color: var(--gray-5);
+  font-size: 0.85rem; text-align: left;
+}
+.reassign-list .btn:hover { border-color: var(--text); }
+.reassign-list .hint { font-size: 0.75rem; }
+
+/* --- The report drill-down ---------------------------------------------- */
+
+.report-rows { display: flex; flex-direction: column; }
+.report-row {
+  display: grid; grid-template-columns: 1fr auto; align-items: center;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--gray-6);
+  font-size: 0.85rem;
+}
+.report-toggle {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.4rem 0; border: none; background: none; border-radius: 0;
+  font: inherit; text-align: left;
+}
+.report-toggle:hover { background: none; text-decoration: underline; }
+.report-count { color: var(--ink-2); font-size: 0.8rem; }
+
+/* The expanded detail spans both grid columns and indents, so the values read
+   as belonging to the category above them. */
+.report-detail {
+  grid-column: 1 / -1;
+  display: flex; flex-direction: column; gap: 0.4rem;
+  padding: 0.3rem 0 0.75rem 1.25rem;
+}
+.report-detail-head, .report-item {
+  display: grid; grid-template-columns: 1fr auto; gap: 0.6rem; align-items: baseline;
+}
+.report-detail-head .section-label:last-child { text-align: right; }
+.report-item-value { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.report-original {
+  font-size: 0.78rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.report-placeholder { font-size: 0.72rem; color: var(--ink-3); }
+
+/* --- The ordered rules -------------------------------------------------- */
+
+.rule-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.rule-row {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--gray-5); border-radius: 6px;
+  font-size: 0.78rem;
+}
+.rule-text {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 0.4rem; overflow: hidden;
+}
+.rule-find, .rule-replace {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rule-text .hint { flex: none; margin: 0; }
+.rule-case { flex: none; font-size: 0.7rem; }
+.rule-actions { display: flex; align-items: center; gap: 0.1rem; flex: none; }
+
+/* --- The Compare card --------------------------------------------------- */
+
+/* position: relative anchors the floating selection panel, which is positioned
+   against the CARD rather than against a pane: scrolling a pane then moves the
+   text out from under the panel instead of dragging the panel off-screen. */
+.compare-card { position: relative; }
+.compare-select { max-width: 16rem; padding: 0.4rem 0.6rem; cursor: pointer; }
+
+.compare-panes {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: 1fr 1fr;
+}
+.compare-pane {
+  display: flex; flex-direction: column; min-height: 0;
+  border-right: 1px solid var(--gray-5);
+}
+.compare-pane:last-child { border-right: none; }
+.pane-caption {
+  flex: none;
+  padding: 0.7rem 1.25rem;
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--ink-3);
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--gray-5);
+}
+/* THE scroll owner of each pane. Both directions: a long unbroken line in an
+   extracted pdf is legitimately wider than the pane and must not widen the page.
+   word-break keeps ordinary prose wrapping. */
+.pane-body {
+  flex: 1; min-height: 0; overflow: auto;
+  margin: 0; padding: 1.1rem 1.25rem;
+  font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.75;
+  white-space: pre-wrap; word-break: break-word;
+}
+
+/* The floating REPLACE SELECTION panel, anchored above the selection. */
+.selection-card {
+  position: absolute; z-index: 6;
+  transform: translate(-50%, -100%);
+  width: 19rem; padding: 0.9rem;
+  display: flex; flex-direction: column; gap: 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--gray-4); border-radius: var(--card-radius);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.16);
+}
+.selection-text {
+  font-size: 0.78rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Highlight tints per category family: black text on every fill (BUILD-02
+   section 5 remapping). */
 mark { border-radius: 3px; padding: 0 2px; color: var(--text); }
-mark.pii { background: var(--tint-orange-1); }
-mark.entity { background: var(--gray-4); }
-mark.custom { background: var(--tint-orange-3); }
+mark.pii { background: var(--tint-orange-2); border-bottom: 1px solid var(--tint-orange-1); }
+mark.entity { background: var(--gray-5); border-bottom: 1px solid var(--gray-3); }
+mark.custom { background: var(--src-ai-bg); border-bottom: 1px solid var(--src-ai-fg); }
 
-/* --- Run view: original-term tooltip + reassign popover (BUILD-02 10c/d) --- */
+/* --- The original-term tooltip (BUILD-02 10c) ---------------------------- */
 
-/* Styled tooltip in pure CSS reading data-original; the native title
-   attribute stays as the accessibility fallback. */
+/* A styled tooltip in pure CSS reading data-original; the native title attribute
+   stays as the accessibility fallback. */
 mark[data-original] { cursor: pointer; position: relative; }
 mark[data-original]:hover::after {
   content: "Original: " attr(data-original);
@@ -1078,14 +1224,7 @@ mark[data-original]:hover::after {
   font-family: var(--font-body);
 }
 
-.reassign-popover {
-  position: absolute; z-index: 40;
-  background: var(--bg); border: 1px solid var(--gray-3); border-radius: 8px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
-  padding: 0.6rem 0.8rem; min-width: 18rem;
-  font-family: var(--font-body); font-size: 0.85rem;
-  white-space: normal;
-}
-.reassign-popover p { margin: 0 0 0.4rem; }
-.reassign-suggestions { list-style: none; margin: 0.3rem 0 0; padding: 0; }
-.reassign-suggestions li { margin: 0; }
+/* The floating reassign popover is GONE (BUILD-05 Phase 7). It was anchored to a
+   mark inside a scrolling pane, so it drifted away from its own mark the moment
+   the pane scrolled, and it could not be reached from the keyboard at all. The
+   Selected placeholder card in the left column replaced it. */

@@ -122,6 +122,13 @@ const initialState = {
   progress: null, // {stage, docIndex, docCount, docName} or null
   results: null,  // engine.Results mirror or null
 
+  // Values added on the Anonymise screen that a fast re-run has not applied yet
+  // (BUILD-05 Phase 7): [{category, text}]. They are ALSO added to `entities`
+  // straight away, so a re-run picks them up; this list exists only so the user
+  // can see what is waiting and remove one before re-running. Cleared by the
+  // re-run that applies them.
+  pendingValues: [],
+
   // Warnings from the last run that the user has dismissed, by id
   // (BUILD-05 Phase 7). A warning is advice, not an error: once it has been
   // read it should stop taking up room in the report, but it must come back
@@ -1172,6 +1179,94 @@ export function reassignOriginal(original, toCategory, toCanonical) {
 
   addManualVariant(toCategory, toCanonical, text);
   return true;
+}
+
+// --- The Anonymise screen's editing surfaces (BUILD-05 Phase 7) ---------------
+
+/**
+ * addPendingValue(category, text) records a value the user added on the
+ * Anonymise screen and adds it to the value list in the same breath.
+ *
+ * The two go together on purpose. The entity is what makes a fast re-run replace
+ * the value; the pending chip is what tells the user it will not happen until
+ * they press it. Recording only one of the two would either lose the value or
+ * lie about when it takes effect.
+ *
+ * A value that is already pending, or already an accepted value, is rejected:
+ * the chip would be a duplicate and the entity would be too, so the honest
+ * answer is "nothing happened" rather than a second chip that does nothing.
+ *
+ * @param {string} category the engine category identifier
+ * @param {string} text the missed value
+ * @returns {boolean} whether a chip was added
+ */
+export function addPendingValue(category, text) {
+  const value = (text ?? "").trim();
+  if (!value) return false;
+  const lower = value.toLowerCase();
+  if (state.pendingValues.some((p) => p.text.toLowerCase() === lower)) return false;
+  if (state.entities.some((e) => e.canonical.toLowerCase() === lower)) return false;
+
+  addEntities([{ category, canonical: value }]);
+  setState({ pendingValues: [...state.pendingValues, { category, text: value }] });
+  return true;
+}
+
+/**
+ * removePendingValue(text) takes a value back off the pending list AND out of
+ * the value list, because the chip's ✕ has to undo the whole of what Add did.
+ * @param {string} text the value to drop
+ */
+export function removePendingValue(text) {
+  const lower = (text ?? "").trim().toLowerCase();
+  const pending = state.pendingValues.find((p) => p.text.toLowerCase() === lower);
+  if (!pending) return;
+  setState({ pendingValues: state.pendingValues.filter((p) => p !== pending) });
+  removeEntity(pending.category, pending.text);
+}
+
+/**
+ * clearPendingValues() empties the list, called by the re-run that applies them.
+ * The ENTITIES stay: they are what the re-run just used.
+ * @returns {number} how many chips were cleared
+ */
+export function clearPendingValues() {
+  const cleared = state.pendingValues.length;
+  if (cleared) setState({ pendingValues: [] });
+  return cleared;
+}
+
+/**
+ * dismissWarning(id) hides one run warning (BUILD-05 Phase 7).
+ *
+ * The id is the warning's own TEXT. Go sends warnings as plain strings with no
+ * identifier, and inventing an index would break the moment a run produced them
+ * in a different order: the same warning would come back undismissed, or a
+ * different one would be hidden. The text is stable for as long as the warning
+ * means the same thing, which is exactly the right lifetime.
+ *
+ * A new run re-raises everything, because resetStep("anonymise") empties this
+ * list: a warning about the run you are looking at now has to be visible.
+ *
+ * @param {string} id the warning text
+ * @returns {boolean} whether it was newly dismissed
+ */
+export function dismissWarning(id) {
+  const text = (id ?? "").trim();
+  if (!text || state.dismissedWarnings.includes(text)) return false;
+  setState({ dismissedWarnings: [...state.dismissedWarnings, text] });
+  return true;
+}
+
+/**
+ * visibleWarnings(s) is the run's warnings minus the dismissed ones. Pure, so
+ * the view renders it without deciding anything.
+ * @param {object} [s] state
+ * @returns {string[]}
+ */
+export function visibleWarnings(s = state) {
+  const dismissed = new Set(s.dismissedWarnings ?? []);
+  return (s.results?.report?.warnings ?? []).filter((w) => !dismissed.has(w));
 }
 
 // --- Same-format metadata review (BUILD-02 Phase 12c) --------------------------

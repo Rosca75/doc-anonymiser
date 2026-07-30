@@ -407,6 +407,137 @@ export const WORKSPACE = {
   removePattern: "Remove this pattern",
 };
 
+// Anonymise screen copy (BUILD-05 Phase 7).
+export const ANONYMISE = {
+  // The run card.
+  run: "RUN",
+  runAgain: "Run again",
+  runNeedsDocuments: "Import at least one document first.",
+  cancel: "Cancel",
+  cancelTooltip: "Stop the run. Anything already replaced is discarded.",
+  cancelIdleTooltip: "Nothing is running.",
+  deepScan: "Deep scan (AI)",
+  deepScanTooltip: "An extra AI pass that looks for values the deterministic passes left behind.",
+  subtitleRunning: "Working through your documents.",
+  subtitleDone: "Check the result side by side. Every replacement maps back to its original.",
+  /** subtitleIdle(n) says what is waiting before the first run. */
+  subtitleIdle(n) {
+    if (n === 0) return "No documents imported yet.";
+    return `${n} document${n === 1 ? "" : "s"} ready. Nothing has been replaced yet.`;
+  },
+  /** progress(stage, file, index, total) is the progress bar's caption. */
+  progress(stage, file, index, total) {
+    return `${stage}: ${file} (${index}/${total})`;
+  },
+  progressStarting: "starting...",
+  statReplacements: "REPLACEMENTS",
+  statDocuments: "DOCUMENTS",
+  statCategories: "CATEGORIES",
+  statDuration: "DURATION",
+
+  // The selected placeholder card.
+  selectedTitle: "Selected placeholder",
+  closeSelection: "Close",
+  replaces: "replaces",
+  makeVariantOf: "Make it a variant of",
+  reassignPlaceholder: "type an existing value",
+  reassignHint: "Reassigning runs the fast deterministic passes again. There is no AI re-scan, and existing placeholders keep their numbers.",
+  /** reassignDone / reassignRefused report the outcome. */
+  reassignDone(original, target) {
+    return `${original} now counts as a spelling of ${target}.`;
+  },
+  reassignRefused(original, target) {
+    return `${original} could not be attached to ${target}. Pick a different value.`;
+  },
+
+  // The report card.
+  reportTitle: "Report",
+  /** reportSummary(n) is the folded card's right-hand read-out. */
+  reportSummary(n) {
+    return `${n} replacement${n === 1 ? "" : "s"}`;
+  },
+  scopeLabel: "Which files the report covers",
+  scopeAll: "All files",
+  reportEmpty: "Nothing was replaced in the files in scope.",
+  valuePlaceholder: "Value / placeholder",
+  occurrences: "Occur.",
+  noValuesInScope: "No values from this category appear in the files in scope.",
+  dismissWarning: "Hide this warning",
+
+  // Something missed?
+  missedTitle: "Something missed?",
+  /** missedSummary(n) is the folded card's read-out. */
+  missedSummary(n) {
+    return n === 0 ? "add a value" : `${n} waiting`;
+  },
+  missedHint: "Add the value, then re-run the fast passes. Existing placeholders keep their numbers.",
+  missedCategoryLabel: "The type of value",
+  missedLabel: "A value the run missed",
+  missedPlaceholder: "missed value, e.g. P. Stone",
+  addValue: "Add value",
+  removePending: "Remove, and stop replacing it",
+  /** missedAlreadyThere(v) explains an add that changed nothing. */
+  missedAlreadyThere(v) {
+    return `${v} is already on the list of values to replace.`;
+  },
+  fastRerun: "Fast re-run",
+  /** fastRerunDone(n) reports what the re-run applied. */
+  fastRerunDone(n) {
+    if (n === 0) return "Re-ran the fast passes. Existing placeholders kept their numbers.";
+    return `Re-ran the fast passes with ${n} added value${n === 1 ? "" : "s"}. ` +
+      `Existing placeholders kept their numbers.`;
+  },
+
+  // Find and replace.
+  rulesTitle: "Find and replace",
+  /** rulesSummary(n) is the folded card's read-out. */
+  rulesSummary(n) {
+    return n === 1 ? "1 rule" : `${n} rules`;
+  },
+  rulesHint: "These run last, in order, and each rule sees what the previous one produced.",
+  ruleFind: "find",
+  ruleReplace: "replace with",
+  ruleTo: "to",
+  caseSensitive: "Case-sensitive",
+  exactCase: "exact case",
+  anyCase: "any case",
+  addRule: "Add rule",
+  ruleNeedsFind: "Type the text to find. A rule with nothing to find would do nothing.",
+  moveUp: "Run this rule earlier",
+  moveDown: "Run this rule later",
+  removeRule: "Remove this rule",
+
+  // The Compare card.
+  compareDoc: "Which document to compare",
+  paneOriginal: "ORIGINAL",
+  paneAnonymised: "ANONYMISED",
+  compareEmpty: "Run the anonymisation to compare the result with the original.",
+  /** replacementsInDocument(n) is the Compare card's read-out. */
+  replacementsInDocument(n) {
+    return `${n} replacement${n === 1 ? "" : "s"} in this document`;
+  },
+
+  // The floating replace-selection panel.
+  replaceSelection: "Replace selection",
+  replaceWith: "What to replace it with",
+  applySelection: "Replace",
+  cancelSelection: "Cancel",
+  selectionNeedsReplacement: "Type what the selected text should become.",
+  /** selectionApplied(find, replace) confirms the new rule. */
+  selectionApplied(find, replace) {
+    return `${find} is now replaced with ${replace} everywhere, by a find and replace rule.`;
+  },
+
+  // The footer.
+  continueNeedsRun: "Run the anonymisation first.",
+  hintRunning: "Running...",
+  hintNotRun: "Run the anonymisation first",
+  /** hintReady(n) says what is ready to export. */
+  hintReady(n) {
+    return `${n} replacement${n === 1 ? "" : "s"} ready to export`;
+  },
+};
+
 // Per-category checkbox labels and one-line examples (BUILD-02 Phase 6b).
 // Keys match engine category identifiers.
 //
