@@ -792,69 +792,81 @@ input, select {
 .home-step-label { font-size: 0.9rem; margin-bottom: 0.2rem; }
 .home-step-body { font-size: 0.8rem; line-height: 1.45; color: var(--muted); }
 
-/* --- Import view ---------------------------------------------------------- */
+/* --- Import screen (BUILD-05 Phase 4) ------------------------------------ */
 
-/* The import step is the one step that fills the available height, so its
-   pane divider spans top to bottom BEFORE any preview is loaded
-   (BUILD-04 CR8). Previously the grid row was as tall as its tallest
-   child, which with an empty preview pane was a couple of lines of hint
-   text, leaving a stub of a divider. min-height: 0 on each link of the
-   chain is what lets the inner panes scroll instead of pushing the grid
-   taller than the window. */
-.step-view-import { flex: 1; min-height: 0; }
-.step-view-import .import-view { height: 100%; display: flex; flex-direction: column; }
-.step-view-import .import-columns { flex: 1; min-height: 0; }
-/* Each pane is itself a column: its heading stays put and only the list
-   or the preview inside it scrolls, so the two panes and the divider
-   between them keep their full height. The max-height override undoes the
-   60vh cap those blocks carry when they are NOT inside a filled pane. */
-.step-view-import .import-columns > .panel { min-height: 0; display: flex; flex-direction: column; }
-.step-view-import .import-columns .doc-list,
-.step-view-import .import-columns .table-scroll,
-.step-view-import .import-columns .md-preview {
-  flex: 1; min-height: 0; overflow: auto; max-height: none;
+/* The document rows. Each is a click target for the preview, with the remove
+   button as the one thing inside it that is NOT that. */
+.doc-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 0.5rem;
 }
-
-/* Two resizable panes separated by a draggable divider (BUILD-02 2g).
-   The column template is set inline from state.importSplit. align-items:
-   stretch (the grid default, spelled out here because it is load-bearing)
-   makes the divider as tall as the row. */
-.import-columns { display: grid; gap: 0; align-items: stretch; }
-.import-divider {
-  width: 6px; cursor: col-resize; align-self: stretch;
-  background: var(--gray-4); border-radius: 3px; margin: 0 0.35rem;
-}
-.import-divider:hover, .import-divider.dragging { background: var(--accent-light); }
-
-.doc-list { list-style: none; margin: 0; padding: 0; }
-.doc-list .empty { color: var(--muted); padding: 0.75rem 0.25rem; }
 
 .doc-row {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.45rem 0.5rem; border-radius: 6px; cursor: pointer;
+  position: relative;
+  display: flex; align-items: center; gap: 0.85rem;
+  padding: 0.7rem 0.85rem 0.7rem 1rem;
+  border: 1px solid var(--gray-5); border-radius: var(--card-radius);
+  background: var(--bg);
+  cursor: pointer;
+  transition: background 0.12s;
 }
 .doc-row:hover { background: var(--gray-6); }
-.doc-row.selected { background: var(--tint-orange-3); }
-.doc-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.doc-size { color: var(--muted); font-size: 0.8rem; }
-.doc-remove { border: none; background: none; color: var(--muted); }
-.doc-remove:hover { color: var(--err); }
 
+/* The SELECTED row: a tinted fill plus an orange bar down its left edge. The
+   bar is the accent's only appearance here, and it is a 3px rule rather than a
+   flood fill, so the card's primary button stays the loud element. */
+.doc-row.selected { border-color: var(--tint-orange-1); background: var(--tint-orange-3); }
+.doc-bar {
+  position: absolute; left: 0; top: 0.5rem; bottom: 0.5rem;
+  width: 3px; border-radius: 3px; background: transparent;
+}
+.doc-row.selected .doc-bar { background: var(--accent); }
+
+.doc-icon {
+  flex: none; display: grid; place-items: center;
+  width: 2.35rem; height: 2.35rem; border-radius: 6px;
+  background: var(--gray-6); color: var(--ink-3);
+}
+.doc-icon svg { width: 1.25rem; height: 1.25rem; }
+
+.doc-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.doc-name { font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+.doc-size, .doc-units { font-size: 0.8rem; color: var(--muted); }
+/* The separator dot between the size and the unit count: decoration only, so
+   it is hidden from assistive technology at the markup level. */
+.doc-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--gray-3); }
+/* The warning count wears the caution foreground so it reads as "look at this"
+   without the full strip's fill, which would dominate the row. */
+.doc-warn {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  font-size: 0.78rem; color: var(--caution-fg); cursor: help;
+}
+.doc-warn .icon svg { width: 0.95rem; height: 0.95rem; }
+.doc-row .doc-remove { flex: none; }
+
+/* --- Preview pane ------------------------------------------------------- */
+
+/* The markdown preview. It sets no max-height: the card body is the scroll
+   owner (the BUILD-05 layout contract), so a preview that tried to cap its own
+   height would leave the card scrolling an element that never overflows. */
 .md-preview {
-  margin: 0; padding: 0.75rem;
-  background: var(--gray-6); border-radius: 8px;
+  margin: 0;
   white-space: pre-wrap; word-break: break-word;
   font-family: var(--font-mono);
-  font-size: 0.85rem;
-  max-height: 60vh; overflow: auto;
+  font-size: 0.85rem; line-height: 1.7;
 }
 
-.table-scroll { max-height: 60vh; overflow: auto; }
+/* A grid preview may be wider than the card, so it scrolls sideways inside its
+   own box rather than widening the page. */
+.table-scroll { overflow-x: auto; }
 
 .grid-table { border-collapse: collapse; font-size: 0.85rem; width: 100%; }
 .grid-table th, .grid-table td {
   border: 1px solid var(--gray-4); padding: 0.3rem 0.55rem; text-align: left;
 }
+/* A sticky header inside the scrolling card body, so the column names stay
+   visible while reading a long sheet. */
 .grid-table th { background: var(--gray-5); position: sticky; top: 0; }
 
 /* --- Values view ----------------------------------------------------------- */

@@ -64,11 +64,6 @@ const initialState = {
   // Name of the document selected in the preview pane (or null).
   previewDoc: null,
 
-  // Import screen split ratio: fraction of width given to the document
-  // list pane (the preview takes the rest). User-draggable divider,
-  // clamped to keep both panes usable (BUILD-02 Phase 2g).
-  importSplit: 0.5,
-
   // Settings mirror (source of truth lives in Go; this copy renders the
   // Configure screen): {level, categories, ollamaPort, model}. level is
   // the LAST CHOSEN PRESET; categories is the granular switch set the
@@ -527,18 +522,11 @@ export function goToScreen(name) {
   return true;
 }
 
-/**
- * setImportSplit(ratio) stores the import-screen divider position as a
- * fraction of the width given to the list pane. Non-numbers are rejected;
- * numbers are clamped to [0.2, 0.8] so neither pane can collapse.
- * Returns the stored value (or null when rejected).
- */
-export function setImportSplit(ratio) {
-  if (typeof ratio !== "number" || Number.isNaN(ratio)) return null;
-  const clamped = Math.min(0.8, Math.max(0.2, ratio));
-  setState({ importSplit: clamped });
-  return clamped;
-}
+// setImportSplit() is GONE (BUILD-05 decision 6). It stored the import screen's
+// draggable pane divider position. The mock-up uses a fixed two-column grid, and
+// a divider that only ever moved between 20% and 80% of the width was three
+// state transitions and a pointer-capture dance to save the user a decision they
+// did not actually have.
 
 // --- Navigation guards ------------------------------------------------------
 

@@ -169,34 +169,47 @@ test("button renders aria-current only when asked", () => {
   assert.ok(!button("Home").includes("aria-current"));
 });
 
-// --- Import pane height contract (BUILD-04 CR8) ----------------------------
+// --- Import screen layout (BUILD-05 Phase 4) -----------------------------
 //
-// The bug: .import-columns collapsed to its content height, so the pane
-// divider only reached full height once a preview was loaded. The fix is a
-// height chain from #view down to the grid. Layout cannot be measured
-// without a browser, so this asserts the chain is declared.
+// BUILD-04 CR8 fixed a pane divider that collapsed to its content height. The
+// divider is GONE (BUILD-05 decision 6): the mock-up uses a fixed two-column
+// grid, so the height chain that used to need pinning is now the shared card
+// contract, asserted above. What is left to pin here is that the divider and
+// its state did not survive as dead CSS.
 
-test("the import step view fills the available height", () => {
-  const view = styleCSS.match(/main#view \{[^}]*\}/);
-  assert.ok(view, "the #view rule must exist");
-  assert.match(view[0], /display:\s*flex/);
-  assert.match(view[0], /flex-direction:\s*column/);
-
-  const fill = styleCSS.match(/\.step-view-import \{[^}]*\}/);
-  assert.ok(fill, "the import step view must claim the leftover height");
-  assert.match(fill[0], /flex:\s*1/);
-  assert.match(fill[0], /min-height:\s*0/);
-
-  assert.match(styleCSS, /\.step-view-import \.import-columns \{[^}]*flex:\s*1/);
+test("the import pane divider is gone, not merely unused", () => {
+  assert.ok(!styleCSS.includes(".import-divider"),
+    "the draggable divider was dropped by decision 6");
+  assert.ok(!styleCSS.includes(".import-columns"),
+    "the resizable grid was replaced by .workspace-import");
+  assert.ok(!styleCSS.includes(".step-view-import"),
+    "the per-step layout class went with the per-step container");
 });
 
-test("the import grid stretches its row so the divider spans it", () => {
-  const columns = styleCSS.match(/\n\.import-columns \{[^}]*\}/);
-  assert.ok(columns, "the .import-columns rule must exist");
-  assert.match(columns[0], /align-items:\s*stretch/);
-  assert.ok(!columns[0].includes("align-items: start"),
-    "align-items: start is what collapsed the row (BUILD-04 CR8)");
-  assert.match(styleCSS, /\.import-divider \{[^}]*align-self:\s*stretch/);
+test("the import screen uses the shared fixed two-column workspace", () => {
+  const grid = styleCSS.match(/\.workspace-import \{[^}]*\}/);
+  assert.ok(grid, "the .workspace-import rule must exist");
+  assert.match(grid[0], /grid-template-columns/);
+});
+
+test("the selected document row is marked with a bar, not an accent flood fill", () => {
+  // One loud element per view, and on the import screen it is ADD FILES.
+  const selected = styleCSS.match(/\.doc-row\.selected \{[^}]*\}/);
+  assert.ok(selected, "the selected-row rule must exist");
+  assert.ok(!/background:\s*var\(--accent\)/.test(selected[0]),
+    "a selected row must not be filled with the accent orange");
+  assert.match(styleCSS, /\.doc-row\.selected \.doc-bar \{[^}]*background:\s*var\(--accent\)/);
+});
+
+test("a wide grid preview scrolls sideways instead of widening the page", () => {
+  assert.match(styleCSS, /\.table-scroll \{[^}]*overflow-x:\s*auto/);
+  // The preview must NOT cap its own height: the card body is the scroll owner,
+  // so a max-height here would leave the card scrolling something that never
+  // overflows.
+  const preview = styleCSS.match(/\.md-preview \{[^}]*\}/);
+  assert.ok(preview, "the .md-preview rule must exist");
+  assert.ok(!preview[0].includes("max-height"),
+    "the card body owns the scrolling, not the preview element");
 });
 
 test("the documentation page styles itself from the brand tokens only", () => {

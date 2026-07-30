@@ -143,6 +143,22 @@ export const HOME = {
 // documentation now lives in frontend/docs/index.html and opens in its own
 // window, so there is no in-app docs screen and no placeholder string.
 
+// Import screen copy (BUILD-05 Phase 4).
+export const IMPORT = {
+  addFiles: "ADD FILES",
+  dropTitle: "Drag files here to import",
+  dropHint: "or click to browse. Accepts .txt, .csv, .md, .docx, .pptx, .xlsx and .pdf. Your originals are only ever read, never changed.",
+  experimentalTooltip: "PDF text extraction is experimental. Review the preview carefully.",
+  removeTooltip: "Remove from session",
+  noSelection: "no document selected",
+  previewEmpty: "Select a document on the left to preview its working form.",
+  previewTruncated: "Preview truncated to the first 5 000 lines. The full document is still processed and exported.",
+  // The footer hint. On an empty screen it says what to do rather than
+  // reporting "0 files", which is the difference between a footer that helps
+  // and one that states the obvious.
+  hintEmpty: "Add at least one document to continue",
+};
+
 // Configure step copy (BUILD-02 Phase 6). Plain language: no "PII", no
 // abbreviations without an example, full sentences.
 export const CONFIGURE = {

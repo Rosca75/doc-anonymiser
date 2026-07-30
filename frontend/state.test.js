@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import {
   getState, setState, resetState, subscribe,
   WIZARD_STEPS, canGoTo, goTo, nextStep, prevStep,
-  goToScreen, setImportSplit,
+  goToScreen,
   applyPreset, toggleCategory, selectionPresetName, presetCategories,
   setUseAI, defaultUseAIFromProbe, llmEnabled,
   addCandidates, acceptCandidate, rejectCandidate, updateCandidate, acceptAllInCategory,
@@ -235,26 +235,15 @@ test("wizard state survives navigating to home and back", () => {
   assert.equal(getState().documents.length, 1);
 });
 
-test("setImportSplit clamps and rejects non-numbers", () => {
-  resetState();
-  const cases = [
-    [0, 0.2],
-    [0.1, 0.2],
-    [0.5, 0.5],
-    [0.95, 0.8],
-  ];
-  for (const [input, want] of cases) {
-    assert.equal(setImportSplit(input), want, `split(${input})`);
-    assert.equal(getState().importSplit, want);
-  }
-  // NaN and non-numbers are rejected, leaving the stored value untouched.
-  setImportSplit(0.5);
-  assert.equal(setImportSplit(NaN), null);
-  assert.equal(setImportSplit("0.7"), null);
-  assert.equal(getState().importSplit, 0.5);
+test("the import divider state is gone, not merely unused (decision 6)", async () => {
+  // A reducer nothing calls is a reducer someone reinstates. The mock-up uses a
+  // fixed two-column grid, so the ratio has no meaning any more.
+  const state = await import("./state.js");
+  assert.equal(state.setImportSplit, undefined,
+    "setImportSplit must be deleted, not left exported");
+  assert.ok(!("importSplit" in getState()),
+    "importSplit must be gone from the state shape too");
 });
-
-// --- Category presets and granular switches (BUILD-02 Phase 3) ---------------
 
 test("applyPreset fills the expected switches per level", () => {
   resetState();
