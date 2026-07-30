@@ -6,24 +6,24 @@
 //   CR4: the top menu is the SAME on every screen, only the highlight
 //        moves. A regression here (a screen quietly dropping or adding an
 //        entry) is exactly what the owner reported.
-//   CR7: the step chips render inside .workflow-banner, never inside the
-//        header, and only for the wizard.
+//   CR7: the step indicators render inside .stepbar, never inside the header,
+//        and only for the wizard. BUILD-05 Phase 2 relaid that bar out as
+//        numbered circles with a check mark for completed steps.
 //
 // Run with `node --test frontend/*.test.js`.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { topnavHTML, workflowBannerHTML, TOPNAV_ITEMS } from "./shell.js";
+import { topnavHTML, stepbarHTML, TOPNAV_ITEMS } from "./shell.js";
 import { WORKFLOW } from "./copy.js";
 
-const STEPS = ["import", "configure", "values", "run", "export"];
+const STEPS = ["import", "identify", "anonymise", "export"];
 const LABELS = {
-  import: "1 · Import",
-  configure: "2 · Configure",
-  values: "3 · Values",
-  run: "4 · Run",
-  export: "5 · Export",
+  import: "Import",
+  identify: "Identify",
+  anonymise: "Anonymise",
+  export: "Export",
 };
 
 /** labelsOf(html) extracts the visible text of every top-menu button. */
@@ -84,42 +84,75 @@ test("top-menu entries render as plain text, no icon (BUILD-05 CR3)", () => {
   assert.equal((html.match(/<svg/g) ?? []).length, 0);
 });
 
-// --- CR7: the Anonymisation workflow banner -------------------------------
+// --- CR7: the wizard step bar --------------------------------------------
 
-test("the workflow banner is titled and carries all five step chips", () => {
-  const html = workflowBannerHTML(STEPS, "import", LABELS, () => true);
-  assert.ok(html.includes(`class="workflow-banner"`));
-  assert.ok(html.includes(WORKFLOW.title));
+test("the step bar carries every step, numbered, with a way out of the flow", () => {
+  const html = stepbarHTML(STEPS, "import", LABELS, () => true);
+  assert.ok(html.includes(`class="stepbar"`));
+  // The bar's accessible name survives even though the visible title is gone.
+  assert.ok(html.includes(`aria-label="${WORKFLOW.title}"`));
   assert.equal(WORKFLOW.title, "Anonymisation workflow");
+  // The back link replaced the visible title.
+  assert.ok(html.includes(`id="stepbar-back"`));
+  assert.ok(html.includes(WORKFLOW.backToFlow));
   for (const step of STEPS) {
-    assert.ok(html.includes(`data-step="${step}"`), `${step} chip missing`);
+    assert.ok(html.includes(`data-step="${step}"`), `${step} missing`);
     assert.ok(html.includes(LABELS[step]), `${step} label missing`);
   }
 });
 
-test("the chips live inside .workflow-steps, not in the header", () => {
-  const html = workflowBannerHTML(STEPS, "import", LABELS, () => true);
-  const chipArea = html.slice(html.indexOf(`class="workflow-steps"`));
-  for (const step of STEPS) {
-    assert.ok(chipArea.includes(`data-step="${step}"`));
+test("the step number comes from the position, not from the label", () => {
+  const html = stepbarHTML(STEPS, "import", LABELS, () => true);
+  // On step 1 nothing is done yet, so every circle shows its own number.
+  for (let i = 0; i < STEPS.length; i++) {
+    assert.ok(html.includes(`<span class="step-circle">${i + 1}</span>`),
+      `circle ${i + 1} missing`);
   }
-  assert.ok(!html.includes("topbar"), "the banner must not render header markup");
 });
 
-test("the active chip is marked and the guarded chips are disabled", () => {
+test("steps behind the active one show a check mark instead of their number", () => {
+  const html = stepbarHTML(STEPS, "anonymise", LABELS, () => true);
+  // import and identify are behind anonymise: two done steps, so two check
+  // marks and no "1" or "2" circle left.
+  assert.equal((html.match(/step-item [^"]*done/g) ?? []).length, 2);
+  assert.ok(!html.includes(`<span class="step-circle">1</span>`));
+  assert.ok(!html.includes(`<span class="step-circle">2</span>`));
+  // The check mark is decorative: the label beside it already names the step.
+  assert.ok(html.includes(`class="icon" aria-hidden="true"`));
+  // export is still ahead, so it keeps its number.
+  assert.ok(html.includes(`<span class="step-circle">4</span>`));
+});
+
+test("the indicators live inside .steps, not in the header", () => {
+  const html = stepbarHTML(STEPS, "import", LABELS, () => true);
+  const stepArea = html.slice(html.indexOf(`class="steps"`));
+  for (const step of STEPS) {
+    assert.ok(stepArea.includes(`data-step="${step}"`));
+  }
+  assert.ok(!html.includes("topbar"), "the bar must not render header markup");
+});
+
+test("the active step is marked and the guarded steps are disabled", () => {
   // Only import is reachable: the guard shape of a fresh session.
-  const html = workflowBannerHTML(STEPS, "import", LABELS, (s) => s === "import");
-  assert.match(html, /class="chip active"[^>]*data-step="import"/);
+  const html = stepbarHTML(STEPS, "import", LABELS, (s) => s === "import");
+  assert.match(html, /class="step-item active"[^>]*data-step="import"/);
   assert.match(html, /data-step="import"[^>]*aria-current="step"/);
   for (const step of STEPS.slice(1)) {
-    const chip = html.slice(html.indexOf(`data-step="${step}"`));
-    assert.ok(chip.startsWith(`data-step="${step}" disabled`), `${step} must render disabled`);
+    const item = html.slice(html.indexOf(`data-step="${step}"`));
+    assert.ok(item.startsWith(`data-step="${step}" disabled`), `${step} must render disabled`);
   }
-  assert.equal((html.match(/chip disabled/g) ?? []).length, STEPS.length - 1);
+  assert.equal((html.match(/step-item disabled/g) ?? []).length, STEPS.length - 1);
 });
 
-test("the workflow banner escapes labels and tokens", () => {
-  const html = workflowBannerHTML(["a<b"], "a<b", { "a<b": `<img src=x>` }, () => true);
+test("an unknown active step marks nothing done rather than marking everything", () => {
+  // A step token the bar does not recognise must not read as "all complete".
+  const html = stepbarHTML(STEPS, "nonesuch", LABELS, () => true);
+  assert.ok(!html.includes("done"));
+  assert.ok(!html.includes("active"));
+});
+
+test("the step bar escapes labels and tokens", () => {
+  const html = stepbarHTML(["a<b"], "a<b", { "a<b": `<img src=x>` }, () => true);
   assert.ok(!html.includes("<img"));
   assert.ok(html.includes("&lt;img"));
   assert.ok(html.includes(`data-step="a&lt;b"`));

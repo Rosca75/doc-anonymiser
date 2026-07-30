@@ -1,5 +1,7 @@
-// views/run.js, wizard step 4: pipeline execution, live progress, and
-// results review (Phase 8).
+// views/anonymise.js, wizard step 3: pipeline execution, live progress, and
+// results review (Phase 8; renamed from views/run.js by BUILD-05 Phase 2,
+// when the step token became "anonymise" so module, token and visible label
+// finally agree).
 //
 //   - Run button (+ optional deep-scan checkbox, LLM-gated) and Cancel,
 //   - progress bar fed by "pipeline:progress" events (state.progress),
@@ -19,12 +21,12 @@ import {
 import { escapeHTML } from "../html.js";
 import { renderHighlighted } from "../highlight.js";
 import { panel, wirePanels } from "../ui.js";
-import { llmGateTooltip } from "./configure.js";
+import { llmGateTooltip } from "./identifyrail.js";
 
 // Panels the user toggled away from their default state (BUILD-02 Phase 2f).
 const collapsedPanels = new Set();
 
-export function renderRun(container) {
+export function renderAnonymise(container) {
   const s = getState();
   // Deep-scan gates on the master AI toggle AND live availability
   // (BUILD-02 Phase 6d).

@@ -12,11 +12,16 @@
 // exhaustive rather than a sample:
 //
 //   empty        nothing imported
-//   documents    imported, nothing configured
+//   documents    imported, nothing chosen
 //   configured   categories chosen, no suggestions
 //   candidates   suggestions waiting for review
 //   values       values accepted, no run yet
 //   results      a run has produced output
+//
+// The last four all sit on the Identify step, which owns both the choices and
+// the values since BUILD-05 Phase 2. They stay separate shapes because the
+// guards and the resets treat them differently even though one screen produces
+// them all.
 //
 // Run with `node --test frontend/*.test.js`.
 
@@ -81,12 +86,12 @@ test("matrix: which steps each session shape unlocks", () => {
     // Nothing imported: only Import.
     empty: ["import"],
     // Documents unlock everything except Export, which needs results.
-    documents: ["import", "configure", "values", "run"],
-    configured: ["import", "configure", "values", "run"],
-    candidates: ["import", "configure", "values", "run"],
-    values: ["import", "configure", "values", "run"],
+    documents: ["import", "identify", "anonymise"],
+    configured: ["import", "identify", "anonymise"],
+    candidates: ["import", "identify", "anonymise"],
+    values: ["import", "identify", "anonymise"],
     // A finished run unlocks Export.
-    results: ["import", "configure", "values", "run", "export"],
+    results: ["import", "identify", "anonymise", "export"],
   };
   for (const name of SHAPE_NAMES) {
     SHAPES[name]();
@@ -135,7 +140,7 @@ test("matrix: a forward move never clears anything", () => {
   // move that quietly dropped state would be the same bug in reverse.
   for (const name of SHAPE_NAMES) {
     SHAPES[name]();
-    if (!canGoTo("configure")) continue;
+    if (!canGoTo("identify")) continue;
     goTo("import");
     const before = JSON.stringify(getState());
     nextStep();
@@ -152,7 +157,8 @@ test("matrix: the guards cannot be bypassed by walking forward repeatedly", () =
   SHAPES.values();
   goTo("import");
   for (let i = 0; i < 10; i++) nextStep();
-  assert.equal(getState().step, "run", "without results, Run is as far as it goes");
+  assert.equal(getState().step, "anonymise",
+    "without results, Anonymise is as far as it goes");
 });
 
 // --- Backward moves and their resets --------------------------------------
@@ -198,24 +204,19 @@ test("matrix: every backward reset preserves documents and the allowlist", () =>
 });
 
 test("matrix: a reset never touches a LATER step's state", () => {
-  // Resetting Configure must not throw away a finished run: the user is
-  // stepping back to adjust one thing, not starting over.
+  // Resetting Identify must not throw away a finished run: the user is stepping
+  // back to adjust what to look for, not starting over.
   SHAPES.results();
-  resetStep("configure");
-  assert.ok(getState().results, "the run survived a configure reset");
-  assert.equal(getState().entities.length, 1, "the values survived too");
-
-  SHAPES.results();
-  resetStep("values");
-  assert.ok(getState().results, "the run survived a values reset");
+  resetStep("identify");
+  assert.ok(getState().results, "the run survived an identify reset");
 });
 
 test("matrix: a reset never touches an EARLIER step's state", () => {
   SHAPES.results();
   const categories = { ...getState().settings.categories };
-  resetStep("run");
+  resetStep("anonymise");
   assert.deepEqual(getState().settings.categories, categories,
-    "resetting the run must not undo the configuration");
+    "resetting the run must not undo the category selection");
   assert.equal(getState().entities.length, 1,
     "resetting the run must not undo the values");
 });
@@ -223,12 +224,12 @@ test("matrix: a reset never touches an EARLIER step's state", () => {
 test("matrix: resetting a step re-locks whatever depended on it", () => {
   SHAPES.results();
   assert.equal(canGoTo("export"), true);
-  resetStep("run");
+  resetStep("anonymise");
   assert.equal(canGoTo("export"), false, "no results means no export");
   // And the wizard cannot be walked into the locked step afterwards.
-  goTo("run");
+  goTo("anonymise");
   assert.equal(nextStep(), false);
-  assert.equal(getState().step, "run");
+  assert.equal(getState().step, "anonymise");
 });
 
 test("matrix: resetting every step in turn lands on a usable session", () => {
@@ -248,7 +249,7 @@ test("matrix: resetting every step in turn lands on a usable session", () => {
   assert.deepEqual(s.settings.categories, presetCategories(s.settings.level));
   // And the wizard is exactly as open as a fresh import: everything but
   // Export.
-  assert.deepEqual(reachableSteps(), ["import", "configure", "values", "run"]);
+  assert.deepEqual(reachableSteps(), ["import", "identify", "anonymise"]);
 });
 
 test("matrix: the reset table covers every step and invents none", () => {

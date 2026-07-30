@@ -61,11 +61,13 @@ doc-anonymiser/
 │   ├── api.js                 # THE ONLY file that calls Go bound methods
 │   ├── state.js               # single source of truth for frontend state
 │   ├── main.js / shell.js / ui.js / html.js / icons.js / copy.js / scroll.js
+│   ├── nav.js                 # THE one place the wizard moves (per-screen footers + step bar)
 │   ├── toast.js / modal.js    # state-backed notice strip + in-app confirm (no native dialogs)
 │   ├── highlight.js / entitymodel.js / candidatemodel.js / countries.js
 │   ├── views/                 # one JS module per wizard step + shared panels:
-│   │                          #   home.js, import.js, identify.js, identifyrail.js,
-│   │                          #   anonymise.js, export.js, allowlist.js
+│   │                          #   home.js, import.js, export.js, anonymise.js,
+│   │                          #   identify.js (layout) + identifyrail.js (choices)
+│   │                          #   + identifyworkspace.js (values), allowlist.js
 │   ├── docs/                  # bundled offline user docs (SECOND window, embedded only)
 │   ├── assets/icons/          # vendored Material Symbols SVGs + LICENSE
 │   └── *.test.js              # node --test frontend/*.test.js (zero npm deps)

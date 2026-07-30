@@ -11,6 +11,21 @@
 
 * { box-sizing: border-box; }
 
+/* --- Chrome heights ------------------------------------------------------
+   Fixed, and taken straight from the mock-ups: header 80px, step bar 68px,
+   app footer 60px. They are fixed because the workspace between them is
+   what has to fit the window; a chrome bar that grew would push a card body
+   out of view instead of scrolling it. Declared as variables so a screen can
+   compute against them if it ever needs to. */
+:root {
+  --chrome-header: 5rem;    /* 80px */
+  --chrome-stepbar: 4.25rem;/* 68px */
+  --chrome-footer: 3.75rem; /* 60px */
+  --card-radius: 8px;
+  --workspace-pad: 1.5rem 2.5rem;  /* the mock-ups' 24px 40px */
+}
+
+
 body {
   margin: 0;
   font-family: var(--font-body);
@@ -39,7 +54,7 @@ h1, h2, h3, h4 {
   display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
   gap: 1.25rem;
   padding: 0 2.5rem;
-  height: 5rem;
+  height: var(--chrome-header);
   background: var(--bg);
   border-bottom: 1px solid var(--gray-4);
 }
@@ -68,29 +83,59 @@ h1, h2, h3, h4 {
 }
 .topnav .topnav-active:hover { border-bottom-color: var(--gray-1); }
 
-/* Anonymisation workflow banner (BUILD-04 CR7): the five step chips moved
-   out of the header into this strip, which appears only on the wizard
-   screen. The header above it is now identical everywhere. */
-.workflow-banner {
-  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
-  padding: 0.5rem 1rem;
-  background: var(--gray-6);
+/* The wizard step bar (BUILD-04 CR7, relaid out for BUILD-05 Phase 2): the
+   step indicators live here rather than in the header, and only on the wizard
+   screen, so the header above is identical everywhere.
+
+   The bar is a FIXED 68px and never wraps: it is chrome, and chrome that
+   reflows moves the workspace boundary under the user's cursor. White, not
+   grey, because it now reads as a continuation of the header. */
+.stepbar {
+  flex: none;
+  display: flex; align-items: center; gap: 1.75rem;
+  padding: 0 2.5rem;
+  height: var(--chrome-stepbar);
+  background: var(--bg);
   border-bottom: 1px solid var(--gray-4);
 }
-.workflow-title {
-  font-family: var(--font-heading); font-size: 0.95rem; color: var(--text);
-}
-.workflow-steps { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+/* The back link that replaced the "Anonymisation workflow" title. Larger than
+   body text because it is the bar's one piece of prose, and quiet because it
+   is a way out, not the way forward. */
+.stepbar-home { font-size: 1.15rem; letter-spacing: -0.01em; padding: 0.2rem 0; }
+.stepbar-home:hover { background: none; color: var(--accent); }
+.stepbar-divider { flex: none; width: 1px; height: 1.875rem; background: var(--gray-4); }
+.steps { display: flex; align-items: stretch; gap: 0.4rem; height: 100%; }
 
-/* Step chips: quiet grey fill; the ACTIVE chip is marked by an orange
-   underline, not an orange flood fill (one loud element per view rule). */
-.chip {
-  border: 1px solid var(--gray-4); background: var(--gray-5); color: var(--text);
-  border-bottom: 3px solid transparent;
-  border-radius: 6px; padding: 0.3rem 0.9rem; font-size: 0.85rem; cursor: pointer;
+/* One step: a numbered circle and its label, sharing a full-height hit area
+   so the whole thing is clickable. The ACTIVE step is marked by an orange
+   underline and an orange circle outline, never an orange flood fill: the one
+   loud element per view belongs to that view's primary button. */
+.step-item {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0 0.5rem; height: 100%;
+  border: none; border-radius: 0; background: none;
+  border-bottom: 2px solid transparent;
 }
-.chip.active { border-bottom-color: var(--accent); background: var(--gray-6); }
-.chip.disabled { opacity: 0.45; cursor: not-allowed; }
+.step-item:hover { background: none; }
+.step-circle {
+  display: grid; place-items: center; flex: none;
+  width: 1.6rem; height: 1.6rem; border-radius: 50%;
+  border: 1.5px solid var(--gray-3);
+  font-size: 0.8rem; color: var(--muted);
+}
+.step-circle .icon svg { width: 0.95em; height: 0.95em; }
+.step-label { font-size: 1rem; color: var(--muted); }
+
+.step-item.active { border-bottom-color: var(--accent); }
+.step-item.active .step-circle { border-color: var(--accent); color: var(--accent); }
+.step-item.active .step-label { color: var(--text); }
+
+/* A step already passed through: darker than a step not yet reached, quieter
+   than the one the user is on. The check mark is what says "done". */
+.step-item.done .step-circle { border-color: var(--ink-2); color: var(--ink-2); }
+.step-item.done .step-label { color: var(--ink-2); }
+
+.step-item.disabled { opacity: 0.55; cursor: not-allowed; }
 
 /* Right-hand header cluster (BUILD-05 CR2): the live status badges, then
    the Help/Settings icon buttons from the mockup, justified to the grid's
@@ -108,14 +153,24 @@ h1, h2, h3, h4 {
 .header-actions .icon-btn:hover { background: none; color: var(--text); }
 .header-actions .icon-btn .icon svg { width: 1.4em; height: 1.4em; }
 
-/* #view is the scroll owner AND a flex column, so a step view can ask to
-   fill the leftover height instead of collapsing to its content
-   (BUILD-04 CR8). Steps that do not ask keep content height, exactly as
-   before, because a flex item only grows when it says so. */
+/* #view is the WORKSPACE HOST, and under the BUILD-05 fixed-height contract
+   it is emphatically NOT a scroll owner: it takes the height the chrome
+   leaves, and whatever it holds has to fit. overflow: hidden is the
+   load-bearing declaration. Without it, a card that mis-sized itself would
+   scroll the page instead of showing the bug, which is how the previous
+   layout drifted into scrolling in two places at once.
+
+   min-height: 0 lets it shrink below its content, so the cards inside can
+   scroll their own bodies (frontend/CLAUDE.md, the layout contract). */
 main#view {
-  flex: 1; overflow: auto; padding: 1rem; background: var(--gray-6);
+  flex: 1; min-height: 0; overflow: hidden;
+  padding: var(--workspace-pad);
+  background: var(--gray-6);
   display: flex; flex-direction: column;
 }
+/* Home is the one screen that is a page rather than a workspace: it is read
+   top to bottom, so it may scroll. */
+main#view.page { overflow-y: auto; }
 
 /* Chrome-level error strip (BUILD-04 CR6), e.g. the documentation window
    refusing to open. It sits between the banner and the view so it is
@@ -123,19 +178,12 @@ main#view {
 .shell-error { padding: 0.75rem 1rem 0; }
 .shell-error .banner { margin-bottom: 0; }
 
-.navbar {
-  display: flex; justify-content: space-between;
-  padding: 0.6rem 1rem;
-  background: var(--bg);
-  border-top: 1px solid var(--gray-4);
-}
-
 /* Permanent app footer (BUILD-05 CR2), shown under every screen: the
    version string and the local-processing reassurance from the mockup. */
 .appfooter {
   flex: none;
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0 2.5rem; height: 3.5rem;
+  padding: 0 2.5rem; height: var(--chrome-footer);
   background: var(--bg);
   border-top: 1px solid var(--gray-4);
   font-size: 0.85rem; color: var(--muted);
@@ -152,20 +200,6 @@ main#view {
    card. The builders that emit this markup live in ui.js; the layout
    contract they assume is documented in frontend/CLAUDE.md.
    ======================================================================== */
-
-/* --- Chrome heights ------------------------------------------------------
-   Fixed, and taken straight from the mock-ups: header 80px, step bar 68px,
-   app footer 60px. They are fixed because the workspace between them is
-   what has to fit the window; a chrome bar that grew would push a card body
-   out of view instead of scrolling it. Declared as variables so a screen can
-   compute against them if it ever needs to. */
-:root {
-  --chrome-header: 5rem;    /* 80px */
-  --chrome-stepbar: 4.25rem;/* 68px */
-  --chrome-footer: 3.75rem; /* 60px */
-  --card-radius: 8px;
-  --workspace-pad: 1.5rem 2.5rem;  /* the mock-ups' 24px 40px */
-}
 
 /* --- The workspace ------------------------------------------------------
    A screen's root element. Two columns by default (rail + workspace, the
@@ -656,16 +690,6 @@ input, select {
 .hint { color: var(--muted); font-size: 0.85rem; }
 /* Muted hint text still sits on light surfaces; keep it readable. */
 .hint strong { color: var(--text); font-weight: 700; }
-
-/* Step banner: the per-step explainer strip (quiet grey, black text). */
-.step-banner {
-  display: flex; align-items: center; gap: 0.75rem;
-  background: var(--gray-6); border: 1px solid var(--gray-4);
-  border-radius: 8px; padding: 0.6rem 0.9rem; margin-bottom: 1rem;
-  font-size: 0.9rem; color: var(--text);
-}
-.step-banner .icon { color: var(--gray-1); }
-.step-banner .banner-title { font-family: var(--font-heading); margin-right: 0.5rem; }
 
 .badge {
   display: inline-block; padding: 0.2rem 0.7rem; border-radius: 999px;

@@ -1,7 +1,8 @@
-// configure.test.js, tests for the Configure screen's category grouping
-// and confidence read-out (BUILD-04 Phase 4).
+// identifyrail.test.js, tests for the Identify rail's category grouping and
+// confidence read-out (BUILD-04 Phase 4 as configure.test.js; renamed with the
+// module by BUILD-05 Phase 2).
 //
-// views/configure.js imports api.js, which only touches `window` inside
+// views/identifyrail.js imports api.js, which only touches `window` inside
 // its functions, so the module imports cleanly here. Only the two PURE
 // exports are exercised: the group table (CR9/CR10) and the sentence that
 // explains the confidence slider (CR9). Everything else in the view is
@@ -10,7 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { CATEGORY_GROUPS, confidenceEffect } from "./views/configure.js";
+import { CATEGORY_GROUPS, confidenceEffect } from "./views/identifyrail.js";
 import { ALL_CATEGORIES } from "./state.js";
 
 // --- CR9: every category is reachable from some group ---------------------

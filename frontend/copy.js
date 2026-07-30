@@ -5,43 +5,56 @@
 // rule 4): no em dashes, no "+" as a stand-in for "and", no unexplained
 // jargon such as "PII" without an example, full sentences.
 
-// STEP_BANNERS: the per-step explainer strip shown at the top of every
-// wizard step (title, body, icon name from icons.js).
-export const STEP_BANNERS = {
-  import: {
-    title: "Import",
-    body: "Add the documents you want to anonymise. You can drag files here or browse for them. Your files are only read, never changed.",
-    icon: "upload_file",
+// The per-step explainer banner (BUILD-02 Phase 2e STEP_BANNERS) is GONE
+// (BUILD-05 Phase 2). It was a strip of prose above every screen, repeating on
+// each visit what the screen's own controls already said, and it cost the
+// screens the vertical space the fixed-height card workspace needs. Its useful
+// sentences moved into the card subtitles below, where they sit next to the
+// heading they explain and scroll away with nothing.
+
+// WORKFLOW: the step bar under the permanent top menu (BUILD-04 CR7, relaid
+// out for BUILD-05 Phase 2). The separate "Anonymisation workflow" title is
+// gone; the back link that replaced it is `backToFlow`, and it is what the
+// mock-ups show in that slot.
+export const WORKFLOW = {
+  // The accessible name of the bar. It is no longer rendered as visible text,
+  // so it exists only for assistive technology.
+  title: "Anonymisation workflow",
+  backToFlow: "Anonymise Flow",
+  backToFlowTitle: "Back to the start of the flow",
+};
+
+// CARDS: the heading and the one explaining sentence for every card that
+// carries a screen's main content. The subtitle is where the deleted
+// STEP_BANNERS copy went: same sentence, next to the heading it explains.
+export const CARDS = {
+  documents: {
+    title: "Documents",
+    subtitle: "Add the documents you want to anonymise. Your files are only read, never changed.",
+  },
+  preview: {
+    title: "Preview",
+    caption: "WORKING FORM",
   },
   configure: {
     title: "Configure",
-    body: "Choose what kinds of information to hide, and decide whether to use the optional local AI.",
-    icon: "tune",
+    subtitle: "Choose what to hide, and how hard to look.",
   },
-  // BUILD-04 CR3: the step token and every user-visible word changed from
-  // "entities" to "values". Engine category identifiers are untouched.
-  values: {
-    title: "Values",
-    body: "Tell the app the values it should replace. You can add them yourself or let the app suggest candidates for your review.",
-    icon: "badge",
+  identify: {
+    title: "Identify",
+    subtitle: "Tell the app which values to replace. Nothing is replaced until you accept it.",
   },
   run: {
-    title: "Run",
-    body: "Run the anonymisation and check the result side by side.",
-    icon: "play_arrow",
+    title: "Run anonymisation",
+    subtitle: "Run the passes, then check the result side by side.",
+  },
+  compare: {
+    title: "Compare",
   },
   export: {
     title: "Export",
-    body: "Save the anonymised copies and, if you need it, the re-identification key.",
-    icon: "download",
+    subtitle: "Save the anonymised copies and, if you need it, the re-identification key.",
   },
-};
-
-// WORKFLOW: the banner that holds the five step chips (BUILD-04 CR7).
-// It sits under the permanent top menu, so the header itself no longer
-// changes shape when the user enters or leaves the wizard.
-export const WORKFLOW = {
-  title: "Anonymisation workflow",
 };
 
 // FOOTER: the permanent strip under every screen (BUILD-05 CR2), matching
@@ -57,19 +70,37 @@ export const FOOTER = {
 // resets the step being left, so the user is asked first, in words that
 // say what will and will not be lost.
 export const NAV = {
-  // The visible step names, for the confirmation sentence. Kept here
-  // rather than reusing STEP_LABELS because those carry the "3 " prefix.
+  // The visible step names, for the footers and the confirmation sentence.
+  // Kept here rather than reusing STEP_LABELS because those carry the step
+  // number. Cross-checked against WIZARD_STEPS by ../step_parity_test.go.
   stepNames: {
     import: "Import",
-    configure: "Configure",
-    values: "Values",
-    run: "Run",
+    identify: "Identify",
+    anonymise: "Anonymise",
     export: "Export",
   },
-  backConfirm(step) {
-    const name = NAV.stepNames[step] ?? step;
-    return `Going back will reset the ${name} step. Your imported documents are kept. Continue?`;
+  /** back(step) is a screen footer's "Back to X" link label. */
+  back(step) {
+    return `Back to ${NAV.stepNames[step] ?? step}`;
   },
+  /** next(step) is a screen footer's primary button label, shouted because
+   *  it is the one loud element on the screen. */
+  next(step) {
+    return `CONTINUE TO ${(NAV.stepNames[step] ?? step).toUpperCase()}`;
+  },
+  // Going BACK through the wizard resets the step being left, so the user is
+  // asked first, in words that say what will and will not be lost. This is an
+  // in-app modal now, not a native confirm (BUILD-05 decision 10), so the
+  // question is a title plus a body rather than one cramped line.
+  backConfirmTitle(step) {
+    return `Reset the ${NAV.stepNames[step] ?? step} step?`;
+  },
+  backConfirmBody(step) {
+    const name = NAV.stepNames[step] ?? step;
+    return `Going back clears everything the ${name} step owns, so you start it fresh. ` +
+      `Your imported documents and your never anonymise list are kept.`;
+  },
+  backConfirmLabel: "Go back and reset",
 };
 
 // Home page copy (BUILD-02 Phase 2b, rewritten for BUILD-04 CR1, sidebar
@@ -81,11 +112,16 @@ export const NAV = {
 // They replace the former single lede plus three feature panels, which said
 // the same three things twice.
 //
-// `steps` feeds the "five steps" sidebar next to the hero: a plain-language
-// walk through the wizard so a first-time user knows what they are signing
-// up for before they click Anonymise documents. The labels here are
-// display-only; they are deliberately not the wizard's own step tokens
-// (state.js WIZARD_STEPS) or NAV.stepNames, which keep "Values" and "Run".
+// `steps` feeds the sidebar next to the hero: a plain-language walk through
+// the wizard so a first-time user knows what they are signing up for before
+// they click Anonymise documents.
+//
+// BUILD-05 Phase 2 cut it from five entries to four, matching the wizard.
+// Unlike before, the labels here ARE the wizard's own step names: the sidebar
+// used to say "Configure / Identify" for steps the wizard called "Values /
+// Run", which meant the landing page taught a vocabulary the application then
+// did not use. The bodies stay in plain language, longer than the step bar's
+// one-word labels can be.
 export const HOME = {
   headline: "Anonymise your documents safely",
   body: [
@@ -93,12 +129,11 @@ export const HOME = {
     "You remain in control throughout the process. Choose from a wide range of predefined patterns or use AI-powered discovery to identify information that may need to be anonymised. You can then review what has been detected and decide which data to replace.",
     "Depending on your security and confidentiality requirements, you can run the entire process locally or connect to an AI endpoint.",
   ],
-  stepsTitle: "The five steps",
+  stepsTitle: "The four steps",
   steps: [
     { label: "Import", body: "Drop in .docx, .pptx, .xlsx, .pdf, .csv, .md or .txt files. Your originals are only ever read, never changed." },
-    { label: "Configure", body: "Pick a preset, then fine-tune the 23 detection categories to fit the document." },
-    { label: "Identify", body: "Go through every candidate one by one. Nothing is replaced until you accept it." },
-    { label: "Anonymise", body: "Check the result side by side, with every replacement mapped back to its original." },
+    { label: "Identify", body: "Pick a preset and fine-tune the 23 detection categories, then review every suggested value. Nothing is replaced until you accept it." },
+    { label: "Anonymise", body: "Run the passes and check the result side by side, with every replacement mapped back to its original." },
     { label: "Export", body: "Save the anonymised copies, the report and the re-identification key." },
   ],
   docsLink: "Read the documentation",

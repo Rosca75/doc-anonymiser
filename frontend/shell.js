@@ -6,9 +6,10 @@
 //
 //   CR4: the top menu must be IDENTICAL on every screen. The button set
 //        never changes; only a quiet highlight moves.
-//   CR7: the five wizard step chips must NOT live in the header. They
-//        belong to a separate "Anonymisation workflow" banner rendered
-//        under the menu, and only while the wizard is on screen.
+//   CR7: the wizard step indicators must NOT live in the header. They belong
+//        to a separate bar rendered under the menu, and only while the wizard
+//        is on screen. BUILD-05 Phase 2 relaid that bar out as numbered
+//        circles with a back link (stepbarHTML below); the rule is unchanged.
 //
 // Both are string-rendering functions with no DOM access, in the same
 // spirit as ui.js and html.js, so shell.test.js can assert them under
@@ -22,6 +23,7 @@
 
 import { escapeHTML } from "./html.js";
 import { button } from "./ui.js";
+import { ICONS } from "./icons.js";
 import { WORKFLOW, FOOTER } from "./copy.js";
 import { openDocumentation } from "./api.js";
 import { setState } from "./state.js";
@@ -105,11 +107,26 @@ export function appFooterHTML() {
 }
 
 /**
- * workflowBannerHTML(steps, activeStep, labels, isEnabled) renders the
- * "Anonymisation workflow" banner: a title plus the ordered step chips
- * (CR7). The caller passes the guard predicate rather than the banner
- * importing state.js, which keeps this function pure and lets the test
- * drive every enabled/disabled combination.
+ * stepbarHTML(steps, activeStep, labels, isEnabled) renders the wizard step
+ * bar: a "back to the flow" link, a divider, then the numbered step circles
+ * (BUILD-04 CR7, relaid out for BUILD-05 Phase 2 to match the mock-ups).
+ *
+ * It replaced workflowBannerHTML. Three things changed, and each one is
+ * carrying its weight:
+ *
+ *   - The visible "Anonymisation workflow" title is gone. It named the bar
+ *     it was already obviously part of; the slot now holds the back link,
+ *     which does something. The string survives as the bar's accessible
+ *     name, where naming the region is the point.
+ *   - A step is a numbered CIRCLE plus its label, not a chip. The number
+ *     says where the user is in a sequence, which a row of equal pills
+ *     cannot.
+ *   - A step BEHIND the active one shows a check mark instead of its number.
+ *     That is the only progress indicator in the application, and it is the
+ *     reason `activeStep` is compared by index here rather than by identity.
+ *
+ * The caller passes the guard predicate rather than this function importing
+ * state.js, which keeps it pure and lets the test drive every combination.
  *
  * @param {string[]} steps ordered step tokens (state.js WIZARD_STEPS)
  * @param {string} activeStep the step currently on screen
@@ -117,20 +134,38 @@ export function appFooterHTML() {
  * @param {(step: string) => boolean} isEnabled navigation guard
  * @returns {string} safe HTML
  */
-export function workflowBannerHTML(steps, activeStep, labels, isEnabled) {
-  const chips = steps.map((step) => {
+export function stepbarHTML(steps, activeStep, labels, isEnabled) {
+  const activeIndex = steps.indexOf(activeStep);
+  const items = steps.map((step, index) => {
     const active = step === activeStep;
-    // A disabled chip is rendered disabled AND carries the class, so the
+    // "done" is positional, not a record of what the user actually finished:
+    // being on step 3 means steps 1 and 2 were passed through. Tracking real
+    // completion would need a fifth piece of state that says nothing extra,
+    // since the guards already refuse a step whose prerequisites are missing.
+    const done = activeIndex >= 0 && index < activeIndex;
+    // A disabled step is rendered disabled AND carries the class, so the
     // greyed styling does not depend on the :disabled selector alone.
     const enabled = isEnabled(step);
-    const classes = `chip${active ? " active" : ""}${enabled ? "" : " disabled"}`;
+    const classes = `step-item${active ? " active" : ""}${done ? " done" : ""}` +
+      `${enabled ? "" : " disabled"}`;
+    // The check mark is decorative: the label beside it already says which
+    // step this is, and "check mark Import" read aloud is noise.
+    const mark = done
+      ? `<span class="icon" aria-hidden="true">${ICONS.check}</span>`
+      : escapeHTML(String(index + 1));
     return `<button class="${classes}" data-step="${escapeHTML(step)}"` +
       `${enabled ? "" : " disabled"}${active ? ` aria-current="step"` : ""}>` +
-      `${escapeHTML(labels[step] ?? step)}</button>`;
+      `<span class="step-circle">${mark}</span>` +
+      `<span class="step-label">${escapeHTML(labels[step] ?? step)}</span>` +
+      `</button>`;
   }).join("");
-  return `<section class="workflow-banner" aria-label="${escapeHTML(WORKFLOW.title)}">` +
-    `<span class="workflow-title">${escapeHTML(WORKFLOW.title)}</span>` +
-    `<nav class="workflow-steps">${chips}</nav>` +
+  return `<section class="stepbar" aria-label="${escapeHTML(WORKFLOW.title)}">` +
+    button(WORKFLOW.backToFlow, {
+      kind: "ghost", id: "stepbar-back", icon: "arrow_back",
+      cls: "stepbar-home", title: WORKFLOW.backToFlowTitle,
+    }) +
+    `<span class="stepbar-divider" aria-hidden="true"></span>` +
+    `<nav class="steps">${items}</nav>` +
     `</section>`;
 }
 

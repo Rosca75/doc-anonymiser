@@ -1,5 +1,9 @@
-// views/configure.js, wizard step 2 (BUILD-02 Phase 6): two focused
-// sub-screens with granular controls and plain language.
+// views/identifyrail.js, the LEFT RAIL of wizard step 2, Identify
+// (BUILD-02 Phase 6 as views/configure.js; renamed by BUILD-05 Phase 2 when
+// Configure stopped being a step of its own and became this rail, and relaid
+// out into the mock-up's four tabs by BUILD-05 Phase 5).
+//
+// Two focused sub-screens with granular controls and plain language.
 //
 //   - "What to anonymise": preset chips (Soft / Standard / Thorough) over
 //     grouped per-category checkboxes; touching any checkbox switches the
@@ -45,7 +49,7 @@ let activeTab = "what";
 // Panels toggled away from their defaults (BUILD-02 Phase 2f).
 const collapsedPanels = new Set();
 
-export function renderConfigure(container) {
+export function renderIdentifyRail(container) {
   const s = getState();
 
   container.innerHTML = `

@@ -1,15 +1,20 @@
-// views/values.js, wizard step 3 (BUILD-02 Phase 9): three discovery
+// views/identifyworkspace.js, the WORKSPACE of wizard step 2, Identify
+// (BUILD-02 Phase 9 as views/values.js; renamed by BUILD-05 Phase 2 and
+// relaid out into the mock-up's four tabs by BUILD-05 Phase 6).
+//
+// Three discovery
 // methods (cloud placeholder / local AI / Smart detection), ONE unified
 // candidate review list (nothing reaches the value tables without an
 // explicit Accept), live match preview for manual entries, and variant
 // drag-and-drop regrouping. FULLY usable without Ollama: Smart detection
 // and the manual add rows carry the whole flow.
 //
-// Naming note (BUILD-04 CR3): the step is called "Values" everywhere the
-// user can see it. The ENGINE identifiers it manipulates (the category
-// keys client_names, person_names, ... and the state.entities array) keep
-// their original names on purpose, so a label change never ripples into
-// the pipeline or into saved sessions.
+// Naming note (BUILD-04 CR3, restated by BUILD-05 Phase 0): the visible
+// labels have changed twice now, from "Entities" to "Values" to this half of
+// "Identify". The ENGINE identifiers this module manipulates (the category
+// keys client_names, person_names, ... and the state.entities array) have not
+// changed once, on purpose: a label is a display string, an identifier is a
+// contract.
 //
 // Render-from-state discipline: every mutation goes through a state.js
 // reducer; every Go call goes through api.js.
@@ -34,7 +39,7 @@ import {
 } from "../candidatemodel.js";
 import { escapeHTML } from "../html.js";
 import { panel, wirePanels, button } from "../ui.js";
-import { llmGateTooltip } from "./configure.js";
+import { llmGateTooltip } from "./identifyrail.js";
 import { renderAllowlistPanel, wireAllowlistPanel } from "./allowlist.js";
 import { keepScrollPosition } from "../scroll.js";
 import { VALUES } from "../copy.js";
@@ -87,7 +92,15 @@ const collapsedPanels = new Set();
 // rather than in the store. candidatemodel.js turns it into rows.
 let candidateFilter = { ...DEFAULT_CANDIDATE_FILTER };
 
-export function renderValues(container) {
+/**
+ * renderIdentifyWorkspace(container, opts) fills the workspace card.
+ * @param {HTMLElement} container the card element views/identify.js created
+ * @param {object} [opts]
+ * @param {string} [opts.footerHTML] the screen's step footer, rendered as the
+ *   card's foot. It is passed in rather than built here because only
+ *   views/identify.js knows about both halves of the screen.
+ */
+export function renderIdentifyWorkspace(container, opts = {}) {
   const s = getState();
   // Discovery gates on the master AI toggle AND live availability
   // (BUILD-02 Phase 6d).
@@ -102,6 +115,7 @@ export function renderValues(container) {
       ${patternsPanel(s)}
       <div id="values-error"></div>
     </div>
+    ${opts.footerHTML ?? ""}
   `;
 
   wirePanels(container, collapsedPanels, () => setState({}));

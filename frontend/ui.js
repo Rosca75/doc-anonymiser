@@ -64,20 +64,11 @@ export function button(label, opts = {}) {
   return `<button ${attrs.filter(Boolean).join(" ")}>${iconHTML}${iconHTML && label ? " " : ""}${escapeHTML(label)}</button>`;
 }
 
-/**
- * banner(title, body, opts) renders the per-step explainer strip: quiet
- * grey background, black text, an icon slot (BUILD-02 Phase 1c).
- * @param {string} title short heading (escaped)
- * @param {string} body one or two explaining sentences (escaped)
- * @param {object} [opts]
- * @param {string} [opts.icon] icon name for the leading slot
- * @returns {string} safe HTML
- */
-export function banner(title, body, opts = {}) {
-  return `<div class="step-banner">${opts.icon ? icon(opts.icon) : ""}` +
-    `<span class="banner-title">${escapeHTML(title)}</span>` +
-    `<span class="banner-body">${escapeHTML(body)}</span></div>`;
-}
+// banner() is GONE (BUILD-05 Phase 2). It rendered the per-step explainer
+// strip, a band of prose above every screen that repeated on each visit what
+// the screen's own controls already said, and it cost the vertical space the
+// fixed-height card workspace needs. Its copy is card subtitles now
+// (card() below, and copy.js CARDS).
 
 /**
  * panel(id, title, contentHTML, opts) renders a <section class="panel">.

@@ -11,11 +11,22 @@
 // stay logic-free (BUILD.md Phase 6).
 
 // WIZARD_STEPS defines the fixed wizard order (CLAUDE.md wizard flow).
-// BUILD-04 CR3 renamed the third step's token from "entities" to
-// "values". Saved sessions written before that rename are migrated by
-// migrateStep() below, so an older file never lands the wizard on a step
-// that no longer exists.
-export const WIZARD_STEPS = ["import", "configure", "values", "run", "export"];
+//
+// BUILD-05 cut five steps to four: Configure stopped being a screen and
+// became the left rail of Identify, which now owns both the choices
+// (categories, confidence, local AI) and the values those choices produce.
+// The tokens ARE the visible labels this time, capitalised: Import, Identify,
+// Anonymise, Export.
+//
+// There is deliberately no migration table for the old tokens. Session files
+// are read only by the version that wrote them (BUILD-05 decision 1), and an
+// unknown persisted token falls back to "import", the one step that is always
+// reachable. A table of every token this application ever used would grow
+// forever to serve files the session loader now refuses anyway.
+//
+// The four tokens are cross-checked against main.js STEP_LABELS and VIEWS,
+// STEP_RESETS below, and copy.js NAV.stepNames by ../step_parity_test.go.
+export const WIZARD_STEPS = ["import", "identify", "anonymise", "export"];
 
 // The initial application state. Every field is documented; grow it here,
 // never ad hoc in views.
@@ -104,6 +115,13 @@ const initialState = {
   running: false,
   progress: null, // {stage, docIndex, docCount, docName} or null
   results: null,  // engine.Results mirror or null
+
+  // Warnings from the last run that the user has dismissed, by id
+  // (BUILD-05 Phase 7). A warning is advice, not an error: once it has been
+  // read it should stop taking up room in the report, but it must come back
+  // if a new run raises it again, which is why the reset for the Anonymise
+  // step empties this list.
+  dismissedWarnings: [],
 
   // Discovery run state (BUILD-02 Phase 7c):
   // {running, current, total, file} or null when idle.
@@ -546,26 +564,23 @@ export function goTo(step) {
   return true;
 }
 
-// LEGACY_STEP_TOKENS maps wizard step tokens written by OLDER versions of
-// the application onto their current names (BUILD-04 CR3). Session files
-// and any other persisted step reference pass through migrateStep() so a
-// rename in the UI can never strand a user on a step that no longer
-// exists. Grow this table on every future token rename; never remove an
-// entry, old files keep existing forever.
-export const LEGACY_STEP_TOKENS = {
-  entities: "values",
-};
-
 /**
- * migrateStep(step) returns the CURRENT token for a possibly legacy step
- * name. Unknown tokens (a corrupted or hand-edited file) fall back to
- * "import", the only step that is always reachable.
- * @param {string} step token read from a persisted session
+ * knownStep(step) returns a token guaranteed to be in WIZARD_STEPS, falling
+ * back to "import" for anything it does not recognise.
+ *
+ * This replaced BUILD-04's LEGACY_STEP_TOKENS + migrateStep() pair, which
+ * translated retired tokens onto current ones. BUILD-05 decision 1 removed
+ * that machinery rather than extending it: a session file whose schema version
+ * this build does not know is refused outright by the loader, so a step token
+ * from an older file never reaches here in the first place. What is left is
+ * the honest case, a corrupted or hand-edited value, and the answer to that is
+ * the step that is always reachable rather than a guess.
+ *
+ * @param {string} step a token from a persisted session or a URL
  * @returns {string} a token guaranteed to be in WIZARD_STEPS
  */
-export function migrateStep(step) {
-  const migrated = LEGACY_STEP_TOKENS[step] ?? step;
-  return WIZARD_STEPS.includes(migrated) ? migrated : "import";
+export function knownStep(step) {
+  return WIZARD_STEPS.includes(step) ? step : "import";
 }
 
 // --- Per-step reset (BUILD-04 CR16) -----------------------------------------
@@ -592,28 +607,33 @@ export function migrateStep(step) {
 export const STEP_RESETS = {
   // Import owns only the error strip of the last import action.
   import: () => ({ importErrors: [] }),
-  // Configure owns what to anonymise and how strictly.
-  configure: () => ({
+  // Identify owns BOTH halves of its screen (BUILD-05 Phase 2): the rail's
+  // choices, which used to belong to a Configure step of its own, and the
+  // workspace's values, suggestions and patterns. They are reset together
+  // because that is now one screen: resetting half of it would leave a
+  // category selection that no longer matches the values it produced.
+  identify: () => ({
     settings: {
       ...state.settings,
       categories: presetCategories(state.settings.level),
       minConfidence: 0,
       smartDetect: { ...SMART_DETECT_DEFAULTS },
     },
-  }),
-  // Values owns the values to replace and everything proposed for review.
-  values: () => ({
     entities: [],
     candidates: [],
     patterns: [],
     discovery: null,
   }),
-  // Run owns the run itself and everything it produced.
-  run: () => ({
+  // Anonymise owns the run itself, everything it produced, and the two
+  // editing surfaces that only exist once there is a result to edit: the
+  // ordered find-and-replace rules and the dismissed-warning list.
+  anonymise: () => ({
     running: false,
     progress: null,
     results: null,
     mapping: null,
+    simpleRules: [],
+    dismissedWarnings: [],
   }),
   // Export owns the per-document metadata review decisions.
   export: () => ({ metaReview: {} }),

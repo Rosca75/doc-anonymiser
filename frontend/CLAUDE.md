@@ -47,10 +47,17 @@ without the runtime. Preserve that behaviour.
   and the subscribe/notify mechanism. Views render from state and dispatch
   actions; they do not keep their own parallel state.
 - **One view module per screen** under `views/` (home, import, identify,
-  identifyrail, anonymise, export, plus the shared allowlist panel). A screen's
-  markup and wiring live in its module. `identifyrail.js` is the exception that
-  proves the rule: Identify is one screen with two halves, and the rail half is
-  big enough to deserve its own file.
+  anonymise, export, plus the shared allowlist panel). A screen's markup and
+  wiring live in its module. Identify is the exception that proves the rule:
+  it is one screen with two halves, each big enough to deserve its own file, so
+  `identify.js` owns the layout and the footer, `identifyrail.js` the choices
+  (country, preset, categories, confidence, local AI) and
+  `identifyworkspace.js` the values, suggestions and patterns.
+- **`nav.js` is the only module that moves the wizard.** Every screen has its
+  own footer now, so the step bar and four footers all navigate; the
+  backward-reset rule lives in `nav.js` once rather than in five places. It
+  also builds the footer itself (`stepFooterHTML`), so a step rename reaches
+  all four screens through `copy.js NAV`.
 - **`copy.js` is the single home for user-visible strings.** No user-facing
   text is hardcoded in a view. `CATEGORY_LABELS` in `copy.js` must have an
   entry for every engine category (enforced by `../category_parity_test.go`).
@@ -98,12 +105,15 @@ Windows it steals focus from the window it belongs to.
 - `index.html` — the single page.
 - `main.js` — application shell runtime: top menu, step bar, active view
   switch, startup checks. It renders NO wizard footer: each screen owns its
-  own (see the fixed-height layout contract below).
+  own (see the fixed-height layout contract above).
 - `shell.js` — pure header/step-bar markup builders.
+- `nav.js` — wizard movement, the backward-reset rule, and the shared
+  per-screen footer (markup plus wiring).
 - `api.js` — THE ONLY bridge caller (see above and `BRIDGE.md`).
 - `state.js` — the store; single source of truth for frontend state.
 - `copy.js` — all user-visible strings + `CATEGORY_LABELS`.
-- `ui.js` — shared UI toolkit (button/banner/panel/icon string builders).
+- `ui.js` — shared UI toolkit: the card kit (card, tabbar, chipRow,
+  collapsibleGroup, stepFooter, toastHTML, modalHTML) plus button/panel/icon.
 - `html.js` — tiny shared HTML helpers (`escapeHTML`).
 - `icons.js` — vendored Material Symbols SVG map.
 - `highlight.js` — renders placeholders as category-coloured `<mark>` with
@@ -121,7 +131,8 @@ Windows it steals focus from the window it belongs to.
   truth for brand values.
 - `style.css` — all layout/component styling; consumes `brand.css` variables
   only.
-- `views/` — one module per wizard screen + the shared `allowlist.js` panel.
+- `views/` — one module per wizard screen (Identify has three, see the
+  discipline rules) + the shared `allowlist.js` panel.
 - `docs/` — the bundled offline user documentation, opened in a SECOND window
   (embedded assets only; see the documentation-window rule below).
 - `assets/icons/` — vendored Material Symbols SVGs + their LICENSE.

@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  button, banner, panel, icon,
+  button, panel, icon,
   card, countBadge, tabbar, chipRow, sectionLabel, statTile,
   collapsibleGroup, stepFooter, toastHTML, modalHTML,
 } from "./ui.js";
@@ -57,16 +57,6 @@ test("button renders data attributes escaped", () => {
 test("icon returns svg for known names and empty string for unknown", () => {
   assert.ok(icon("home").includes("<svg"));
   assert.equal(icon("no_such_icon"), "");
-});
-
-// --- banner -------------------------------------------------------------
-
-test("banner renders title, body and escapes content", () => {
-  const html = banner("Import", "Add <files> here.", { icon: "upload_file" });
-  assert.ok(html.includes("step-banner"));
-  assert.ok(html.includes("Import"));
-  assert.ok(html.includes("Add &lt;files&gt; here."));
-  assert.ok(html.includes("<svg"));
 });
 
 // --- panel --------------------------------------------------------------
@@ -136,14 +126,42 @@ test("the icon rule centres rather than nudging below the baseline", () => {
     "no negative vertical-align nudge may remain (BUILD-04 CR5)");
 });
 
-test("the workflow banner has its own styling, separate from the header", () => {
-  assert.match(styleCSS, /\.workflow-banner \{/);
-  assert.match(styleCSS, /\.workflow-steps \{/);
+test("the step bar has its own styling, separate from the header", () => {
+  assert.match(styleCSS, /\.stepbar \{/);
+  assert.match(styleCSS, /\.steps \{/);
+  // The bar is fixed-height chrome: it must not wrap or grow (BUILD-05).
+  const bar = styleCSS.match(/\.stepbar \{[^}]*\}/);
+  assert.match(bar[0], /height:\s*var\(--chrome-stepbar\)/);
+  assert.match(bar[0], /flex:\s*none/);
+  assert.ok(!bar[0].includes("flex-wrap"), "the step bar must never wrap");
   // The active top-menu entry stays quiet: no accent colour in its rule.
   const active = styleCSS.match(/\.topnav \.topnav-active \{[^}]*\}/);
   assert.ok(active, "the quiet active-entry rule must exist");
   assert.ok(!active[0].includes("--accent"),
     "the active menu entry must not use the accent orange");
+});
+
+test("the active step is marked with an outline, never an orange flood fill", () => {
+  // One loud element per view, and it is the view's primary button, not the
+  // chrome (brand rule). So the accent may colour the underline, the circle's
+  // border and the circle's number, but never a background.
+  const rules = [...styleCSS.matchAll(/\.step-item\.active[^{]*\{([^}]*)\}/g)].map((m) => m[1]);
+  assert.ok(rules.length > 0, "the active-step rules must exist");
+  for (const body of rules) {
+    assert.ok(!/background:[^;]*--accent/.test(body),
+      `an active step must not be filled with the accent: ${body}`);
+  }
+  assert.ok(rules.some((b) => /border-bottom-color:\s*var\(--accent\)/.test(b)));
+});
+
+test("the workflow banner is gone, replaced by the step bar", () => {
+  // Phase 2 renamed it. A leftover rule would style markup nothing emits.
+  assert.ok(!styleCSS.includes(".workflow-banner"));
+  assert.ok(!styleCSS.includes(".workflow-steps"));
+  // The global navigation footer is gone too: each screen owns its own.
+  assert.ok(!/^\.navbar \{/m.test(styleCSS));
+  // So is the per-step explainer strip; its copy moved into card subtitles.
+  assert.ok(!styleCSS.includes(".step-banner"));
 });
 
 test("button renders aria-current only when asked", () => {
@@ -201,16 +219,16 @@ test("the documentation page styles itself from the brand tokens only", () => {
 // markup side is asserted in views/values.js by reading the source, since
 // the chip builder is not exported and there is no DOM here.
 
-const valuesJS = fs.readFileSync(path.join(staticDir, "views", "values.js"), "utf8");
+const workspaceJS = fs.readFileSync(path.join(staticDir, "views", "identifyworkspace.js"), "utf8");
 
 test("variant chips are rendered draggable", () => {
-  assert.match(valuesJS, /class="pill variant-chip" draggable="true"/);
+  assert.match(workspaceJS, /class="pill variant-chip" draggable="true"/);
 });
 
 test("the move button inside a chip does not swallow the drag", () => {
   // A draggable child would start its own (non) drag over most of the
   // chip's width, which is why the button opts out explicitly.
-  assert.match(valuesJS, /class="variant-move" draggable="false"/);
+  assert.match(workspaceJS, /class="variant-move" draggable="false"/);
 });
 
 test("variant chips are not styled as disabled", () => {

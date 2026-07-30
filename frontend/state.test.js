@@ -26,8 +26,8 @@ test("setState merges and notifies subscribers", () => {
   resetState();
   let seen = null;
   const unsub = subscribe((s) => { seen = s.step; });
-  setState({ step: "configure" });
-  assert.equal(seen, "configure");
+  setState({ step: "identify" });
+  assert.equal(seen, "identify");
   unsub();
 });
 
@@ -37,15 +37,15 @@ test("guards: no step beyond import without documents", () => {
   for (const step of WIZARD_STEPS.slice(1)) {
     assert.equal(canGoTo(step), false, `${step} must be locked without documents`);
   }
-  assert.equal(goTo("configure"), false);
+  assert.equal(goTo("identify"), false);
   assert.equal(getState().step, "import");
 });
 
 test("guards: documents unlock middle steps, results unlock export", () => {
   resetState();
   setState({ documents: [{ name: "a.txt" }] });
-  assert.equal(canGoTo("configure"), true);
-  assert.equal(canGoTo("run"), true);
+  assert.equal(canGoTo("identify"), true);
+  assert.equal(canGoTo("anonymise"), true);
   assert.equal(canGoTo("export"), false, "export needs results");
   setState({ results: { documents: [] } });
   assert.equal(canGoTo("export"), true);
@@ -61,7 +61,7 @@ test("next/prev walk the wizard linearly and respect guards", () => {
   assert.equal(nextStep(), false, "cannot advance with no documents");
   setState({ documents: [{ name: "a.txt" }] });
   assert.equal(nextStep(), true);
-  assert.equal(getState().step, "configure");
+  assert.equal(getState().step, "identify");
   assert.equal(prevStep(), true);
   assert.equal(getState().step, "import");
   assert.equal(prevStep(), false, "cannot go back from the first step");
@@ -228,10 +228,10 @@ test("wizard state survives navigating to home and back", () => {
   resetState();
   setState({ documents: [{ name: "a.txt" }] });
   goToScreen("wizard");
-  goTo("configure");
+  goTo("identify");
   goToScreen("home");
   goToScreen("wizard");
-  assert.equal(getState().step, "configure");
+  assert.equal(getState().step, "identify");
   assert.equal(getState().documents.length, 1);
 });
 
@@ -472,44 +472,27 @@ test("reassignOriginal removes a standalone entity and adds the variant", () => 
   assert.equal(reassignOriginal("X", "person_names", "Ghost"), false);
 });
 
-// --- Step token rename and migration (BUILD-04 CR3) ------------------------
+// --- The four-step wizard (BUILD-05 Phase 2) ------------------------------
 
-import { migrateStep, LEGACY_STEP_TOKENS } from "./state.js";
-import { STEP_BANNERS } from "./copy.js";
+import { knownStep } from "./state.js";
 
-test("the wizard's third step token is values, not entities", () => {
-  assert.deepEqual(WIZARD_STEPS, ["import", "configure", "values", "run", "export"]);
+test("the wizard has exactly four steps, in order", () => {
+  assert.deepEqual(WIZARD_STEPS, ["import", "identify", "anonymise", "export"]);
 });
 
-test("migrateStep maps the legacy entities token onto values", () => {
-  assert.equal(migrateStep("entities"), "values");
-  assert.equal(LEGACY_STEP_TOKENS.entities, "values");
-});
-
-test("migrateStep passes current tokens through untouched", () => {
+test("knownStep passes current tokens through untouched", () => {
   for (const step of WIZARD_STEPS) {
-    assert.equal(migrateStep(step), step);
+    assert.equal(knownStep(step), step);
   }
 });
 
-test("migrateStep falls back to import for unknown or missing tokens", () => {
-  // A hand-edited or corrupted session must never strand the wizard on a
-  // step that does not exist; import is the only always-reachable step.
-  assert.equal(migrateStep("teleport"), "import");
-  assert.equal(migrateStep(undefined), "import");
-  assert.equal(migrateStep(""), "import");
-});
-
-test("every wizard step has a banner keyed by its current token", () => {
-  for (const step of WIZARD_STEPS) {
-    assert.ok(STEP_BANNERS[step], `no step banner for ${step}`);
-  }
-});
-
-test("no user-visible step wording still says Entities", () => {
-  for (const [step, banner] of Object.entries(STEP_BANNERS)) {
-    assert.doesNotMatch(banner.title, /entit/i, `${step} title`);
-    assert.doesNotMatch(banner.body, /entit/i, `${step} body`);
+test("an unknown persisted step token lands on import", () => {
+  // BUILD-05 decision 1: there is no migration table any more. A session file
+  // this build does not understand is refused by the loader, so the only
+  // tokens that reach here are corrupted or hand-edited ones, and the answer
+  // is the one step that is always reachable.
+  for (const bad of ["configure", "values", "run", "entities", "teleport", "", undefined, null]) {
+    assert.equal(knownStep(bad), "import", `knownStep(${JSON.stringify(bad)})`);
   }
 });
 
@@ -804,17 +787,21 @@ function fullSession() {
 }
 
 test("isBackward only reports moves toward the start of the wizard", () => {
-  assert.equal(isBackward("values", "configure"), true);
+  assert.equal(isBackward("anonymise", "identify"), true);
   assert.equal(isBackward("export", "import"), true);
-  assert.equal(isBackward("configure", "values"), false);
-  assert.equal(isBackward("run", "run"), false);
-  assert.equal(isBackward("run", "nowhere"), false, "an unknown step is not a backward move");
+  assert.equal(isBackward("identify", "anonymise"), false);
+  assert.equal(isBackward("anonymise", "anonymise"), false);
+  assert.equal(isBackward("anonymise", "nowhere"), false, "an unknown step is not a backward move");
 });
 
 test("resetStep rejects an unknown step instead of silently doing nothing", () => {
   resetState();
   assert.equal(resetStep("teleport"), false);
-  assert.equal(resetStep("values"), true);
+  // The retired tokens are unknown steps now, not aliases for the new ones.
+  assert.equal(resetStep("configure"), false);
+  assert.equal(resetStep("values"), false);
+  assert.equal(resetStep("run"), false);
+  assert.equal(resetStep("identify"), true);
 });
 
 test("every wizard step has a reset entry (CR16)", () => {
@@ -843,48 +830,47 @@ test("NO reset ever clears the allowlist (CR16)", () => {
   }
 });
 
-test("resetStep(configure) restores the preset and the detection defaults", () => {
+test("resetStep(identify) restores the preset and the detection defaults", () => {
+  // Identify owns BOTH halves of its screen now (BUILD-05 Phase 2): the rail's
+  // choices, which used to be a Configure step, and the workspace's values.
   fullSession();
   assert.equal(getState().settings.categories.email, false);
   assert.equal(getState().settings.minConfidence, 0.9);
 
-  assert.equal(resetStep("configure"), true);
+  assert.equal(resetStep("identify"), true);
   const s = getState();
   assert.deepEqual(s.settings.categories, presetCategories(s.settings.level));
   assert.equal(s.settings.minConfidence, 0);
   assert.deepEqual(s.settings.smartDetect, SMART_DETECT_DEFAULTS);
-  // The values step is untouched by a configure reset.
-  assert.equal(s.entities.length, 1);
 });
 
-test("resetStep(configure) keeps the machine's connection settings", () => {
+test("resetStep(identify) clears values, suggestions, patterns and discovery", () => {
+  fullSession();
+  assert.equal(resetStep("identify"), true);
+  const s = getState();
+  assert.deepEqual(s.entities, []);
+  assert.deepEqual(s.candidates, []);
+  assert.deepEqual(s.patterns, []);
+  assert.equal(s.discovery, null);
+  // The run is untouched: it belongs to the next step.
+  assert.ok(s.results);
+});
+
+test("resetStep(identify) keeps the machine's connection settings", () => {
   // Port, model and the AI toggle describe the machine, not this batch of
   // documents, so stepping back must not make the user reconfigure Ollama.
   fullSession();
   setState({ settings: { ...getState().settings, ollamaPort: 12345, model: "custom:7b", useAI: true } });
-  resetStep("configure");
+  resetStep("identify");
   const s = getState();
   assert.equal(s.settings.ollamaPort, 12345);
   assert.equal(s.settings.model, "custom:7b");
   assert.equal(s.settings.useAI, true);
 });
 
-test("resetStep(values) clears values, suggestions, patterns and discovery", () => {
+test("resetStep(anonymise) clears the run and its re-identification mapping", () => {
   fullSession();
-  assert.equal(resetStep("values"), true);
-  const s = getState();
-  assert.deepEqual(s.entities, []);
-  assert.deepEqual(s.candidates, []);
-  assert.deepEqual(s.patterns, []);
-  assert.equal(s.discovery, null);
-  // Configure and Run are untouched.
-  assert.equal(s.settings.minConfidence, 0.9);
-  assert.ok(s.results);
-});
-
-test("resetStep(run) clears the run and its re-identification mapping", () => {
-  fullSession();
-  assert.equal(resetStep("run"), true);
+  assert.equal(resetStep("anonymise"), true);
   const s = getState();
   assert.equal(s.running, false);
   assert.equal(s.progress, null);
@@ -894,10 +880,24 @@ test("resetStep(run) clears the run and its re-identification mapping", () => {
   assert.equal(s.entities.length, 1);
 });
 
-test("resetStep(run) re-locks the export step, which needs results", () => {
+test("resetStep(anonymise) clears the editing surfaces the run screen owns", () => {
+  // The find-and-replace rules and the dismissed warnings only exist once
+  // there is a result to edit, so they are the Anonymise step's own data.
+  fullSession();
+  setState({
+    simpleRules: [{ find: "x", replace: "[CUSTOM_1]", caseSensitive: true }],
+    dismissedWarnings: ["skipped-pdf"],
+  });
+  resetStep("anonymise");
+  const s = getState();
+  assert.deepEqual(s.simpleRules, []);
+  assert.deepEqual(s.dismissedWarnings, []);
+});
+
+test("resetStep(anonymise) re-locks the export step, which needs results", () => {
   fullSession();
   assert.equal(canGoTo("export"), true);
-  resetStep("run");
+  resetStep("anonymise");
   assert.equal(canGoTo("export"), false);
 });
 
@@ -906,7 +906,7 @@ test("resetStep(export) clears only the metadata review decisions", () => {
   assert.equal(resetStep("export"), true);
   const s = getState();
   assert.deepEqual(s.metaReview, {});
-  assert.ok(s.results, "the results are the Run step's, not Export's");
+  assert.ok(s.results, "the results belong to the Anonymise step, not Export");
 });
 
 test("resetStep(import) clears the error strip but nothing else", () => {
