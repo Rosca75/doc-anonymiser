@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Helvetica,Arial,sans-serif;color:#000000;-webkit-font-smoothing:antialiased}
+  a{color:#000000;text-decoration:none}
+  a:hover{color:#FD5108}
+  input,select,button{font-family:Helvetica,Arial,sans-serif}
+  input[type=checkbox]{accent-color:#000000;width:15px;height:15px;margin:0;flex:none}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:#CBD1D6;border-radius:6px;border:2px solid transparent;background-clip:content-box}
+</style>
+</helmet>
+<div style="display:flex;flex-direction:column;height:100vh;background:#F5F7F8">
+
+  <header style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 40px;height:80px;background:#FFFFFF;border-bottom:1px solid #DFE3E6;flex:none">
+    <div style="font-weight:700;font-size:26px;letter-spacing:-.01em;color:#000000">Doc Anonymiser</div>
+    <nav style="display:flex;align-items:center;gap:44px;font-size:16px">
+      <a href="#" style="color:#000000">Home</a>
+      <a href="#" style="display:flex;flex-direction:column;align-items:center;gap:6px;color:#000000">Anonymise documents
+        <span style="display:block;width:100%;height:2px;background:#A1A8B3;border-radius:2px"></span>
+      </a>
+      <a href="#" style="color:#000000">Documentation</a>
+    </nav>
+    <div style="display:flex;align-items:center;justify-content:flex-end;gap:22px">
+      <button aria-label="Help" style="display:grid;place-items:center;width:32px;height:32px;padding:0;border:none;background:none;cursor:pointer;color:#717C8D">
+        <svg width="24" height="24" viewBox="0 -960 960 960" fill="currentColor"><path d="M513.5-254.5Q528-269 528-290t-14.5-35.5Q499-340 478-340t-35.5 14.5Q428-311 428-290t14.5 35.5Q457-240 478-240t35.5-14.5ZM442-394h74q0-33 7.5-52t42.5-52q26-26 41-49.5t15-56.5q0-56-41-86t-97-30q-57 0-92.5 30T342-618l66 26q5-18 22.5-39t53.5-21q32 0 48 17.5t16 38.5q0 20-12 37.5T506-526q-44 39-54 59t-10 73Zm38 314q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Zm0-320Z"></path></svg>
+      </button>
+      <button aria-label="Settings" style="display:grid;place-items:center;width:32px;height:32px;padding:0;border:none;background:none;cursor:pointer;color:#717C8D">
+        <svg width="24" height="24" viewBox="0 -960 960 960" fill="currentColor"><path d="m370-80-16-128q-13-5-24.5-12T307-235l-119 50L78-375l103-78q-1-7-1-13.5v-27q0-6.5 1-13.5L78-585l110-190 119 50q11-8 23-15t24-12l16-128h220l16 128q13 5 24.5 12t22.5 15l119-50 110 190-103 78q1 7 1 13.5v27q0 6.5-2 13.5l103 78-110 190-118-50q-11 8-23 15t-24 12L590-80H370Zm70-80h79l14-106q31-8 57.5-23.5T639-327l99 41 39-68-86-65q5-14 7-29.5t2-31.5q0-16-2-31.5t-7-29.5l86-65-39-68-99 42q-22-23-48.5-38.5T533-694l-13-106h-79l-14 106q-31 8-57.5 23.5T321-633l-99-41-39 68 86 64q-5 15-7 30t-2 32q0 16 2 31t7 30l-86 65 39 68 99-42q22 23 48.5 38.5T427-266l13 106Zm42-180q58 0 99-41t41-99q0-58-41-99t-99-41q-59 0-99.5 41T342-480q0 58 40.5 99t99.5 41Zm-2-140Z"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <section aria-label="Anonymisation workflow" style="display:flex;align-items:center;gap:28px;padding:0 40px;height:68px;background:#FFFFFF;border-bottom:1px solid #DFE3E6;flex:none">
+    <a href="#" style="display:flex;align-items:center;gap:12px;color:#000000;font-size:21px;letter-spacing:-.01em">
+      <svg width="22" height="22" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="m313-440 224 224-57 56-320-320 320-320 57 56-224 224h487v80H313Z"></path></svg>
+      Anonymise Flow
+    </a>
+    <span style="width:1px;height:30px;background:#DFE3E6"></span>
+    <nav style="display:flex;align-items:stretch;gap:6px;height:100%">
+      <sc-for list="{{ steps }}" as="s" hint-placeholder-count="4">
+        <a href="#" style="{{ s.wrapStyle }}">
+          <span style="{{ s.circleStyle }}">{{ s.mark }}</span>
+          <span style="{{ s.labelStyle }}">{{ s.label }}</span>
+        </a>
+      </sc-for>
+    </nav>
+  </section>
+
+  <main style="position:relative;flex:1;min-height:0;display:flex;flex-direction:column;gap:14px;padding:18px 40px 16px">
+
+    <div style="flex:1;min-height:0;display:grid;grid-template-columns:392px minmax(0,1fr);gap:16px">
+
+      <!-- LEFT: DESTINATION + KEYS -->
+      <div style="display:flex;flex-direction:column;gap:14px;min-height:0;overflow-y:auto;padding-right:2px">
+
+        <section style="flex:none;background:#FFFFFF;border:1px solid #DFE3E6;border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;flex-direction:column;gap:3px">
+            <h2 style="margin:0;font-size:18px;font-weight:400;letter-spacing:-.01em">Export</h2>
+            <span style="font-size:12.5px;color:#A1A8B3;text-wrap:pretty">{{ exportSubtitle }}</span>
+          </div>
+          <label style="display:flex;flex-direction:column;gap:6px;font-size:11px;font-weight:700;letter-spacing:.06em;color:#717C8D">DESTINATION FOLDER
+            <span style="display:flex;gap:8px">
+              <input value="{{ dest }}" onChange="{{ onDest }}" style="flex:1;min-width:0;padding:7px 10px;border:1px solid #DFE3E6;border-radius:6px;font-family:Consolas,'Courier New',monospace;font-size:12px;color:#000000">
+              <button onClick="{{ onBrowse }}" style="flex:none;padding:0 12px;height:32px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;cursor:pointer" style-hover="border-color:#000000">Browse</button>
+            </span>
+          </label>
+          <button onClick="{{ onZip }}" style="display:inline-flex;align-items:center;justify-content:center;gap:8px;height:34px;border:1px solid #FD5108;border-radius:6px;background:#FD5108;color:#FFFFFF;font-size:13px;font-weight:700;letter-spacing:.04em;cursor:pointer" style-hover="background:#E64906">
+            <svg width="17" height="17" viewBox="0 -960 960 960" fill="currentColor"><path d="M480-320 280-520l56-58 104 104v-326h80v326l104-104 56 58-200 200ZM240-160q-33 0-56.5-23.5T160-240v-120h80v120h480v-120h80v120q0 33-23.5 56.5T720-160H240Z"></path></svg>
+            EXPORT ALL AS ZIP
+          </button>
+          <span style="font-size:12px;color:#A1A8B3;text-wrap:pretty">Every file saves with an _anon suffix. Your source files are never changed.</span>
+        </section>
+
+        <section style="flex:none;background:#FFFFFF;border:1px solid #FFCDA8;border-radius:8px;overflow:hidden">
+          <div onClick="{{ onToggleMapping }}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px;background:#FFF5ED;border-bottom:1px solid #FFE8D4;cursor:pointer">
+            <span style="display:flex;align-items:center;gap:8px;font-size:15px">
+              <svg width="16" height="16" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true" style="{{ mappingChevron }}"><path d="M480-345 240-585l56-56 184 184 184-184 56 56-240 240Z"></path></svg>
+              Value mapping
+            </span>
+            <span style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#B4551A">RE-IDENTIFICATION KEY</span>
+          </div>
+          <div style="{{ mappingBodyStyle }}">
+            <p style="margin:0;font-size:12px;line-height:1.5;color:#A1A8B3;text-wrap:pretty">Maps every placeholder back to its original value. Handle it like the originals themselves.</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <button onClick="{{ onMapCsv }}" style="height:32px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;cursor:pointer" style-hover="border-color:#000000">CSV</button>
+              <button onClick="{{ onMapJson }}" style="height:32px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;cursor:pointer" style-hover="border-color:#000000">JSON</button>
+            </div>
+          </div>
+        </section>
+
+        <section style="flex:none;background:#FFFFFF;border:1px solid #DFE3E6;border-radius:8px;overflow:hidden">
+          <div onClick="{{ onToggleReport }}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px;border-bottom:1px solid #EEEFF1;font-size:15px;cursor:pointer">
+            <span style="display:flex;align-items:center;gap:8px">
+              <svg width="16" height="16" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true" style="{{ reportChevron }}"><path d="M480-345 240-585l56-56 184 184 184-184 56 56-240 240Z"></path></svg>
+              Report
+            </span>
+            <span style="font-size:12px;color:#A1A8B3">{{ reportSummary }}</span>
+          </div>
+          <div style="{{ reportBodyStyle }}">
+            <p style="margin:0;font-size:12px;line-height:1.5;color:#A1A8B3;text-wrap:pretty">Counts per category, settings used and skipped files. Contains no original values.</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <button onClick="{{ onRepJson }}" style="height:32px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;cursor:pointer" style-hover="border-color:#000000">JSON</button>
+              <button onClick="{{ onRepMd }}" style="height:32px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;cursor:pointer" style-hover="border-color:#000000">Markdown</button>
+            </div>
+          </div>
+        </section>
+
+        <section style="flex:none;background:#FFFFFF;border:1px solid #DFE3E6;border-radius:8px;overflow:hidden">
+          <div onClick="{{ onToggleSession }}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px;border-bottom:1px solid #EEEFF1;font-size:15px;cursor:pointer">
+            <span style="display:flex;align-items:center;gap:8px">
+              <svg width="16" height="16" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true" style="{{ sessionChevron }}"><path d="M480-345 240-585l56-56 184 184 184-184 56 56-240 240Z"></path></svg>
+              Session
+            </span>
+            <span style="font-size:12px;color:#A1A8B3">reuse placeholders</span>
+          </div>
+          <div style="{{ sessionBodyStyle }}">
+            <p style="margin:0;font-size:12px;line-height:1.5;color:#A1A8B3;text-wrap:pretty">Saves values, allowlist, patterns, rules and the placeholder registry, so a follow-up batch reuses the same placeholders. Contains the key.</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <button onClick="{{ onSaveSession }}" style="height:32px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;cursor:pointer" style-hover="border-color:#000000">Save</button>
+              <button onClick="{{ onLoadSession }}" style="height:32px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;cursor:pointer" style-hover="border-color:#000000">Load</button>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- RIGHT: DOCUMENTS -->
+      <section style="display:flex;flex-direction:column;min-height:0;background:#FFFFFF;border:1px solid #DFE3E6;border-radius:8px;overflow:hidden">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:14px 20px 12px;border-bottom:1px solid #EEEFF1">
+          <div style="display:flex;align-items:baseline;gap:12px;min-width:0">
+            <h2 style="margin:0;font-size:18px;font-weight:400;letter-spacing:-.01em">Documents</h2>
+            <span style="font-size:12.5px;color:#A1A8B3">{{ docsSummary }}</span>
+          </div>
+          <span style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#717C8D">SAVE ONE FILE AT A TIME</span>
+        </div>
+
+        <div style="flex:1;min-height:0;overflow-y:auto">
+          <sc-for list="{{ docs }}" as="d" hint-placeholder-count="3">
+            <div style="display:flex;align-items:center;gap:14px;padding:12px 20px;border-bottom:1px solid #F5F7F8">
+              <span style="display:flex;flex-direction:column;gap:2px;width:210px;flex:none;min-width:0">
+                <span style="font-size:13.5px;color:#000000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ d.outName }}</span>
+                <span style="font-size:11.5px;color:#A1A8B3">{{ d.meta }}</span>
+              </span>
+              <span style="display:flex;flex-wrap:wrap;gap:6px;flex:1;min-width:0">
+                <sc-for list="{{ d.formats }}" as="fmt" hint-placeholder-count="3">
+                  <button onClick="{{ fmt.onSave }}" title="{{ fmt.title }}" style="{{ fmt.style }}">{{ fmt.label }}</button>
+                </sc-for>
+              </span>
+              <button onClick="{{ d.onCopy }}" title="Copy the anonymised text" style="display:grid;place-items:center;flex:none;width:30px;height:30px;padding:0;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;cursor:pointer;color:#54616C" style-hover="border-color:#000000;color:#000000">
+                <svg width="16" height="16" viewBox="0 -960 960 960" fill="currentColor"><path d="M360-240q-33 0-56.5-23.5T280-320v-480q0-33 23.5-56.5T360-880h360q33 0 56.5 23.5T800-800v480q0 33-23.5 56.5T720-240H360Zm0-80h360v-480H360v480ZM200-80q-33 0-56.5-23.5T120-160v-560h80v560h440v80H200Zm160-240v-480 480Z"></path></svg>
+              </button>
+            </div>
+          </sc-for>
+
+          <sc-if value="{{ hasReview }}" hint-placeholder-val="{{ false }}">
+            <div style="margin:14px 20px 18px;border:1px solid #FFCDA8;border-radius:8px;overflow:hidden">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 16px;background:#FFF5ED;border-bottom:1px solid #FFE8D4">
+                <span style="font-size:14px;color:#000000">Properties review — {{ reviewDoc }}</span>
+                <span style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#B4551A">{{ reviewExt }}</span>
+              </div>
+              <div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">
+                <p style="margin:0;font-size:12px;line-height:1.5;color:#A1A8B3;text-wrap:pretty">These properties travel inside the file. Edit a value, or keep the original. Nothing is rewritten without your review.</p>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:6px 12px;align-items:center">
+                  <span style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#A1A8B3">PROPERTY</span>
+                  <span style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#A1A8B3">CURRENT</span>
+                  <span style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#A1A8B3">WILL BECOME</span>
+                  <span></span>
+                  <sc-for list="{{ reviewFields }}" as="fl" hint-placeholder-count="4">
+                    <span style="display:flex;flex-direction:column;gap:1px;min-width:0">
+                      <span style="font-size:12.5px;color:#000000">{{ fl.name }}</span>
+                      <span style="font-size:11px;color:#A1A8B3">{{ fl.part }}</span>
+                    </span>
+                    <span style="font-size:12.5px;color:#54616C;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ fl.value }}</span>
+                    <input value="{{ fl.finalValue }}" onChange="{{ fl.onChange }}" style="min-width:0;padding:6px 8px;border:1px solid #DFE3E6;border-radius:6px;font-family:Consolas,'Courier New',monospace;font-size:12px;color:#000000">
+                    <button onClick="{{ fl.onKeep }}" style="{{ fl.keepStyle }}">{{ fl.keepLabel }}</button>
+                  </sc-for>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span style="font-size:12.5px;color:#717C8D;flex:none">File name</span>
+                  <input value="{{ reviewFilename }}" onChange="{{ onReviewFilename }}" style="flex:1;min-width:0;padding:7px 10px;border:1px solid #DFE3E6;border-radius:6px;font-family:Consolas,'Courier New',monospace;font-size:12.5px;color:#000000">
+                  <button onClick="{{ onReviewCancel }}" style="flex:none;padding:0 14px;height:32px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;cursor:pointer" style-hover="border-color:#000000">Close</button>
+                  <button onClick="{{ onReviewExport }}" style="flex:none;padding:0 16px;height:32px;border:1px solid #FD5108;border-radius:6px;background:#FD5108;color:#FFFFFF;font-size:13px;cursor:pointer" style-hover="background:#E64906">{{ reviewExportLabel }}</button>
+                </div>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+
+        <sc-if value="{{ hasToast }}" hint-placeholder-val="{{ true }}">
+          <div style="{{ toastStyle }}">
+            <svg width="16" height="16" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true" style="flex:none"><path d="m424-296 282-282-56-56-226 226-114-114-56 56 170 170Zm56 216q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"></path></svg>
+            <span style="flex:1;min-width:0">{{ toastText }}</span>
+            <button onClick="{{ onDismissToast }}" title="Dismiss" style="display:grid;place-items:center;flex:none;width:20px;height:20px;padding:0;border:none;background:none;cursor:pointer;color:inherit;opacity:.7" style-hover="opacity:1">
+              <svg width="13" height="13" viewBox="0 -960 960 960" fill="currentColor"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"></path></svg>
+            </button>
+          </div>
+        </sc-if>
+      </section>
+
+    </div>
+
+    <section style="flex:none;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:11px 20px;background:#FFFFFF;border:1px solid #DFE3E6;border-radius:8px">
+      <a href="#" style="display:inline-flex;align-items:center;gap:8px;font-size:14px;color:#54616C">
+        <svg width="18" height="18" viewBox="0 -960 960 960" fill="currentColor"><path d="m313-440 224 224-57 56-320-320 320-320 57 56-224 224h487v80H313Z"></path></svg>
+        Back to Anonymise
+      </a>
+      <div style="display:flex;align-items:center;gap:16px">
+        <span style="font-size:13px;color:#A1A8B3">{{ finishHint }}</span>
+        <button onClick="{{ onFinish }}" style="display:inline-flex;align-items:center;gap:10px;padding:0 20px;height:38px;border:1px solid #000000;border-radius:6px;background:#FFFFFF;color:#000000;font-size:13px;font-weight:700;letter-spacing:.04em;cursor:pointer" style-hover="background:#F5F7F8">
+          START A NEW BATCH
+          <svg width="17" height="17" viewBox="0 -960 960 960" fill="currentColor"><path d="M480-160q-134 0-227-93t-93-227q0-134 93-227t227-93q69 0 132 28.5T720-690v-110h80v280H520v-80h168q-32-56-87.5-88T480-720q-100 0-170 70t-70 170q0 100 70 170t170 70q77 0 139-44t87-116h84q-28 106-114 173t-196 67Z"></path></svg>
+        </button>
+      </div>
+    </section>
+
+    <sc-if value="{{ guardOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute;inset:0;z-index:8;display:grid;place-items:center;background:rgba(0,0,0,.28);padding:40px">
+        <div style="width:440px;max-width:100%;background:#FFFFFF;border:1px solid #FFCDA8;border-radius:8px;overflow:hidden;box-shadow:0 18px 44px rgba(0,0,0,.22)">
+          <div style="display:flex;align-items:center;gap:9px;padding:12px 18px;background:#FFF5ED;border-bottom:1px solid #FFE8D4">
+            <svg width="18" height="18" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true" style="flex:none;color:#B4551A"><path d="m40-120 440-760 440 760H40Zm138-80h604L480-720 178-200Zm302-40q17 0 28.5-11.5T520-280q0-17-11.5-28.5T480-320q-17 0-28.5 11.5T440-280q0 17 11.5 28.5T480-240Zm-40-120h80v-200h-80v200Z"></path></svg>
+            <span style="font-size:15px;color:#000000">{{ guardTitle }}</span>
+          </div>
+          <div style="padding:16px 18px;display:flex;flex-direction:column;gap:14px">
+            <p style="margin:0;font-size:13px;line-height:1.55;color:#54616C;text-wrap:pretty">This file contains the re-identification key: anyone holding it can map every placeholder back to the real value. Store it as carefully as the original documents.</p>
+            <div style="display:flex;justify-content:flex-end;gap:8px">
+              <button onClick="{{ onGuardCancel }}" style="padding:0 16px;height:34px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:13px;cursor:pointer" style-hover="border-color:#000000">Cancel</button>
+              <button onClick="{{ onGuardConfirm }}" style="padding:0 16px;height:34px;border:1px solid #FD5108;border-radius:6px;background:#FD5108;color:#FFFFFF;font-size:13px;cursor:pointer" style-hover="background:#E64906">{{ guardConfirmLabel }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+  </main>
+
+  <footer style="display:flex;align-items:center;justify-content:space-between;padding:0 40px;height:60px;background:#FFFFFF;border-top:1px solid #DFE3E6;font-size:15px;color:#A1A8B3;flex:none">
+    <span>Version 0.1.0</span>
+    <span style="display:flex;align-items:center;gap:10px">Local processing only
+      <span style="width:9px;height:9px;border-radius:50%;background:#059669"></span>
+    </span>
+  </footer>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+const NATIVE = new Set(["docx", "pptx", "xlsx", "pdf"]);
+const NATIVE_CAPTION = "Keeps the original layout. Your source file is not changed.";
+const PDF_CAPTION = "Experimental: simplified layout, not a copy of the original design.";
+
+const DOCS = [
+  {
+    name: "services-agreement.docx", ext: "docx", replacements: 7,
+    formats: ["docx", "pdf", "md", "txt", "json"],
+    meta: [
+      { name: "Author", part: "core", value: "Marie Duval", proposed: "[PERSON_1]" },
+      { name: "Company", part: "app", value: "Meridian Consulting S.a r.l.", proposed: "[CLIENT_1]" },
+      { name: "Last modified by", part: "core", value: "Thomas Berger", proposed: "[PERSON_2]" },
+      { name: "Title", part: "core", value: "Services agreement - Northstar", proposed: "Services agreement - [PROJECT_1]" },
+    ],
+  },
+  {
+    name: "board-minutes.pptx", ext: "pptx", replacements: 7,
+    formats: ["pptx", "md", "txt", "json"],
+    meta: [
+      { name: "Author", part: "core", value: "Sophie Klein", proposed: "[PERSON_3]" },
+      { name: "Company", part: "app", value: "Meridian Consulting S.a r.l.", proposed: "[CLIENT_1]" },
+      { name: "Title", part: "core", value: "Board meeting - January", proposed: "Board meeting - January" },
+    ],
+  },
+  {
+    name: "handover-notes.md", ext: "md", replacements: 5,
+    formats: ["md", "txt", "json"],
+    meta: [],
+  },
+];
+
+class Component extends DCLogic {
+  state = {
+    dest: "C:\\Users\\rosca\\Documents\\anonymised",
+    open: { mapping: true, report: false, session: false },
+    review: null,
+    guard: null,
+    toast: { text: "3 documents anonymised. Nothing has been written to disk yet.", tone: "info" },
+  };
+
+  toggle(key) {
+    this.setState((st) => ({ open: { ...st.open, [key]: !st.open[key] } }));
+  }
+
+  say(text, tone) {
+    this.setState({ toast: { text, tone: tone ?? "ok" } });
+  }
+
+  outName(d) {
+    const dot = d.name.lastIndexOf(".");
+    return d.name.slice(0, dot) + "_anon" + d.name.slice(dot);
+  }
+
+  openReview(d, ext) {
+    const dot = d.name.lastIndexOf(".");
+    this.setState({
+      review: {
+        doc: d.name, ext,
+        filename: d.name.slice(0, dot) + "_anon." + ext,
+        fields: d.meta.map((f) => ({ ...f, finalValue: f.proposed })),
+      },
+      toast: null,
+    });
+  }
+
+  bodyStyle(open, gap) {
+    return open
+      ? "padding:14px 16px;display:flex;flex-direction:column;gap:" + gap + "px"
+      : "display:none";
+  }
+
+  chevron(open) {
+    return "flex:none;color:#A1A8B3;transition:transform .15s;transform:rotate(" +
+      (open ? "0deg" : "-90deg") + ")";
+  }
+
+  renderVals() {
+    const s = this.state;
+    const total = DOCS.reduce((a, d) => a + d.replacements, 0);
+
+    const stepDefs = [
+      { mark: "\u2713", label: "Import", st: "done" },
+      { mark: "\u2713", label: "Identify", st: "done" },
+      { mark: "\u2713", label: "Anonymise", st: "done" },
+      { mark: "4", label: "Export", st: "on" },
+    ];
+    const steps = stepDefs.map((d) => {
+      const on = d.st === "on", done = d.st === "done";
+      return {
+        mark: d.mark, label: d.label,
+        wrapStyle: "display:flex;align-items:center;gap:10px;padding:0 8px;height:100%;border-bottom:2px solid " +
+          (on ? "#FD5108" : "transparent"),
+        circleStyle: "display:grid;place-items:center;width:26px;height:26px;border-radius:50%;border:1.5px solid " +
+          (on ? "#FD5108" : done ? "#54616C" : "#CBD1D6") + ";font-size:13px;color:" +
+          (on ? "#FD5108" : done ? "#54616C" : "#A1A8B3"),
+        labelStyle: "font-size:16px;color:" + (on ? "#000000" : done ? "#54616C" : "#A1A8B3"),
+      };
+    });
+
+    const fmtBase = "padding:0 11px;height:28px;border-radius:6px;font-family:Consolas,'Courier New',monospace;" +
+      "font-size:12px;cursor:pointer;white-space:nowrap;";
+    const docs = DOCS.map((d) => ({
+      outName: this.outName(d),
+      meta: d.replacements + " replacements" + (d.meta.length ? " \u00b7 " + d.meta.length + " properties" : ""),
+      formats: d.formats.map((ext) => {
+        const native = NATIVE.has(ext);
+        const pdf = ext === "pdf";
+        return {
+          label: pdf ? ".pdf (same format)" : native ? "." + ext + " (same format)" : "." + ext,
+          title: pdf ? PDF_CAPTION : native ? NATIVE_CAPTION : "Plain export of the anonymised text.",
+          style: fmtBase + (native
+            ? "border:1px solid #FFCDA8;background:#FFF5ED;color:#000000"
+            : "border:1px solid #DFE3E6;background:#FFFFFF;color:#54616C"),
+          onSave: () => {
+            if (native) { this.openReview(d, ext); return; }
+            this.say("Saved " + this.outName(d).replace(/\.[^.]+$/, "." + ext) + " to the destination folder.");
+          },
+        };
+      }),
+      onCopy: () => this.say(d.name + " copied to the clipboard as anonymised text."),
+    }));
+
+    const r = s.review;
+    const t = s.toast;
+    const toastTone = {
+      ok: ["#F0FBF4", "#BFE6CE", "#0A6B3D"],
+      info: ["#F5F7F8", "#EEEFF1", "#54616C"],
+      warn: ["#FBF6E6", "#F5E3B8", "#6B5310"],
+    }[t ? t.tone : "info"];
+
+    return {
+      steps, docs,
+      exportSubtitle: total + " replacements across 3 documents. Choose what leaves this machine.",
+      dest: s.dest,
+      onDest: (e) => this.setState({ dest: e.target.value }),
+      onBrowse: () => this.say("Folder picker opens in the desktop app.", "info"),
+      onZip: () => this.say("All 3 documents exported as anonymised-batch.zip.", "ok"),
+      docsSummary: total + " replacements \u00b7 _anon suffix",
+
+      mappingChevron: this.chevron(s.open.mapping),
+      mappingBodyStyle: this.bodyStyle(s.open.mapping, 12),
+      onToggleMapping: () => this.toggle("mapping"),
+      reportChevron: this.chevron(s.open.report),
+      reportBodyStyle: this.bodyStyle(s.open.report, 12),
+      onToggleReport: () => this.toggle("report"),
+      reportSummary: "13 categories",
+      sessionChevron: this.chevron(s.open.session),
+      sessionBodyStyle: this.bodyStyle(s.open.session, 12),
+      onToggleSession: () => this.toggle("session"),
+
+      onMapCsv: () => this.setState({ guard: { title: "Export the value mapping as CSV", label: "Export CSV", done: "Value mapping exported as CSV. Keep it with the originals." } }),
+      onMapJson: () => this.setState({ guard: { title: "Export the value mapping as JSON", label: "Export JSON", done: "Value mapping exported as JSON. Keep it with the originals." } }),
+      onRepJson: () => this.say("Report exported as report.json.", "ok"),
+      onRepMd: () => this.say("Report exported as report.md.", "ok"),
+      onSaveSession: () => this.setState({ guard: { title: "Save the session file", label: "Save session", done: "Session saved. A follow-up batch will reuse these placeholders." } }),
+      onLoadSession: () => this.say("Session loaded: values, allowlist, patterns and rules restored.", "ok"),
+
+      guardOpen: !!s.guard,
+      guardTitle: s.guard ? s.guard.title : "",
+      guardConfirmLabel: s.guard ? s.guard.label : "",
+      onGuardCancel: () => this.setState({ guard: null }),
+      onGuardConfirm: () => {
+        const done = s.guard ? s.guard.done : "";
+        this.setState({ guard: null, toast: { text: done, tone: "warn" } });
+      },
+
+      hasReview: !!r,
+      reviewDoc: r ? r.doc : "",
+      reviewExt: r ? r.ext.toUpperCase() : "",
+      reviewFilename: r ? r.filename : "",
+      reviewExportLabel: r ? "Export ." + r.ext + " copy" : "",
+      onReviewFilename: (e) => {
+        const v = e.target.value;
+        this.setState((st) => ({ review: { ...st.review, filename: v } }));
+      },
+      onReviewCancel: () => this.setState({ review: null }),
+      onReviewExport: () => {
+        const name = r ? r.filename : "";
+        this.setState({ review: null, toast: { text: "Same-format copy " + name + " exported. Your source file was not changed.", tone: "warn" } });
+      },
+      reviewFields: (r ? r.fields : []).map((f, i) => {
+        const changed = f.finalValue !== f.value;
+        return {
+          name: f.name, part: f.part, value: f.value, finalValue: f.finalValue,
+          onChange: (e) => {
+            const v = e.target.value;
+            this.setState((st) => ({
+              review: { ...st.review, fields: st.review.fields.map((g, j) => j === i ? { ...g, finalValue: v } : g) },
+            }));
+          },
+          keepLabel: changed ? "keep original" : "unchanged",
+          keepStyle: changed
+            ? "padding:0 10px;height:28px;border:1px solid #DFE3E6;border-radius:6px;background:#FFFFFF;font-size:12px;cursor:pointer;white-space:nowrap"
+            : "padding:0 10px;height:28px;border:none;background:none;font-size:12px;color:#A1A8B3;white-space:nowrap;cursor:default",
+          onKeep: () => {
+            if (!changed) return;
+            this.setState((st) => ({
+              review: { ...st.review, fields: st.review.fields.map((g, j) => j === i ? { ...g, finalValue: g.value } : g) },
+            }));
+          },
+        };
+      }),
+
+      hasToast: !!t,
+      toastText: t ? t.text : "",
+      toastStyle: "flex:none;display:flex;align-items:center;gap:9px;padding:11px 20px;border-top:1px solid " +
+        toastTone[1] + ";background:" + toastTone[0] + ";color:" + toastTone[2] + ";font-size:12.5px;line-height:1.45",
+      onDismissToast: () => this.setState({ toast: null }),
+
+      finishHint: "Exports are written only when you click a save button",
+      onFinish: () => this.say("Ready for a new batch: drop new files on the Import step.", "info"),
+    };
+  }
+}
+</script>
+</body>
+</html>
