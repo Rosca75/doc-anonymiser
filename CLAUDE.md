@@ -61,8 +61,11 @@ doc-anonymiser/
 │   ├── api.js                 # THE ONLY file that calls Go bound methods
 │   ├── state.js               # single source of truth for frontend state
 │   ├── main.js / shell.js / ui.js / html.js / icons.js / copy.js / scroll.js
-│   ├── highlight.js / entitymodel.js / candidatemodel.js
-│   ├── views/                 # one JS module per screen + shared allowlist panel
+│   ├── toast.js / modal.js    # state-backed notice strip + in-app confirm (no native dialogs)
+│   ├── highlight.js / entitymodel.js / candidatemodel.js / countries.js
+│   ├── views/                 # one JS module per wizard step + shared panels:
+│   │                          #   home.js, import.js, identify.js, identifyrail.js,
+│   │                          #   anonymise.js, export.js, allowlist.js
 │   ├── docs/                  # bundled offline user docs (SECOND window, embedded only)
 │   ├── assets/icons/          # vendored Material Symbols SVGs + LICENSE
 │   └── *.test.js              # node --test frontend/*.test.js (zero npm deps)
@@ -202,13 +205,20 @@ doc-anonymiser/
   `internal_names`, `person_names`, `custom_patterns` (user regex),
   plus PII categories emitted by pass 1. The user-visible label for
   `internal_names` is "Internal".
-- **Engine identifiers are stable, user-visible labels are not (BUILD-04 CR3):**
-  wizard step 3 is called **"Values"** everywhere the user can see it (step
-  chip, step banner, headings, help text), and its view module is
-  `frontend/views/values.js`. The engine category identifiers listed above, and
-  the PII category constants in `backend/engine/pii.go`, are NEVER renamed to follow a
-  label change. A saved session that stored the old step token `entities`
-  still loads, mapped to `values` by an explicit migration.
+- **Engine identifiers are stable, user-visible labels are not (BUILD-05 Phase 0,
+  superseding BUILD-04 CR3):** the wizard has **four** steps, and both their
+  tokens and their visible labels are: 1 **Import**, 2 **Identify**,
+  3 **Anonymise**, 4 **Export**. Step 2 owns what used to be a screen of its
+  own: the configure choices (preset, the 23 detection categories, the
+  confidence floor, the local-AI settings) are the left rail of Identify, and
+  the values, suggestions, allowlist and custom patterns are its workspace.
+  The engine category identifiers listed above, and the PII category constants
+  in `backend/engine/pii.go`, are NEVER renamed to follow a label change: a
+  label is a display string, an identifier is a contract. Session files are
+  read only by the version that wrote them: a file whose schema version this
+  build does not know is refused with an actionable message rather than
+  half-migrated, so no step-token or field migration table exists
+  (BUILD-05 decision 1).
 - **Sensitive state stays in memory** by default. Saving a session (registry
   + entities + settings) to disk is an explicit user action with a warning
   that the file contains the re-identification key.
