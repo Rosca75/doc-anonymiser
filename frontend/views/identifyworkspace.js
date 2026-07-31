@@ -23,7 +23,7 @@
 // Naming note (BUILD-04 CR3, restated by BUILD-05 Phase 0): the visible labels
 // have changed twice now, from "Entities" to "Values" to this half of
 // "Identify". The ENGINE identifiers this module manipulates (the category keys
-// client_names, person_names, ... and the state.entities array) have not changed
+// entity_names, person_names, ... and the state.entities array) have not changed
 // once, on purpose: a label is a display string, an identifier is a contract.
 
 import {
@@ -55,9 +55,8 @@ import { CARDS, WORKSPACE, VALUES, CATEGORY_LABELS } from "../copy.js";
 // are the categories a user may ADD a value to by hand; the PII categories are
 // detected, not listed.
 export const CATEGORIES = [
-  ["client_names", "Clients"],
+  ["entity_names", "Entities"],
   ["project_names", "Projects"],
-  ["internal_names", "Internal"],
   ["person_names", "Persons"],
 ];
 
@@ -74,7 +73,7 @@ let activeTab = "suggestions";
 let candidateFilter = { ...DEFAULT_CANDIDATE_FILTER, source: "" };
 // The draft text of the three add rows, kept across repaints so a state change
 // elsewhere does not empty a half-typed value.
-const drafts = { value: "", valueCategory: "client_names", allow: "", pattern: "" };
+const drafts = { value: "", valueCategory: "entity_names", allow: "", pattern: "" };
 // Per-entity inline feedback (a refused placeholder, a duplicate variant),
 // keyed by entityKey. Cleared for a row as soon as it succeeds at anything.
 const rowFeedback = new Map();

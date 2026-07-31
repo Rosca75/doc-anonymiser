@@ -15,14 +15,14 @@ import (
 
 func TestSetPlaceholderAcceptsAValidRename(t *testing.T) {
 	reg := NewRegistry()
-	reg.Assign("client_names", "Meridian Consulting")
-	reg.Assign("client_names", "Meridian Consulting") // a second occurrence
+	reg.Assign("entity_names", "Meridian Consulting")
+	reg.Assign("entity_names", "Meridian Consulting") // a second occurrence
 
-	if err := reg.SetPlaceholder("client_names", "Meridian Consulting", "[BANK_A_1]"); err != nil {
+	if err := reg.SetPlaceholder("entity_names", "Meridian Consulting", "[BANK_A_1]"); err != nil {
 		t.Fatalf("a valid rename must be accepted: %v", err)
 	}
 
-	got, ok := reg.Lookup("client_names", "Meridian Consulting")
+	got, ok := reg.Lookup("entity_names", "Meridian Consulting")
 	if !ok || got != "[BANK_A_1]" {
 		t.Errorf("Lookup after rename = %q %v, want [BANK_A_1] true", got, ok)
 	}
@@ -34,7 +34,7 @@ func TestSetPlaceholderAcceptsAValidRename(t *testing.T) {
 		}
 	}
 	// And the lookup stays case-insensitive, like every other registry lookup.
-	if got, ok := reg.Lookup("client_names", "MERIDIAN CONSULTING"); !ok || got != "[BANK_A_1]" {
+	if got, ok := reg.Lookup("entity_names", "MERIDIAN CONSULTING"); !ok || got != "[BANK_A_1]" {
 		t.Errorf("case-insensitive lookup after rename = %q %v", got, ok)
 	}
 }
@@ -48,23 +48,23 @@ func TestSetPlaceholderRefusesAMalformedPlaceholder(t *testing.T) {
 		in  string
 		why string
 	}{
-		{in: "CLIENT_1", why: "no brackets, so it would not stand out in the text"},
+		{in: "ENTITY_1", why: "no brackets, so it would not stand out in the text"},
 		{in: "[client_1]", why: "lower case, so it would read as ordinary prose"},
 		{in: "[CLIENT]", why: "no number, so two clients could not be told apart"},
-		{in: "[CLIENT_0]", why: "zero, which no automatic assignment hands out"},
+		{in: "[ENTITY_0]", why: "zero, which no automatic assignment hands out"},
 		{in: "[CLIENT 1]", why: "a space, which a docx line break can split"},
-		{in: "[CLIENT_1] extra", why: "trailing text: the whole value is the placeholder"},
+		{in: "[ENTITY_1] extra", why: "trailing text: the whole value is the placeholder"},
 		{in: "", why: "empty"},
 		{in: "   ", why: "whitespace only"},
 		{in: "[_1]", why: "no name at all"},
-		{in: "[CLIENT_1", why: "unclosed bracket"},
-		{in: "[CLIENT_-1]", why: "a negative number"},
+		{in: "[ENTITY_1", why: "unclosed bracket"},
+		{in: "[ENTITY_-1]", why: "a negative number"},
 	}
 
 	for _, tt := range tests {
 		reg := NewRegistry()
-		reg.Assign("client_names", "Meridian Consulting")
-		err := reg.SetPlaceholder("client_names", "Meridian Consulting", tt.in)
+		reg.Assign("entity_names", "Meridian Consulting")
+		err := reg.SetPlaceholder("entity_names", "Meridian Consulting", tt.in)
 		if err == nil {
 			t.Errorf("%q must be refused (%s)", tt.in, tt.why)
 			continue
@@ -75,7 +75,7 @@ func TestSetPlaceholderRefusesAMalformedPlaceholder(t *testing.T) {
 			t.Errorf("%q: the refusal must show the expected shape, got: %v", tt.in, err)
 		}
 		// And the stored placeholder must be untouched.
-		if got, _ := reg.Lookup("client_names", "Meridian Consulting"); got != "[CLIENT_1]" {
+		if got, _ := reg.Lookup("entity_names", "Meridian Consulting"); got != "[ENTITY_1]" {
 			t.Errorf("%q: a refused rename must leave the placeholder alone, got %q", tt.in, got)
 		}
 	}
@@ -83,12 +83,12 @@ func TestSetPlaceholderRefusesAMalformedPlaceholder(t *testing.T) {
 
 func TestSetPlaceholderRefusesACollision(t *testing.T) {
 	reg := NewRegistry()
-	reg.Assign("client_names", "Meridian Consulting") // [CLIENT_1]
-	reg.Assign("client_names", "Aurora Group")        // [CLIENT_2]
+	reg.Assign("entity_names", "Meridian Consulting") // [ENTITY_1]
+	reg.Assign("entity_names", "Aurora Group")        // [ENTITY_2]
 	reg.Assign("person_names", "Marie Duval")         // [PERSON_1]
 
 	// Same category.
-	err := reg.SetPlaceholder("client_names", "Aurora Group", "[CLIENT_1]")
+	err := reg.SetPlaceholder("entity_names", "Aurora Group", "[ENTITY_1]")
 	if err == nil {
 		t.Fatal("renaming onto another value's placeholder must be refused")
 	}
@@ -102,10 +102,10 @@ func TestSetPlaceholderRefusesACollision(t *testing.T) {
 	// ACROSS categories too: the exported key is one flat list, so [PERSON_1]
 	// meaning two different things is ambiguous even when the two sit in
 	// different categories.
-	if err := reg.SetPlaceholder("client_names", "Aurora Group", "[PERSON_1]"); err == nil {
+	if err := reg.SetPlaceholder("entity_names", "Aurora Group", "[PERSON_1]"); err == nil {
 		t.Error("a collision across categories must be refused as well")
 	}
-	if got, _ := reg.Lookup("client_names", "Aurora Group"); got != "[CLIENT_2]" {
+	if got, _ := reg.Lookup("entity_names", "Aurora Group"); got != "[ENTITY_2]" {
 		t.Errorf("a refused rename must leave the placeholder alone, got %q", got)
 	}
 }
@@ -115,8 +115,8 @@ func TestSetPlaceholderToItsOwnValueIsAcceptedAndRecorded(t *testing.T) {
 	// the saved registry already carries the renamed placeholder, so re-applying
 	// it is what repopulates the override set.
 	reg := NewRegistry()
-	reg.Assign("client_names", "Meridian Consulting")
-	if err := reg.SetPlaceholder("client_names", "Meridian Consulting", "[CLIENT_1]"); err != nil {
+	reg.Assign("entity_names", "Meridian Consulting")
+	if err := reg.SetPlaceholder("entity_names", "Meridian Consulting", "[ENTITY_1]"); err != nil {
 		t.Fatalf("renaming to the current value must be accepted: %v", err)
 	}
 	if len(reg.Overrides()) != 1 {
@@ -126,7 +126,7 @@ func TestSetPlaceholderToItsOwnValueIsAcceptedAndRecorded(t *testing.T) {
 
 func TestSetPlaceholderRefusesAnUnknownValue(t *testing.T) {
 	reg := NewRegistry()
-	err := reg.SetPlaceholder("client_names", "Never Seen", "[CLIENT_9]")
+	err := reg.SetPlaceholder("entity_names", "Never Seen", "[ENTITY_9]")
 	if err == nil {
 		t.Fatal("there is nothing to rename before the value has a placeholder")
 	}
@@ -141,18 +141,18 @@ func TestSetPlaceholderRefusesAnUnknownValue(t *testing.T) {
 }
 
 func TestAssignSkipsANumberAnOverrideTook(t *testing.T) {
-	// Renaming [CLIENT_1] to [CLIENT_3] means the third automatic client must
-	// not also become [CLIENT_3]. The counter advances past it, so the numbers
+	// Renaming [ENTITY_1] to [ENTITY_3] means the third automatic client must
+	// not also become [ENTITY_3]. The counter advances past it, so the numbers
 	// simply have a gap.
 	reg := NewRegistry()
-	reg.Assign("client_names", "First") // [CLIENT_1]
-	if err := reg.SetPlaceholder("client_names", "First", "[CLIENT_3]"); err != nil {
+	reg.Assign("entity_names", "First") // [ENTITY_1]
+	if err := reg.SetPlaceholder("entity_names", "First", "[ENTITY_3]"); err != nil {
 		t.Fatalf("SetPlaceholder: %v", err)
 	}
-	second := reg.Assign("client_names", "Second")
-	third := reg.Assign("client_names", "Third")
+	second := reg.Assign("entity_names", "Second")
+	third := reg.Assign("entity_names", "Third")
 
-	if second == "[CLIENT_3]" || third == "[CLIENT_3]" {
+	if second == "[ENTITY_3]" || third == "[ENTITY_3]" {
 		t.Errorf("automatic assignment reused the overridden placeholder: %q, %q", second, third)
 	}
 	seen := map[string]string{}
@@ -167,13 +167,13 @@ func TestAssignSkipsANumberAnOverrideTook(t *testing.T) {
 
 func TestOverridesReportOnlyWhatTheUserRenamed(t *testing.T) {
 	reg := NewRegistry()
-	reg.Assign("client_names", "Meridian Consulting")
+	reg.Assign("entity_names", "Meridian Consulting")
 	reg.Assign("person_names", "Marie Duval")
 	if len(reg.Overrides()) != 0 {
 		t.Errorf("nothing has been renamed yet, got %v", reg.Overrides())
 	}
 
-	if err := reg.SetPlaceholder("client_names", "Meridian Consulting", "[BANK_A_1]"); err != nil {
+	if err := reg.SetPlaceholder("entity_names", "Meridian Consulting", "[BANK_A_1]"); err != nil {
 		t.Fatalf("SetPlaceholder: %v", err)
 	}
 	overrides := reg.Overrides()
@@ -182,8 +182,8 @@ func TestOverridesReportOnlyWhatTheUserRenamed(t *testing.T) {
 	}
 	// Keyed "category|lower-cased original", exactly as the registry keys its
 	// entries, so ApplyOverrides can find the same entry again.
-	if got := overrides["client_names|meridian consulting"]; got != "[BANK_A_1]" {
-		t.Errorf("Overrides() = %v, want client_names|meridian consulting to be [BANK_A_1]", overrides)
+	if got := overrides["entity_names|meridian consulting"]; got != "[BANK_A_1]" {
+		t.Errorf("Overrides() = %v, want entity_names|meridian consulting to be [BANK_A_1]", overrides)
 	}
 
 	// A rename that KEEPS the category's own label is still an override. This is
@@ -198,17 +198,17 @@ func TestOverridesReportOnlyWhatTheUserRenamed(t *testing.T) {
 
 	// The returned map must be a COPY: a caller mutating it must not be able to
 	// rewrite the registry's own record.
-	reg.Overrides()["client_names|meridian consulting"] = "[TAMPERED_1]"
-	if reg.Overrides()["client_names|meridian consulting"] != "[BANK_A_1]" {
+	reg.Overrides()["entity_names|meridian consulting"] = "[TAMPERED_1]"
+	if reg.Overrides()["entity_names|meridian consulting"] != "[BANK_A_1]" {
 		t.Error("Overrides() must return a copy, not the live map")
 	}
 }
 
 func TestSessionRoundTripsPlaceholderOverrides(t *testing.T) {
 	reg := NewRegistry()
-	reg.Assign("client_names", "Meridian Consulting")
+	reg.Assign("entity_names", "Meridian Consulting")
 	reg.Assign("person_names", "Marie Duval")
-	if err := reg.SetPlaceholder("client_names", "Meridian Consulting", "[BANK_A_1]"); err != nil {
+	if err := reg.SetPlaceholder("entity_names", "Meridian Consulting", "[BANK_A_1]"); err != nil {
 		t.Fatalf("SetPlaceholder: %v", err)
 	}
 
@@ -229,7 +229,7 @@ func TestSessionRoundTripsPlaceholderOverrides(t *testing.T) {
 	if len(failures) != 0 {
 		t.Fatalf("restoring the overrides must not fail: %v", failures)
 	}
-	if got, ok := restored.Lookup("client_names", "Meridian Consulting"); !ok || got != "[BANK_A_1]" {
+	if got, ok := restored.Lookup("entity_names", "Meridian Consulting"); !ok || got != "[BANK_A_1]" {
 		t.Errorf("the renamed placeholder did not survive the round trip: %q %v", got, ok)
 	}
 	// The KNOWLEDGE that it was deliberate has to survive too, or saving again
@@ -248,19 +248,19 @@ func TestApplyOverridesCollectsFailuresInsteadOfAborting(t *testing.T) {
 	// registry) must still restore the others: one bad entry cannot cost the
 	// user the rest.
 	reg := NewRegistry()
-	reg.Assign("client_names", "Meridian Consulting")
+	reg.Assign("entity_names", "Meridian Consulting")
 	reg.Assign("person_names", "Marie Duval")
 
 	failures := reg.ApplyOverrides(map[string]string{
-		"client_names|meridian consulting": "[BANK_A_1]",
-		"client_names|long gone":           "[GONE_1]",    // no such entry
+		"entity_names|meridian consulting": "[BANK_A_1]",
+		"entity_names|long gone":           "[GONE_1]",    // no such entry
 		"person_names|marie duval":         "not a shape", // malformed
 		"malformed key":                    "[X_1]",       // no separator
 	})
 	if len(failures) != 3 {
 		t.Errorf("failures = %v, want three (missing, malformed placeholder, malformed key)", failures)
 	}
-	if got, _ := reg.Lookup("client_names", "Meridian Consulting"); got != "[BANK_A_1]" {
+	if got, _ := reg.Lookup("entity_names", "Meridian Consulting"); got != "[BANK_A_1]" {
 		t.Errorf("the good override must still have applied, got %q", got)
 	}
 	if got, _ := reg.Lookup("person_names", "Marie Duval"); got != "[PERSON_1]" {

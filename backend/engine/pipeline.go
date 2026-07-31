@@ -135,8 +135,8 @@ type Results struct {
 
 // CategorySelection is the granular per-category switch set the pipeline
 // obeys (BUILD-02 Phase 3): every PII category (email, url, iban, vat,
-// matricule, phone, amount, date) and every entity category (client_names,
-// project_names, internal_names, person_names, custom_patterns,
+// matricule, phone, amount, date) and every entity category (entity_names,
+// project_names, person_names, custom_patterns,
 // organisation_names, location_names) maps to on/off. Levels are PRESETS
 // that fill this map (PresetSelection); the UI may then flip individual
 // switches ("custom" mode).
@@ -157,15 +157,18 @@ var AllPIICategories = []string{
 // AllEntityCategories lists the entity categories in a stable order.
 // organisation_names and location_names have no manual-entry UI, but LLM
 // proposals use them, so they are selectable switches too.
+// entity_names (BUILD-06) is the merge of the former client_names and
+// internal_names: the distinction cost the user a decision at every value
+// they added, and the pipeline treated the two identically anyway.
 var AllEntityCategories = []string{
-	"client_names", "project_names", "internal_names", "person_names",
+	"entity_names", "project_names", "person_names",
 	"custom_patterns", "organisation_names", "location_names",
 }
 
 // PresetSelection reproduces the exact v1 level semantics (CLAUDE.md §5)
 // as a CategorySelection:
 //
-//	soft     = hard PII + client/project/internal names + custom patterns
+//	soft     = hard PII + entity/project names + custom patterns
 //	medium   = soft + person names (the default)
 //	advanced = medium + amounts, dates, organisations, locations
 func PresetSelection(level Level) CategorySelection {
@@ -177,7 +180,7 @@ func PresetSelection(level Level) CategorySelection {
 		CatCreditCard: true, CatNHS: true, CatIPAddress: true,
 		CatMACAddress: true, CatCrypto: true, CatDatabaseURI: true,
 		CatDESteuerID: true, CatESNIF: true,
-		"client_names": true, "project_names": true, "internal_names": true,
+		"entity_names": true, "project_names": true,
 		"custom_patterns": true,
 	}
 	if level == LevelMedium || level == LevelAdvanced {

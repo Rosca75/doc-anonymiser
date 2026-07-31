@@ -19,10 +19,10 @@ import {
 function fixture() {
   return [
     { text: "Marie Duval", category: "person_names", count: 7, source: "smart" },
-    { text: "Alpine Trust", category: "client_names", count: 3, source: "smart" },
+    { text: "Alpine Trust", category: "entity_names", count: 3, source: "smart" },
     { text: "Anouk Berger", category: "person_names", count: 3, source: "local-ai" },
     { text: "Project Borealis", category: "project_names", count: 1, source: "smart" },
-    { text: "Helpdesk", category: "internal_names", count: 12, source: "smart" },
+    { text: "Helpdesk", category: "entity_names", count: 12, source: "smart" },
   ];
 }
 
@@ -141,8 +141,10 @@ test("the sort toggles flip and adopt", () => {
 // --- CR15: the bulk-action counts ----------------------------------------
 
 test("category counts describe exactly the rows given", () => {
+  // Two of the fixture rows were client_names and internal_names before the
+  // BUILD-06 merge, so they now count as one entity_names pair.
   assert.deepEqual(candidateCategoryCounts(fixture()), {
-    person_names: 2, client_names: 1, project_names: 1, internal_names: 1,
+    person_names: 2, entity_names: 2, project_names: 1,
   });
 });
 

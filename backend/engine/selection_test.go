@@ -20,9 +20,9 @@ Office in Metropolis for Acme Corp. Code PRJ-42 applies.`
 
 // selectionEntities declares one entity per entity category.
 var selectionEntities = []Entity{
-	{Category: "client_names", Canonical: "Alpine Trust S.A."},
+	{Category: "entity_names", Canonical: "Alpine Trust S.A."},
 	{Category: "project_names", Canonical: "Project Borealis"},
-	{Category: "internal_names", Canonical: "Paul Stone"},
+	{Category: "entity_names", Canonical: "Paul Stone"},
 	{Category: "person_names", Canonical: "Marie Curie"},
 	{Category: "organisation_names", Canonical: "Acme Corp"},
 	{Category: "location_names", Canonical: "Metropolis"},
@@ -64,9 +64,9 @@ func TestSingleCategorySelection(t *testing.T) {
 		{CatPhone, "+352 621 000 111"},
 		{CatAmount, "EUR 12,500"},
 		{CatDate, "2026-01-15"},
-		{"client_names", "Alpine Trust S.A."},
+		{"entity_names", "Alpine Trust S.A."},
 		{"project_names", "Project Borealis"},
-		{"internal_names", "Paul Stone"},
+		{"entity_names", "Paul Stone"},
 		{"person_names", "Marie Curie"},
 		{"organisation_names", "Acme Corp"},
 		{"location_names", "Metropolis"},
@@ -163,7 +163,7 @@ func TestMixedSelection(t *testing.T) {
 	if !strings.Contains(out, "info.desk@example.com") {
 		t.Errorf("emails off: the address must survive, output: %s", out)
 	}
-	if !strings.Contains(out, "[CLIENT_1]") {
+	if !strings.Contains(out, "[ENTITY_1]") {
 		t.Errorf("clients on: Alpine Trust must be replaced, output: %s", out)
 	}
 	if strings.Contains(out, "Marie Curie") {

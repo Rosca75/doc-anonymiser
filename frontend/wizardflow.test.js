@@ -56,7 +56,7 @@ const SHAPES = {
   candidates: () => {
     SHAPES.configured();
     addCandidates([
-      { text: "Alpine Trust", category: "client_names", count: 4 },
+      { text: "Alpine Trust", category: "entity_names", count: 4 },
       { text: "Marie Duval", category: "person_names", count: 2 },
     ], "smart");
   },

@@ -32,7 +32,7 @@ test("bracket text that is not a placeholder is left unmarked", () => {
 
 test("markClass covers the three families", () => {
   assert.equal(markClass("IBAN"), "pii");
-  assert.equal(markClass("CLIENT"), "entity");
+  assert.equal(markClass("ENTITY"), "entity");
   assert.equal(markClass("CUSTOM"), "custom");
   assert.equal(markClass("FUTURE_LABEL"), "custom");
 });
@@ -40,16 +40,16 @@ test("markClass covers the three families", () => {
 // --- BUILD-02 Phase 10b: mapping-aware marks ---------------------------------
 
 test("mapping adds data attributes and the original in the title", () => {
-  const html = renderHighlighted("see [CLIENT_1] here",
-    { "[CLIENT_1]": { original: "Acme S.A.", category: "client_names" } });
-  assert.ok(html.includes('data-ph="[CLIENT_1]"'));
+  const html = renderHighlighted("see [ENTITY_1] here",
+    { "[ENTITY_1]": { original: "Acme S.A.", category: "entity_names" } });
+  assert.ok(html.includes('data-ph="[ENTITY_1]"'));
   assert.ok(html.includes('data-original="Acme S.A."'));
   assert.ok(html.includes('title="Original: Acme S.A."'));
 });
 
 test("mapping miss falls back to the label-only title", () => {
-  const html = renderHighlighted("see [CLIENT_9] here", { "[CLIENT_1]": { original: "x" } });
-  assert.ok(html.includes('title="client"'));
+  const html = renderHighlighted("see [ENTITY_9] here", { "[ENTITY_1]": { original: "x" } });
+  assert.ok(html.includes('title="entity"'));
   assert.ok(!html.includes("data-ph"));
 });
 

@@ -179,8 +179,7 @@ doc-anonymiser/
   to CSV on export.
 - **Anonymisation levels** (mirror the notebook semantics):
   - `soft` — hard PII (emails, phones, IBANs, national IDs, VAT numbers,
-    URLs with credentials) + engagement entities (client/project/internal
-    names).
+    URLs with credentials) + engagement entities (entity/project names).
   - `medium` (default) — soft + person names. Dates and locations kept.
   - `advanced` — medium + dates, locations, organisation names, monetary
     amounts.
@@ -200,18 +199,26 @@ doc-anonymiser/
   4. Post-pass: registry re-application across ALL loaded documents so the
      same real-world entity maps to the same placeholder everywhere.
 - **Placeholders:** stable per session, format `[CATEGORY_N]` (e.g.
-  `[CLIENT_1]`, `[PERSON_3]`, `[EMAIL_2]`). The registry maps original →
+  `[ENTITY_1]`, `[PERSON_3]`, `[EMAIL_2]`). The registry maps original →
   placeholder and is exportable as a re-identification key (CSV/JSON).
 - **Allowlist wins:** an allowlisted term is never replaced, by any pass.
-- **Entity categories:** `client_names`, `project_names`,
-  `internal_names`, `person_names`, `custom_patterns` (user regex),
-  plus PII categories emitted by pass 1. The user-visible label for
-  `internal_names` is "Internal".
+- **Entity categories:** `entity_names`, `project_names`, `person_names`,
+  `custom_patterns` (user regex), plus `organisation_names` and
+  `location_names` (LLM proposals only) and the PII categories emitted by
+  pass 1. The user-visible label for `entity_names` is "Entity names".
+  `entity_names` is the BUILD-06 merge of the former `client_names` and
+  `internal_names`: the pipeline treated the two identically, and the
+  distinction cost the user a decision at every value they added. It covers
+  named organisations, companies, teams and internal systems. A human being
+  is always `person_names`, which is why `entity_names` gets
+  organisation-style variant expansion and NOT the person-style expansion
+  (initials, surname-only) `internal_names` used to get: expanding "Delta
+  Industries" to "Industries" would replace an ordinary noun everywhere.
 - **Engine identifiers are stable, user-visible labels are not (BUILD-05 Phase 0,
   superseding BUILD-04 CR3):** the wizard has **four** steps, and both their
   tokens and their visible labels are: 1 **Import**, 2 **Identify**,
   3 **Anonymise**, 4 **Export**. Step 2 owns what used to be a screen of its
-  own: the configure choices (preset, the 23 detection categories, the
+  own: the configure choices (preset, the 22 detection categories, the
   confidence floor, the local-AI settings) are the left rail of Identify, and
   the values, suggestions, allowlist and custom patterns are its workspace.
   The engine category identifiers listed above, and the PII category constants

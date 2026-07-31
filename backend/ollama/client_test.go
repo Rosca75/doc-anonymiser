@@ -125,14 +125,14 @@ func TestChatTooOld(t *testing.T) {
 
 func TestDiscoverHappyPath(t *testing.T) {
 	text := "Alpine Trust hired Meridian Consulting for Project Borealis. Contact Marie Duval."
-	c := chatReplyServer(t, `{"client_names":["Alpine Trust"],"project_names":["Project Borealis"],"internal_names":[],"person_names":["Marie Duval"]}`)
+	c := chatReplyServer(t, `{"entity_names":["Alpine Trust"],"project_names":["Project Borealis"],"person_names":["Marie Duval"]}`)
 
 	got, err := c.Discover(context.Background(), text)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
 	want := []engine.ProposedEntity{
-		{Category: "client_names", Text: "Alpine Trust"},
+		{Category: "entity_names", Text: "Alpine Trust"},
 		{Category: "project_names", Text: "Project Borealis"},
 		{Category: "person_names", Text: "Marie Duval"},
 	}
@@ -148,7 +148,7 @@ func TestDiscoverHappyPath(t *testing.T) {
 
 func TestDiscoverStripsCodeFences(t *testing.T) {
 	text := "Alpine Trust appears here."
-	c := chatReplyServer(t, "```json\n{\"client_names\":[\"Alpine Trust\"],\"project_names\":[],\"internal_names\":[],\"person_names\":[]}\n```")
+	c := chatReplyServer(t, "```json\n{\"entity_names\":[\"Alpine Trust\"],\"project_names\":[],\"person_names\":[]}\n```")
 	got, err := c.Discover(context.Background(), text)
 	if err != nil || len(got) != 1 || got[0].Text != "Alpine Trust" {
 		t.Errorf("fenced JSON not tolerated: %+v %v", got, err)
@@ -165,12 +165,12 @@ func TestDiscoverMalformedReply(t *testing.T) {
 
 func TestDeepScanHallucinationFilterAndAllowlist(t *testing.T) {
 	text := "Residual mention of Borealis Fund and the CSSF here."
-	c := chatReplyServer(t, `{"client_names":["Borealis Fund","Fabricated Corp","CSSF"],"project_names":[],"internal_names":[],"person_names":[]}`)
+	c := chatReplyServer(t, `{"entity_names":["Borealis Fund","Fabricated Corp","CSSF"],"project_names":[],"person_names":[]}`)
 	// Wire the allowlist veto exactly as app.go does.
 	allow := engine.NewAllowlist() // seeds CSSF
 	c.Allow = allow.Contains
 
-	got, err := c.DeepScan(context.Background(), text, []engine.Entity{{Category: "client_names", Canonical: "Alpine Trust"}})
+	got, err := c.DeepScan(context.Background(), text, []engine.Entity{{Category: "entity_names", Canonical: "Alpine Trust"}})
 	if err != nil {
 		t.Fatalf("DeepScan: %v", err)
 	}
@@ -195,12 +195,12 @@ func TestDeepScanContextCancellation(t *testing.T) {
 
 func TestMergeProposals(t *testing.T) {
 	a := []engine.ProposedEntity{
-		{Category: "client_names", Text: "Alpine Trust"},
+		{Category: "entity_names", Text: "Alpine Trust"},
 		{Category: "person_names", Text: "Marie Duval"},
 	}
 	b := []engine.ProposedEntity{
-		{Category: "client_names", Text: "ALPINE TRUST"}, // dup, other case
-		{Category: "client_names", Text: "Borealis Fund"},
+		{Category: "entity_names", Text: "ALPINE TRUST"}, // dup, other case
+		{Category: "entity_names", Text: "Borealis Fund"},
 		{Category: "person_names", Text: "  "}, // blank: dropped
 	}
 	got := MergeProposals(a, b)
@@ -217,7 +217,7 @@ func TestMergeProposals(t *testing.T) {
 // server) into engine.Run, proving the LLM slot end to end headlessly.
 func TestPipelineWithOllamaClient(t *testing.T) {
 	text := "Final note about Zephyr Capital."
-	c := chatReplyServer(t, `{"client_names":["Zephyr Capital"],"project_names":[],"internal_names":[],"person_names":[]}`)
+	c := chatReplyServer(t, `{"entity_names":["Zephyr Capital"],"project_names":[],"person_names":[]}`)
 
 	res, err := engine.Run(context.Background(), engine.PipelineInput{
 		Documents: []engine.Document{{Name: "z.txt", Format: engine.FormatTXT, Markdown: text}},
@@ -229,7 +229,7 @@ func TestPipelineWithOllamaClient(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	out := res.Documents[0].Anonymised
-	if strings.Contains(out, "Zephyr") || !strings.Contains(out, "[CLIENT_1]") {
+	if strings.Contains(out, "Zephyr") || !strings.Contains(out, "[ENTITY_1]") {
 		t.Errorf("deep-scan finding not applied: %q", out)
 	}
 	if res.Report.LLMPass != "completed" {
@@ -379,7 +379,7 @@ func TestChunkText(t *testing.T) {
 // size message instead of running for an hour.
 func TestChunkCap(t *testing.T) {
 	c := New("")
-	c.ContextSize = 512 // tiny budget: 512*3*3/4 = 1152 bytes per chunk
+	c.ContextSize = 512                             // tiny budget: 512*3*3/4 = 1152 bytes per chunk
 	huge := strings.Repeat("line of text\n", 20000) // ~260 KB >> 64 chunks
 	if _, err := c.Chunks(huge); err == nil || !strings.Contains(err.Error(), "Smart detection") {
 		t.Errorf("oversize document must fail with the split/smart-detection advice, got %v", err)
@@ -404,9 +404,9 @@ func TestDiscoverAcrossChunks(t *testing.T) {
 		// name; "Zephyr Capital" is proposed by chunk 1 although it only
 		// occurs later in the document (full-text filter must keep it).
 		n := calls.Add(1)
-		content := `{"client_names":["Alpine Trust","Zephyr Capital"],"project_names":[],"internal_names":[],"person_names":[]}`
+		content := `{"entity_names":["Alpine Trust","Zephyr Capital"],"project_names":[],"person_names":[]}`
 		if n > 1 {
-			content = `{"client_names":["Alpine Trust"],"project_names":[],"internal_names":[],"person_names":[]}`
+			content = `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`
 		}
 		resp, _ := json.Marshal(map[string]interface{}{
 			"message": map[string]string{"role": "assistant", "content": content},
@@ -449,7 +449,7 @@ func TestDiscoverCancelBetweenChunks(t *testing.T) {
 		}
 		resp, _ := json.Marshal(map[string]interface{}{
 			"message": map[string]string{"role": "assistant",
-				"content": `{"client_names":["Alpine Trust"],"project_names":[],"internal_names":[],"person_names":[]}`},
+				"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`},
 		})
 		w.Write(resp)
 	})
@@ -475,14 +475,14 @@ func TestDiscoverCancelBetweenChunks(t *testing.T) {
 // server "invents" (not among the inputs) is dropped by the verbatim
 // filter; allowlisted texts are vetoed.
 func TestClassifyCandidates(t *testing.T) {
-	c := chatReplyServer(t, `{"client_names":["Alpine Trust","Fabricated Corp"],"project_names":[],"internal_names":[],"person_names":["Marie Duval","CSSF"]}`)
+	c := chatReplyServer(t, `{"entity_names":["Alpine Trust","Fabricated Corp"],"project_names":[],"person_names":["Marie Duval","CSSF"]}`)
 	allow := engine.NewAllowlist() // seeds CSSF
 	c.Allow = allow.Contains
 
 	got, err := c.ClassifyCandidates(context.Background(), []engine.Candidate{
 		{Text: "Alpine Trust", Category: "person_names", Contexts: []string{"audit of Alpine Trust started"}},
-		{Text: "Marie Duval", Category: "client_names"},
-		{Text: "CSSF", Category: "client_names"},
+		{Text: "Marie Duval", Category: "entity_names"},
+		{Text: "CSSF", Category: "entity_names"},
 	})
 	if err != nil {
 		t.Fatalf("ClassifyCandidates: %v", err)
@@ -494,7 +494,7 @@ func TestClassifyCandidates(t *testing.T) {
 	for _, p := range got {
 		byText[p.Text] = p.Category
 	}
-	if byText["Alpine Trust"] != "client_names" || byText["Marie Duval"] != "person_names" {
+	if byText["Alpine Trust"] != "entity_names" || byText["Marie Duval"] != "person_names" {
 		t.Errorf("classification wrong: %v", byText)
 	}
 	if _, ok := byText["Fabricated Corp"]; ok {
@@ -529,7 +529,7 @@ func TestClassifyCandidatesBatching(t *testing.T) {
 		}
 		resp, _ := json.Marshal(map[string]interface{}{
 			"message": map[string]string{"role": "assistant",
-				"content": `{"client_names":[],"project_names":[],"internal_names":[],"person_names":[]}`},
+				"content": `{"entity_names":[],"project_names":[],"person_names":[]}`},
 		})
 		w.Write(resp)
 	})

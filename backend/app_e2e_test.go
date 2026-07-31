@@ -68,7 +68,7 @@ func TestSourceTextSurvivesTheWholeFlow(t *testing.T) {
 	req := RunRequest{
 		Entities: []engine.Entity{
 			{Category: "person_names", Canonical: "Marie Duval"},
-			{Category: "client_names", Canonical: "Alpine Trust"},
+			{Category: "entity_names", Canonical: "Alpine Trust"},
 		},
 		Categories: engine.PresetSelection(engine.LevelAdvanced),
 	}
@@ -154,5 +154,79 @@ func TestResultsCarryNoSourceCopy(t *testing.T) {
 		if strings.Contains(rd.JSON, source) {
 			t.Errorf("document %q carries a copy of the source text in JSON", rd.Name)
 		}
+	}
+}
+
+// --- Reported issue 5: the entity-category merge -------------------------
+
+// TestEntityCategoryMergeIsComplete guards the BUILD-06 merge of client_names
+// and internal_names into entity_names. A half-done merge is the dangerous
+// shape: the pipeline silently DROPS an entity whose category is not in the
+// selection, so a value the user listed would simply never be replaced.
+func TestEntityCategoryMergeIsComplete(t *testing.T) {
+	for _, retired := range []string{"client_names", "internal_names"} {
+		for _, cat := range engine.AllEntityCategories {
+			if cat == retired {
+				t.Errorf("%s is still an engine category", retired)
+			}
+		}
+		for _, level := range []engine.Level{engine.LevelSoft, engine.LevelMedium, engine.LevelAdvanced} {
+			if engine.PresetSelection(level)[retired] {
+				t.Errorf("preset %q still switches %s on", level, retired)
+			}
+		}
+	}
+	if !engine.PresetSelection(engine.LevelSoft)["entity_names"] {
+		t.Error("entity_names must be on at every preset, as both merged categories were")
+	}
+
+	// The placeholder the user sees, end to end.
+	app, _ := importFixtures(t, "sample.txt")
+	app.docs = append(app.docs, engine.Document{
+		Name: "merge.txt", Format: engine.FormatTXT,
+		Markdown: "Alpine Trust and Marie Duval both appear here.",
+	})
+	res, err := app.FastRerun(RunRequest{
+		Entities: []engine.Entity{
+			{Category: "entity_names", Canonical: "Alpine Trust"},
+			{Category: "person_names", Canonical: "Marie Duval"},
+		},
+		Categories: engine.PresetSelection(engine.LevelMedium),
+	})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	var merged string
+	for _, rd := range res.Documents {
+		if rd.Name == "merge.txt" {
+			merged = rd.Anonymised
+		}
+	}
+	if !strings.Contains(merged, "[ENTITY_1]") {
+		t.Errorf("an entity_names value must become [ENTITY_n], got %q", merged)
+	}
+	for _, gone := range []string{"[CLIENT_", "[INTERNAL_"} {
+		if strings.Contains(merged, gone) {
+			t.Errorf("the retired placeholder %s] is still produced: %q", gone, merged)
+		}
+	}
+}
+
+// TestDiscoveryPromptsUseTheMergedCategory: the model is told the category
+// keys by name, so a prompt left on the old keys silently produces proposals
+// the engine then drops as unknown categories.
+func TestDiscoveryPromptsUseTheMergedCategory(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("ollama", "client.go"))
+	if err != nil {
+		t.Fatalf("could not read the Ollama client: %v", err)
+	}
+	text := string(source)
+	for _, retired := range []string{`"client_names"`, `"internal_names"`, "[CLIENT_1]"} {
+		if strings.Contains(text, retired) {
+			t.Errorf("backend/ollama/client.go still mentions %s; the prompts and the engine must agree on the category keys", retired)
+		}
+	}
+	if !strings.Contains(text, `"entity_names"`) {
+		t.Error("the prompts must demand the entity_names key")
 	}
 }

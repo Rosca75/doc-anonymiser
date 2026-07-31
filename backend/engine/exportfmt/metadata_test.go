@@ -69,7 +69,7 @@ func TestMetadataExtractAndPropose(t *testing.T) {
 	// Proposals: pipeline path, allowlist wins ("CSSF" survives in the
 	// subject although it looks like an organisation).
 	cfg := testConfig(
-		engine.Entity{Category: "client_names", Canonical: "Alpine Trust"},
+		engine.Entity{Category: "entity_names", Canonical: "Alpine Trust"},
 		engine.Entity{Category: "person_names", Canonical: "Marie Duval"},
 	)
 	cfg.Allowlist.Add("CSSF")
@@ -93,9 +93,9 @@ func TestMetadataRewriteRoundTrip(t *testing.T) {
 	raw := buildPropsDocx(t)
 	reviewed := []MetaField{
 		{Part: "docProps/core.xml", Name: "creator", Value: "[PERSON_1]"},
-		{Part: "docProps/core.xml", Name: "title", Value: "[CLIENT_1] engagement report"},
-		{Part: "docProps/app.xml", Name: "Company", Value: "[CLIENT_1]"},
-		{Part: "docProps/custom.xml", Name: "Client", Value: "[CLIENT_1]"},
+		{Part: "docProps/core.xml", Name: "title", Value: "[ENTITY_1] engagement report"},
+		{Part: "docProps/app.xml", Name: "Company", Value: "[ENTITY_1]"},
+		{Part: "docProps/custom.xml", Name: "Client", Value: "[ENTITY_1]"},
 		// A rejected field simply is not in this list: lastModifiedBy
 		// keeps "Marie Duval".
 	}
@@ -112,9 +112,9 @@ func TestMetadataRewriteRoundTrip(t *testing.T) {
 		byName[f.Part+"|"+f.Name] = f.Value
 	}
 	if byName["docProps/core.xml|creator"] != "[PERSON_1]" ||
-		byName["docProps/core.xml|title"] != "[CLIENT_1] engagement report" ||
-		byName["docProps/app.xml|Company"] != "[CLIENT_1]" ||
-		byName["docProps/custom.xml|Client"] != "[CLIENT_1]" {
+		byName["docProps/core.xml|title"] != "[ENTITY_1] engagement report" ||
+		byName["docProps/app.xml|Company"] != "[ENTITY_1]" ||
+		byName["docProps/custom.xml|Client"] != "[ENTITY_1]" {
 		t.Errorf("reviewed values did not round-trip: %v", byName)
 	}
 	if byName["docProps/core.xml|lastModifiedBy"] != "Marie Duval" {
@@ -159,15 +159,15 @@ func extractEntry(t *testing.T, raw []byte, name string) string {
 
 func TestSameFormatFileName(t *testing.T) {
 	reg := engine.NewRegistry()
-	reg.Assign("client_names", "Alpine Trust")
+	reg.Assign("entity_names", "Alpine Trust")
 	reg.Assign("person_names", "Amélie Lefèvre")
 	entries := reg.Entries()
 
 	cases := []struct {
 		name, docName, ext, want string
 	}{
-		{"client term replaced", "Alpine Trust report.docx", "docx", "CLIENT_1 report_anon.docx"},
-		{"entirely one entity falls back", "Alpine Trust.docx", "docx", "CLIENT_1_anon.docx"},
+		{"client term replaced", "Alpine Trust report.docx", "docx", "ENTITY_1 report_anon.docx"},
+		{"entirely one entity falls back", "Alpine Trust.docx", "docx", "ENTITY_1_anon.docx"},
 		{"unicode name replaced", "notes Amélie Lefèvre.pptx", "pptx", "notes PERSON_1_anon.pptx"},
 		{"sheet hash sanitised", "workbook.xlsx#Clients", "xlsx", "workbook.xlsx_Clients_anon.xlsx"},
 		{"glued original falls back", "AlpineTrustAlpine Trust.docx", "docx", "document_anon_7.docx"},

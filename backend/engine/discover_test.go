@@ -39,8 +39,8 @@ func TestSmartDetectSuffixGazetteer(t *testing.T) {
 			if c == nil {
 				t.Fatalf("candidate %q missing, got %+v", tc.want, got)
 			}
-			if c.Category != "client_names" {
-				t.Errorf("suffix candidate category = %s, want client_names", c.Category)
+			if c.Category != "entity_names" {
+				t.Errorf("suffix candidate category = %s, want entity_names", c.Category)
 			}
 		})
 	}
@@ -168,7 +168,7 @@ func TestSmartDetectFrenchFixture(t *testing.T) {
 	if c := findCandidate(got, "Amélie Lefèvre"); c == nil || c.Category != "person_names" {
 		t.Errorf("accented person name missing or misrouted: %+v", got)
 	}
-	if c := findCandidate(got, "Lumière Conseil Sàrl"); c == nil || c.Category != "client_names" {
+	if c := findCandidate(got, "Lumière Conseil Sàrl"); c == nil || c.Category != "entity_names" {
 		t.Errorf("French company with Sàrl suffix missing or misrouted: %+v", got)
 	}
 }

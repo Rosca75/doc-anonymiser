@@ -25,9 +25,8 @@ import (
 // of breaking.
 var placeholderLabels = map[string]string{
 	// Entity categories (CLAUDE.md §5).
-	"client_names":       "CLIENT",
+	"entity_names":       "ENTITY",
 	"project_names":      "PROJECT",
-	"internal_names":     "INTERNAL",
 	"person_names":       "PERSON",
 	"custom_patterns":    "CUSTOM",
 	"organisation_names": "ORG",

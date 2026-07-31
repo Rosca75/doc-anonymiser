@@ -51,8 +51,8 @@ test("a new value is PENDING, not empty", () => {
 
 test("zero variants is an explicit EMPTY state, never a stuck pending placeholder", () => {
   resetState();
-  addEntities([{ category: "client_names", canonical: "Acme" }]);
-  setEntityVariants("client_names", "Acme", []);
+  addEntities([{ category: "entity_names", canonical: "Acme" }]);
+  setEntityVariants("entity_names", "Acme", []);
   const e = entityFor("Acme");
   assert.deepEqual(e.variants, []);
   assert.equal(variantState(e), "empty");
@@ -87,11 +87,11 @@ test("adding a variant re-pends ONLY the amended value", () => {
 test("two values keep independent state", () => {
   resetState();
   addEntities([
-    { category: "client_names", canonical: "Alpha" },
-    { category: "client_names", canonical: "Beta" },
+    { category: "entity_names", canonical: "Alpha" },
+    { category: "entity_names", canonical: "Beta" },
   ]);
-  setEntityVariants("client_names", "Alpha", ["A"]);
-  setEntityVariantError("client_names", "Beta", "expansion failed");
+  setEntityVariants("entity_names", "Alpha", ["A"]);
+  setEntityVariantError("entity_names", "Beta", "expansion failed");
 
   assert.equal(variantState(entityFor("Alpha")), "list");
   assert.equal(variantState(entityFor("Beta")), "error");
@@ -126,13 +126,13 @@ test("CR17: adding a variant to a SECOND value works like the first", () => {
   // addressed rows by position rather than by key.
   resetState();
   addEntities([
-    { category: "client_names", canonical: "First Client" },
-    { category: "client_names", canonical: "Second Client" },
+    { category: "entity_names", canonical: "First Client" },
+    { category: "entity_names", canonical: "Second Client" },
   ]);
-  setEntityVariants("client_names", "First Client", []);
-  setEntityVariants("client_names", "Second Client", []);
+  setEntityVariants("entity_names", "First Client", []);
+  setEntityVariants("entity_names", "Second Client", []);
 
-  addManualVariant("client_names", "Second Client", "SecondCo");
+  addManualVariant("entity_names", "Second Client", "SecondCo");
   const second = entityFor("Second Client");
   assert.deepEqual(second.manualVariants, ["SecondCo"]);
   assert.equal(variantState(second), "pending", "the amended row re-expands");
@@ -142,10 +142,10 @@ test("CR17: adding a variant to a SECOND value works like the first", () => {
 
 test("CR17: a duplicate variant changes nothing, case-insensitively", () => {
   resetState();
-  addEntities([{ category: "client_names", canonical: "Acme" }]);
-  addManualVariant("client_names", "Acme", "ACME Ltd");
-  setEntityVariants("client_names", "Acme", []);
-  addManualVariant("client_names", "Acme", "acme ltd");
+  addEntities([{ category: "entity_names", canonical: "Acme" }]);
+  addManualVariant("entity_names", "Acme", "ACME Ltd");
+  setEntityVariants("entity_names", "Acme", []);
+  addManualVariant("entity_names", "Acme", "acme ltd");
   const e = entityFor("Acme");
   assert.deepEqual(e.manualVariants, ["ACME Ltd"], "one spelling, kept as typed");
   assert.equal(variantState(e), "empty", "an add that changed nothing must not re-pend");
@@ -154,13 +154,13 @@ test("CR17: a duplicate variant changes nothing, case-insensitively", () => {
 test("CR17: moving a variant between two values re-pends BOTH", () => {
   resetState();
   addEntities([
-    { category: "client_names", canonical: "Alpha" },
-    { category: "client_names", canonical: "Beta" },
+    { category: "entity_names", canonical: "Alpha" },
+    { category: "entity_names", canonical: "Beta" },
   ]);
-  setEntityVariants("client_names", "Alpha", ["Alph"]);
-  setEntityVariants("client_names", "Beta", []);
+  setEntityVariants("entity_names", "Alpha", ["Alph"]);
+  setEntityVariants("entity_names", "Beta", []);
 
-  assert.equal(moveVariant("client_names", "Alpha", "client_names", "Beta", "Alph"), true);
+  assert.equal(moveVariant("entity_names", "Alpha", "entity_names", "Beta", "Alph"), true);
   const alpha = entityFor("Alpha");
   const beta = entityFor("Beta");
   // The source EXCLUDES it, so automatic expansion stops matching it; the target
@@ -174,8 +174,8 @@ test("CR17: moving a variant between two values re-pends BOTH", () => {
 
 test("CR17: a settled row is never re-expanded, an empty result included", () => {
   resetState();
-  addEntities([{ category: "client_names", canonical: "Acme" }]);
-  setEntityVariants("client_names", "Acme", []);
+  addEntities([{ category: "entity_names", canonical: "Acme" }]);
+  setEntityVariants("entity_names", "Acme", []);
   for (let i = 0; i < 5; i++) {
     assert.deepEqual(pendingExpansions(getState().entities), [],
       "repeated renders must not queue the same expansion again");
@@ -184,8 +184,8 @@ test("CR17: a settled row is never re-expanded, an empty result included", () =>
 
 test("removing a value takes its variant state with it", () => {
   resetState();
-  addEntities([{ category: "client_names", canonical: "Acme" }]);
-  removeEntity("client_names", "Acme");
+  addEntities([{ category: "entity_names", canonical: "Acme" }]);
+  removeEntity("entity_names", "Acme");
   assert.deepEqual(getState().entities, []);
   assert.deepEqual(pendingExpansions(getState().entities), []);
 });

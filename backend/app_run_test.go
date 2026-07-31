@@ -51,7 +51,7 @@ func TestFastRerunAppliesEntityWithoutLLM(t *testing.T) {
 			chatCalls.Add(1)
 			resp, _ := json.Marshal(map[string]interface{}{
 				"message": map[string]string{"role": "assistant",
-					"content": `{"client_names":["Alpine Trust"],"project_names":[],"internal_names":[],"person_names":[]}`},
+					"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`},
 			})
 			w.Write(resp)
 		default:
@@ -73,7 +73,7 @@ func TestFastRerunAppliesEntityWithoutLLM(t *testing.T) {
 		t.Fatalf("first run: %v", err)
 	}
 	out1 := res1.Documents[0].Anonymised
-	if !strings.Contains(out1, "[CLIENT_1]") || !strings.Contains(out1, "[EMAIL_1]") {
+	if !strings.Contains(out1, "[ENTITY_1]") || !strings.Contains(out1, "[EMAIL_1]") {
 		t.Fatalf("first run output unexpected: %q", out1)
 	}
 	if strings.Contains(out1, "Marie Duval") == false {
@@ -97,7 +97,7 @@ func TestFastRerunAppliesEntityWithoutLLM(t *testing.T) {
 		t.Errorf("new entity not applied on fast rerun: %q", out2)
 	}
 	// Registry stability: the client and email keep their numbers.
-	if !strings.Contains(out2, "[CLIENT_1]") || !strings.Contains(out2, "[EMAIL_1]") {
+	if !strings.Contains(out2, "[ENTITY_1]") || !strings.Contains(out2, "[EMAIL_1]") {
 		t.Errorf("existing placeholders must stay stable: %q", out2)
 	}
 	if chatCalls.Load() != callsAfterFirst {
@@ -149,7 +149,7 @@ func TestApplySettingsRoundTrip(t *testing.T) {
 	if got.ContextSize != 16384 || !got.UseAI || got.Model != "custom:3b" {
 		t.Errorf("settings not stored: %+v", got)
 	}
-	if got.Categories["email"] || !got.Categories["client_names"] {
+	if got.Categories["email"] || !got.Categories["entity_names"] {
 		t.Errorf("categories not stored: %+v", got.Categories)
 	}
 	if app.llm.ContextSize != 16384 {
@@ -171,7 +171,7 @@ func TestPipelineDonePayloadIncludesMapping(t *testing.T) {
 		Markdown: "mail one@example.com from Alpine"}}
 
 	res, err := app.runPipelineBlocking(context.Background(), RunRequest{
-		Entities: []engine.Entity{{Category: "client_names", Canonical: "Alpine"}},
+		Entities: []engine.Entity{{Category: "entity_names", Canonical: "Alpine"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestPipelineDonePayloadIncludesMapping(t *testing.T) {
 	if info, ok := mapping["[EMAIL_1]"]; !ok || info.Original != "one@example.com" {
 		t.Errorf("mapping missing the email entry: %+v", mapping)
 	}
-	if info, ok := mapping["[CLIENT_1]"]; !ok || info.Original != "Alpine" || info.Category != "client_names" {
+	if info, ok := mapping["[ENTITY_1]"]; !ok || info.Original != "Alpine" || info.Category != "entity_names" {
 		t.Errorf("mapping missing the client entry: %+v", mapping)
 	}
 

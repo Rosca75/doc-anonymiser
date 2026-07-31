@@ -156,8 +156,8 @@ func TestDocxRoundTrip(t *testing.T) {
 func TestPptxRoundTrip(t *testing.T) {
 	raw := fixture(t, "deck.pptx")
 	cfg := testConfig(
-		engine.Entity{Category: "client_names", Canonical: "Alpine Trust"},
-		engine.Entity{Category: "client_names", Canonical: "Borealis Fund"},
+		engine.Entity{Category: "entity_names", Canonical: "Alpine Trust"},
+		engine.Entity{Category: "entity_names", Canonical: "Borealis Fund"},
 	)
 
 	out, total, err := ExportPptx(raw, cfg)
@@ -175,7 +175,7 @@ func TestPptxRoundTrip(t *testing.T) {
 	if strings.Contains(md, "Borealis Fund") || strings.Contains(md, "Alpine Trust") {
 		t.Errorf("originals leaked:\n%s", md)
 	}
-	if !strings.Contains(md, "[CLIENT_1]") || !strings.Contains(md, "[CLIENT_2]") {
+	if !strings.Contains(md, "[ENTITY_1]") || !strings.Contains(md, "[ENTITY_2]") {
 		t.Errorf("placeholders missing (slide body and notes):\n%s", md)
 	}
 
@@ -317,7 +317,7 @@ func TestXlsxRoundTrip(t *testing.T) {
 	must(src.Write(&buf))
 	src.Close()
 
-	cfg := testConfig(engine.Entity{Category: "client_names", Canonical: "Alpine Trust"})
+	cfg := testConfig(engine.Entity{Category: "entity_names", Canonical: "Alpine Trust"})
 	out, total, err := ExportXlsx(buf.Bytes(), cfg)
 	if err != nil {
 		t.Fatalf("ExportXlsx: %v", err)
@@ -332,8 +332,8 @@ func TestXlsxRoundTrip(t *testing.T) {
 	}
 	defer res.Close()
 
-	if v, _ := res.GetCellValue("Data", "A2"); v != "[CLIENT_1]" {
-		t.Errorf("A2 = %q, want [CLIENT_1]", v)
+	if v, _ := res.GetCellValue("Data", "A2"); v != "[ENTITY_1]" {
+		t.Errorf("A2 = %q, want [ENTITY_1]", v)
 	}
 	if v, _ := res.GetCellValue("Data", "B2"); v != "[EMAIL_1]" {
 		t.Errorf("B2 = %q, want [EMAIL_1]", v)
@@ -347,7 +347,7 @@ func TestXlsxRoundTrip(t *testing.T) {
 	if f, _ := res.GetCellFormula("Data", "D2"); f != "C2*2" {
 		t.Errorf("formula changed: %q", f)
 	}
-	if v, _ := res.GetCellValue("Data", "A4"); !strings.Contains(v, "[CLIENT_1]") {
+	if v, _ := res.GetCellValue("Data", "A4"); !strings.Contains(v, "[ENTITY_1]") {
 		t.Errorf("merged cell not rewritten: %q", v)
 	}
 	merges, _ := res.GetMergeCells("Data")

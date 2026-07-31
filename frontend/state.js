@@ -203,7 +203,10 @@ export const EXTENDED_PII_CATEGORIES = [
   "crypto", "database_uri", "de_steuer_id", "es_nif",
 ];
 export const ADVANCED_PII_CATEGORIES = ["amount", "date"];
-export const NAME_CATEGORIES = ["client_names", "project_names", "internal_names", "person_names"];
+// entity_names (BUILD-06) is the merge of the former client_names and
+// internal_names. Mirrors engine.AllEntityCategories; the pairing is enforced
+// by ../category_parity_test.go.
+export const NAME_CATEGORIES = ["entity_names", "project_names", "person_names"];
 export const ADVANCED_ENTITY_CATEGORIES = ["organisation_names", "location_names"];
 export const ALL_CATEGORIES = [
   ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES, ...ADVANCED_PII_CATEGORIES,
@@ -212,7 +215,7 @@ export const ALL_CATEGORIES = [
 
 /**
  * presetCategories(level) reproduces engine.PresetSelection exactly:
- * soft = hard PII + client/project/internal + custom patterns;
+ * soft = hard PII + entity/project names + custom patterns;
  * medium = soft + persons; advanced = everything.
  */
 export function presetCategories(level) {
@@ -222,7 +225,7 @@ export function presetCategories(level) {
   // Extended recognizers are hard PII at every level, matching the Go
   // PresetSelection exactly (BUILD-04 CR9).
   for (const c of EXTENDED_PII_CATEGORIES) sel[c] = true;
-  sel.client_names = sel.project_names = sel.internal_names = true;
+  sel.entity_names = sel.project_names = true;
   sel.custom_patterns = true;
   if (level === "medium" || level === "advanced") sel.person_names = true;
   if (level === "advanced") {

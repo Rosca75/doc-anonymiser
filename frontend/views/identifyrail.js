@@ -5,7 +5,7 @@
 //
 // The rail answers WHAT to look for and HOW, in four tabs:
 //
-//   Scope           the document country, the preset, the 23 detection
+//   Scope           the document country, the preset, the 22 detection
 //                   categories in four collapsible groups, and the confidence
 //                   floor. Open by default, and the only tab most users will
 //                   ever touch.

@@ -98,12 +98,12 @@ func TestLuhn(t *testing.T) {
 		s  string
 		ok bool
 	}{
-		{"4532015112830366", true},   // Visa test
-		{"4532015112830367", false},  // mutated
-		{"5555555555554444", true},   // Mastercard test
-		{"378282246310005", true},    // Amex test
-		{"371449635398431", true},    // Amex test
-		{"6011111111111117", true},   // Discover test
+		{"4532015112830366", true},  // Visa test
+		{"4532015112830367", false}, // mutated
+		{"5555555555554444", true},  // Mastercard test
+		{"378282246310005", true},   // Amex test
+		{"371449635398431", true},   // Amex test
+		{"6011111111111117", true},  // Discover test
 		{"4532 0151 1283 0366", true},
 		{"4532-0151-1283-0366", true},
 		{"", false},
@@ -201,7 +201,7 @@ func TestConfidenceDefaults(t *testing.T) {
 	}
 	// Entities and custom patterns also carry confidence.
 	spans := DetectEntities("Alpine Trust S.A. filed a report", []Entity{
-		{Category: "client_names", Canonical: "Alpine Trust S.A."},
+		{Category: "entity_names", Canonical: "Alpine Trust S.A."},
 	}, nil)
 	if len(spans) == 0 || spans[0].Confidence != ConfidenceManualDefault {
 		t.Errorf("entity span confidence = %v, want %v", spans, ConfidenceManualDefault)

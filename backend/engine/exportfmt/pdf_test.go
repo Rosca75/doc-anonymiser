@@ -50,14 +50,14 @@ func TestExportPDFFallbackRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := testConfig(engine.Entity{Category: "client_names", Canonical: "Alpine Trust"})
+	cfg := testConfig(engine.Entity{Category: "entity_names", Canonical: "Alpine Trust"})
 	anonymised, n := cfg.AnonymiseText(md)
 	if n == 0 || strings.Contains(anonymised, "Alpine Trust") {
 		t.Fatalf("working text not anonymised: %q", anonymised)
 	}
 
 	reviewed := []MetaField{
-		{Part: "pdf:Info", Name: "Title", Value: "[CLIENT_1] engagement"},
+		{Part: "pdf:Info", Name: "Title", Value: "[ENTITY_1] engagement"},
 		{Part: "pdf:Info", Name: "Author", Value: "[PERSON_1]"},
 	}
 	out, err := ExportPDF(anonymised, reviewed, cfg)
@@ -67,7 +67,7 @@ func TestExportPDFFallbackRoundTrip(t *testing.T) {
 
 	// Re-extract with the import reader: placeholders in, originals out.
 	extracted := extractAllPDFText(t, out)
-	if !strings.Contains(extracted, "[CLIENT_1]") {
+	if !strings.Contains(extracted, "[ENTITY_1]") {
 		t.Errorf("placeholder missing from the regenerated PDF text: %q", extracted)
 	}
 	if strings.Contains(extracted, "Alpine Trust") {
@@ -83,7 +83,7 @@ func TestExportPDFFallbackRoundTrip(t *testing.T) {
 	for _, f := range meta {
 		byName[f.Name] = f.Value
 	}
-	if byName["Title"] != "[CLIENT_1] engagement" || byName["Author"] != "[PERSON_1]" {
+	if byName["Title"] != "[ENTITY_1] engagement" || byName["Author"] != "[PERSON_1]" {
 		t.Errorf("reviewed metadata not applied: %v", byName)
 	}
 }
@@ -102,7 +102,7 @@ func TestExportPDFSelfCheckBlocksLeaks(t *testing.T) {
 	// still contains a registry original, so the self-check must FAIL
 	// the export and no bytes may be returned.
 	cfg := testConfig()
-	cfg.Registry.Assign("client_names", "Zephyr Capital")
+	cfg.Registry.Assign("entity_names", "Zephyr Capital")
 	out, err := ExportPDF("This text still mentions Zephyr Capital openly.", nil, cfg)
 	if err == nil || out != nil {
 		t.Fatalf("leaky export must fail, got bytes=%v err=%v", out != nil, err)

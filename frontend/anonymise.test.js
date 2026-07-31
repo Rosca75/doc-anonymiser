@@ -49,11 +49,11 @@ test("countOccurrences returns 0 for an empty needle rather than a huge number",
 const MAPPING = {
   "[PERSON_1]": { original: "Marie Duval", category: "person_names" },
   "[PERSON_2]": { original: "Thomas Berger", category: "person_names" },
-  "[CLIENT_1]": { original: "Meridian Consulting", category: "client_names" },
+  "[ENTITY_1]": { original: "Meridian Consulting", category: "entity_names" },
 };
 
 const DOCS = [
-  { name: "a.docx", anonymised: "[PERSON_1] met [PERSON_1] and [CLIENT_1]." },
+  { name: "a.docx", anonymised: "[PERSON_1] met [PERSON_1] and [ENTITY_1]." },
   { name: "b.pptx", anonymised: "[PERSON_2] chaired. [PERSON_1] apologised." },
 ];
 
@@ -75,8 +75,8 @@ test("valuesInCategory honours the scope: one document counts only its own", () 
 test("valuesInCategory omits values that do not appear in scope at all", () => {
   // A value replaced in another document must not appear with a count of 0: the
   // drill-down is about what is in the files the user selected.
-  const rows = valuesInCategory({ mapping: MAPPING }, [DOCS[1]], "client_names");
-  assert.deepEqual(rows, [], "[CLIENT_1] is only in a.docx");
+  const rows = valuesInCategory({ mapping: MAPPING }, [DOCS[1]], "entity_names");
+  assert.deepEqual(rows, [], "[ENTITY_1] is only in a.docx");
 });
 
 test("valuesInCategory sorts by occurrences, then by placeholder for a tie", () => {
@@ -160,7 +160,7 @@ test("continueHint counts what is ready once there is a result", () => {
 // these tests pin both the content and where it comes from.
 
 const SOURCE = "Marie Duval met Meridian Consulting on 12 March 2024.";
-const ANONYMISED = "[PERSON_1] met [CLIENT_1] on [DATE_1].";
+const ANONYMISED = "[PERSON_1] met [ENTITY_1] on [DATE_1].";
 
 /** compareState() is a state with one imported document and one result. */
 function compareState(overrides = {}) {
@@ -170,7 +170,7 @@ function compareState(overrides = {}) {
     results: { documents: [{ name: "a.txt", anonymised: ANONYMISED, byCategory: { person_names: 1 } }] },
     mapping: {
       "[PERSON_1]": { original: "Marie Duval", category: "person_names" },
-      "[CLIENT_1]": { original: "Meridian Consulting", category: "client_names" },
+      "[ENTITY_1]": { original: "Meridian Consulting", category: "entity_names" },
       "[DATE_1]": { original: "12 March 2024", category: "date" },
     },
     ...overrides,
@@ -206,7 +206,7 @@ test("compareCard ignores any stale copy of the source on the result document", 
   // back, the ORIGINAL pane must still read the import list, because the
   // import list is the only thing that cannot go stale.
   const s = compareState();
-  const doc = { ...s.results.documents[0], original: "[PERSON_1] met [CLIENT_1]." };
+  const doc = { ...s.results.documents[0], original: "[PERSON_1] met [ENTITY_1]." };
   assert.equal(textOf(compareCard(s, doc), "#original-pane"), SOURCE);
 });
 

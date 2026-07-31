@@ -12,7 +12,7 @@
 //     sentence start is dropped (sentence-case noise); repeated
 //     sentence-start runs are kept.
 //  2. Legal-suffix gazetteer (Luxembourg-aware): a capitalised run
-//     followed by S.A., S.à r.l., GmbH, ... is a client_names candidate
+//     followed by S.A., S.à r.l., GmbH, ... is an entity_names candidate
 //     with high confidence (suffix included in the candidate text).
 //  3. Frequency analysis: runs occurring twice or more qualify on their
 //     own; a single-occurrence SINGLE-WORD run without a suffix or title
@@ -245,7 +245,7 @@ func SmartDetectWithOptions(text string, allow *Allowlist, opts SmartDetectOptio
 		// Category priority: legal suffix beats title beats the default.
 		switch {
 		case r.hasSuffix:
-			g.category = "client_names"
+			g.category = "entity_names"
 		case r.hasTitle && g.category == "":
 			g.category = "person_names"
 		}
@@ -275,14 +275,14 @@ func SmartDetectWithOptions(text string, allow *Allowlist, opts SmartDetectOptio
 			continue
 		}
 		// Default category for unclassified runs: multi-word runs read as
-		// person names, single words as organisation-ish client names.
+		// person names, single words as organisation-ish entity names.
 		// This is only the INITIAL guess; the review UI and the optional
 		// LLM classification (Phase 8b) refine it.
 		if g.category == "" {
 			if r.words >= 2 {
 				g.category = "person_names"
 			} else {
-				g.category = "client_names"
+				g.category = "entity_names"
 			}
 		}
 		// Allowlist veto LAST among the ORIGINAL rules (allowlist wins,

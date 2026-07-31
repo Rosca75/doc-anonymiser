@@ -115,7 +115,7 @@ func TestMidRunOllamaCrashDegrades(t *testing.T) {
 			}
 			resp, _ := json.Marshal(map[string]interface{}{
 				"message": map[string]string{"role": "assistant",
-					"content": `{"client_names":[],"project_names":[],"internal_names":[],"person_names":[]}`},
+					"content": `{"entity_names":[],"project_names":[],"person_names":[]}`},
 			})
 			w.Write(resp)
 		}
@@ -231,14 +231,14 @@ func TestFreePathNumbersInsteadOfOverwriting(t *testing.T) {
 // fail obscurely.
 func TestSetEntityPlaceholderBeforeAnyRun(t *testing.T) {
 	app := NewApp()
-	err := app.SetEntityPlaceholder("client_names", "Meridian Consulting", "[BANK_A_1]")
+	err := app.SetEntityPlaceholder("entity_names", "Meridian Consulting", "[BANK_A_1]")
 	if err == nil {
 		t.Fatal("there is nothing to rename before the first run")
 	}
 	if !strings.Contains(err.Error(), "run the anonymisation") {
 		t.Errorf("the refusal must say what to do first, got: %v", err)
 	}
-	if got := app.EntityPlaceholder("client_names", "Meridian Consulting"); got != "" {
+	if got := app.EntityPlaceholder("entity_names", "Meridian Consulting"); got != "" {
 		t.Errorf("EntityPlaceholder before a run = %q, want \"\"", got)
 	}
 }

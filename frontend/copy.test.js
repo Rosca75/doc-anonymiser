@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { HOME, CARDS, NAV, WORKFLOW } from "./copy.js";
+import { HOME, CARDS, NAV, WORKFLOW, CATEGORY_LABELS } from "./copy.js";
 
 const staticDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -171,4 +171,14 @@ test("brand.css declares Helvetica first for headings and body", () => {
   const css = fs.readFileSync(path.join(staticDir, "brand.css"), "utf8");
   assert.match(css, /--font-heading:\s*Helvetica,\s*Arial,\s*sans-serif;/);
   assert.match(css, /--font-body:\s*Helvetica,\s*Arial,\s*sans-serif;/);
+});
+
+// --- BUILD-06: the merged entity category -------------------------------
+
+test("the retired category labels are gone from the copy", () => {
+  // client_names and internal_names merged into entity_names. A label left
+  // behind would offer the user a category the engine no longer has.
+  assert.ok(!("client_names" in CATEGORY_LABELS), "client_names must be gone");
+  assert.ok(!("internal_names" in CATEGORY_LABELS), "internal_names must be gone");
+  assert.equal(CATEGORY_LABELS.entity_names[0], "Entity names");
 });
