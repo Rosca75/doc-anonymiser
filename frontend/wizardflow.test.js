@@ -23,7 +23,7 @@
 // guards and the resets treat them differently even though one screen produces
 // them all.
 //
-// Run with `node --test frontend/*.test.js`.
+// Run with `node --test "frontend/**/*.test.js"`.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

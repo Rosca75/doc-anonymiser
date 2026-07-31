@@ -10,7 +10,7 @@
 //        and only for the wizard. BUILD-05 Phase 2 relaid that bar out as
 //        numbered circles with a check mark for completed steps.
 //
-// Run with `node --test frontend/*.test.js`.
+// Run with `node --test "frontend/**/*.test.js"`.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

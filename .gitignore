@@ -23,3 +23,8 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# --- UI test artefacts (docs/UITESTING.md layer 3) ---
+# Screenshots and browser logs from the rendering harnesses. They are evidence
+# for ONE run, uploaded by CI on failure and deleted locally on success.
+/scripts/uitest/artifacts/

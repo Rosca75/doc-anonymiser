@@ -11,10 +11,30 @@
 // from window.go.main.App to window.go.backend.App. If every bound call ever
 // starts throwing "Wails bridge not available", check this namespace first.
 
+// EVERY wrapper below is `async`, and that is load-bearing rather than a style
+// choice. bridge() THROWS when the bridge is absent, and a plain function that
+// throws does so SYNCHRONOUSLY: the caller never gets a promise, so the
+// `.catch()` every call site already writes is dead code and the exception
+// escapes into whatever was rendering at the time. main.js boot() survived it
+// (it awaits), but views/export.js ensureFormats() did not, and one missing
+// bridge took the whole Export screen down with an uncaught error.
+//
+// Marking each wrapper `async` turns that throw into a REJECTED PROMISE, which
+// is what every caller in this frontend is written against. It changes nothing
+// when the bridge is present (an async function returning a promise is
+// transparent) and it is what makes api.js's documented graceful degradation
+// (frontend/CLAUDE.md) actually true. `onEvent` is deliberately NOT async: it
+// returns nothing and no caller awaits it.
+//
+// Found by the Linux rendering harness (scripts/uitest/renderharness), where
+// there is never a bridge, which is exactly the condition this contract is about.
+
 /**
  * bridge() returns the bound App object, or throws a readable error when
  * the Wails bridge is not present (e.g. the page was opened in a normal
- * browser instead of the app window).
+ * browser instead of the app window). Callers reach it only through the async
+ * wrappers below, so what a caller sees is a rejection, never a synchronous
+ * throw.
  */
 function bridge() {
   const app = window.go?.backend?.App;
@@ -28,7 +48,7 @@ function bridge() {
 }
 
 /** ping() proves the JS↔Go bridge end to end (resolves to "pong"). */
-export function ping() {
+export async function ping() {
   return bridge().Ping();
 }
 
@@ -37,7 +57,7 @@ export function ping() {
  * Never rejects for "Ollama missing", that is a normal state inside the
  * returned {available, models, detail} object (graceful degradation).
  */
-export function probeOllama() {
+export async function probeOllama() {
   return bridge().ProbeOllama();
 }
 
@@ -45,7 +65,7 @@ export function probeOllama() {
 
 /** documentationURL() resolves to the asset path of the bundled
  *  documentation page, as declared by Go (app.go DocumentationURL). */
-export function documentationURL() {
+export async function documentationURL() {
   return bridge().DocumentationURL();
 }
 
@@ -83,17 +103,17 @@ export async function openDocumentation() {
 
 /** importFiles() opens the native multi-file dialog; resolves to an
  *  ImportResult {documents, errors}. */
-export function importFiles() {
+export async function importFiles() {
   return bridge().ImportFiles();
 }
 
 /** removeDocument(name) drops one document; resolves to ImportResult. */
-export function removeDocument(name) {
+export async function removeDocument(name) {
   return bridge().RemoveDocument(name);
 }
 
 /** listDocuments() returns the current DocumentInfo list. */
-export function listDocuments() {
+export async function listDocuments() {
   return bridge().ListDocuments();
 }
 
@@ -107,25 +127,25 @@ export function listDocuments() {
  * restored by navigation). An unknown name resolves with `found: false`; it
  * does not reject.
  */
-export function getDocumentSource(name) {
+export async function getDocumentSource(name) {
   return bridge().GetDocumentSource(name);
 }
 
 // --- Settings ----------------------------------------------------------
 
 /** getSettings() resolves to {level, ollamaPort, model}. */
-export function getSettings() {
+export async function getSettings() {
   return bridge().GetSettings();
 }
 
 /** applySettings(settings) stores settings and resolves to the fresh
  *  OllamaStatus (rejects with an actionable message on bad input). */
-export function applySettings(settings) {
+export async function applySettings(settings) {
   return bridge().ApplySettings(settings);
 }
 
 /** listOllamaModels() resolves to the installed model names. */
-export function listOllamaModels() {
+export async function listOllamaModels() {
   return bridge().ListOllamaModels();
 }
 
@@ -133,18 +153,18 @@ export function listOllamaModels() {
 
 /** defaultAllowlist() resolves to the seeded never-anonymise terms shown
  *  in the UI at startup (removable like any other term). */
-export function defaultAllowlist() {
+export async function defaultAllowlist() {
   return bridge().DefaultAllowlist();
 }
 
 /** importAllowlistCSV() opens a native dialog for a CSV of terms;
  *  resolves to the parsed terms (null when the user cancels). */
-export function importAllowlistCSV() {
+export async function importAllowlistCSV() {
   return bridge().ImportAllowlistCSV();
 }
 
 /** saveAllowlistTemplate() saves the downloadable CSV template. */
-export function saveAllowlistTemplate() {
+export async function saveAllowlistTemplate() {
   return bridge().SaveAllowlistTemplate();
 }
 
@@ -165,39 +185,39 @@ export function saveAllowlistTemplate() {
  * only a failure to start (no matching documents, a run already in flight)
  * rejects.
  */
-export function runDetection(fileNames, allowTerms) {
+export async function runDetection(fileNames, allowTerms) {
   return bridge().RunDetection(fileNames, allowTerms);
 }
 
 /** cancelDetection() aborts the in-flight detection run (no-op if idle).
  *  It shares Go's single cancellation slot, so it reaches whichever route is
  *  running, including mid-file. */
-export function cancelDetection() {
+export async function cancelDetection() {
   return bridge().CancelDiscovery();
 }
 
 /** runDiscovery(fileNames, allowTerms) resolves to a DiscoveryResult
  *  {proposals: [{category, text}], status, cancelled}. A cancelled run
  *  resolves with partial proposals; only real failures reject. */
-export function runDiscovery(fileNames, allowTerms) {
+export async function runDiscovery(fileNames, allowTerms) {
   return bridge().RunDiscovery(fileNames, allowTerms);
 }
 
 /** cancelDiscovery() aborts the in-flight discovery run (no-op if idle). */
-export function cancelDiscovery() {
+export async function cancelDiscovery() {
   return bridge().CancelDiscovery();
 }
 
 /** estimateDiscovery(fileNames) resolves to per-file size estimates
  *  [{name, chunks, tooLarge, message}] so oversized files can be
  *  excluded BEFORE the run starts. */
-export function estimateDiscovery(fileNames) {
+export async function estimateDiscovery(fileNames) {
   return bridge().EstimateDiscovery(fileNames);
 }
 
 /** expandVariants(entity) resolves to the variant list of one entity
  *  ({category, canonical, manualVariants, excludedVariants}). */
-export function expandVariants(entity) {
+export async function expandVariants(entity) {
   return bridge().ExpandEntityVariants(entity);
 }
 
@@ -211,7 +231,7 @@ export function expandVariants(entity) {
  * matching engine.SmartDetectOptions field for field. Omitting it sends
  * the zero value, which means "no filtering".
  */
-export function runSmartDetection(fileNames, allowTerms, classify, options) {
+export async function runSmartDetection(fileNames, allowTerms, classify, options) {
   return bridge().RunSmartDetection(fileNames, allowTerms, !!classify, options ?? {
     minLength: 0, minOccurrences: 0, excludeCommonWords: false, minConfidence: 0,
   });
@@ -219,18 +239,18 @@ export function runSmartDetection(fileNames, allowTerms, classify, options) {
 
 /** countTermMatches(term) resolves to {count, documents} for the live
  *  manual-entry preview. */
-export function countTermMatches(term) {
+export async function countTermMatches(term) {
   return bridge().CountTermMatches(term);
 }
 
 /** validatePattern(expr) resolves to "" (valid) or the error message. */
-export function validatePattern(expr) {
+export async function validatePattern(expr) {
   return bridge().ValidatePattern(expr);
 }
 
 /** patternMatches(expr) resolves to up to 20 sample matches across the
  *  loaded documents. */
-export function patternMatches(expr) {
+export async function patternMatches(expr) {
   return bridge().PatternMatches(expr);
 }
 
@@ -243,13 +263,13 @@ export function patternMatches(expr) {
  * verbatim. The rename takes effect on the next run or fast re-run, not
  * retroactively.
  */
-export function setEntityPlaceholder(category, canonical, placeholder) {
+export async function setEntityPlaceholder(category, canonical, placeholder) {
   return bridge().SetEntityPlaceholder(category, canonical, placeholder);
 }
 
 /** entityPlaceholder(category, canonical) resolves to the placeholder
  *  currently assigned to a value, or "" before the first run. */
-export function entityPlaceholder(category, canonical) {
+export async function entityPlaceholder(category, canonical) {
   return bridge().EntityPlaceholder(category, canonical);
 }
 
@@ -257,29 +277,29 @@ export function entityPlaceholder(category, canonical) {
 
 /** runPipeline(request) starts the pipeline; resolves immediately (results
  *  arrive on the "pipeline:done" event, progress on "pipeline:progress"). */
-export function runPipeline(request) {
+export async function runPipeline(request) {
   return bridge().RunPipeline(request);
 }
 
 /** cancelPipeline() aborts the in-flight run. */
-export function cancelPipeline() {
+export async function cancelPipeline() {
   return bridge().CancelPipeline();
 }
 
 /** fastRerun(request) re-runs the deterministic passes only (no LLM),
  *  resolving directly to the fresh Results. */
-export function fastRerun(request) {
+export async function fastRerun(request) {
   return bridge().FastRerun(request);
 }
 
 /** getResults() resolves to the latest Results (or null). */
-export function getResults() {
+export async function getResults() {
   return bridge().GetResults();
 }
 
 /** getMapping() resolves to the placeholder → {original, category}
  *  lookup for tooltips and reassignment (empty before the first run). */
-export function getMapping() {
+export async function getMapping() {
   return bridge().GetMapping();
 }
 
@@ -287,31 +307,31 @@ export function getMapping() {
 
 /** exportDocumentFormats(name) resolves to the offered extensions
  *  (default first) for one result document. */
-export function exportDocumentFormats(name) {
+export async function exportDocumentFormats(name) {
   return bridge().ExportDocumentFormats(name);
 }
 
 /** saveDocument(name, ext) opens a save dialog for one document. */
-export function saveDocument(name, ext) {
+export async function saveDocument(name, ext) {
   return bridge().SaveDocument(name, ext);
 }
 
 /** getSameFormatMetadata(name, ext) resolves to {fields, filename}: the
  *  document properties with proposed replacements plus the proposed
  *  anonymised filename, for the review panel (BUILD-02 Phase 12). */
-export function getSameFormatMetadata(name, ext) {
+export async function getSameFormatMetadata(name, ext) {
   return bridge().GetSameFormatMetadata(name, ext);
 }
 
 /** saveSameFormat(name, ext, fields, filename) writes the same-format
  *  copy with the REVIEWED metadata values and filename. */
-export function saveSameFormat(name, ext, fields, filename) {
+export async function saveSameFormat(name, ext, fields, filename) {
   return bridge().SaveSameFormat(name, ext, fields, filename);
 }
 
 /** exportAllZip() saves every anonymised document into one zip, asking for a
  *  location with the native save dialog. */
-export function exportAllZip() {
+export async function exportAllZip() {
   return bridge().ExportAllZip();
 }
 
@@ -320,7 +340,7 @@ export function exportAllZip() {
  * chosen path, or "" when the user cancelled (BUILD-05 Phase 3).
  * Nothing is written; it only picks.
  */
-export function chooseExportFolder() {
+export async function chooseExportFolder() {
   return bridge().ChooseExportFolder();
 }
 
@@ -333,36 +353,36 @@ export function chooseExportFolder() {
  * re-identification key (BUILD-05 decision 4). An existing archive is never
  * overwritten: the new one is numbered.
  */
-export function exportAllZipTo(dir) {
+export async function exportAllZipTo(dir) {
   return bridge().ExportAllZipTo(dir);
 }
 
 /** copyDocument(name) puts the anonymised text on the clipboard. */
-export function copyDocument(name) {
+export async function copyDocument(name) {
   return bridge().CopyDocument(name);
 }
 
 /** exportMapping(format) saves the re-identification key ("csv"/"json").
  *  Call ONLY after the user confirmed the sensitivity warning. */
-export function exportMapping(format) {
+export async function exportMapping(format) {
   return bridge().ExportMapping(format);
 }
 
 /** exportReport(format) saves the run report ("json"/"md"). */
-export function exportReport(format) {
+export async function exportReport(format) {
   return bridge().ExportReport(format);
 }
 
 /** saveSession(request) persists the session (entities, allowlist,
  *  patterns, rules, settings, registry). Warn the user first, the file
  *  contains the re-identification key. */
-export function saveSession(request) {
+export async function saveSession(request) {
   return bridge().SaveSessionToFile(request);
 }
 
 /** loadSession() opens a session file; resolves to the Session object or
  *  null when the user cancels the dialog. */
-export function loadSession() {
+export async function loadSession() {
   return bridge().LoadSessionFromFile();
 }
 

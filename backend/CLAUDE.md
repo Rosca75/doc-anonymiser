@@ -100,6 +100,13 @@ half-migrated (BUILD-05 decision 1).
   is not a Go expert and orchestrates agents, so explain intent, not just
   mechanics. Error messages must be actionable: what failed, what was
   expected, how to fix it.
+- **A change is not finished until its tests move with it** (root `CLAUDE.md`
+  section 6). In the same change: update the tests that asserted the old
+  behaviour, add a test for the new behaviour, delete the tests for behaviour
+  that is gone, and never weaken an assertion to make it pass. A pass that
+  asserts a retired contract is worse than a failure, because it is read as
+  evidence. When a change here alters something the UI reads, the FRONTEND
+  suite is part of the same change too: `node --test "frontend/**/*.test.js"`.
 - **Table-driven unit tests** for all engine logic; fixtures live in
   `backend/testdata/` in the supported formats, English and French. Tests
   reach fixtures by relative path (`../testdata`, `../../testdata`) — keep

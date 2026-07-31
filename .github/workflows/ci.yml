@@ -8,16 +8,23 @@
 #      message if the CLI version diverges from the Wails library version
 #      required in go.mod (they are a coupled pair — see CLAUDE.md §7),
 #   4. runs `go vet` and `go test`,
-#   5. does a Linux `wails build` as a build-sanity check (the Ubuntu runner
+#   5. runs the frontend node tests,
+#   6. runs the LINUX RENDERING HARNESS (layer 3, docs/UITESTING.md): a real
+#      Chromium over the DevTools Protocol, asserting what a user would SEE.
+#      This one BLOCKS: the seven issues reported against the built application
+#      all passed the tests above it, and the questions it answers (does the
+#      screen fit, is the tooltip visible or clipped) are answerable only by a
+#      renderer,
+#   7. does a Linux `wails build` as a build-sanity check (the Ubuntu runner
 #      needs GTK + WebKit dev headers, installed below).
 name: CI
 
 on:
   push:
   pull_request:
-  # The Windows UI job is opt-in: it drives a real browser and is slower and
-  # more fragile than the rest, so it runs on demand and on tags rather than
-  # on every push.
+  # The Windows UI job is opt-in: it needs the packaged .exe and the real
+  # WebView2, so it runs on demand and on tags rather than on every push. The
+  # rendering checks themselves gate on ubuntu-latest in the job below.
   workflow_dispatch:
 
 env:
@@ -80,10 +87,62 @@ jobs:
       - name: go test
         run: go test ./...
 
-      # Dev-time frontend store tests: plain `node --test`, zero npm
+      # Layer 2: the frontend unit tests. Plain `node --test`, zero npm
       # dependencies (node ships on the runner; see BUILD.md Phase 6).
-      - name: frontend store tests (node --test)
-        run: node --test frontend/*.test.js
+      #
+      # The pattern is RECURSIVE and it is QUOTED, and both matter. The flat
+      # `frontend/*.test.js` this used to be silently ignored anything under
+      # frontend/views/, so a test file added next to a view module would never
+      # run and CI would stay green: a false pass, which is worse than no test.
+      # The quotes hand the pattern to node rather than to bash, whose globstar
+      # is off by default and would expand `**` as a single `*`, reintroducing
+      # the same hole from the other direction.
+      #
+      # ../frontend_tests_test.go expands this exact pattern and fails if any
+      # test file on disk would be missed by it.
+      - name: frontend unit tests (node --test)
+        run: node --test "frontend/**/*.test.js"
+
+      # Layer 3 of the test strategy (docs/UITESTING.md), and the first version
+      # of it that actually runs anywhere. It serves frontend/ over loopback,
+      # drives a headless Chromium over the DevTools Protocol, and asserts the
+      # things only a renderer can answer: no wizard screen scrolls or clips the
+      # page, the Import preview shows source text rather than placeholders, the
+      # Configure rail is three detection routes with the documented default
+      # switches, a real hover produces a tooltip that is visibly inside the
+      # Compare card, and nothing logged an error.
+      #
+      # It BLOCKS, deliberately. Every one of the seven reported issues passed
+      # the steps above; a check that catches them and does not gate is a
+      # comment. It needs no new dependency (a small RFC 6455 client in the
+      # harness) and no service, and the whole run is a few seconds.
+      #
+      # No install step: the GitHub ubuntu runner image already ships Google
+      # Chrome, and the harness finds it on PATH. Nothing is downloaded, no npm
+      # is involved (Playwright would need it), and CI spends no time on it. If a
+      # future runner image drops Chrome, this step is where it will say so
+      # rather than the harness failing further down.
+      - name: Locate the browser for the rendering harness
+        run: |
+          BROWSER=$(command -v google-chrome || command -v chromium-browser || command -v chromium || true)
+          if [ -z "${BROWSER}" ]; then
+            echo "::error::No Chromium-family browser on PATH, so the rendering harness cannot run."
+            echo "::error::Fix: add an install step (apt-get install -y chromium), or set CHROME to a browser binary."
+            exit 1
+          fi
+          echo "Using ${BROWSER}"
+          "${BROWSER}" --version
+
+      - name: UI rendering harness (Linux, layer 3)
+        run: go run ./scripts/uitest/renderharness -keep-artifacts
+
+      - name: Upload rendering-harness artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-rendering-linux
+          path: scripts/uitest/artifacts/
+          if-no-files-found: ignore
 
       # Build sanity only — we do not ship the Linux CI binary from here
       # (release.yml handles real artefacts on tags).
@@ -91,16 +150,19 @@ jobs:
         run: wails build -platform linux/amd64 -tags webkit2_41
 
   # ---------------------------------------------------------------------------
-  # Layer 3 of the test strategy (docs/UITESTING.md): the real WebView.
+  # The ADDITIONAL PLATFORM CHECK (docs/UITESTING.md): Windows, the real
+  # WebView2 engine, and the packaged .exe.
   #
-  # The Go and node suites prove behaviour and markup. They cannot prove that a
-  # tooltip is VISIBLE rather than clipped by its scrolling pane, or that a
-  # screen fits the window, and both were real defects that passed every unit
-  # test. This job drives the actual UI over the DevTools Protocol from
-  # PowerShell, using only what ships with Windows.
+  # The rendering assertions themselves already gated on ubuntu-latest above, in
+  # Chromium. This job exists for the two things Linux cannot do: run them
+  # against the engine the user actually gets, and inspect the accessibility
+  # tree of the built binary, which is what catches a white-screen boot. It
+  # shares its probes with the Linux harness (scripts/uitest/probes.js), so the
+  # assertions are not duplicated, only the plumbing.
   #
-  # It is continue-on-error until it has enough runs to show it is not flaky.
-  # Promote it to a gate by deleting that line.
+  # STILL UNVERIFIED: this script has never been executed on a Windows machine,
+  # which is exactly why it is continue-on-error. Promote it to a gate by
+  # deleting that line once it has passed a few times.
   ui-windows:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
@@ -127,6 +189,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ui-screenshots
+          name: ui-rendering-windows
           path: scripts/uitest/artifacts/
           if-no-files-found: ignore
