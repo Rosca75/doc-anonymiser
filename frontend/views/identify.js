@@ -4,7 +4,7 @@
 // Identify is one screen with two halves:
 //
 //   the rail        a third of the width: WHAT to look for (country, preset, the
-//                   23 categories, the confidence floor) and HOW (smart
+//                   22 categories, the confidence floor) and HOW (smart
 //                   detection, local AI). This is what used to be a Configure
 //                   step of its own; BUILD-05 folded it in, because choosing
 //                   what to detect and reviewing what was detected is one task,

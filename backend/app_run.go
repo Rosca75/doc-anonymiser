@@ -125,6 +125,7 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 	// the Configure screen and applies to every run and fast re-run alike
 	// (BUILD-04 CR9).
 	minConfidence := a.settings.MinConfidence
+	useAI := a.settings.UseAI
 	llm := a.llm
 	// The registry lives for the whole session so placeholders stay
 	// stable across runs and late-imported batches (CLAUDE.md §5).
@@ -143,6 +144,10 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 		allow.Add(t)
 	}
 
+	// Set when a requested deep scan does not run, so the report says why
+	// rather than leaving the user to wonder what the checkbox did.
+	deepScanSkipped := ""
+
 	input := engine.PipelineInput{
 		Documents:     docs,
 		Entities:      req.Entities,
@@ -157,14 +162,32 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 			a.emit("pipeline:progress", ev)
 		},
 	}
+	// GO decides whether the AI pass runs, not the caller (BUILD-06). The
+	// request asking for it is necessary but not sufficient: the user's Local
+	// AI switch has to be on and Ollama has to actually answer. Settings.UseAI
+	// was stored, serialised into every session file, and read by no decision
+	// path at all, which meant the only thing standing between a switched-off
+	// route and a running model was a boolean the frontend computed.
 	if req.UseDeepScan {
-		// The allowlist veto inside the client mirrors the engine's own
-		// check (allowlist wins in every pass).
-		llm.Allow = allow.Contains
-		input.LLM = llm
+		switch {
+		case !useAI:
+			res := "the local AI is switched off in Configure, so the deep scan was skipped"
+			deepScanSkipped = res
+		case !llm.Probe().Available:
+			deepScanSkipped = "Ollama did not answer, so the deep scan was skipped and the deterministic passes ran alone"
+		default:
+			// The allowlist veto inside the client mirrors the engine's own
+			// check (allowlist wins in every pass).
+			llm.Allow = allow.Contains
+			input.LLM = llm
+		}
 	}
 
 	results, err := engine.Run(ctx, input)
+	if results != nil && deepScanSkipped != "" {
+		results.Report.LLMPass = deepScanSkipped
+		results.Report.Warnings = append(results.Report.Warnings, deepScanSkipped)
+	}
 	if results != nil {
 		a.mu.Lock()
 		a.results = results

@@ -165,8 +165,8 @@ func TestRegistryStability(t *testing.T) {
 	if p := reg.Assign("person_names", "Marie Duval"); p != "[PERSON_1]" {
 		t.Errorf("person placeholder = %q, want [PERSON_1]", p)
 	}
-	if p := reg.Assign("client_names", "Alpine Trust"); p != "[CLIENT_1]" {
-		t.Errorf("client placeholder = %q, want [CLIENT_1]", p)
+	if p := reg.Assign("entity_names", "Alpine Trust"); p != "[ENTITY_1]" {
+		t.Errorf("client placeholder = %q, want [ENTITY_1]", p)
 	}
 
 	export := reg.Export()

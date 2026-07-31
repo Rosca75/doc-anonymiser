@@ -13,11 +13,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  CATEGORY_GROUPS, RAIL_TABS, PRESETS, confidenceEffect, llmGateTooltip,
-  LLM_DISABLED_TOOLTIP,
+  CATEGORY_GROUPS, RAIL_SECTIONS, PRESETS, confidenceEffect, llmGateTooltip,
+  llmDisabledTooltip, railBody,
 } from "./views/identifyrail.js";
-import { CONFIGURE } from "./copy.js";
-import { ALL_CATEGORIES } from "./state.js";
+import { CONFIGURE, RAIL } from "./copy.js";
+import { ALL_CATEGORIES, resetState, getState, setState, setUseAI } from "./state.js";
+import { textOf, all, one, exists } from "./testhtml.js";
 
 // --- CR9: every category is reachable from some group ---------------------
 
@@ -62,20 +63,29 @@ test("every group has a title and at least one category (CR10)", () => {
   }
 });
 
-// --- The rail's tabs and presets (BUILD-05 Phase 5) ----------------------
+// --- The rail's route sections (BUILD-06) --------------------------------
+//
+// The four peer tabs are gone. They said Scope was a thing of its own rather
+// than the scope OF smart detection, and they made Cloud AI, which is not
+// built, look like a peer of two routes that are.
 
-test("the rail has exactly the four tabs the mock-up shows", () => {
-  assert.deepEqual(RAIL_TABS.map(([id]) => id), ["scope", "smart", "local", "cloud"]);
-  for (const [id, label] of RAIL_TABS) {
+test("the rail is three route sections, in the order the routes run", () => {
+  assert.deepEqual(RAIL_SECTIONS.map(([id]) => id),
+    ["rail-smart", "rail-local", "rail-cloud"]);
+  for (const [id, label] of RAIL_SECTIONS) {
     assert.ok(label.trim().length > 0, `${id} has no label`);
   }
 });
 
-test("Scope is the first tab, so it is the one that opens", () => {
-  // It holds the country, the preset and the categories: the controls a user
-  // came here for. Opening on Smart detection would put a tuning panel in front
-  // of the choice it tunes.
-  assert.equal(RAIL_TABS[0][0], "scope");
+test("only the two built routes have an operable switch", () => {
+  const keys = Object.fromEntries(RAIL_SECTIONS.map(([id, , key]) => [id, key]));
+  assert.equal(keys["rail-smart"], "useSmartDetect");
+  assert.equal(keys["rail-local"], "useAI");
+  assert.equal(keys["rail-cloud"], null, "Cloud AI is not built, so its switch cannot be operated");
+});
+
+test("Scope is no longer a section: it is nested in the route it scopes", () => {
+  assert.ok(!RAIL_SECTIONS.some(([, label]) => /scope/i.test(label)));
 });
 
 test("the presets are the three engine levels, and Custom is not among them", () => {
@@ -92,8 +102,13 @@ test("the gate tooltip tells the two reasons apart", () => {
   // Ollama missing and the toggle being off are different problems with
   // different fixes, so they must not share one message.
   const missing = llmGateTooltip({ ollama: { available: false }, settings: {} });
-  assert.equal(missing, LLM_DISABLED_TOOLTIP);
   assert.match(missing, /127\.0\.0\.1:11434/, "it must name the address that was probed");
+
+  // The port is a SETTING, so the sentence has to follow it. A fixed 11434
+  // lies to the one user most likely to be reading it.
+  const moved = llmGateTooltip({ ollama: { available: false }, settings: { ollamaPort: 11500 } });
+  assert.match(moved, /127\.0\.0\.1:11500/);
+  assert.equal(llmDisabledTooltip(0), llmDisabledTooltip(11434), "an unset port falls back to the default");
 
   const off = llmGateTooltip({ ollama: { available: true }, settings: { useAI: false } });
   assert.equal(off, CONFIGURE.aiOffTooltip);
@@ -141,4 +156,77 @@ test("the confidence read-out is a full sentence at every slider stop", () => {
     assert.ok(sentence.endsWith("."), `${percent}: not a sentence`);
     assert.ok(!sentence.includes("—"), `${percent}: em dash`);
   }
+});
+
+// --- What the rail actually renders (BUILD-06) ---------------------------
+
+/** railHTML() renders the rail from a fresh store, optionally patched. */
+function railHTML(patch = {}) {
+  resetState();
+  if (patch.ollama) setState({ ollama: patch.ollama });
+  if (patch.useAI) setUseAI(true);
+  return railBody(getState());
+}
+
+test("the rail renders three sections and nothing else at the top level", () => {
+  const html = railHTML();
+  const sections = all(html, "section.rail-section");
+  assert.equal(sections.length, 3);
+  // The first title in a section is its own; the rest belong to the groups
+  // nested inside it (the category groups, the strictness block).
+  const titles = sections.map((sec) =>
+    all(sec.outer, "span.cgroup-title")[0].inner.replace(/<[^>]*>/g, "").trim());
+  assert.deepEqual(titles, [RAIL.tabSmart, RAIL.tabLocalAI, RAIL.tabCloudAI]);
+});
+
+test("Smart detection is ON by default, and switchable", () => {
+  const html = railHTML();
+  const smart = all(html, "input.route-toggle")[0];
+  assert.equal(smart.attrs["data-route"], "rail-smart");
+  assert.ok("checked" in smart.attrs, "Smart detection runs unless the user says otherwise");
+  assert.ok(!("disabled" in smart.attrs), "and the user can say otherwise");
+});
+
+test("Local AI is OFF by default even when Ollama is detected", () => {
+  const html = railHTML({ ollama: { available: true, models: [], detail: "" } });
+  const local = all(html, "input.route-toggle")[1];
+  assert.equal(local.attrs["data-route"], "rail-local");
+  assert.ok(!("checked" in local.attrs),
+    "detecting Ollama enables the switch, it does not flip it");
+  assert.ok(!("disabled" in local.attrs));
+});
+
+test("Cloud AI is off, disabled, and says why", () => {
+  const html = railHTML();
+  const cloud = all(html, "input.route-toggle")[2];
+  assert.ok(!("checked" in cloud.attrs));
+  assert.ok("disabled" in cloud.attrs, "a switch for a route that does not exist must not move");
+  assert.match(html, new RegExp(RAIL.cloudNotYet));
+});
+
+test("the scope controls live inside the Smart detection section", () => {
+  // This is the whole point of the restructure: scope is the scope OF smart
+  // detection, not a peer of it.
+  const smart = all(railHTML(), "section.rail-section")[0].outer;
+  assert.ok(exists(smart, "#document-country"), "the document country");
+  assert.ok(exists(smart, "[data-preset]"), "the presets");
+  assert.ok(exists(smart, ".cat-toggle"), "the category checkboxes");
+  assert.ok(exists(smart, "#min-confidence"), "the confidence floor");
+  assert.ok(exists(smart, "#smart-min-length"), "and the strictness fields");
+});
+
+test("every category checkbox is reachable without switching anything", () => {
+  // With tabs, three quarters of the rail was one click away and invisible.
+  const boxes = all(railHTML(), "input.cat-toggle").map((b) => b.attrs["data-category"]);
+  assert.deepEqual(boxes.slice().sort(), ALL_CATEGORIES.slice().sort());
+});
+
+test("the Local AI fields are disabled while the route is off", () => {
+  const off = railHTML({ ollama: { available: true, models: ["m"], detail: "" } });
+  assert.ok("disabled" in one(off, "#ollama-model").attrs);
+  const on = railHTML({ ollama: { available: true, models: ["m"], detail: "" }, useAI: true });
+  assert.ok(!("disabled" in one(on, "#ollama-model").attrs));
+  // The port is never gated: it is how a user FIXES a connection, so locking
+  // it would lock them out of fixing the thing the gate complains about.
+  assert.ok(!("disabled" in one(off, "#ollama-port").attrs));
 });

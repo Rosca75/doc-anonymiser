@@ -115,7 +115,7 @@ func TestMidRunOllamaCrashDegrades(t *testing.T) {
 			}
 			resp, _ := json.Marshal(map[string]interface{}{
 				"message": map[string]string{"role": "assistant",
-					"content": `{"client_names":[],"project_names":[],"internal_names":[],"person_names":[]}`},
+					"content": `{"entity_names":[],"project_names":[],"person_names":[]}`},
 			})
 			w.Write(resp)
 		}
@@ -124,6 +124,9 @@ func TestMidRunOllamaCrashDegrades(t *testing.T) {
 
 	app := NewApp()
 	app.llm = ollama.New(srv.URL)
+	// The deep scan is gated on the Local AI switch in Go (BUILD-06), so a
+	// test that exercises it has to turn the route on, exactly like a user.
+	app.settings.UseAI = true
 	app.docs = []engine.Document{
 		{Name: "1.txt", Format: engine.FormatTXT, Markdown: "first mail one@example.com"},
 		{Name: "2.txt", Format: engine.FormatTXT, Markdown: "second mail two@example.com"},
@@ -231,14 +234,14 @@ func TestFreePathNumbersInsteadOfOverwriting(t *testing.T) {
 // fail obscurely.
 func TestSetEntityPlaceholderBeforeAnyRun(t *testing.T) {
 	app := NewApp()
-	err := app.SetEntityPlaceholder("client_names", "Meridian Consulting", "[BANK_A_1]")
+	err := app.SetEntityPlaceholder("entity_names", "Meridian Consulting", "[BANK_A_1]")
 	if err == nil {
 		t.Fatal("there is nothing to rename before the first run")
 	}
 	if !strings.Contains(err.Error(), "run the anonymisation") {
 		t.Errorf("the refusal must say what to do first, got: %v", err)
 	}
-	if got := app.EntityPlaceholder("client_names", "Meridian Consulting"); got != "" {
+	if got := app.EntityPlaceholder("entity_names", "Meridian Consulting"); got != "" {
 		t.Errorf("EntityPlaceholder before a run = %q, want \"\"", got)
 	}
 }

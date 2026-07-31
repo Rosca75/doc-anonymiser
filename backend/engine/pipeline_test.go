@@ -36,7 +36,7 @@ func TestTwoDocumentConsistency(t *testing.T) {
 
 	res := runPipeline(t, PipelineInput{
 		Documents: []Document{docA, docB},
-		Entities:  []Entity{{Category: "client_names", Canonical: "Alpine Trust"}},
+		Entities:  []Entity{{Category: "entity_names", Canonical: "Alpine Trust"}},
 		Level:     LevelMedium,
 		Allowlist: NewEmptyAllowlist(),
 	})
@@ -48,7 +48,7 @@ func TestTwoDocumentConsistency(t *testing.T) {
 		}
 	}
 	// Same placeholder everywhere (the registry guarantee).
-	if !strings.Contains(a, "[CLIENT_1]") || !strings.Contains(b, "[CLIENT_1]") {
+	if !strings.Contains(a, "[ENTITY_1]") || !strings.Contains(b, "[ENTITY_1]") {
 		t.Errorf("client placeholder differs across documents:\nA: %s\nB: %s", a, b)
 	}
 	if !strings.Contains(a, "[EMAIL_1]") || !strings.Contains(b, "[EMAIL_1]") {
@@ -110,9 +110,9 @@ func TestHallucinationFilterInPipeline(t *testing.T) {
 	text := "The CSSF reviewed the Alpine engagement."
 	llm := &fakeLLM{perText: map[string][]ProposedEntity{
 		text: {
-			{Category: "client_names", Text: "Alpine"},          // real
-			{Category: "client_names", Text: "Zenith Holdings"}, // hallucinated
-			{Category: "client_names", Text: "CSSF"},            // allowlisted
+			{Category: "entity_names", Text: "Alpine"},          // real
+			{Category: "entity_names", Text: "Zenith Holdings"}, // hallucinated
+			{Category: "entity_names", Text: "CSSF"},            // allowlisted
 		},
 	}}
 	res := runPipeline(t, PipelineInput{
@@ -138,7 +138,7 @@ func TestHallucinationFilterInPipeline(t *testing.T) {
 func TestLevelMatrix(t *testing.T) {
 	text := "Marie Duval (marie.duval@example.com) met Alpine Trust in Paris on 2026-07-23 for €5,000."
 	entities := []Entity{
-		{Category: "client_names", Canonical: "Alpine Trust"},
+		{Category: "entity_names", Canonical: "Alpine Trust"},
 		{Category: "person_names", Canonical: "Marie Duval"},
 		{Category: "location_names", Canonical: "Paris"},
 	}
@@ -156,19 +156,19 @@ func TestLevelMatrix(t *testing.T) {
 	soft := run(LevelSoft)
 	// Soft: hard PII + engagement entities; person names, dates,
 	// locations and amounts stay.
-	if soft != "Marie Duval ([EMAIL_1]) met [CLIENT_1] in Paris on 2026-07-23 for €5,000." {
+	if soft != "Marie Duval ([EMAIL_1]) met [ENTITY_1] in Paris on 2026-07-23 for €5,000." {
 		t.Errorf("soft output unexpected: %q", soft)
 	}
 
 	medium := run(LevelMedium)
 	// Medium: + person names. Dates and locations kept.
-	if medium != "[PERSON_1] ([EMAIL_1]) met [CLIENT_1] in Paris on 2026-07-23 for €5,000." {
+	if medium != "[PERSON_1] ([EMAIL_1]) met [ENTITY_1] in Paris on 2026-07-23 for €5,000." {
 		t.Errorf("medium output unexpected: %q", medium)
 	}
 
 	advanced := run(LevelAdvanced)
 	// Advanced: + dates, locations, amounts.
-	if advanced != "[PERSON_1] ([EMAIL_1]) met [CLIENT_1] in [LOCATION_1] on [DATE_1] for [AMOUNT_1]." {
+	if advanced != "[PERSON_1] ([EMAIL_1]) met [ENTITY_1] in [LOCATION_1] on [DATE_1] for [AMOUNT_1]." {
 		t.Errorf("advanced output unexpected: %q", advanced)
 	}
 }
@@ -309,7 +309,7 @@ func TestPipelineBudget(t *testing.T) {
 		docs[i] = Document{Name: fmt.Sprintf("doc%02d.txt", i), Format: FormatTXT, Markdown: text}
 	}
 	entities := []Entity{
-		{Category: "client_names", Canonical: "Alpine Trust"},
+		{Category: "entity_names", Canonical: "Alpine Trust"},
 		{Category: "person_names", Canonical: "Marie Duval"},
 		{Category: "person_names", Canonical: "Peter Stone"},
 	}

@@ -39,12 +39,12 @@ func TestExpandVariantsGolden(t *testing.T) {
 		},
 		{
 			name:   "organisation with legal suffix",
-			entity: Entity{Category: "client_names", Canonical: "Alpine Trust S.A."},
+			entity: Entity{Category: "entity_names", Canonical: "Alpine Trust S.A."},
 			want:   []string{"Alpine Trust S.A.", "Alpine Trust"},
 		},
 		{
 			name:   "organisation with sarl suffix",
-			entity: Entity{Category: "client_names", Canonical: "Borealis Partners S.à r.l."},
+			entity: Entity{Category: "entity_names", Canonical: "Borealis Partners S.à r.l."},
 			want:   []string{"Borealis Partners S.à r.l.", "Borealis Partners"},
 		},
 		{
@@ -86,7 +86,7 @@ func TestExpandVariantsGolden(t *testing.T) {
 // "Alten" fires standalone and next to punctuation, never inside
 // "Altenberg"; accented names work despite RE2's ASCII-only \b.
 func TestDetectEntitiesBoundaries(t *testing.T) {
-	entities := []Entity{{Category: "client_names", Canonical: "Alten"}}
+	entities := []Entity{{Category: "entity_names", Canonical: "Alten"}}
 	allow := NewEmptyAllowlist()
 
 	tests := []struct {
@@ -127,7 +127,7 @@ func TestDetectEntitiesBoundaries(t *testing.T) {
 // is never replaced (manual test matrix scenario 5: "CSSF").
 func TestAllowlistBeatsEntity(t *testing.T) {
 	allow := NewAllowlist() // seeds CSSF
-	entities := []Entity{{Category: "client_names", Canonical: "CSSF"}}
+	entities := []Entity{{Category: "entity_names", Canonical: "CSSF"}}
 	spans := DetectEntities("reported to the CSSF yesterday", entities, allow)
 	if len(spans) != 0 {
 		t.Errorf("allowlisted entity was matched: %+v", spans)

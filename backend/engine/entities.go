@@ -24,7 +24,7 @@ import (
 // Entity is one known engagement entity.
 type Entity struct {
 	// Category is one of the CLAUDE.md §5 entity categories:
-	// client_names, project_names, internal_names, person_names.
+	// entity_names, project_names, person_names.
 	Category string `json:"category"`
 	// Canonical is the full name as entered/discovered.
 	Canonical string `json:"canonical"`
@@ -54,9 +54,14 @@ type Entity struct {
 // personCategories lists the categories whose canonical names are people —
 // they get person-style variant expansion (initials, surname-only, …).
 // Everything else is treated as an organisation-style name.
+// entity_names is deliberately NOT here. It absorbed the former
+// internal_names, which were staff names and did want person-style variants,
+// but the merged category is dominated by organisations: expanding "Delta
+// Industries" into the surname variant "Industries" would replace an ordinary
+// noun everywhere it appears. A member of staff belongs in person_names, and
+// the discovery prompts say so.
 var personCategories = map[string]bool{
-	"person_names":       true,
-	"internal_names": true, // internal names are staff names
+	"person_names": true,
 }
 
 // nameParticles are the lower-case surname particles that glue multi-word

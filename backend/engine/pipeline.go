@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -103,12 +104,16 @@ type SpanTrace struct {
 }
 
 // ResultDocument is one anonymised document plus its statistics.
+//
+// It deliberately carries NO copy of the source text. There is exactly one
+// producer of original text in this application, the imported Document held
+// by the App, and the UI reads the ORIGINAL pane from that same producer
+// (App.GetDocumentSource). A second copy travelling with the result is what
+// would let a preview drift from the file the user imported, and it doubled
+// the size of every "pipeline:done" payload for text nobody edited.
 type ResultDocument struct {
 	Name   string `json:"name"`
 	Format Format `json:"format"`
-	// Original is the pre-anonymisation markdown working form (the UI
-	// shows it side by side with Anonymised).
-	Original string `json:"original"`
 	// Anonymised is the rewritten markdown working form.
 	Anonymised string `json:"anonymised"`
 	// Grid is the anonymised cell grid for CSV-origin documents (nil
@@ -131,8 +136,8 @@ type Results struct {
 
 // CategorySelection is the granular per-category switch set the pipeline
 // obeys (BUILD-02 Phase 3): every PII category (email, url, iban, vat,
-// matricule, phone, amount, date) and every entity category (client_names,
-// project_names, internal_names, person_names, custom_patterns,
+// matricule, phone, amount, date) and every entity category (entity_names,
+// project_names, person_names, custom_patterns,
 // organisation_names, location_names) maps to on/off. Levels are PRESETS
 // that fill this map (PresetSelection); the UI may then flip individual
 // switches ("custom" mode).
@@ -153,15 +158,18 @@ var AllPIICategories = []string{
 // AllEntityCategories lists the entity categories in a stable order.
 // organisation_names and location_names have no manual-entry UI, but LLM
 // proposals use them, so they are selectable switches too.
+// entity_names (BUILD-06) is the merge of the former client_names and
+// internal_names: the distinction cost the user a decision at every value
+// they added, and the pipeline treated the two identically anyway.
 var AllEntityCategories = []string{
-	"client_names", "project_names", "internal_names", "person_names",
+	"entity_names", "project_names", "person_names",
 	"custom_patterns", "organisation_names", "location_names",
 }
 
 // PresetSelection reproduces the exact v1 level semantics (CLAUDE.md §5)
 // as a CategorySelection:
 //
-//	soft     = hard PII + client/project/internal names + custom patterns
+//	soft     = hard PII + entity/project names + custom patterns
 //	medium   = soft + person names (the default)
 //	advanced = medium + amounts, dates, organisations, locations
 func PresetSelection(level Level) CategorySelection {
@@ -173,7 +181,7 @@ func PresetSelection(level Level) CategorySelection {
 		CatCreditCard: true, CatNHS: true, CatIPAddress: true,
 		CatMACAddress: true, CatCrypto: true, CatDatabaseURI: true,
 		CatDESteuerID: true, CatESNIF: true,
-		"client_names": true, "project_names": true, "internal_names": true,
+		"entity_names": true, "project_names": true,
 		"custom_patterns": true,
 	}
 	if level == LevelMedium || level == LevelAdvanced {
@@ -288,6 +296,10 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	}
 
 	// --- Report assembly. -------------------------------------------------
+	// The per-VALUE tables are built from the registry and the finished text,
+	// once, here. They used to be recomputed in JavaScript on every repaint of
+	// the report card, and they were absent from the exported report entirely.
+	entries = reg.Entries()
 	for i, rd := range res.Documents {
 		docTotal := 0
 		byCat := map[string]int{}
@@ -306,10 +318,53 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		if i < len(llmDurations) {
 			dr.LLMDurationMS = llmDurations[i]
 		}
+		dr.Values = valueReports(entries, []ResultDocument{rd})
 		res.Report.Documents = append(res.Report.Documents, dr)
 	}
+	res.Report.Values = valueReports(entries, res.Documents)
 	finishReport(res, start)
 	return res, nil
+}
+
+// valueReports lists what each registry entry actually replaced in the given
+// documents, most frequent first.
+//
+// The count is taken from the FINISHED text rather than from the registry's
+// own counter, for two reasons: the registry counts per SESSION, so it cannot
+// answer a per-document question, and the post-pass and the simple-replace
+// rules both rewrite text after the counter was incremented. Counting
+// placeholders in the text that will be exported is the only figure that
+// matches what the user will see.
+//
+// A value with no occurrences in scope is omitted: it belongs to another
+// document, or to an earlier run whose placeholder the session registry kept.
+func valueReports(entries []MappingEntry, docs []ResultDocument) []ValueReport {
+	out := make([]ValueReport, 0, len(entries))
+	for _, e := range entries {
+		count := 0
+		for _, d := range docs {
+			// Count the placeholder in the text as exported. For a grid or a
+			// complex sheet, Anonymised is regenerated from the cells, so it
+			// stays the single thing to count.
+			count += strings.Count(d.Anonymised, e.Placeholder)
+		}
+		if count == 0 {
+			continue
+		}
+		out = append(out, ValueReport{
+			Original:    e.Original,
+			Placeholder: e.Placeholder,
+			Category:    e.Category,
+			Count:       count,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Placeholder < out[j].Placeholder
+	})
+	return out
 }
 
 // emit calls the progress callback when one is registered.
@@ -372,7 +427,6 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 	rd := ResultDocument{
 		Name:       doc.Name,
 		Format:     doc.Format,
-		Original:   doc.Markdown,
 		ByCategory: map[string]int{},
 		Warnings:   doc.Warnings,
 	}

@@ -15,29 +15,31 @@
 //
 // One structural change beyond the layout (BUILD-05 Phase 6): "Run detection" is
 // ONE button in the card header. It used to be a panel with a per-file checkbox
-// list and a separate button per method. Now it runs the offline smart pass
-// always, and the AI pass as well when Local AI is on, over every imported
-// document. The estimateDiscovery pre-check survives; an oversized file becomes
-// a notice rather than a picker the user has to operate before anything happens.
+// list and a separate button per method.
+//
+// BUILD-06 made it ONE bridge call as well (api.js runDetection): Go runs every
+// switched-on route under one cancellation context, reports one monotonic
+// progress fraction across the whole run, and always ends with a terminal
+// event. This module no longer sequences the passes, no longer computes a
+// percentage, and no longer decides which routes run.
 //
 // Naming note (BUILD-04 CR3, restated by BUILD-05 Phase 0): the visible labels
 // have changed twice now, from "Entities" to "Values" to this half of
 // "Identify". The ENGINE identifiers this module manipulates (the category keys
-// client_names, person_names, ... and the state.entities array) have not changed
+// entity_names, person_names, ... and the state.entities array) have not changed
 // once, on purpose: a label is a display string, an identifier is a contract.
 
 import {
-  runDiscovery, cancelDiscovery, estimateDiscovery, runSmartDetection,
+  runDetection, cancelDetection, countTermMatches, patternMatches,
   expandVariants, validatePattern, setEntityPlaceholder, entityPlaceholder,
 } from "../api.js";
 import {
-  getState, setState, llmEnabled,
+  getState, setState, llmEnabled, detectionRoutesOn,
   addEntities, removeEntity, entityKey,
   setEntityVariants, setEntityVariantError, addManualVariant,
   addCandidates, acceptCandidate, rejectCandidate,
   acceptAllShown, rejectAllShown, moveVariant,
   addPattern, removePattern,
-  smartDetectOptions,
 } from "../state.js";
 import { pendingExpansions } from "../entitymodel.js";
 import {
@@ -55,9 +57,8 @@ import { CARDS, WORKSPACE, VALUES, CATEGORY_LABELS } from "../copy.js";
 // are the categories a user may ADD a value to by hand; the PII categories are
 // detected, not listed.
 export const CATEGORIES = [
-  ["client_names", "Clients"],
+  ["entity_names", "Entities"],
   ["project_names", "Projects"],
-  ["internal_names", "Internal"],
   ["person_names", "Persons"],
 ];
 
@@ -74,7 +75,11 @@ let activeTab = "suggestions";
 let candidateFilter = { ...DEFAULT_CANDIDATE_FILTER, source: "" };
 // The draft text of the three add rows, kept across repaints so a state change
 // elsewhere does not empty a half-typed value.
-const drafts = { value: "", valueCategory: "client_names", allow: "", pattern: "" };
+const drafts = {
+  value: "", valueCategory: "entity_names", allow: "", pattern: "",
+  // The live "found N times in M documents" read-out under the add row.
+  valueMatches: "",
+};
 // Per-entity inline feedback (a refused placeholder, a duplicate variant),
 // keyed by entityKey. Cleared for a row as soon as it succeeds at anything.
 const rowFeedback = new Map();
@@ -116,16 +121,21 @@ function head(s, busy) {
     ` placeholder="${escapeHTML(VALUES.searchPlaceholder)}"` +
     ` aria-label="${escapeHTML(VALUES.searchPlaceholder)}"/></label>`;
 
-  // The run button says what it will DO, which depends on whether the local AI
-  // is on: the offline pass always runs, the AI pass only when it can.
+  // The run button says what it will DO, which depends on which detection
+  // ROUTES are switched on in the rail (BUILD-06). With every route off there
+  // is nothing to run, and the button says so rather than running an empty
+  // pass and reporting "0 suggestions" as if it had looked.
   const aiOK = llmEnabled(s);
+  const routes = detectionRoutesOn(s);
+  const blocked = s.documents.length === 0 ? WORKSPACE.runNeedsDocuments
+    : (routes === 0 ? WORKSPACE.runNeedsRoute : "");
   const runTitle = aiOK ? WORKSPACE.runWithAI : WORKSPACE.runOffline;
   const run = busy
     ? button(WORKSPACE.cancel, { kind: "secondary", id: "btn-detect-cancel", icon: "cancel" })
     : button(WORKSPACE.runDetection, {
       kind: "secondary", id: "btn-detect", icon: "smart_toy",
-      disabled: s.documents.length === 0,
-      title: s.documents.length === 0 ? WORKSPACE.runNeedsDocuments : runTitle,
+      disabled: !!blocked,
+      title: blocked || runTitle,
     });
 
   return `<div class="card-head with-controls">` +
@@ -143,18 +153,47 @@ function subtitle(s) {
   return WORKSPACE.subtitle(waiting, accepted);
 }
 
-/** progressStrip(s) is the determinate per-file bar shown while a detection run
- *  is in flight (BUILD-02 Phase 7c/7d). */
-function progressStrip(s) {
+/**
+ * progressStrip(s) is the bar shown while a detection run is in flight.
+ *
+ * The percentage comes from GO (BUILD-06): it covers the whole run across
+ * every route, so it cannot rewind when the second route starts over with a
+ * smaller file count. Recomputing it here from (current+1)/total per route is
+ * exactly the bug that made the bar jump backwards mid-run.
+ */
+export function progressStrip(s) {
   const d = s.discovery;
   // The gate is deliberately `=== true` and nothing else (BUILD-04 CR17): the
   // bar must depend on a run being in flight, never on a leftover object.
   if (d?.running !== true) return "";
-  const pct = d.total ? Math.round(((d.current + 1) / d.total) * 100) : 0;
+  const pct = Math.max(0, Math.min(100, Math.round((d.fraction ?? 0) * 100)));
   return `<div class="detect-progress">` +
     `<div class="progress-bar"><div style="width:${pct}%"></div></div>` +
-    `<span class="hint mono">${escapeHTML(WORKSPACE.scanning(d.file ?? "", d.current + 1, d.total))}</span>` +
+    `<span class="hint mono" id="detect-caption">${escapeHTML(detectionCaption(d))}</span>` +
     `</div>`;
+}
+
+/**
+ * detectionCaption(d) says which route is running, on which file, how far
+ * into it, and for how long.
+ *
+ * Every part of that answers a question the old one-line caption left open
+ * when a run felt stuck: WHICH pass is this (two routes read the same files
+ * twice), where inside a long file has it got to (a chunked AI scan sat on
+ * one caption for minutes), and has anything happened at all recently.
+ */
+export function detectionCaption(d) {
+  const route = d.phaseCount > 1
+    ? `${WORKSPACE.phaseName(d.phase)} (${(d.phaseIndex ?? 0) + 1}/${d.phaseCount})`
+    : WORKSPACE.phaseName(d.phase);
+  const parts = [route];
+  if (d.total) parts.push(WORKSPACE.fileOf(d.file ?? "", (d.current ?? 0) + 1, d.total));
+  if (d.chunkCount > 1) parts.push(WORKSPACE.chunkOf((d.chunk ?? 0) + 1, d.chunkCount));
+  if (d.startedAt) {
+    const seconds = Math.max(0, Math.round((Date.now() - d.startedAt) / 1000));
+    parts.push(WORKSPACE.elapsed(seconds));
+  }
+  return parts.join(", ");
 }
 
 function tabs(s) {
@@ -304,7 +343,12 @@ function valuesTab(s) {
       `${escapeHTML(label)}</option>`).join("") +
     `</select>` +
     button(WORKSPACE.addValue, { kind: "secondary", id: "btn-add-value" }) +
-    `</div>`;
+    `</div>` +
+    // The live match count (BUILD-06). The bridge method for it has existed
+    // since BUILD-02 and nothing called it, so a user typing a value had no
+    // way of knowing whether it occurs in their documents at all until after a
+    // run. A value that matches nothing is almost always a typo.
+    `<p class="hint" id="value-matches">${escapeHTML(drafts.valueMatches)}</p>`;
 
   const cards = s.entities.map((e) => valueCard(e)).join("") ||
     `<div class="grid-empty">${escapeHTML(WORKSPACE.noValues)}</div>`;
@@ -433,7 +477,7 @@ function wire(container, s, shown) {
     }
   });
 
-  wireDetection(container, s);
+  wireDetection(container);
   wireNotice(container);
 
   if (activeTab === "suggestions") wireSuggestions(container, shown);
@@ -445,22 +489,17 @@ function wire(container, s, shown) {
 // --- Run detection --------------------------------------------------------
 
 /**
- * wireDetection(container, s) wires the ONE Run detection button.
+ * wireDetection(container) wires the ONE Run detection button to the ONE
+ * detection call.
  *
- * It folds what used to be two panels and a per-file picker into a single
- * action over every imported document (BUILD-05 Phase 6):
- *
- *   the offline smart pass  always, so the button works with Ollama absent
- *   the local AI pass       as well, when Local AI is on AND reachable
- *
- * The estimateDiscovery pre-check survives, because an oversized file failing
- * mid-run is a much worse experience than being told up front. What changed is
- * the shape of the answer: an oversized file becomes a NOTICE naming it, and
- * the run continues over the rest, instead of a picker the user has to operate
- * before anything happens at all.
+ * Everything this function used to decide now belongs to Go: which routes run,
+ * which files the local AI can read, what happens when one file fails, and
+ * when the run is over. What is left here is what a view should do: start it,
+ * fold the findings into the store, and report what came back, INCLUDING the
+ * cancelled flag and the per-file problems the old code discarded.
  */
-function wireDetection(container, s) {
-  container.querySelector("#btn-detect-cancel")?.addEventListener("click", () => cancelDiscovery());
+function wireDetection(container) {
+  container.querySelector("#btn-detect-cancel")?.addEventListener("click", () => cancelDetection());
 
   const btn = container.querySelector("#btn-detect");
   if (!btn || btn.disabled) return;
@@ -469,50 +508,47 @@ function wireDetection(container, s) {
     const all = getState().documents.map((d) => d.name);
     if (all.length === 0) return;
 
-    let files = all;
-    const aiOK = llmEnabled(getState());
+    // ONE call for the whole run (BUILD-06). Go decides which routes are on,
+    // skips what the local AI cannot read and says so, keeps going past a
+    // file that failed, and always ends the run with a terminal event that
+    // clears the progress bar. The old two-call sequence could not do any of
+    // that: it had two cancellation slots with a dead zone between them, and
+    // it dropped the cancelled flag and the status both passes returned.
+    setState({
+      discovery: {
+        running: true, phase: "", phaseIndex: 0, phaseCount: 1,
+        current: 0, total: all.length, file: all[0],
+        chunk: 0, chunkCount: 0, fraction: 0, startedAt: Date.now(),
+      },
+    });
 
-    // The size pre-check only matters for the AI pass: the offline pass streams
-    // and has no context window to overflow.
-    if (aiOK) {
-      try {
-        const estimates = await estimateDiscovery(files);
-        const tooLarge = (estimates ?? []).filter((e) => e.tooLarge);
-        if (tooLarge.length) {
-          const excluded = new Set(tooLarge.map((e) => e.name));
-          files = files.filter((f) => !excluded.has(f));
-          notify(WORKSPACE.tooLargeNotice(tooLarge.map((e) => e.name)), "warn");
-        }
-      } catch { /* estimation is advisory; the run still guards itself */ }
-    }
-
-    setState({ discovery: { running: true, current: 0, total: all.length, file: all[0] } });
-    let added = 0;
     try {
-      // The offline pass first, and unconditionally. Its tuning travels with the
-      // call (BUILD-04 CR13), read from the store so the options in force are
-      // exactly the ones the rail shows.
-      const smart = await runSmartDetection(
-        all, getState().allowlist, false, smartDetectOptions(getState()));
-      added += addCandidates(smart?.candidates ?? [], "smart");
+      const result = await runDetection(all, getState().allowlist);
+      const added =
+        addCandidates(result?.candidates ?? [], "smart") +
+        addCandidates(
+          (result?.proposals ?? []).map((p) => ({ text: p.text, category: p.category })), "local-ai");
 
-      // Then the AI pass, if it can run at all and there is anything left to
-      // read after the size check.
-      if (aiOK && files.length) {
-        const ai = await runDiscovery(files, getState().allowlist);
-        added += addCandidates(
-          (ai?.proposals ?? []).map((p) => ({ text: p.text, category: p.category })), "local-ai");
+      // A file the AI could not read is reported, not silently dropped.
+      for (const skip of result?.skipped ?? []) {
+        notify(WORKSPACE.skippedNotice(skip.name, skip.reason), "warn");
       }
-      notify(WORKSPACE.detectionDone(added), added ? "ok" : "info");
+      // So is a route that failed on one file while the others succeeded.
+      for (const message of result?.errors ?? []) {
+        notify(message, "warn");
+      }
+      if (result?.cancelled) {
+        notify(WORKSPACE.detectionCancelled(added), "info");
+      } else {
+        notify(WORKSPACE.detectionDone(added), added ? "ok" : "info");
+      }
     } catch (err) {
       notify(String(err?.message ?? err), "warn");
     } finally {
-      // ALWAYS clear the running flag (BUILD-04 CR17). Clearing it only on the
-      // happy paths meant any escape in between left the button disabled forever
-      // with no way back except leaving and re-entering the step.
+      // Belt and braces: the terminal event already clears this (main.js), so
+      // a lost event cannot strand the bar, and a lost promise cannot either.
       setState({ discovery: null });
-      // Newly accepted nothing yet, but a fresh candidate list is worth looking
-      // at, so land the user on it.
+      // Land the user on the fresh candidate list, which is what they ran for.
       activeTab = "suggestions";
       setState({});
     }
@@ -570,7 +606,32 @@ function wireSuggestions(container, shown) {
 function wireValues(container) {
   const draft = container.querySelector("#value-draft");
   const category = container.querySelector("#value-category");
-  draft?.addEventListener("input", () => { drafts.value = draft.value; });
+  const matches = container.querySelector("#value-matches");
+  // Debounced: one bridge round-trip per keystroke over a batch of documents
+  // would be a count nobody waits for.
+  let matchTimer = null;
+  draft?.addEventListener("input", () => {
+    drafts.value = draft.value;
+    if (matchTimer) clearTimeout(matchTimer);
+    const term = draft.value.trim();
+    if (!term) {
+      drafts.valueMatches = "";
+      if (matches) matches.textContent = "";
+      return;
+    }
+    matchTimer = setTimeout(async () => {
+      try {
+        const info = await countTermMatches(term);
+        // The field may have moved on while the count was in flight; a stale
+        // answer under a different word is worse than no answer.
+        if (draft.value.trim() !== term) return;
+        drafts.valueMatches = WORKSPACE.valueMatches(info?.count ?? 0, info?.documents ?? 0);
+      } catch {
+        drafts.valueMatches = ""; // no bridge: say nothing rather than guess
+      }
+      if (matches) matches.textContent = drafts.valueMatches;
+    }, 250);
+  });
   category?.addEventListener("change", () => { drafts.valueCategory = category.value; });
 
   const add = async () => {
@@ -578,6 +639,7 @@ function wireValues(container) {
     if (!value) return;
     const n = addEntities([{ category: drafts.valueCategory, canonical: value }]);
     drafts.value = "";
+    drafts.valueMatches = "";
     if (n === 0) notify(WORKSPACE.valueAlreadyThere(value), "info");
     setState({});
     await refreshVariants();
@@ -829,11 +891,30 @@ function wirePatterns(container) {
   input?.addEventListener("input", async () => {
     drafts.pattern = input.value;
     const expr = input.value.trim();
+    if (!expr) {
+      feedback.textContent = "";
+      return;
+    }
     // Live compile validation (a cheap round-trip), so a broken expression is
     // visible before it is added rather than after.
-    feedback.textContent = expr
-      ? (await validatePattern(expr)) || WORKSPACE.patternCompiles
-      : "";
+    const error = await validatePattern(expr);
+    if (error) {
+      feedback.textContent = error;
+      return;
+    }
+    // It compiles: now say what it actually MATCHES (BUILD-06). The sample
+    // matches existed behind a bridge method nothing called, which left
+    // "this expression compiles" as the only feedback a regex ever got, and
+    // a regex that compiles and matches nothing is the common mistake.
+    try {
+      const samples = await patternMatches(expr);
+      if (input.value.trim() !== expr) return; // the field moved on
+      feedback.textContent = samples?.length
+        ? WORKSPACE.patternSamples(samples)
+        : WORKSPACE.patternNoMatches;
+    } catch {
+      feedback.textContent = WORKSPACE.patternCompiles;
+    }
   });
 
   const add = async () => {

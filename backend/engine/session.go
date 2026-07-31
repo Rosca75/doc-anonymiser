@@ -26,7 +26,11 @@ import (
 // re-identification key is the one failure mode worth being strict about: a
 // partially-restored registry silently reassigns placeholders, and the user
 // finds out when their two batches no longer agree.
-const SessionVersion = 2
+// Version 3 (BUILD-06) merges the client_names and internal_names categories
+// into entity_names. A version 2 file names categories this build no longer
+// has, so it is refused rather than loaded with entities the pipeline would
+// silently drop.
+const SessionVersion = 3
 
 // SessionSettings mirrors the app settings worth persisting. The engine
 // does not interpret them — they round-trip for app.go. The BUILD-02
@@ -39,6 +43,11 @@ type SessionSettings struct {
 	Model       string            `json:"model"`
 	ContextSize int               `json:"contextSize,omitempty"`
 	UseAI       bool              `json:"useAI,omitempty"`
+	// UseSmartDetect is the offline detection route switch (BUILD-06). It is
+	// a POINTER because its default is TRUE: with a plain bool, "absent" and
+	// "the user switched it off" are the same value, and the wrong reading of
+	// the two silently changes what a restored session detects.
+	UseSmartDetect *bool `json:"useSmartDetect,omitempty"`
 	// MinConfidence is the BUILD-04 CR9 detection-confidence floor. Absent
 	// in every session file written before BUILD-04, where it loads as 0,
 	// which is exactly the "keep every detection" default: an older

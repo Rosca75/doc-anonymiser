@@ -326,12 +326,11 @@ func (c *Client) Chat(ctx context.Context, model, systemPrompt, userPrompt strin
 // anything not copied exactly from the text is dropped afterwards anyway.
 const discoverSystemPrompt = `You are an entity extraction engine for confidential business documents.
 Extract proper names from the user's document and respond with ONLY a JSON object, no prose, using exactly these keys:
-{"client_names": [], "project_names": [], "internal_names": [], "person_names": []}
+{"entity_names": [], "project_names": [], "person_names": []}
 Rules:
-- client_names: companies/organisations that are clients or counterparties.
+- entity_names: named organisations, companies, teams and internal systems, whether they are clients, counterparties or internal.
 - project_names: engagement or project code names.
-- internal_names: internal staff, teams or internal systems.
-- person_names: natural persons not already in internal_names.
+- person_names: every natural person, including members of staff. A human being is NEVER an entity_names.
 - Copy every name VERBATIM from the document. Never invent, translate or reformat names.
 - Use [] for a category with no findings.`
 
@@ -343,7 +342,15 @@ Rules:
 // FULL document text (an entity split across a boundary is covered by the
 // chunk overlap). The caller (app.go) merges multi-file results.
 func (c *Client) Discover(ctx context.Context, text string) ([]engine.ProposedEntity, error) {
-	return c.scanChunks(ctx, text, func(chunk string) (string, error) {
+	return c.DiscoverWithProgress(ctx, text, nil)
+}
+
+// DiscoverWithProgress is Discover with a per-chunk callback, so a long
+// document reports progress instead of sitting frozen on one caption for
+// minutes (BUILD-06). onChunk is called BEFORE each chunk is sent, with the
+// 0-based index and the total; nil disables it.
+func (c *Client) DiscoverWithProgress(ctx context.Context, text string, onChunk func(index, total int)) ([]engine.ProposedEntity, error) {
+	return c.scanChunks(ctx, text, onChunk, func(chunk string) (string, error) {
 		return c.Chat(ctx, c.Model, discoverSystemPrompt, chunk)
 	})
 }
@@ -353,13 +360,16 @@ func (c *Client) Discover(ctx context.Context, text string) ([]engine.ProposedEn
 // against the whole document. On mid-loop cancellation the proposals
 // gathered so far are returned WITH the context error, so callers can
 // keep partial results (BUILD-02 Phase 7d).
-func (c *Client) scanChunks(ctx context.Context, text string, chat func(chunk string) (string, error)) ([]engine.ProposedEntity, error) {
+func (c *Client) scanChunks(ctx context.Context, text string, onChunk func(index, total int), chat func(chunk string) (string, error)) ([]engine.ProposedEntity, error) {
 	chunks, err := c.Chunks(text)
 	if err != nil {
 		return nil, err
 	}
 	var batches [][]engine.ProposedEntity
-	for _, chunk := range chunks {
+	for i, chunk := range chunks {
+		if onChunk != nil {
+			onChunk(i, len(chunks))
+		}
 		if err := ctx.Err(); err != nil {
 			return c.filterProposals(ollamaMerge(batches), text), err
 		}
@@ -386,12 +396,14 @@ func ollamaMerge(batches [][]engine.ProposedEntity) []engine.ProposedEntity {
 
 // --- Deep-scan (residual pass) -------------------------------------------
 
-const deepScanSystemPromptPrefix = `You are an entity extraction engine performing a FINAL review of a business document that was already partially anonymised (placeholders look like [CLIENT_1]).
+const deepScanSystemPromptPrefix = `You are an entity extraction engine performing a FINAL review of a business document that was already partially anonymised (placeholders look like [ENTITY_1]).
 Find ONLY residual proper names that are still visible and were missed. Respond with ONLY a JSON object, no prose, using exactly these keys:
-{"client_names": [], "project_names": [], "internal_names": [], "person_names": []}
+{"entity_names": [], "project_names": [], "person_names": []}
 Rules:
+- entity_names: named organisations, companies, teams and internal systems.
+- person_names: every natural person, including members of staff.
 - Copy every name VERBATIM from the document. Never invent names.
-- Do NOT report placeholders like [CLIENT_1] or names from the known list below.
+- Do NOT report placeholders like [ENTITY_1] or names from the known list below.
 - Use [] for a category with no findings.`
 
 // DeepScan implements engine.LLM: it proposes residual entities for one
@@ -407,7 +419,7 @@ func (c *Client) DeepScan(ctx context.Context, text string, known []engine.Entit
 		system += "\nKnown (do not report): " + strings.Join(names, "; ")
 	}
 
-	return c.scanChunks(ctx, text, func(chunk string) (string, error) {
+	return c.scanChunks(ctx, text, nil, func(chunk string) (string, error) {
 		return c.Chat(ctx, c.Model, system, chunk)
 	})
 }
@@ -457,12 +469,11 @@ func MergeProposals(batches ...[]engine.ProposedEntity) []engine.ProposedEntity 
 const classifySystemPrompt = `You are an entity classification engine for confidential business documents.
 The user sends a list of candidate names, each with short context snippets from the document.
 Assign every candidate to exactly ONE category and respond with ONLY a JSON object, no prose, using exactly these keys:
-{"client_names": [], "project_names": [], "internal_names": [], "person_names": []}
+{"entity_names": [], "project_names": [], "person_names": []}
 Rules:
-- client_names: companies/organisations that are clients or counterparties.
+- entity_names: named organisations, companies, teams and internal systems, whether they are clients, counterparties or internal.
 - project_names: engagement or project code names.
-- internal_names: internal staff, teams or internal systems.
-- person_names: natural persons not already in internal_names.
+- person_names: every natural person, including members of staff. A human being is NEVER an entity_names.
 - Copy every candidate VERBATIM into one list. Never invent, translate or reformat names.
 - Use [] for a category with no candidates.`
 
@@ -539,7 +550,7 @@ func (c *Client) ClassifyCandidates(ctx context.Context, candidates []engine.Can
 // --- JSON reply parsing ---------------------------------------------------
 
 // entityCategories are the exact keys the prompts demand (CLAUDE.md §5).
-var entityCategories = []string{"client_names", "project_names", "internal_names", "person_names"}
+var entityCategories = []string{"entity_names", "project_names", "person_names"}
 
 // parseEntityJSON tolerantly parses the model's JSON reply: accidental
 // markdown code fences are stripped, unknown keys ignored, and each known

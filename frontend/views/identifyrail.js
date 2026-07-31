@@ -1,21 +1,26 @@
 // views/identifyrail.js, the LEFT RAIL of wizard step 2, Identify
 // (BUILD-02 Phase 6 as views/configure.js; renamed by BUILD-05 Phase 2 when
-// Configure stopped being a step of its own, and relaid out into the mock-up's
-// four tabs by BUILD-05 Phase 5).
+// Configure stopped being a step of its own; re-laid out by BUILD-06).
 //
-// The rail answers WHAT to look for and HOW, in four tabs:
+// The rail lists the DETECTION ROUTES, one switchable section each, in the
+// order they run. It used to be four peer tabs (Scope, Smart detection, Local
+// AI, Cloud AI), which said three untrue things at once: that Scope was a
+// thing of its own rather than the scope OF smart detection, that the routes
+// were alternatives rather than independent switches, and that Cloud AI was as
+// real as the other three.
 //
-//   Scope           the document country, the preset, the 23 detection
-//                   categories in four collapsible groups, and the confidence
-//                   floor. Open by default, and the only tab most users will
-//                   ever touch.
-//   Smart detection the offline heuristic pass's strictness. It guesses which
-//                   words are names from how they are written, so it always
-//                   proposes some things that are not names, and these settings
-//                   decide how much of that the user sees.
-//   Local AI        the master toggle, the Ollama port (host locked to
-//                   loopback, CLAUDE.md §8), the model and the context size.
-//   Cloud AI        a placeholder panel and nothing else (decision 8).
+//   Smart detection  ON by default, switchable off. The offline heuristic
+//                    pass. Its SCOPE (document country, preset, the 22
+//                    detection categories, the confidence floor) and its
+//                    strictness are nested inside it, because they are the
+//                    settings this route reads.
+//   Local AI         OFF by default. The Ollama port (host locked to loopback,
+//                    CLAUDE.md §8), the model and the context size. Detecting
+//                    Ollama enables the switch; it never flips it.
+//   Cloud AI         OFF and disabled, a placeholder (decision 8).
+//
+// Nothing here gates the deterministic PII pass: that is not a detection
+// route, it is what the Anonymise step always does.
 //
 // The allowlist editor moved OUT of here: it belongs to the workspace half of
 // Identify now (views/identifyworkspace.js, the "Never anonymise" tab), because
@@ -28,7 +33,7 @@
 import { applySettings, listOllamaModels, probeOllama } from "../api.js";
 import {
   getState, setState,
-  applyPreset, toggleCategory, selectionPresetName, setUseAI,
+  applyPreset, toggleCategory, selectionPresetName, setUseAI, setUseSmartDetect,
   setCategoryGroup, setMinConfidence, setDocumentCountry,
   setSmartDetectOptions, smartDetectOptions,
   ALL_CATEGORIES,
@@ -41,34 +46,43 @@ import { CARDS, CONFIGURE, RAIL, VALUES, categoryLabels } from "../copy.js";
 import { examplesFor, countryOptions } from "../countries.js";
 import { keepScrollPosition } from "../scroll.js";
 
-// The tooltip used by every disabled LLM control when Ollama is missing,
-// verbatim from CLAUDE.md §4.
-export const LLM_DISABLED_TOOLTIP = "Requires Ollama, which was not detected on 127.0.0.1:11434";
+/**
+ * llmDisabledTooltip(port) is what every disabled LLM control says when Ollama
+ * is missing (CLAUDE.md §4). It names the ADDRESS ACTUALLY PROBED: the port is
+ * a setting, so a fixed "11434" in this sentence lies to the one user most
+ * likely to be reading it, the one who changed the port.
+ */
+export function llmDisabledTooltip(port) {
+  return `Requires Ollama, which was not detected on 127.0.0.1:${port || 11434}`;
+}
 
 /**
  * llmGateTooltip(s) picks the right explanation for a disabled AI control:
- * Ollama missing vs the master toggle being off. Two different problems with two
- * different fixes, so they must not share one message.
+ * Ollama missing vs the route being switched off. Two different problems with
+ * two different fixes, so they must not share one message.
  */
 export function llmGateTooltip(s) {
-  if (!s.ollama?.available) return LLM_DISABLED_TOOLTIP;
+  if (!s.ollama?.available) return llmDisabledTooltip(s.settings?.ollamaPort);
   return CONFIGURE.aiOffTooltip;
 }
 
-// RAIL_TABS is the tab set, in order. `id` is the token stored in activeTab.
-export const RAIL_TABS = [
-  ["scope", RAIL.tabScope],
-  ["smart", RAIL.tabSmart],
-  ["local", RAIL.tabLocalAI],
-  ["cloud", RAIL.tabCloudAI],
+// RAIL_SECTIONS is the rail's shape: [id, title, settings key that switches
+// the route on]. The order is the order the routes run in. A null key marks a
+// section whose switch cannot be operated (Cloud AI).
+export const RAIL_SECTIONS = [
+  ["rail-smart", RAIL.tabSmart, "useSmartDetect"],
+  ["rail-local", RAIL.tabLocalAI, "useAI"],
+  ["rail-cloud", RAIL.tabCloudAI, null],
 ];
 
-// Which tab is open, and which category groups the user folded shut. Both are
-// VIEW preferences rather than application state: nothing downstream reads
-// them, they must not travel in a session file, and putting them in the store
-// would mean every fold went through a reducer.
-let activeTab = "scope";
-const collapsedGroups = new Set();
+// Which sections and which category groups the user folded shut. A VIEW
+// preference rather than application state: nothing downstream reads it, it
+// must not travel in a session file, and putting it in the store would mean
+// every fold went through a reducer.
+//
+// Local AI and Cloud AI start folded: they are off, and an open panel of
+// disabled fields is noise above the settings that ARE in use.
+const collapsedGroups = new Set(["rail-local", "rail-cloud"]);
 
 // PRESETS: engine level → user-facing label. "soft/medium/advanced" reads too
 // technical; Standard and Thorough say what they mean.
@@ -104,42 +118,117 @@ export function renderIdentifyRail(container) {
     `<div class="card-head-left"><h2>${escapeHTML(CARDS.configure.title)}</h2></div>` +
     `<span class="card-sub">${escapeHTML(RAIL.activeCount(active, ALL_CATEGORIES.length))}</span>` +
     `</div>` +
-    `<div class="rail-tabs">` +
-    chipRow(RAIL_TABS.map(([id, label]) => ({ id, label, active: activeTab === id })),
-      { attr: "railtab", square: true, ariaLabel: RAIL.tabsLabel }) +
-    `</div>` +
-    `<div class="card-body">${tabBody(s)}</div>` +
+    `<div class="card-body">${railBody(s)}</div>` +
     `<div id="settings-error"></div>`;
 
-  for (const chip of container.querySelectorAll("[data-railtab]")) {
-    chip.addEventListener("click", () => {
-      activeTab = chip.dataset.railtab;
-      setState({}); // repaint; the tab is view state, so nothing else changes
+  // Every section is on screen at once now, so every section is wired every
+  // time. The tab-switching dance that used to decide which wiring ran is gone
+  // with the tabs.
+  wireSectionSwitches(container);
+  wireScope(container);
+  wireSmart(container);
+  wireLocalAI(container);
+  wireGroups(container, (id) => {
+    if (collapsedGroups.has(id)) collapsedGroups.delete(id);
+    else collapsedGroups.add(id);
+    setState({}); // repaint; folding is view state
+  });
+  // Cloud AI is a placeholder panel with a switch that cannot be operated
+  // (decision 8), so there is deliberately nothing to wire for it.
+}
+
+/**
+ * railBody(s) renders the three route sections. Exported for the render
+ * tests: which sections exist and which switch is on is exactly what reported
+ * issue 3 was about.
+ *
+ * Each is a collapsibleGroup whose header carries the route's switch, so the
+ * one control that decides whether a section matters sits on the section
+ * itself rather than three fields down inside it.
+ */
+export function railBody(s) {
+  return RAIL_SECTIONS.map(([id, title, key]) => {
+    const on = key ? !!s.settings[key] : false;
+    return collapsibleGroup(id, title, sectionBody(s, id), {
+      open: !collapsedGroups.has(id),
+      cls: `rail-section${on ? "" : " route-off"}`,
+      headRightHTML: routeSwitch(s, id, key, on),
+    });
+  }).join("");
+}
+
+/**
+ * routeSwitch(s, id, key, on) is the on/off control in a section header.
+ *
+ * Cloud AI's is rendered disabled rather than omitted: a section with no
+ * switch reads as "always on", which is the opposite of the truth.
+ */
+function routeSwitch(s, id, key, on) {
+  const disabled = key === null;
+  const title = disabled ? RAIL.cloudNotYet
+    : (key === "useAI" && !s.ollama?.available ? llmDisabledTooltip(s.settings.ollamaPort) : "");
+  return `<label class="route-switch"${title ? ` title="${escapeHTML(title)}"` : ""}>` +
+    `<input type="checkbox" class="route-toggle" data-route="${escapeHTML(id)}"` +
+    `${on ? " checked" : ""}${disabled ? " disabled" : ""}` +
+    ` aria-label="${escapeHTML(RAIL.routeSwitchLabel(RAIL_SECTIONS.find(([sid]) => sid === id)?.[1] ?? id))}"/>` +
+    `<span class="route-state">${escapeHTML(on ? RAIL.routeOn : RAIL.routeOff)}</span>` +
+    `</label>`;
+}
+
+/** sectionBody(s, id) is the content of one route section. */
+function sectionBody(s, id) {
+  switch (id) {
+    case "rail-local": return localAISection(s);
+    case "rail-cloud": return cloudAISection();
+    default: return smartSection(s);
+  }
+}
+
+/** wireSectionSwitches(container) wires the header switches. The click must
+ *  NOT reach the header, which is itself the fold toggle: switching a route on
+ *  and having the section fold shut under your cursor is nobody's intent. */
+function wireSectionSwitches(container) {
+  for (const box of container.querySelectorAll(".route-toggle")) {
+    box.addEventListener("click", (ev) => ev.stopPropagation());
+    box.addEventListener("change", (ev) => {
+      ev.stopPropagation();
+      const on = ev.target.checked;
+      if (ev.target.dataset.route === "rail-local") setUseAI(on);
+      else setUseSmartDetect(on);
+      // Turning a route on opens its section: the settings it reads are the
+      // next thing the user wants.
+      if (on) collapsedGroups.delete(ev.target.dataset.route);
+      pushSettings(container);
     });
   }
-
-  if (activeTab === "scope") wireScope(container);
-  else if (activeTab === "smart") wireSmart(container);
-  else if (activeTab === "local") wireLocalAI(container);
-  // The Cloud AI tab is a placeholder panel with no controls (decision 8), so
-  // there is deliberately nothing to wire.
-}
-
-/** tabBody(s) renders whichever tab is open. */
-function tabBody(s) {
-  switch (activeTab) {
-    case "smart": return smartTab(s);
-    case "local": return localAITab(s);
-    case "cloud": return cloudAITab();
-    default: return scopeTab(s);
+  for (const head of container.querySelectorAll(".route-switch")) {
+    head.addEventListener("click", (ev) => ev.stopPropagation());
   }
 }
 
-// --- Scope ----------------------------------------------------------------
+// --- Smart detection: scope first, then strictness ------------------------
 
-/** scopeTab(s) is the country, the preset, the category groups and the
+/**
+ * smartSection(s) is the whole offline route: what it looks for, then how
+ * strict it is about what it finds.
+ *
+ * The scope (country, preset, categories, confidence floor) leads, because it
+ * is the part a user came here to change; the four tuning fields follow, as
+ * their own folded block, because they are the part a user changes when the
+ * suggestions are wrong.
+ */
+function smartSection(s) {
+  return `<p class="hint">${escapeHTML(RAIL.smartIntro)}</p>` +
+    scopeBlocks(s) +
+    collapsibleGroup("rail-smart-tuning", RAIL.smartTuning, smartTuning(s), {
+      open: !collapsedGroups.has("rail-smart-tuning"),
+      cls: "rail-subgroup",
+    });
+}
+
+/** scopeBlocks(s) is the country, the preset, the category groups and the
  *  confidence floor, in that order: broadest choice first. */
-function scopeTab(s) {
+function scopeBlocks(s) {
   return `<div class="rail-block">` +
     sectionLabel(RAIL.country) +
     countrySelect(s) +
@@ -317,12 +406,6 @@ function wireScope(container) {
     });
   }
 
-  wireGroups(container, (id) => {
-    if (collapsedGroups.has(id)) collapsedGroups.delete(id);
-    else collapsedGroups.add(id);
-    setState({}); // repaint; folding is view state
-  });
-
   // "input" updates the read-out live while dragging without touching the
   // store; "change" (on release) commits it, so a drag does not fire one bridge
   // round-trip per pixel.
@@ -344,8 +427,8 @@ function wireScope(container) {
 
 // --- Smart detection ------------------------------------------------------
 
-/** smartTab(s) is the offline heuristic pass's strictness (BUILD-04 CR13). */
-function smartTab(s) {
+/** smartTuning(s) is the offline heuristic pass's strictness (BUILD-04 CR13). */
+function smartTuning(s) {
   const opts = smartDetectOptions(s);
   const numberRow = (id, label, hint, value, attrs) =>
     `<label class="rail-field" for="${id}">` +
@@ -354,7 +437,6 @@ function smartTab(s) {
     `</label><p class="hint">${escapeHTML(hint)}</p>`;
 
   return `<div class="rail-block">` +
-    sectionLabel(RAIL.tabSmart) +
     `<p class="hint">${escapeHTML(VALUES.smartSettingsHint)}</p>` +
     numberRow("smart-min-length", VALUES.smartMinLength, VALUES.smartMinLengthHint,
       opts.minLength, `min="0" max="40" step="1"`) +
@@ -393,7 +475,7 @@ function wireSmart(container) {
 
 // --- Local AI -------------------------------------------------------------
 
-function localAITab(s) {
+function localAISection(s) {
   const ollamaOK = !!s.ollama?.available;
   const aiOn = !!s.settings.useAI;
   // The model and the context size are gated, the PORT and Re-probe are not:
@@ -404,13 +486,9 @@ function localAITab(s) {
     `<option value="${escapeHTML(m)}"${s.settings.model === m ? " selected" : ""}>` +
     `${escapeHTML(m)}</option>`).join("");
 
+  // The route's own switch lives in the section header now, so the body opens
+  // with what the switch cannot say: whether Ollama is actually there.
   return `<div class="rail-block">` +
-    sectionLabel(RAIL.tabLocalAI) +
-    `<label class="cat-row">` +
-    `<input type="checkbox" id="use-ai"${aiOn ? " checked" : ""}` +
-    `${ollamaOK ? "" : ` title="${escapeHTML(LLM_DISABLED_TOOLTIP)}"`}/>` +
-    `<span class="cat-label">${escapeHTML(CONFIGURE.useAILabel)}</span>` +
-    `</label>` +
     `<p class="hint">${escapeHTML(CONFIGURE.useAIHint)}</p>` +
     `<div class="rail-status">` +
     `<span class="state-tag${ollamaOK ? "" : " bad"}" title="${escapeHTML(s.ollama?.detail ?? "")}">` +
@@ -435,10 +513,6 @@ function localAITab(s) {
 }
 
 function wireLocalAI(container) {
-  container.querySelector("#use-ai")?.addEventListener("change", (ev) => {
-    setUseAI(ev.target.checked);
-    pushSettings(container);
-  });
   for (const id of ["#ollama-port", "#ollama-model", "#context-size"]) {
     container.querySelector(id)?.addEventListener("change", () => pushSettings(container));
   }
@@ -451,7 +525,7 @@ function wireLocalAI(container) {
 // --- Cloud AI -------------------------------------------------------------
 
 /**
- * cloudAITab() is a placeholder panel and NOTHING else (BUILD-05 decision 8).
+ * cloudAISection() is a placeholder panel and NOTHING else (decision 8).
  *
  * Deliberately absent, because a separate improvement plan owns this feature and
  * must not have to trip over half-built scaffolding: no provider list, no
@@ -460,9 +534,8 @@ function wireLocalAI(container) {
  * commits only to the thing that will not change about it, which is that nothing
  * leaves the machine before the user has said in writing what may.
  */
-function cloudAITab() {
+function cloudAISection() {
   return `<div class="rail-block">` +
-    sectionLabel(RAIL.tabCloudAI) +
     `<div class="placeholder-panel">` +
     `<span class="fmt-badge">${escapeHTML(RAIL.cloudNotYet)}</span>` +
     `<p class="hint">${escapeHTML(RAIL.cloudBody)}</p>` +
@@ -490,6 +563,8 @@ async function pushSettings(container) {
     model: model?.value || s.settings.model,
     contextSize: ctxSize ? (parseInt(ctxSize.value, 10) || 0) : (s.settings.contextSize ?? 8192),
     useAI: !!s.settings.useAI,
+    useSmartDetect: s.settings.useSmartDetect !== false,
+    useCloudAI: false, // not built (decision 8); sent so Go never has to guess
     // Read from the store, not the input: setMinConfidence already validated and
     // stored it, and the Scope tab may not be rendered at all.
     minConfidence: s.settings.minConfidence ?? 0,

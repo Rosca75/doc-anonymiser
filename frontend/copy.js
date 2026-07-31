@@ -132,7 +132,7 @@ export const HOME = {
   stepsTitle: "The four steps",
   steps: [
     { label: "Import", body: "Drop in .docx, .pptx, .xlsx, .pdf, .csv, .md or .txt files. Your originals are only ever read, never changed." },
-    { label: "Identify", body: "Pick a preset and fine-tune the 23 detection categories, then review every suggested value. Nothing is replaced until you accept it." },
+    { label: "Identify", body: "Pick a preset and fine-tune the 22 detection categories, then review every suggested value. Nothing is replaced until you accept it." },
     { label: "Anonymise", body: "Run the passes and check the result side by side, with every replacement mapped back to its original." },
     { label: "Export", body: "Save the anonymised copies, the report and the re-identification key." },
   ],
@@ -169,7 +169,7 @@ export const CONFIGURE = {
   useAILabel: "Use local AI (Ollama)",
   useAIHint: "When enabled, a language model running on this machine can suggest names to replace and double-check the result. Nothing leaves your computer.",
   contextSizeHint: "Higher values let the AI read longer documents at once but use more memory.",
-  aiOffTooltip: "Local AI is turned off. Enable it under Configure, AI and advanced settings.",
+  aiOffTooltip: "Local AI is turned off. Turn it on with the switch on the Local AI section of Configure.",
   allowHint: "Terms in this list survive every pass, even when they also appear as names to replace.",
   // BUILD-04 CR9: the group that surfaces the BUILD-03 recognizers.
   groupTechnical: "Payment, tax and technical identifiers",
@@ -212,10 +212,20 @@ export function categoryLabels(examples = {}) {
 // below, which is where they were and where the parity guard looks.
 export const RAIL = {
   tabsLabel: "Configure sections",
-  tabScope: "Scope",
   tabSmart: "Smart detection",
   tabLocalAI: "Local AI",
   tabCloudAI: "Cloud AI",
+
+  // BUILD-06: the three routes are switchable sections, not tabs. Scope stopped
+  // being a section of its own because it is the scope OF smart detection.
+  smartIntro: "Finds names by how they are written, on this machine and without any AI. It runs on the categories you choose below.",
+  smartTuning: "Strictness",
+  routeOn: "On",
+  routeOff: "Off",
+  /** routeSwitchLabel(title) is the accessible name of a section's switch. */
+  routeSwitchLabel(title) {
+    return `Turn ${title} on or off`;
+  },
 
   country: "Document country",
   countryHint: "The phone, VAT and national identification examples follow this country's formats, and the matching national identifiers are switched on. It changes nothing else about how detection works.",
@@ -313,22 +323,48 @@ export const WORKSPACE = {
   runDetection: "Run detection",
   runOffline: "Reads every imported document and suggests values, without any AI.",
   runWithAI: "Reads every imported document twice: the offline pass, then the local AI. Nothing leaves your computer.",
+  runNeedsRoute: "No detection route is on. Turn on Smart detection or Local AI in Configure.",
   runNeedsDocuments: "Import at least one document first.",
   cancel: "Cancel",
-  /** scanning(file, index, total) is the progress bar's caption. */
-  scanning(file, index, total) {
-    return `Scanning ${file} (${index}/${total})`;
+  // The progress caption (BUILD-06). It is assembled from these parts rather
+  // than written as one sentence, because a run that feels stuck raises three
+  // separate questions: which route is this, where in the batch is it, and
+  // where inside this file.
+  /** phaseName(phase) turns an engine route token into words. */
+  phaseName(phase) {
+    if (phase === "ai") return "Local AI";
+    if (phase === "smart") return "Smart detection";
+    return "Starting";
+  },
+  /** fileOf(file, index, total) is the position in the batch. */
+  fileOf(file, index, total) {
+    return `${file} (${index} of ${total})`;
+  },
+  /** chunkOf(index, total) is the position inside one chunked AI scan. A long
+   *  document used to sit on an unchanging caption for minutes. */
+  chunkOf(index, total) {
+    return `part ${index} of ${total}`;
+  },
+  /** elapsed(seconds) is how long the run has been going. */
+  elapsed(seconds) {
+    if (seconds < 60) return `${seconds}s`;
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
   },
   /** detectionDone(n) reports the run's result. */
   detectionDone(n) {
     if (n === 0) return "Detection finished. Nothing new to review.";
     return `Detection finished. ${n} new suggestion${n === 1 ? "" : "s"} to review.`;
   },
-  /** tooLargeNotice(names) explains which files the AI pass skipped and why. */
-  tooLargeNotice(names) {
-    const list = names.join(", ");
-    return `The local AI cannot read ${list} in one pass, so ${names.length === 1 ? "it was" : "they were"} ` +
-      `left out of the AI pass. The offline pass still covered ${names.length === 1 ? "it" : "them"} in full.`;
+  /** detectionCancelled(n) reports a run the user stopped. Partial findings
+   *  are kept, so the sentence says what was kept rather than just "stopped". */
+  detectionCancelled(n) {
+    if (n === 0) return "Detection cancelled. Nothing was added.";
+    return `Detection cancelled. ${n} suggestion${n === 1 ? "" : "s"} found before it stopped ${n === 1 ? "was" : "were"} kept.`;
+  },
+  /** skippedNotice(name, reason) names a file a route could not read, and why.
+   *  Go writes the reason, because Go is what knows the limit. */
+  skippedNotice(name, reason) {
+    return `${name}: ${reason}`;
   },
 
   // The suggestions table.
@@ -363,6 +399,13 @@ export const WORKSPACE = {
 
   // My values.
   addValueLabel: "A value to replace",
+  /** valueMatches(count, documents) is the live read-out under the add row.
+   *  A value that matches nothing is almost always a typo, and saying so
+   *  before the run is the cheapest correction there is. */
+  valueMatches(count, documents) {
+    if (count === 0) return "Not found in any imported document. Check the spelling.";
+    return `Found ${count} time${count === 1 ? "" : "s"} in ${documents} document${documents === 1 ? "" : "s"}.`;
+  },
   addValuePlaceholder: "add a value to replace, e.g. Meridian Consulting",
   addValueCategory: "The type of value",
   addValue: "Add value",
@@ -398,6 +441,14 @@ export const WORKSPACE = {
   addPatternPlaceholder: "add an expression, e.g. INV-\\d{6}",
   patternValid: "valid",
   patternCompiles: "this expression compiles",
+  patternNoMatches: "This expression compiles but matches nothing in the imported documents.",
+  /** patternSamples(samples) shows what a regex actually catches, which is the
+   *  question "it compiles" never answered. */
+  patternSamples(samples) {
+    const shown = samples.slice(0, 5).join(", ");
+    const more = samples.length > 5 ? `, and ${samples.length - 5} more` : "";
+    return `Matches ${shown}${more}.`;
+  },
   removePattern: "Remove this pattern",
 };
 
@@ -446,15 +497,35 @@ export const ANONYMISE = {
 
   // The report card.
   reportTitle: "Report",
-  /** reportSummary(n) is the folded card's right-hand read-out. */
-  reportSummary(n) {
-    return `${n} replacement${n === 1 ? "" : "s"}`;
+  /** reportSummary(n, values) is the folded card's right-hand read-out. It
+   *  counts VALUES as well as replacements: "48 replacements" alone does not
+   *  tell a user whether there is a list of them to look at. */
+  reportSummary(n, values) {
+    const r = `${n} replacement${n === 1 ? "" : "s"}`;
+    if (values === undefined) return r;
+    return `${r}, ${values} value${values === 1 ? "" : "s"}`;
   },
   scopeLabel: "Which files the report covers",
   scopeAll: "All files",
   reportEmpty: "Nothing was replaced in the files in scope.",
   valuePlaceholder: "Value / placeholder",
   occurrences: "Occur.",
+  // The flat value list (BUILD-06). It is the answer to "what did you
+  // replace?", which the category totals never gave.
+  valuesTitle: "Replaced values",
+  valuesKeyWarning: "Shows real values: this is your re-identification key.",
+  valuesFilterPlaceholder: "Filter values",
+  valuesFilterEmpty: "No replaced value matches this filter.",
+  byCategoryTitle: "By category",
+  /** reportLevel(level) names the preset the run used. */
+  reportLevel(level) {
+    return `Ran at the ${level} preset`;
+  },
+  /** reportLLMPass(text) reports what happened to the AI pass, verbatim from
+   *  Go. A run that degraded halfway used to say so only in the JSON export. */
+  reportLLMPass(text) {
+    return `AI deep scan: ${text}`;
+  },
   noValuesInScope: "No values from this category appear in the files in scope.",
   dismissWarning: "Hide this warning",
 
@@ -506,6 +577,15 @@ export const ANONYMISE = {
   paneOriginal: "ORIGINAL",
   paneAnonymised: "ANONYMISED",
   compareEmpty: "Run the anonymisation to compare the result with the original.",
+  /** tooltipTimes(n) is the second line of a mark's hover tooltip. */
+  tooltipTimes(n) {
+    return `replaced ${n} time${n === 1 ? "" : "s"} in this document`;
+  },
+  // Shown in the ORIGINAL pane when the source text is not available: the
+  // document was removed from the import list while its result stayed on
+  // screen. The pane says so rather than showing the anonymised text, which
+  // is the one thing the ORIGINAL pane must never contain.
+  originalUnavailable: "The source text is not available: this document was removed from the import list. Re-import it to compare.",
   /** replacementsInDocument(n) is the Compare card's read-out. */
   replacementsInDocument(n) {
     return `${n} replacement${n === 1 ? "" : "s"} in this document`;
@@ -677,9 +757,8 @@ export const CATEGORY_LABELS = {
   vat: ["VAT numbers", "For example LU12345678"],
   matricule: ["National identification numbers", "For example the Luxembourg 13 digit number"],
   url: ["Web addresses", "For example https://example.com/report"],
-  client_names: ["Client names", "The client names you list in the Values step"],
+  entity_names: ["Entity names", "Companies, teams and internal systems you list in the Values step"],
   project_names: ["Project names", "The project names you list in the Values step"],
-  internal_names: ["Internal names", "Internal staff, teams and systems"],
   person_names: ["Person names", "For example Marie Duval, M. Duval or just Marie"],
   custom_patterns: ["Custom patterns", "The regular expressions you add in the Values step"],
   date: ["Dates", "For example 15 January 2026 or 15/01/2026"],

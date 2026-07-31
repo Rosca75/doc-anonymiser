@@ -65,6 +65,11 @@ const initialState = {
   // Import errors from the last import action (shown as dismissible list).
   importErrors: [],
 
+  // Source text fetched from Go for documents the import list no longer holds
+  // (see documentSource() below): {name: {markdown, truncated, isGrid}}. It is
+  // a cache, never a second source of truth: `documents` always wins.
+  sourceCache: {},
+
   // Name of the document selected in the preview pane (or null).
   previewDoc: null,
 
@@ -80,16 +85,27 @@ const initialState = {
   // the LAST CHOSEN PRESET; categories is the granular switch set the
   // pipeline obeys (BUILD-02 Phase 3). The categories map is filled below
   // after presetCategories is defined.
-  // useAI is the master "Use local AI" toggle (BUILD-02 Phase 6d):
-  // null = not yet decided (defaults to Ollama availability after the
-  // first probe), true/false = explicit user choice.
+  // The three DETECTION ROUTES (BUILD-06), each with its own switch, because
+  // they are three separate ways of finding values and the user turns them on
+  // and off independently:
+  //   useSmartDetect  the offline heuristic pass. ON by default, and
+  //                   deactivable. Its scope (the categories, the preset, the
+  //                   confidence floor) and its tuning are the settings it
+  //                   reads, which is why the rail nests them inside it.
+  //   useAI           the local model (Ollama). OFF by default. Detecting
+  //                   Ollama ENABLES the switch, it never flips it: turning on
+  //                   a route that sends the document to a model, however
+  //                   local, is the user's decision to make.
+  //   useCloudAI      not built (BUILD-05 decision 8). Always false, kept here
+  //                   so the rail has something honest to render.
   // contextSize is the Ollama num_ctx setting (Phase 5b), default 8192.
   // minConfidence is the detection-confidence floor (BUILD-04 CR9), 0 to
   // 1 on the engine's scale. 0 is the default and keeps every detection,
   // which is exactly the behaviour before the setting existed.
   settings: {
     level: "medium", categories: null, ollamaPort: 11434, model: "",
-    contextSize: 8192, useAI: null, minConfidence: 0,
+    contextSize: 8192, useAI: false, useSmartDetect: true, useCloudAI: false,
+    minConfidence: 0,
     // smartDetect is the BUILD-04 CR13 tuning for the offline Smart
     // detection pass, matching engine.SmartDetectOptions field for field.
     // The defaults are the STRICTER ones (engine
@@ -136,8 +152,14 @@ const initialState = {
   // step empties this list.
   dismissedWarnings: [],
 
-  // Discovery run state (BUILD-02 Phase 7c):
-  // {running, current, total, file} or null when idle.
+  // Detection run state (BUILD-06), or null when idle:
+  // {running, phase, phaseIndex, phaseCount, current, total, file,
+  //  chunk, chunkCount, fraction, startedAt}.
+  //
+  // `fraction` comes from GO and is guaranteed non-decreasing across the whole
+  // run. The frontend used to compute a percentage per pass, which is why the
+  // bar rewound when the second pass started over with a smaller denominator.
+  // It is never recomputed here.
   discovery: null,
 
   // Unified candidate review list (BUILD-02 Phase 9b): candidates from
@@ -198,7 +220,10 @@ export const EXTENDED_PII_CATEGORIES = [
   "crypto", "database_uri", "de_steuer_id", "es_nif",
 ];
 export const ADVANCED_PII_CATEGORIES = ["amount", "date"];
-export const NAME_CATEGORIES = ["client_names", "project_names", "internal_names", "person_names"];
+// entity_names (BUILD-06) is the merge of the former client_names and
+// internal_names. Mirrors engine.AllEntityCategories; the pairing is enforced
+// by ../category_parity_test.go.
+export const NAME_CATEGORIES = ["entity_names", "project_names", "person_names"];
 export const ADVANCED_ENTITY_CATEGORIES = ["organisation_names", "location_names"];
 export const ALL_CATEGORIES = [
   ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES, ...ADVANCED_PII_CATEGORIES,
@@ -207,7 +232,7 @@ export const ALL_CATEGORIES = [
 
 /**
  * presetCategories(level) reproduces engine.PresetSelection exactly:
- * soft = hard PII + client/project/internal + custom patterns;
+ * soft = hard PII + entity/project names + custom patterns;
  * medium = soft + persons; advanced = everything.
  */
 export function presetCategories(level) {
@@ -217,7 +242,7 @@ export function presetCategories(level) {
   // Extended recognizers are hard PII at every level, matching the Go
   // PresetSelection exactly (BUILD-04 CR9).
   for (const c of EXTENDED_PII_CATEGORIES) sel[c] = true;
-  sel.client_names = sel.project_names = sel.internal_names = true;
+  sel.entity_names = sel.project_names = true;
   sel.custom_patterns = true;
   if (level === "medium" || level === "advanced") sel.person_names = true;
   if (level === "advanced") {
@@ -575,13 +600,25 @@ export function setUseAI(on) {
 }
 
 /**
- * defaultUseAIFromProbe(available) fills the toggle's DEFAULT after the
- * first Ollama probe: on when detected, off otherwise. A prior explicit
- * user choice (true/false) is never overwritten.
+ * setUseSmartDetect(on) turns the offline heuristic route on or off.
+ *
+ * It is ON by default: it needs nothing installed, it is the route that works
+ * on every machine, and a user who has just imported documents expects the
+ * app to look at them. It is switchable because its suggestions are guesses,
+ * and someone who only wants the deterministic PII pass plus their own listed
+ * values should be able to say so.
  */
-export function defaultUseAIFromProbe(available) {
-  if (state.settings.useAI !== null) return;
-  setState({ settings: { ...state.settings, useAI: !!available } });
+export function setUseSmartDetect(on) {
+  setState({ settings: { ...state.settings, useSmartDetect: !!on } });
+}
+
+/**
+ * detectionRoutesOn(s) is how many ways of FINDING values are enabled. Zero
+ * means the detect button has nothing to run, which the UI says rather than
+ * running an empty pass and reporting "0 suggestions" as if it had looked.
+ */
+export function detectionRoutesOn(s = state) {
+  return (s.settings.useSmartDetect ? 1 : 0) + (llmEnabled(s) ? 1 : 0);
 }
 
 /**
@@ -784,6 +821,59 @@ export function applyImportResult(result) {
     documents,
     importErrors: result.errors ?? [],
     previewDoc: previewStillValid ? state.previewDoc : (documents[0]?.name ?? null),
+    // A fresh import list makes every cached source stale (a re-imported file
+    // with the same name is a DIFFERENT file). Dropping the cache is cheaper
+    // and safer than deciding which entries survived.
+    sourceCache: {},
+  });
+}
+
+/**
+ * documentSource(s, name) is THE way any view asks for a document's source
+ * text, and the reason items 1 and 4 cannot come back: nothing else in the
+ * frontend is allowed to call something "the original".
+ *
+ * It reads the import list first (already in the store, already truncated by
+ * Go), then the cache filled by cacheDocumentSource() for documents the list
+ * no longer holds.
+ *
+ * @param {object} s state
+ * @param {string} name document name
+ * @returns {{markdown: string, truncated: boolean, isGrid: boolean, found: boolean}|null}
+ *          null means "not known yet", which is a caller's cue to fetch;
+ *          `found: false` means "asked, and the document is gone".
+ */
+export function documentSource(s, name) {
+  if (!name) return null;
+  const imported = (s.documents ?? []).find((d) => d.name === name);
+  if (imported) {
+    return {
+      markdown: imported.markdown ?? "",
+      truncated: !!imported.previewTruncated,
+      isGrid: !!imported.isGrid,
+      found: true,
+    };
+  }
+  return s.sourceCache?.[name] ?? null;
+}
+
+/**
+ * cacheDocumentSource(name, source) stores a source fetched from Go.
+ * A `found: false` answer is cached as an empty source, so a missing document
+ * is asked about once rather than on every repaint.
+ */
+export function cacheDocumentSource(name, source) {
+  if (!name) return;
+  setState({
+    sourceCache: {
+      ...state.sourceCache,
+      [name]: {
+        markdown: source?.markdown ?? "",
+        truncated: !!source?.truncated,
+        isGrid: !!source?.isGrid,
+        found: !!source?.found,
+      },
+    },
   });
 }
 
@@ -1274,6 +1364,7 @@ export function startNewBatch() {
     documents: [],
     previewDoc: null,
     importErrors: [],
+    sourceCache: {},
     entities: [],
     candidates: [],
     patterns: [],

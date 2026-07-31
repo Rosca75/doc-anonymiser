@@ -51,8 +51,11 @@ without the runtime. Preserve that behaviour.
   wiring live in its module. Identify is the exception that proves the rule:
   it is one screen with two halves, each big enough to deserve its own file, so
   `identify.js` owns the layout and the footer, `identifyrail.js` the choices
-  (country, preset, categories, confidence, local AI) and
-  `identifyworkspace.js` the values, suggestions and patterns.
+  and `identifyworkspace.js` the values, suggestions and patterns. The rail is
+  three switchable DETECTION ROUTE sections (BUILD-06), not tabs: Smart
+  detection (on by default, and the owner of the scope controls, because the
+  country, preset, categories and confidence floor are the scope OF that
+  route), Local AI (off by default) and Cloud AI (off, disabled, not built).
 - **`nav.js` is the only module that moves the wizard.** Every screen has its
   own footer now, so the step bar and four footers all navigate; the
   backward-reset rule lives in `nav.js` once rather than in five places. It
@@ -144,6 +147,11 @@ Windows it steals focus from the window it belongs to.
 - `assets/icons/` — vendored Material Symbols SVGs + their LICENSE.
 - `*.test.js` — dev-time tests, run with `node --test frontend/*.test.js`
   (zero npm deps). They are self-relative and never shipped in the binary.
+- `testhtml.js` — dev-time only: a tiny dependency-free HTML query helper
+  (`one`, `all`, `textOf`, `attr`) so a test can assert what a pane SHOWS
+  rather than that the output contains a substring. Views build HTML strings,
+  so exporting a builder (`previewBody`, `compareCard`, …) is all it takes to
+  test a whole screen without a browser.
 
 ## Typography and brand (BUILD-04 CR2)
 
@@ -177,10 +185,17 @@ process; this second window is one the WebView opens itself.
 
 ## Testing
 
-- `node --test frontend/*.test.js` — store, view-model and copy-guard tests,
-  zero npm dependencies (Node ships on the CI runner).
+- `node --test frontend/*.test.js` — store, view-model, render and copy-guard
+  tests, zero npm dependencies (Node ships on the CI runner).
 - Keep the pure view-models (`entitymodel.js`, `candidatemodel.js`) covered
   by table-style tests when you change their logic.
+- **Render tests over substring matches.** Export a screen's builder and assert
+  what a pane SHOWS with `testhtml.js` (`textOf`, `all`, `attr`). Four bugs
+  about what a pane displayed lived happily beside green tests that only
+  checked the output contained a substring somewhere.
+- What no test in this folder can prove (a tooltip clipped by its scrolling
+  pane, a screen that does not fit the window) belongs to the Windows harness
+  in `../scripts/uitest/`. See `../docs/UITESTING.md`.
 
 ## Where to look next
 

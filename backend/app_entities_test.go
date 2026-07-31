@@ -70,9 +70,9 @@ func TestRunDiscoveryMergesAndDedupes(t *testing.T) {
 	// once (first spelling) and both persons.
 	app := newTestApp(t, func(user string) string {
 		if strings.Contains(user, "doc one") {
-			return `{"client_names":["Alpine Trust"],"project_names":[],"internal_names":[],"person_names":["Marie Duval"]}`
+			return `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":["Marie Duval"]}`
 		}
-		return `{"client_names":["ALPINE TRUST"],"project_names":[],"internal_names":[],"person_names":["Peter Stone"]}`
+		return `{"entity_names":["ALPINE TRUST"],"project_names":[],"person_names":["Peter Stone"]}`
 	})
 	app.docs = []engine.Document{
 		{Name: "one.txt", Format: engine.FormatTXT, Markdown: "doc one: Alpine Trust with Marie Duval"},
@@ -97,7 +97,7 @@ func TestRunDiscoveryMergesAndDedupes(t *testing.T) {
 
 func TestRunDiscoveryRespectsAllowlist(t *testing.T) {
 	app := newTestApp(t, func(string) string {
-		return `{"client_names":["CSSF","Alpine Trust"],"project_names":[],"internal_names":[],"person_names":[]}`
+		return `{"entity_names":["CSSF","Alpine Trust"],"project_names":[],"person_names":[]}`
 	})
 	app.docs = []engine.Document{{Name: "a.txt", Format: engine.FormatTXT, Markdown: "CSSF and Alpine Trust"}}
 
@@ -149,7 +149,7 @@ func TestRunDiscoveryCancellation(t *testing.T) {
 	var calls atomic.Int32
 	app := newTestApp(t, func(user string) string {
 		calls.Add(1)
-		return `{"client_names":["Alpine Trust"],"project_names":[],"internal_names":[],"person_names":[]}`
+		return `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`
 	})
 	app.docs = []engine.Document{
 		{Name: "one.txt", Format: engine.FormatTXT, Markdown: "Alpine Trust one"},
@@ -210,7 +210,7 @@ func TestEstimateDiscoveryOversize(t *testing.T) {
 // the file name in the payload.
 func TestDiscoveryProgressEvents(t *testing.T) {
 	app := newTestApp(t, func(string) string {
-		return `{"client_names":[],"project_names":[],"internal_names":[],"person_names":[]}`
+		return `{"entity_names":[],"project_names":[],"person_names":[]}`
 	})
 	app.docs = []engine.Document{
 		{Name: "one.txt", Format: engine.FormatTXT, Markdown: "text one"},
@@ -316,7 +316,7 @@ func TestRunSmartDetectionReturnsCandidatesNotEntities(t *testing.T) {
 	if c, ok := byText["Marie Duval"]; !ok || c.Category != "person_names" || c.Count < 2 {
 		t.Errorf("Marie Duval candidate wrong: %+v", res.Candidates)
 	}
-	if c, ok := byText["Alpine Trust S.A."]; !ok || c.Category != "client_names" {
+	if c, ok := byText["Alpine Trust S.A."]; !ok || c.Category != "entity_names" {
 		t.Errorf("suffix client candidate wrong: %+v", res.Candidates)
 	}
 }

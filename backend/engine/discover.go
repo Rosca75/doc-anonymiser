@@ -12,7 +12,7 @@
 //     sentence start is dropped (sentence-case noise); repeated
 //     sentence-start runs are kept.
 //  2. Legal-suffix gazetteer (Luxembourg-aware): a capitalised run
-//     followed by S.A., S.à r.l., GmbH, ... is a client_names candidate
+//     followed by S.A., S.à r.l., GmbH, ... is an entity_names candidate
 //     with high confidence (suffix included in the candidate text).
 //  3. Frequency analysis: runs occurring twice or more qualify on their
 //     own; a single-occurrence SINGLE-WORD run without a suffix or title
@@ -28,9 +28,11 @@
 package engine
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Candidate is one Smart-detection proposal for the review UI (and for
@@ -214,7 +216,24 @@ func SmartDetect(text string, allow *Allowlist) []Candidate {
 // carries the heuristic score the filtering used (candidateScore), so the
 // UI can filter further without recomputing anything.
 func SmartDetectWithOptions(text string, allow *Allowlist, opts SmartDetectOptions) []Candidate {
-	runs := extractRuns(text)
+	candidates, _ := SmartDetectContext(context.Background(), text, allow, opts)
+	return candidates
+}
+
+// SmartDetectContext is SmartDetectWithOptions that can be INTERRUPTED
+// (BUILD-06). Until now the offline pass took no context at all, so Cancel
+// could only take effect between documents: one very large file ran to
+// completion whatever the user pressed, which is a large part of why
+// detection "sometimes does not complete" from the outside.
+//
+// On cancellation it returns the candidates found so far together with
+// ctx.Err(), the same contract the chunked LLM scan already had: partial work
+// is worth keeping, and the caller decides how to describe it.
+func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts SmartDetectOptions) ([]Candidate, error) {
+	runs, err := extractRunsContext(ctx, text)
+	if err != nil {
+		return nil, err
+	}
 
 	// Group occurrences by candidate text (case-sensitive: "WEBER" and
 	// "Weber" are different spellings the review UI should see as typed;
@@ -231,7 +250,15 @@ func SmartDetectWithOptions(text string, allow *Allowlist, opts SmartDetectOptio
 	groups := map[string]*group{}
 	order := []string{}
 
-	for _, r := range runs {
+	for i, r := range runs {
+		// Checked every 512 runs rather than every run: ctx.Err() is a mutex
+		// read, and a document long enough to need interrupting has hundreds
+		// of thousands of runs.
+		if i%512 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		g, ok := groups[r.text]
 		if !ok {
 			g = &group{text: r.text, firstStart: r.start, sentenceOnly: true}
@@ -245,7 +272,7 @@ func SmartDetectWithOptions(text string, allow *Allowlist, opts SmartDetectOptio
 		// Category priority: legal suffix beats title beats the default.
 		switch {
 		case r.hasSuffix:
-			g.category = "client_names"
+			g.category = "entity_names"
 		case r.hasTitle && g.category == "":
 			g.category = "person_names"
 		}
@@ -275,14 +302,14 @@ func SmartDetectWithOptions(text string, allow *Allowlist, opts SmartDetectOptio
 			continue
 		}
 		// Default category for unclassified runs: multi-word runs read as
-		// person names, single words as organisation-ish client names.
+		// person names, single words as organisation-ish entity names.
 		// This is only the INITIAL guess; the review UI and the optional
 		// LLM classification (Phase 8b) refine it.
 		if g.category == "" {
 			if r.words >= 2 {
 				g.category = "person_names"
 			} else {
-				g.category = "client_names"
+				g.category = "entity_names"
 			}
 		}
 		// Allowlist veto LAST among the ORIGINAL rules (allowlist wins,
@@ -316,7 +343,7 @@ func SmartDetectWithOptions(text string, allow *Allowlist, opts SmartDetectOptio
 		}
 		return groups[out[i].Text].firstStart < groups[out[j].Text].firstStart
 	})
-	return out
+	return out, nil
 }
 
 // firstRunFor returns the first occurrence of a run text (for word-count
@@ -333,11 +360,33 @@ func firstRunFor(runs []smartRun, text string) smartRun {
 // extractRuns scans the text once and returns every capitalised-run
 // occurrence with its metadata.
 func extractRuns(text string) []smartRun {
+	runs, _ := extractRunsContext(context.Background(), text)
+	return runs
+}
+
+// extractRunsContext is extractRuns that can be interrupted. The token walk
+// is the longest uninterruptible stretch of the offline pass, so this is
+// where Cancel has to be able to land: without it, pressing Cancel on a large
+// document did nothing at all until the whole file was done.
+func extractRunsContext(ctx context.Context, text string) ([]smartRun, error) {
 	tokens := tokenize(text)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var runs []smartRun
 
 	i := 0
+	checked := 0
 	for i < len(tokens) {
+		// ctx.Err() is a mutex read, so it is checked every 4096 tokens
+		// rather than every token: often enough that Cancel feels immediate,
+		// rare enough to cost nothing on the documents that do not need it.
+		if i-checked >= 4096 {
+			checked = i
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if !isCapWord(tokens[i].text) {
 			i++
 			continue
@@ -470,7 +519,7 @@ func extractRuns(text string) []smartRun {
 		}
 		i = j
 	}
-	return runs
+	return runs, nil
 }
 
 // isBareSuffix reports whether the whole run text is just a legal form
@@ -492,7 +541,13 @@ func suffixBoundaryOK(s, suffix string) bool {
 	if rest == "" {
 		return true
 	}
-	r := []rune(rest)[0]
+	// DecodeRuneInString, not []rune(rest)[0]. `rest` here is the whole
+	// remainder of the document, and converting it to a rune slice to read
+	// ONE character allocated and scanned megabytes per run: extractRuns was
+	// quadratic in document size, which is why a large file made detection
+	// look like it had hung (15 s for 800 KB, ~2 min for 2.4 MB). Decoding
+	// the first rune in place is the same answer in constant time.
+	r, _ := utf8.DecodeRuneInString(rest)
 	return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 }
 

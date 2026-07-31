@@ -18,7 +18,7 @@ import {
   WIZARD_STEPS, canGoTo, goTo, nextStep,
   goToScreen,
   applyPreset, toggleCategory, selectionPresetName, presetCategories,
-  setUseAI, defaultUseAIFromProbe, llmEnabled,
+  setUseAI, setUseSmartDetect, detectionRoutesOn, llmEnabled,
   addCandidates, acceptCandidate, rejectCandidate,
   moveVariant, entityAutocomplete, reassignOriginal,
   applyImportResult,
@@ -110,9 +110,9 @@ import {
 test("addEntities dedupes case-insensitively and defaults to accepted", () => {
   resetState();
   const added = addEntities([
-    { category: "client_names", canonical: "Alpine Trust" },
-    { category: "client_names", canonical: "ALPINE TRUST" }, // dup
-    { category: "client_names", canonical: "  " },           // blank
+    { category: "entity_names", canonical: "Alpine Trust" },
+    { category: "entity_names", canonical: "ALPINE TRUST" }, // dup
+    { category: "entity_names", canonical: "  " },           // blank
     { category: "person_names", canonical: "Marie Duval" },
   ]);
   assert.equal(added, 2);
@@ -128,7 +128,7 @@ test("acceptedEntities filters on status, as the belt to a removed brace", () =>
   // directly is the only way to keep that guard honest now that no reducer
   // exercises it.
   resetState();
-  addEntities([{ category: "client_names", canonical: "Alpine Trust" }]);
+  addEntities([{ category: "entity_names", canonical: "Alpine Trust" }]);
   assert.equal(getState().entities[0].status, "accepted", "every new value is accepted");
   assert.equal(acceptedEntities().length, 1);
 
@@ -150,8 +150,8 @@ test("manual variants dedupe and clear the expansion cache", () => {
 
 test("removeEntity deletes the row", () => {
   resetState();
-  addEntities([{ category: "client_names", canonical: "Alpine" }]);
-  removeEntity("client_names", "ALPINE");
+  addEntities([{ category: "entity_names", canonical: "Alpine" }]);
+  removeEntity("entity_names", "ALPINE");
   assert.equal(getState().entities.length, 0);
 });
 
@@ -197,7 +197,7 @@ test("simple rules: add validates, move reorders, remove deletes", () => {
 test("buildRunRequest assembles only pipeline-ready inputs", () => {
   resetState();
   addEntities([
-    { category: "client_names", canonical: "Alpine" },
+    { category: "entity_names", canonical: "Alpine" },
     { category: "person_names", canonical: "Denied Person" },
   ]);
   // No reducer can deny a value any more (BUILD-05 Phase 9), so the state is set
@@ -213,7 +213,7 @@ test("buildRunRequest assembles only pipeline-ready inputs", () => {
 
   const req = buildRunRequest(true);
   assert.equal(req.useDeepScan, true);
-  assert.deepEqual(req.entities, [{ category: "client_names", canonical: "Alpine", manualVariants: [], excludedVariants: [] }]);
+  assert.deepEqual(req.entities, [{ category: "entity_names", canonical: "Alpine", manualVariants: [], excludedVariants: [] }]);
   assert.deepEqual(req.allowTerms, ["CSSF"]);
   assert.deepEqual(req.patterns, [{ expr: "PRJ-[0-9]+" }]);
   assert.equal(req.simpleRules.length, 1);
@@ -317,18 +317,28 @@ test("llmEnabled requires BOTH the toggle and a reachable Ollama", () => {
   assert.equal(llmEnabled(), false, "Ollama down blocks AI even with toggle on");
 });
 
-test("defaultUseAIFromProbe fills the default once, never overrides a choice", () => {
+test("the detection routes start with Smart detection on and both AI routes off", () => {
+  // BUILD-06: Smart detection needs nothing installed, so it runs by default.
+  // Local AI is a route that hands the document to a model, so the user turns
+  // it on themselves, even when Ollama is detected.
   resetState();
-  assert.equal(getState().settings.useAI, null);
-  defaultUseAIFromProbe(true);
-  assert.equal(getState().settings.useAI, true, "default follows availability");
-  // A later probe result must not flip an established value.
-  defaultUseAIFromProbe(false);
-  assert.equal(getState().settings.useAI, true);
-  // An explicit user choice survives everything.
-  setUseAI(false);
-  defaultUseAIFromProbe(true);
+  assert.equal(getState().settings.useSmartDetect, true);
   assert.equal(getState().settings.useAI, false);
+  assert.equal(getState().settings.useCloudAI, false);
+  setState({ ollama: { available: true, models: [], detail: "" } });
+  assert.equal(getState().settings.useAI, false, "detecting Ollama must not switch the route on");
+});
+
+test("detectionRoutesOn counts the ways of finding values that are enabled", () => {
+  resetState();
+  assert.equal(detectionRoutesOn(), 1, "Smart detection alone");
+  setState({ ollama: { available: true, models: [], detail: "" } });
+  setUseAI(true);
+  assert.equal(detectionRoutesOn(), 2);
+  setUseSmartDetect(false);
+  assert.equal(detectionRoutesOn(), 1, "local AI alone");
+  setUseAI(false);
+  assert.equal(detectionRoutesOn(), 0, "nothing to run, and the UI must say so");
 });
 
 // --- Candidate review gate (BUILD-02 Phase 9b) --------------------------------
@@ -336,7 +346,7 @@ test("defaultUseAIFromProbe fills the default once, never overrides a choice", (
 test("candidates wait for explicit accept; accept moves them to entities", () => {
   resetState();
   const added = addCandidates([
-    { text: "Alpine Trust", category: "client_names", count: 3 },
+    { text: "Alpine Trust", category: "entity_names", count: 3 },
     { text: "Marie Duval", category: "person_names" },
   ], "smart");
   assert.equal(added, 2);
@@ -344,17 +354,17 @@ test("candidates wait for explicit accept; accept moves them to entities", () =>
 
   assert.equal(acceptCandidate("Alpine Trust"), true);
   assert.equal(getState().entities.length, 1);
-  assert.equal(getState().entities[0].category, "client_names");
+  assert.equal(getState().entities[0].category, "entity_names");
   assert.equal(getState().candidates.length, 1, "accepted candidate leaves the review list");
 });
 
 test("reject removes, duplicates and existing entities are skipped", () => {
   resetState();
-  addEntities([{ category: "client_names", canonical: "Known Corp" }]);
+  addEntities([{ category: "entity_names", canonical: "Known Corp" }]);
   const added = addCandidates([
-    { text: "Known Corp", category: "client_names" }, // already an entity
-    { text: "Fresh Co", category: "client_names" },
-    { text: "fresh co", category: "client_names" },   // case-insensitive dup
+    { text: "Known Corp", category: "entity_names" }, // already an entity
+    { text: "Fresh Co", category: "entity_names" },
+    { text: "fresh co", category: "entity_names" },   // case-insensitive dup
   ], "local-ai");
   assert.equal(added, 1);
   rejectCandidate("Fresh Co");
@@ -386,14 +396,14 @@ test("moveVariant rejects self-drops, unknown rows and absent variants", () => {
   resetState();
   addEntities([
     { category: "person_names", canonical: "Jean Muller" },
-    { category: "client_names", canonical: "Alpine" },
+    { category: "entity_names", canonical: "Alpine" },
   ]);
   setEntityVariants("person_names", "Jean Muller", ["Jean Muller"]);
-  setEntityVariants("client_names", "Alpine", ["Alpine"]);
+  setEntityVariants("entity_names", "Alpine", ["Alpine"]);
 
   assert.equal(moveVariant("person_names", "Jean Muller", "person_names", "Jean Muller", "Jean Muller"), false, "self-drop");
-  assert.equal(moveVariant("person_names", "Ghost", "client_names", "Alpine", "x"), false, "unknown source");
-  assert.equal(moveVariant("person_names", "Jean Muller", "client_names", "Alpine", "Not A Variant"), false, "absent variant");
+  assert.equal(moveVariant("person_names", "Ghost", "entity_names", "Alpine", "x"), false, "unknown source");
+  assert.equal(moveVariant("person_names", "Jean Muller", "entity_names", "Alpine", "Not A Variant"), false, "absent variant");
   // No state damage from rejected moves.
   assert.equal(getState().entities.find((e) => e.canonical === "Alpine").manualVariants.length, 0);
 });
@@ -402,14 +412,14 @@ test("moveVariant across categories re-pends only the two touched rows", () => {
   resetState();
   addEntities([
     { category: "person_names", canonical: "Jean Muller" },
-    { category: "client_names", canonical: "Alpine" },
-    { category: "client_names", canonical: "Borealis" },
+    { category: "entity_names", canonical: "Alpine" },
+    { category: "entity_names", canonical: "Borealis" },
   ]);
   setEntityVariants("person_names", "Jean Muller", ["Jean Muller", "Muller"]);
-  setEntityVariants("client_names", "Alpine", ["Alpine"]);
-  setEntityVariants("client_names", "Borealis", ["Borealis"]);
+  setEntityVariants("entity_names", "Alpine", ["Alpine"]);
+  setEntityVariants("entity_names", "Borealis", ["Borealis"]);
 
-  assert.equal(moveVariant("person_names", "Jean Muller", "client_names", "Alpine", "Muller"), true);
+  assert.equal(moveVariant("person_names", "Jean Muller", "entity_names", "Alpine", "Muller"), true);
   const untouched = getState().entities.find((e) => e.canonical === "Borealis");
   assert.deepEqual(untouched.variants, ["Borealis"], "third row untouched");
   const pendingNames = getState().entities.filter((e) => e.variants === null).map((e) => e.canonical).sort();
@@ -423,7 +433,7 @@ test("entityAutocomplete ranks prefix matches before substring matches", () => {
   addEntities([
     { category: "person_names", canonical: "Jean Muller" },
     { category: "person_names", canonical: "Muller Freres" },
-    { category: "client_names", canonical: "Amullertech" },
+    { category: "entity_names", canonical: "Amullertech" },
   ]);
   const got = entityAutocomplete("muller");
   assert.equal(got.length, 3);
@@ -617,7 +627,7 @@ function seedCandidates() {
   addCandidates([
     { text: "Marie Duval", category: "person_names", count: 7 },
     { text: "Anouk Berger", category: "person_names", count: 3 },
-    { text: "Alpine Trust", category: "client_names", count: 3 },
+    { text: "Alpine Trust", category: "entity_names", count: 3 },
   ], "smart");
 }
 
@@ -694,7 +704,7 @@ function fullSession() {
     discovery: { running: true },
   });
   addEntities([{ category: "person_names", canonical: "Marie Duval" }]);
-  addCandidates([{ text: "Alpine Trust", category: "client_names" }], "smart");
+  addCandidates([{ text: "Alpine Trust", category: "entity_names" }], "smart");
   addPattern("PRJ-[0-9]+", null);
   setMinConfidence(0.9);
   setCategoryGroup(["email"], false);
@@ -1092,7 +1102,7 @@ test("addPendingValue refuses a duplicate, case-insensitively", () => {
   resetState();
   addPendingValue("person_names", "P. Stone");
   assert.equal(addPendingValue("person_names", "p. stone"), false);
-  assert.equal(addPendingValue("client_names", "P. STONE"), false,
+  assert.equal(addPendingValue("entity_names", "P. STONE"), false,
     "the category does not make it a different value");
   assert.equal(getState().pendingValues.length, 1);
 });
@@ -1101,8 +1111,8 @@ test("addPendingValue refuses a value that is already on the list to replace", (
   // A chip for something already being replaced would promise a change the
   // re-run cannot make.
   resetState();
-  addEntities([{ category: "client_names", canonical: "Aurora Group" }]);
-  assert.equal(addPendingValue("client_names", "Aurora Group"), false);
+  addEntities([{ category: "entity_names", canonical: "Aurora Group" }]);
+  assert.equal(addPendingValue("entity_names", "Aurora Group"), false);
   assert.deepEqual(getState().pendingValues, []);
 });
 
@@ -1111,7 +1121,7 @@ test("removePendingValue undoes the WHOLE of what Add did", () => {
   // replaced with no chip left to say so.
   resetState();
   addPendingValue("person_names", "P. Stone");
-  addPendingValue("client_names", "Aurora Group");
+  addPendingValue("entity_names", "Aurora Group");
   removePendingValue("P. Stone");
   const s = getState();
   assert.deepEqual(s.pendingValues.map((p) => p.text), ["Aurora Group"]);
@@ -1120,7 +1130,7 @@ test("removePendingValue undoes the WHOLE of what Add did", () => {
 
 test("removePendingValue ignores a value that is not pending", () => {
   resetState();
-  addEntities([{ category: "client_names", canonical: "Aurora Group" }]);
+  addEntities([{ category: "entity_names", canonical: "Aurora Group" }]);
   removePendingValue("Aurora Group");
   assert.equal(getState().entities.length, 1,
     "a value that was never pending must not be removed by the chip handler");
@@ -1130,7 +1140,7 @@ test("clearPendingValues empties the chips but KEEPS the values", () => {
   // The re-run just used those entities; dropping them would undo the re-run.
   resetState();
   addPendingValue("person_names", "P. Stone");
-  addPendingValue("client_names", "Aurora Group");
+  addPendingValue("entity_names", "Aurora Group");
   assert.equal(clearPendingValues(), 2);
   assert.deepEqual(getState().pendingValues, []);
   assert.equal(getState().entities.length, 2);
@@ -1213,7 +1223,7 @@ function finishedBatch() {
   addCandidates([{ text: "Thomas Berger", category: "person_names" }], "smart");
   addPattern("INV-\\d{6}");
   addSimpleRule({ find: "4471-B", replace: "[CUSTOM_1]", caseSensitive: true });
-  addPendingValue("client_names", "Aurora Group");
+  addPendingValue("entity_names", "Aurora Group");
   dismissWarning("w");
   addAllowTerm("CSSF");
   setDocumentCountry("DE");

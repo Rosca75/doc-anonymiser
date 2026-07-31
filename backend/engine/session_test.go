@@ -27,7 +27,7 @@ func runExportFixture(t *testing.T) (*Results, *Registry) {
 			{Name: "notes.txt", Format: FormatTXT, Markdown: "Alpine Trust wrote to marie.duval@example.com."},
 			csvDoc,
 		},
-		Entities:  []Entity{{Category: "client_names", Canonical: "Alpine Trust"}},
+		Entities:  []Entity{{Category: "entity_names", Canonical: "Alpine Trust"}},
 		Level:     LevelMedium,
 		Allowlist: NewEmptyAllowlist(),
 		Registry:  reg,
@@ -62,7 +62,7 @@ func TestBuildExportZipContents(t *testing.T) {
 
 	// Default formats: txt for the text doc, csv for the grid doc; names
 	// carry the _anon suffix.
-	if !strings.Contains(got["notes_anon.txt"], "[CLIENT_1]") {
+	if !strings.Contains(got["notes_anon.txt"], "[ENTITY_1]") {
 		t.Errorf("notes_anon.txt missing or not anonymised: %v", got)
 	}
 	if !strings.Contains(got["clients_anon.csv"], "[EMAIL_1]") {
@@ -107,7 +107,7 @@ func TestCSVExportEqualsAnonymisedGrid(t *testing.T) {
 func TestSessionSaveLoadEquality(t *testing.T) {
 	_, reg := runExportFixture(t)
 	original := Session{
-		Entities:    []Entity{{Category: "client_names", Canonical: "Alpine Trust", ManualVariants: []string{"Alpine"}}},
+		Entities:    []Entity{{Category: "entity_names", Canonical: "Alpine Trust", ManualVariants: []string{"Alpine"}}},
 		AllowTerms:  []string{"CSSF", "Luxembourg"},
 		Patterns:    []CustomPattern{{Expr: "PRJ-[0-9]+"}},
 		SimpleRules: []SimpleRule{{Find: "x", Replace: "y", CaseSensitive: true}},
@@ -176,16 +176,18 @@ func TestSessionSaveLoadEquality(t *testing.T) {
 func TestMappingExportGolden(t *testing.T) {
 	reg := NewRegistry()
 	reg.Assign(CatEmail, "marie.duval@example.com")
-	reg.Assign("client_names", "Alpine Trust")
+	reg.Assign("entity_names", "Alpine Trust")
 	reg.Assign(CatEmail, "marie.duval@example.com") // second occurrence
 
 	out, err := MappingToCSV(reg.Export())
 	if err != nil {
 		t.Fatalf("MappingToCSV: %v", err)
 	}
+	// Rows come out longest-original-first (Registry.Export), which is why the
+	// email precedes the shorter entity name here.
 	want := "original,placeholder,category,count\n" +
-		"Alpine Trust,[CLIENT_1],client_names,1\n" +
-		"marie.duval@example.com,[EMAIL_1],email,2\n"
+		"marie.duval@example.com,[EMAIL_1],email,2\n" +
+		"Alpine Trust,[ENTITY_1],entity_names,1\n"
 	if string(out) != want {
 		t.Errorf("mapping CSV golden mismatch:\n--- got ---\n%s--- want ---\n%s", out, want)
 	}
@@ -217,8 +219,8 @@ func TestExportFileName(t *testing.T) {
 // the first one is a compatibility question.
 func TestLoadSessionWithoutOptionalFields(t *testing.T) {
 	legacy := []byte(`{
-	  "version": 2,
-	  "entities": [{"category": "client_names", "canonical": "Alpine Trust"}],
+	  "version": 3,
+	  "entities": [{"category": "entity_names", "canonical": "Alpine Trust"}],
 	  "allowTerms": ["CSSF"],
 	  "patterns": [],
 	  "simpleRules": [],
@@ -277,7 +279,7 @@ func TestSessionRoundTripsMinConfidence(t *testing.T) {
 // turned every filter off" (BUILD-04 CR13). Collapsing the two would
 // silently re-enable filtering for someone who switched it off.
 func TestSessionSmartDetectAbsentVersusExplicitZero(t *testing.T) {
-	absent, err := LoadSession([]byte(`{"version":2,"settings":{"level":"medium"}}`))
+	absent, err := LoadSession([]byte(`{"version":3,"settings":{"level":"medium"}}`))
 	if err != nil {
 		t.Fatalf("a session with no smartDetect block: %v", err)
 	}

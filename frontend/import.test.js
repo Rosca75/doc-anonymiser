@@ -9,7 +9,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { markdownTableToHTML, unitLabel, readyHint } from "./views/import.js";
+import { markdownTableToHTML, unitLabel, readyHint, previewBody } from "./views/import.js";
+import { textOf, all, unescape } from "./testhtml.js";
 
 // --- markdownTableToHTML ------------------------------------------------
 
@@ -101,4 +102,46 @@ test("readyHint is singular for one document", () => {
 test("readyHint copes with a document that has no unit count", () => {
   const hint = readyHint({ documents: [{ unitCount: 0, unit: "" }] });
   assert.equal(hint, "1 document ready");
+});
+
+// --- previewBody: the Import preview shows SOURCE text ------------------
+//
+// Reported issue 1: "the preview area of the Import step must only show a
+// preview of the text, without any anonymisation yet". These tests assert the
+// rendered pane content rather than a substring, so a future change that
+// pipes anonymised text in here fails instead of looking plausible.
+
+test("previewBody renders the document's own markdown, escaped", () => {
+  const html = previewBody({
+    name: "a.txt", isGrid: false, previewTruncated: false,
+    markdown: "Marie Duval <marie@example.com> met Alpine Trust.",
+  });
+  assert.equal(textOf(html, "pre.md-preview"),
+    "Marie Duval <marie@example.com> met Alpine Trust.");
+});
+
+test("previewBody never shows a placeholder: the Import step is pre-anonymisation", () => {
+  const source = "Marie Duval met Alpine Trust on 12 March 2024.";
+  const html = previewBody({ name: "a.txt", isGrid: false, markdown: source });
+  const shown = textOf(html, "pre.md-preview");
+  assert.equal(shown, source);
+  assert.ok(!/\[[A-Z][A-Z0-9_]*_\d+\]/.test(shown),
+    "the Import preview must show the imported text, never a placeholder");
+});
+
+test("previewBody shows the truncation notice above the text, not instead of it", () => {
+  const html = previewBody({
+    name: "big.txt", isGrid: false, previewTruncated: true, markdown: "line one",
+  });
+  assert.match(textOf(html, "div.banner"), /Preview truncated/);
+  assert.equal(textOf(html, "pre.md-preview"), "line one");
+});
+
+test("previewBody renders a grid document as a table of its own cells", () => {
+  const html = previewBody({
+    name: "a.csv", isGrid: true,
+    markdown: "| Client | Email |\n| --- | --- |\n| Aurora Group | lena@aurora.eu |",
+  });
+  const cells = all(html, "td").map((c) => unescape(c.inner));
+  assert.deepEqual(cells, ["Aurora Group", "lena@aurora.eu"]);
 });

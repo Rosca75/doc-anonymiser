@@ -196,7 +196,7 @@ function previewCard(doc) {
  * readability; everything else is shown as preformatted markdown.
  * All content is escaped: it comes from user documents.
  */
-function previewBody(doc) {
+export function previewBody(doc) {
   // Very large documents preview truncated (first 5 000 lines); the pipeline
   // still processes the FULL content (Phase 10 hardening).
   const notice = doc.previewTruncated

@@ -97,6 +97,20 @@ export function listDocuments() {
   return bridge().ListDocuments();
 }
 
+/**
+ * getDocumentSource(name) resolves to the SOURCE text of one imported
+ * document, `{found, markdown, truncated, isGrid}`.
+ *
+ * This is the one place original text comes from. The Anonymise screen's
+ * ORIGINAL pane uses it whenever the import list in the store does not hold
+ * the document (a result left on screen after the file was removed, a view
+ * restored by navigation). An unknown name resolves with `found: false`; it
+ * does not reject.
+ */
+export function getDocumentSource(name) {
+  return bridge().GetDocumentSource(name);
+}
+
 // --- Settings ----------------------------------------------------------
 
 /** getSettings() resolves to {level, ollamaPort, model}. */
@@ -135,6 +149,32 @@ export function saveAllowlistTemplate() {
 }
 
 // --- Entities screen (Phase 7) ------------------------------------------
+
+/**
+ * runDetection(fileNames, allowTerms) runs EVERY enabled detection route in
+ * one call and resolves to a DetectionResult
+ * {candidates, proposals, phases, skipped, errors, cancelled, status}.
+ *
+ * This is the UI's detection entry point (BUILD-06). It replaced two separate
+ * calls whose lifecycles could not be reconciled: one cancellation slot, one
+ * monotonic progress stream ("detection:progress") and exactly one terminal
+ * event ("detection:done" or "detection:error") now cover the whole run.
+ * Which routes run is decided in Go from the stored switches.
+ *
+ * A cancelled run RESOLVES with the partial findings and cancelled: true;
+ * only a failure to start (no matching documents, a run already in flight)
+ * rejects.
+ */
+export function runDetection(fileNames, allowTerms) {
+  return bridge().RunDetection(fileNames, allowTerms);
+}
+
+/** cancelDetection() aborts the in-flight detection run (no-op if idle).
+ *  It shares Go's single cancellation slot, so it reaches whichever route is
+ *  running, including mid-file. */
+export function cancelDetection() {
+  return bridge().CancelDiscovery();
+}
 
 /** runDiscovery(fileNames, allowTerms) resolves to a DiscoveryResult
  *  {proposals: [{category, text}], status, cancelled}. A cancelled run

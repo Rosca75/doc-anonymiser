@@ -15,6 +15,10 @@ name: CI
 on:
   push:
   pull_request:
+  # The Windows UI job is opt-in: it drives a real browser and is slower and
+  # more fragile than the rest, so it runs on demand and on tags rather than
+  # on every push.
+  workflow_dispatch:
 
 env:
   # The single place the Wails CLI version is pinned for CI.
@@ -58,6 +62,18 @@ jobs:
             exit 1
           fi
 
+      # Formatting is a guard, not a preference: an unformatted file fails
+      # every future diff review before it fails anything else.
+      - name: gofmt
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "${UNFORMATTED}" ]; then
+            echo "::error::These files are not gofmt-clean:"
+            echo "${UNFORMATTED}"
+            echo "::error::Fix: run 'gofmt -w .' and commit the result."
+            exit 1
+          fi
+
       - name: go vet
         run: go vet ./...
 
@@ -73,3 +89,44 @@ jobs:
       # (release.yml handles real artefacts on tags).
       - name: wails build (Linux sanity check)
         run: wails build -platform linux/amd64 -tags webkit2_41
+
+  # ---------------------------------------------------------------------------
+  # Layer 3 of the test strategy (docs/UITESTING.md): the real WebView.
+  #
+  # The Go and node suites prove behaviour and markup. They cannot prove that a
+  # tooltip is VISIBLE rather than clipped by its scrolling pane, or that a
+  # screen fits the window, and both were real defects that passed every unit
+  # test. This job drives the actual UI over the DevTools Protocol from
+  # PowerShell, using only what ships with Windows.
+  #
+  # It is continue-on-error until it has enough runs to show it is not flaky.
+  # Promote it to a gate by deleting that line.
+  ui-windows:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.26.x
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+
+      - name: Install pinned Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@${env:WAILS_CLI_VERSION}
+
+      - name: UI checks against wails dev
+        run: pwsh scripts/uitest/Invoke-UITest.ps1 -KeepArtifacts
+
+      - name: UI smoke test against the packaged binary
+        run: pwsh scripts/uitest/Invoke-UITest.ps1 -Packaged -KeepArtifacts
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots
+          path: scripts/uitest/artifacts/
+          if-no-files-found: ignore

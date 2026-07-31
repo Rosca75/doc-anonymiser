@@ -31,7 +31,7 @@ not perform OCR, so scanned PDFs cannot be processed.
 
 It replaces emails, phone numbers, IBANs, national IDs, VAT numbers, person
 names, client names, project names and more with stable placeholders such as
-`[PERSON_1]` or `[CLIENT_2]`, consistently across every document you load.
+`[PERSON_1]` or `[ENTITY_2]`, consistently across every document you load.
 A re-identification key (original → placeholder) can be exported so the
 process is reversible by you — and only by you.
 

@@ -51,6 +51,7 @@ doc-anonymiser/
 ├── wails.json                 # Wails config; assetdir: "frontend"
 ├── main.go                    # Wails bootstrap ONLY: //go:embed all:frontend; backend.NewApp()
 ├── embed_test.go              # asserts the frontend is embedded (package main)
+├── backend/app_e2e_test.go    # headless end-to-end through the bound app layer
 ├── category_parity_test.go    # JS↔Go category parity guard (package main)
 ├── copy_guard_test.go         # no em dashes in Go user-facing strings (package main)
 ├── frontend/                  # THE GUI — vanilla ES modules, embedded via go:embed
@@ -70,6 +71,7 @@ doc-anonymiser/
 │   │                          #   + identifyworkspace.js (values), allowlist.js
 │   ├── docs/                  # bundled offline user docs (SECOND window, embedded only)
 │   ├── assets/icons/          # vendored Material Symbols SVGs + LICENSE
+│   ├── testhtml.js            # dev-time HTML query helper for the render tests
 │   └── *.test.js              # node --test frontend/*.test.js (zero npm deps)
 ├── backend/                   # ALL Go business logic + the Wails bound-app layer (package backend)
 │   ├── CLAUDE.md              # backend charter (see above)
@@ -87,17 +89,23 @@ doc-anonymiser/
 │   │   ├── pipeline.go        # Pass orchestration per anonymisation level
 │   │   ├── allowlist.go       # Terms never anonymised
 │   │   ├── simplereplace.go   # Manual find-and-replace pass
-│   │   ├── report.go          # Per-file / per-category statistics
+│   │   ├── report.go          # Per-file / per-category / per-VALUE statistics
 │   │   ├── session.go         # Save/load session state (JSON, schema migrations)
 │   │   └── exportfmt/         # same-format export: rewrite of original bytes (docx/pptx/xlsx, pdf experimental)
 │   ├── ollama/
 │   │   └── client.go          # THE ONLY FILE that talks to Ollama (net/http)
 │   └── testdata/              # fixture documents for unit tests (lives with the engine that uses it)
-├── scripts/genicon.go         # standalone icon generator (//go:build ignore)
+├── scripts/
+│   ├── genicon.go             # standalone icon generator (//go:build ignore)
+│   └── uitest/                # Windows-only UI harness (PowerShell + .NET, no
+│                              #   packages): drives wails dev over the DevTools
+│                              #   Protocol, plus a UI Automation smoke test of
+│                              #   the packaged .exe (docs/UITESTING.md)
 ├── .github/workflows/
 │   ├── ci.yml                 # build + test on push/PR
 │   └── release.yml            # on tag: build, zip, attach to Release
 └── docs/                      # phased build plans (BUILD.md, BUILD-02..04, CHANGE-01)
+    ├── UITESTING.md           # the three test layers and how to run each
     └── brand/color-palette.json  # vendored brand palette (source for frontend/brand.css)
 ```
 
@@ -179,8 +187,7 @@ doc-anonymiser/
   to CSV on export.
 - **Anonymisation levels** (mirror the notebook semantics):
   - `soft` — hard PII (emails, phones, IBANs, national IDs, VAT numbers,
-    URLs with credentials) + engagement entities (client/project/internal
-    names).
+    URLs with credentials) + engagement entities (entity/project names).
   - `medium` (default) — soft + person names. Dates and locations kept.
   - `advanced` — medium + dates, locations, organisation names, monetary
     amounts.
@@ -200,20 +207,32 @@ doc-anonymiser/
   4. Post-pass: registry re-application across ALL loaded documents so the
      same real-world entity maps to the same placeholder everywhere.
 - **Placeholders:** stable per session, format `[CATEGORY_N]` (e.g.
-  `[CLIENT_1]`, `[PERSON_3]`, `[EMAIL_2]`). The registry maps original →
+  `[ENTITY_1]`, `[PERSON_3]`, `[EMAIL_2]`). The registry maps original →
   placeholder and is exportable as a re-identification key (CSV/JSON).
 - **Allowlist wins:** an allowlisted term is never replaced, by any pass.
-- **Entity categories:** `client_names`, `project_names`,
-  `internal_names`, `person_names`, `custom_patterns` (user regex),
-  plus PII categories emitted by pass 1. The user-visible label for
-  `internal_names` is "Internal".
+- **Entity categories:** `entity_names`, `project_names`, `person_names`,
+  `custom_patterns` (user regex), plus `organisation_names` and
+  `location_names` (LLM proposals only) and the PII categories emitted by
+  pass 1. The user-visible label for `entity_names` is "Entity names".
+  `entity_names` is the BUILD-06 merge of the former `client_names` and
+  `internal_names`: the pipeline treated the two identically, and the
+  distinction cost the user a decision at every value they added. It covers
+  named organisations, companies, teams and internal systems. A human being
+  is always `person_names`, which is why `entity_names` gets
+  organisation-style variant expansion and NOT the person-style expansion
+  (initials, surname-only) `internal_names` used to get: expanding "Delta
+  Industries" to "Industries" would replace an ordinary noun everywhere.
 - **Engine identifiers are stable, user-visible labels are not (BUILD-05 Phase 0,
   superseding BUILD-04 CR3):** the wizard has **four** steps, and both their
   tokens and their visible labels are: 1 **Import**, 2 **Identify**,
   3 **Anonymise**, 4 **Export**. Step 2 owns what used to be a screen of its
-  own: the configure choices (preset, the 23 detection categories, the
-  confidence floor, the local-AI settings) are the left rail of Identify, and
-  the values, suggestions, allowlist and custom patterns are its workspace.
+  own: the configure choices are the left rail of Identify, and the values,
+  suggestions, allowlist and custom patterns are its workspace. The rail lists
+  the DETECTION ROUTES as switchable sections (BUILD-06): Smart detection, on
+  by default and owning the scope controls (preset, the 22 detection
+  categories, the confidence floor) because they are that route's scope; Local
+  AI, off by default; Cloud AI, off and not built. Detecting Ollama ENABLES the
+  Local AI switch, it never flips it.
   The engine category identifiers listed above, and the PII category constants
   in `backend/engine/pii.go`, are NEVER renamed to follow a label change: a
   label is a display string, an identifier is a contract. Session files are

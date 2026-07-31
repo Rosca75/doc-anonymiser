@@ -21,10 +21,10 @@
 // its original, clicking one selects it, and selecting free text offers to
 // replace it with a [CUSTOM_n] rule.
 
-import { runPipeline, cancelPipeline, fastRerun, getMapping } from "../api.js";
+import { runPipeline, cancelPipeline, fastRerun, getMapping, getDocumentSource } from "../api.js";
 import {
   getState, setState, llmEnabled,
-  buildRunRequest,
+  buildRunRequest, documentSource, cacheDocumentSource,
   addSimpleRule, removeSimpleRule, moveSimpleRule,
   entityAutocomplete, reassignOriginal,
   addPendingValue, removePendingValue, clearPendingValues,
@@ -37,7 +37,7 @@ import { llmGateTooltip } from "./identifyrail.js";
 import { CATEGORIES } from "./identifyworkspace.js";
 import { stepFooterHTML, wireStepFooter } from "../nav.js";
 import { notify, wireNotice } from "../toast.js";
-import { CARDS, ANONYMISE, CATEGORY_LABELS } from "../copy.js";
+import { CARDS, ANONYMISE, CATEGORY_LABELS, IMPORT } from "../copy.js";
 import { toastHTML } from "../ui.js";
 
 // --- View-local state -----------------------------------------------------
@@ -50,6 +50,9 @@ const collapsed = new Set(["missed", "rules", "selected"]);
 const expandedCategories = new Set();
 // The report's scope: "__all" or one document name.
 let reportScope = "__all";
+// The value list's filter text. View state: it is a way of looking at the
+// result, not part of it.
+let valueFilter = "";
 // The clicked placeholder, or null: {placeholder, original, category}.
 let selectedMark = null;
 // The reassign autocomplete's draft text.
@@ -220,18 +223,24 @@ function selectedCard(s) {
 // --- Report card ----------------------------------------------------------
 
 /**
- * reportCard(s) is the per-category drill-down.
+ * reportCard(s) answers "what did you replace?".
  *
- * The per-value occurrence counts are computed HERE, in JS, from the anonymised
- * text of the documents in scope. The report Go sends carries per-category
- * totals, not per-value ones, and adding them would mean the registry counting
- * per document rather than per session. Counting a placeholder's occurrences in
- * text the frontend already has is exact and costs nothing.
+ * It used to answer "how much", and only that: a list of category totals, each
+ * of which had to be clicked open to see the values behind it. A user who had
+ * just watched dozens of values disappear from their document could not find a
+ * list of them anywhere, which is reported issue 7.
+ *
+ * So the VALUES come first now, as a flat, filterable list that is on screen
+ * without clicking anything, and the per-category breakdown follows it. Both
+ * read report.values from Go (BUILD-06), which is also what the exported report
+ * contains: the screen and the file can no longer disagree, and the counts are
+ * computed once per run instead of on every repaint.
  */
-function reportCard(s) {
+export function reportCard(s) {
   const scopeDocs = scopedDocuments(s);
   const byCategory = aggregateCategories(scopeDocs);
   const total = Object.values(byCategory).reduce((a, b) => a + b, 0);
+  const values = scopedValues(s);
 
   const options = [{ value: "__all", label: ANONYMISE.scopeAll }]
     .concat((s.results.documents ?? []).map((d) => ({ value: d.name, label: d.name })))
@@ -256,11 +265,86 @@ function reportCard(s) {
   const body =
     `<select id="report-scope" class="rail-select" aria-label="${escapeHTML(ANONYMISE.scopeLabel)}">` +
     `${options}</select>` +
+    runNote(s) +
+    valueList(values) +
+    sectionLabel(ANONYMISE.byCategoryTitle) +
     `<div class="report-rows">${rows}</div>` +
     warnings;
 
   return collapsibleCard("report", ANONYMISE.reportTitle,
-    ANONYMISE.reportSummary(total), body);
+    ANONYMISE.reportSummary(total, values.length), body);
+}
+
+/**
+ * runNote(s) surfaces what the run itself did, which the card used to ignore
+ * entirely: the preset it ran at, and what happened to the AI pass. A run that
+ * silently degraded ("degraded: connection refused") said so only in the JSON
+ * export, which is the one place nobody looks after a run.
+ */
+function runNote(s) {
+  const report = s.results?.report ?? {};
+  const parts = [];
+  if (report.level) parts.push(ANONYMISE.reportLevel(report.level));
+  if (report.llmPass) parts.push(ANONYMISE.reportLLMPass(report.llmPass));
+  if (!parts.length) return "";
+  return `<p class="hint" id="report-run-note">${escapeHTML(parts.join(". "))}.</p>`;
+}
+
+/**
+ * valueList(values) is the flat list of everything that was replaced, with a
+ * filter box. It carries the re-identification warning, because unlike the
+ * exported report on the Export screen, this list shows originals in clear.
+ */
+function valueList(values) {
+  const shown = filterValues(values, valueFilter);
+  const rows = shown.map((v) =>
+    `<div class="report-item" data-value-row="${escapeHTML(v.placeholder)}">` +
+    `<span class="report-item-value">` +
+    `<span class="report-original">${escapeHTML(v.original)}</span>` +
+    `<span class="report-placeholder mono">${escapeHTML(v.placeholder)}</span>` +
+    `</span>` +
+    `<span class="mono report-count">${escapeHTML(String(v.count))}</span>` +
+    `</div>`).join("");
+
+  return `<div class="report-values">` +
+    `<div class="report-values-head">` +
+    sectionLabel(ANONYMISE.valuesTitle) +
+    `<span class="hint">${escapeHTML(ANONYMISE.valuesKeyWarning)}</span>` +
+    `</div>` +
+    `<input id="report-value-filter" class="report-filter" value="${escapeHTML(valueFilter)}"` +
+    ` placeholder="${escapeHTML(ANONYMISE.valuesFilterPlaceholder)}"` +
+    ` aria-label="${escapeHTML(ANONYMISE.valuesFilterPlaceholder)}"/>` +
+    `<div class="report-detail-head">` +
+    sectionLabel(ANONYMISE.valuePlaceholder, { mini: true }) +
+    sectionLabel(ANONYMISE.occurrences, { mini: true }) +
+    `</div>` +
+    `<div class="report-value-rows" id="report-value-rows">` +
+    (rows || `<span class="hint">${escapeHTML(
+      values.length ? ANONYMISE.valuesFilterEmpty : ANONYMISE.reportEmpty)}</span>`) +
+    `</div></div>`;
+}
+
+/**
+ * scopedValues(s) is the values Go reported for the documents in scope.
+ *
+ * Go computes both the whole-run list and a per-document one, so the scope
+ * selector picks a list rather than recounting anything.
+ */
+export function scopedValues(s) {
+  const report = s.results?.report ?? {};
+  if (reportScope === "__all") return report.values ?? [];
+  const doc = (report.documents ?? []).find((d) => d.name === reportScope);
+  return doc?.values ?? [];
+}
+
+/** filterValues(values, needle) is the search box, over both the original and
+ *  the placeholder: a user looks for either. */
+export function filterValues(values, needle) {
+  const q = (needle ?? "").trim().toLowerCase();
+  if (!q) return values ?? [];
+  return (values ?? []).filter((v) =>
+    String(v.original ?? "").toLowerCase().includes(q) ||
+    String(v.placeholder ?? "").toLowerCase().includes(q));
 }
 
 /** scopedDocuments(s) is the documents the report covers. */
@@ -288,6 +372,7 @@ function categoryRow(s, docs, category, count) {
   let detail = "";
   if (open) {
     const items = valuesInCategory(s, docs, category);
+    // Same data as the flat list above, filtered to this category.
     detail = `<div class="report-detail">` +
       `<div class="report-detail-head">` +
       sectionLabel(ANONYMISE.valuePlaceholder, { mini: true }) +
@@ -299,7 +384,7 @@ function categoryRow(s, docs, category, count) {
         `<span class="report-original">${escapeHTML(it.original)}</span>` +
         `<span class="report-placeholder mono">${escapeHTML(it.placeholder)}</span>` +
         `</span>` +
-        `<span class="mono report-count">${escapeHTML(String(it.occurrences))}</span>` +
+        `<span class="mono report-count">${escapeHTML(String(it.count))}</span>` +
         `</div>`).join("") ||
         `<span class="hint">${escapeHTML(ANONYMISE.noValuesInScope)}</span>`) +
       `</div>`;
@@ -316,26 +401,20 @@ function categoryRow(s, docs, category, count) {
 }
 
 /**
- * valuesInCategory(s, docs, category) lists the values replaced in one category,
- * with how many times each placeholder occurs in the documents IN SCOPE.
+ * valuesInCategory(s, docs, category) is the values of ONE category, in scope.
  *
- * The count comes from the anonymised text rather than from the registry,
- * because the registry counts per SESSION and the report can be scoped to one
- * document. Counting occurrences of a placeholder in text we already hold is
- * exact, and it is what makes the scope selector mean anything.
+ * It now filters the list GO computed (report.values) instead of recounting
+ * placeholder occurrences in the anonymised text of every document on every
+ * repaint. Same numbers, computed once per run rather than once per render,
+ * and identical to what the exported report contains, which the recount could
+ * not promise.
+ *
+ * `docs` is no longer used and is kept in the signature only so the call sites
+ * read the same as the rest of the report code; the scope lives in the module's
+ * reportScope, which scopedValues() applies.
  */
 export function valuesInCategory(s, docs, category) {
-  const mapping = s.mapping ?? {};
-  const out = [];
-  for (const [placeholder, info] of Object.entries(mapping)) {
-    if (info?.category !== category) continue;
-    const occurrences = docs.reduce(
-      (total, d) => total + countOccurrences(d.anonymised ?? "", placeholder), 0);
-    if (occurrences === 0) continue; // not in this scope, so not in this list
-    out.push({ placeholder, original: info.original ?? "", occurrences });
-  }
-  return out.sort((a, b) => b.occurrences - a.occurrences ||
-    a.placeholder.localeCompare(b.placeholder));
+  return scopedValues(s).filter((v) => v.category === category);
 }
 
 /** countOccurrences(text, needle) counts non-overlapping occurrences. split() is
@@ -446,7 +525,12 @@ function collapsibleCard(id, title, summary, bodyHTML) {
 
 // --- Compare card --------------------------------------------------------
 
-function compareCard(s, doc) {
+/**
+ * compareCard(s, doc) is the two-pane comparison. Exported for the render
+ * tests: the ORIGINAL pane's content is the thing reported issues 1 and 4 were
+ * about, so it is asserted rather than eyeballed (see anonymise.test.js).
+ */
+export function compareCard(s, doc) {
   const options = (s.results?.documents ?? []).map((d) =>
     `<option value="${escapeHTML(d.name)}"${d === doc ? " selected" : ""}>` +
     `${escapeHTML(d.name)}</option>`).join("");
@@ -455,11 +539,24 @@ function compareCard(s, doc) {
     ? `<select id="compare-doc" class="compare-select" aria-label="${escapeHTML(ANONYMISE.compareDoc)}">${options}</select>`
     : "";
 
+  // The ORIGINAL pane reads the IMPORTED source, never anything the pipeline
+  // produced or copied. That is the whole fix for the "ORIGINAL shows
+  // [PERSON_2]" report: there is now one producer of original text in the
+  // application (App.GetDocumentSource, mirrored in the import list) and this
+  // pane is a reader of it. `source` is null only while the fetch for a
+  // document that left the import list is in flight (see wireCompare).
+  const source = doc ? documentSource(s, doc.name) : null;
+  const originalBody = source?.found
+    ? (source.truncated
+      ? `<div class="banner warn">${escapeHTML(IMPORT.previewTruncated)}</div>` : "") +
+      escapeHTML(source.markdown)
+    : `<span class="hint">${escapeHTML(ANONYMISE.originalUnavailable)}</span>`;
+
   const panes = doc
     ? `<div class="compare-panes">` +
       `<div class="compare-pane">` +
       `<div class="pane-caption">${escapeHTML(ANONYMISE.paneOriginal)}</div>` +
-      `<pre class="pane-body" id="original-pane">${escapeHTML(doc.original ?? "")}</pre>` +
+      `<pre class="pane-body" id="original-pane">${originalBody}</pre>` +
       `</div>` +
       `<div class="compare-pane">` +
       `<div class="pane-caption">${escapeHTML(ANONYMISE.paneAnonymised)}</div>` +
@@ -474,6 +571,7 @@ function compareCard(s, doc) {
     `<div class="card-head-right">${head}</div>` +
     `</div>` +
     selectionPanel() +
+    `<div class="mark-tooltip" id="mark-tooltip" role="tooltip" hidden></div>` +
     panes +
     toastHTML(getState().notice) +
     `</section>`;
@@ -598,6 +696,26 @@ function wireReport(container) {
     reportScope = ev.target.value;
     setState({});
   });
+
+  // The filter repaints the list in place rather than through the store: it is
+  // a way of looking at the result, and routing every keystroke through a full
+  // re-render would move the caret and lose focus.
+  const filter = container.querySelector("#report-value-filter");
+  filter?.addEventListener("input", () => {
+    valueFilter = filter.value;
+    const rows = container.querySelector("#report-value-rows");
+    if (!rows) return;
+    const shown = filterValues(scopedValues(getState()), valueFilter);
+    rows.innerHTML = shown.map((v) =>
+      `<div class="report-item" data-value-row="${escapeHTML(v.placeholder)}">` +
+      `<span class="report-item-value">` +
+      `<span class="report-original">${escapeHTML(v.original)}</span>` +
+      `<span class="report-placeholder mono">${escapeHTML(v.placeholder)}</span>` +
+      `</span>` +
+      `<span class="mono report-count">${escapeHTML(String(v.count))}</span>` +
+      `</div>`).join("") ||
+      `<span class="hint">${escapeHTML(ANONYMISE.valuesFilterEmpty)}</span>`;
+  });
   for (const row of container.querySelectorAll(".report-row")) {
     row.querySelector(".report-toggle")?.addEventListener("click", () => {
       const key = row.dataset.category;
@@ -675,12 +793,35 @@ function wireRules(container) {
 }
 
 function wireCompare(container, doc) {
+  // If the ORIGINAL pane has no source to show, ask Go for it ONCE. This is
+  // the fallback path for a document that left the import list; the common
+  // case is served straight from the store with no bridge call at all.
+  if (doc && documentSource(getState(), doc.name) === null) {
+    getDocumentSource(doc.name)
+      .then((source) => cacheDocumentSource(doc.name, source))
+      // A missing bridge (plain browser) leaves the pane on its hint, which is
+      // the honest answer: no backend, no source text.
+      .catch(() => cacheDocumentSource(doc.name, { found: false }));
+  }
+
   container.querySelector("#compare-doc")?.addEventListener("change", (ev) => {
     // Changing document clears the selected mark: it belonged to the old one.
     selectedMark = null;
     selection = null;
     setState({ resultDoc: ev.target.value });
   });
+
+  // A results view restored by navigation can have results but no mapping (the
+  // fast re-run path fetches it separately). Without it every mark falls back
+  // to its label and the hover shows nothing, which is indistinguishable from
+  // a broken tooltip. Fetch it once, quietly.
+  if (doc && !getState().mapping) {
+    getMapping()
+      .then((mapping) => { if (mapping) setState({ mapping }); })
+      .catch(() => { /* no bridge: the marks keep their label-only titles */ });
+  }
+
+  wireMarkTooltip(container, doc);
 
   // Clicking a mark fills the Selected placeholder card. highlight.js already
   // emits data-ph and data-original, so this needs no parsing.
@@ -698,6 +839,82 @@ function wireCompare(container, doc) {
 
   wireTextSelection(container);
   wireSelectionPanel(container);
+}
+
+/**
+ * wireMarkTooltip(container, doc) shows the original value under the mark the
+ * pointer (or the keyboard focus) is on.
+ *
+ * The markup for this has been right for a long time; the PLACEMENT was not.
+ * The tooltip was a CSS ::after on the mark itself, and the mark lives inside
+ * `.pane-body { overflow: auto }`, so the pane clipped it: near the right-hand
+ * edge or the last line of the pane it was simply not visible, which is why it
+ * was reported as missing. `white-space: nowrap` made a long value run off the
+ * side even when it did appear.
+ *
+ * The fix is the one the reassign popover already had to make (style.css, the
+ * note where that popover used to be): position it against the COMPARE CARD,
+ * not inside the scrolling pane. Scrolling then moves the text out from under
+ * it, so the tooltip hides on scroll rather than drifting away from its mark.
+ */
+function wireMarkTooltip(container, doc) {
+  const host = container.querySelector("#compare-card");
+  const tip = container.querySelector("#mark-tooltip");
+  const pane = container.querySelector("#anonymised-pane");
+  if (!host || !tip || !pane) return;
+
+  const hide = () => { tip.hidden = true; };
+
+  const show = (mark) => {
+    const original = mark.dataset.original;
+    if (!original) return; // a mapping miss has nothing to show
+    const category = mark.dataset.category;
+    const count = doc ? countOccurrences(doc.anonymised ?? "", mark.dataset.ph ?? "") : 0;
+
+    tip.innerHTML =
+      `<span class="tooltip-original">${escapeHTML(original)}</span>` +
+      `<span class="tooltip-meta">${escapeHTML(tooltipMeta(category, count))}</span>`;
+    tip.hidden = false;
+
+    // Positioned against the card, and flipped above the mark when there is no
+    // room below it: a tooltip that opens off the bottom of the window is the
+    // same as no tooltip.
+    const markBox = mark.getBoundingClientRect();
+    const hostBox = host.getBoundingClientRect();
+    const tipBox = tip.getBoundingClientRect();
+    const below = markBox.bottom - hostBox.top + 6;
+    const above = markBox.top - hostBox.top - tipBox.height - 6;
+    const fitsBelow = markBox.bottom + tipBox.height + 12 <= hostBox.bottom;
+    let left = markBox.left - hostBox.left;
+    left = Math.max(6, Math.min(left, hostBox.width - tipBox.width - 6));
+    tip.style.left = `${left}px`;
+    tip.style.top = `${fitsBelow || above < 0 ? below : above}px`;
+  };
+
+  for (const mark of pane.querySelectorAll("mark[data-original]")) {
+    mark.addEventListener("mouseenter", () => show(mark));
+    mark.addEventListener("mouseleave", hide);
+    // Keyboard parity: the marks are focusable now (highlight.js), so the same
+    // information is reachable without a pointer.
+    mark.addEventListener("focus", () => show(mark));
+    mark.addEventListener("blur", hide);
+    mark.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      ev.preventDefault();
+      mark.click();
+    });
+  }
+  // Scrolling moves the text, not the tooltip: hide it rather than let it
+  // point at whatever has scrolled under it.
+  pane.addEventListener("scroll", hide);
+}
+
+/** tooltipMeta(category, count) is the second line: what kind of value it is
+ *  and how often it was replaced in this document. */
+export function tooltipMeta(category, count) {
+  const label = CATEGORY_LABELS[category]?.[0] ?? category ?? "";
+  const times = count > 0 ? ANONYMISE.tooltipTimes(count) : "";
+  return [label, times].filter(Boolean).join(", ");
 }
 
 /**

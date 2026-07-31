@@ -1,0 +1,347 @@
+// app_detect_test.go — tests for the unified detection run (BUILD-06).
+//
+// These guard the reported issue "detection sometimes does not complete, the
+// progress is difficult to follow". Each test names the specific way the old
+// two-call design could leave the UI stuck or lying.
+package backend
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"doc-anonymiser/backend/engine"
+	"doc-anonymiser/backend/ollama"
+)
+
+// recorder captures the events an App emits, so a test can assert on the
+// stream the UI would actually receive.
+type recorder struct {
+	mu     sync.Mutex
+	events []struct {
+		Name    string
+		Payload interface{}
+	}
+}
+
+func (r *recorder) add(name string, payload interface{}) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, struct {
+		Name    string
+		Payload interface{}
+	}{name, payload})
+}
+
+func (r *recorder) names() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	for _, e := range r.events {
+		out = append(out, e.Name)
+	}
+	return out
+}
+
+func (r *recorder) progress() []DetectionProgress {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []DetectionProgress
+	for _, e := range r.events {
+		if e.Name != "detection:progress" {
+			continue
+		}
+		if p, ok := e.Payload.(DetectionProgress); ok {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func (r *recorder) count(name string) int {
+	n := 0
+	for _, got := range r.names() {
+		if got == name {
+			n++
+		}
+	}
+	return n
+}
+
+// withRecorder swaps the Wails emit indirection for a recorder. a.ctx has to
+// be non-nil for emit() to fire at all, and it is never dereferenced here.
+func withRecorder(t *testing.T, a *App) *recorder {
+	t.Helper()
+	rec := &recorder{}
+	a.ctx = context.Background()
+	previous := runtimeEventsEmit
+	runtimeEventsEmit = func(_ *App, name string, payload interface{}) { rec.add(name, payload) }
+	t.Cleanup(func() { runtimeEventsEmit = previous })
+	return rec
+}
+
+// detectionApp is an App with three small documents and Smart detection on.
+func detectionApp() *App {
+	app := NewApp()
+	app.docs = []engine.Document{
+		{Name: "a.txt", Format: engine.FormatTXT, Markdown: "Alpine Trust S.A. met Marie Duval. Alpine Trust signed."},
+		{Name: "b.txt", Format: engine.FormatTXT, Markdown: "Borealis Fund GmbH replied. Borealis Fund agreed."},
+		{Name: "c.txt", Format: engine.FormatTXT, Markdown: "Zephyr Capital Ltd invoiced. Zephyr Capital paid."},
+	}
+	return app
+}
+
+// TestDetectionAlwaysEndsWithATerminalEvent is the core of the "does not
+// complete" report: the progress bar used to be cleared only by a `finally`
+// in the caller, so anything that escaped in between left it spinning.
+func TestDetectionAlwaysEndsWithATerminalEvent(t *testing.T) {
+	app := detectionApp()
+	rec := withRecorder(t, app)
+
+	if _, err := app.RunDetection([]string{"a.txt", "b.txt", "c.txt"}, nil); err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	if got := rec.count("detection:done"); got != 1 {
+		t.Errorf("want exactly one detection:done, got %d", got)
+	}
+	if got := rec.count("detection:error"); got != 0 {
+		t.Errorf("a clean run must not emit detection:error, got %d", got)
+	}
+	if rec.count("detection:progress") == 0 {
+		t.Error("a run over three files must report progress")
+	}
+}
+
+// TestDetectionWithNoRouteOnStillEnds: with every switch off there is nothing
+// to run, and that has to be said, not left as a spinning bar.
+func TestDetectionWithNoRouteOnStillEnds(t *testing.T) {
+	app := detectionApp()
+	app.settings.UseSmartDetect = false
+	app.settings.UseAI = false
+	rec := withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"a.txt"}, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	if len(res.Phases) != 0 || len(res.Candidates) != 0 {
+		t.Errorf("no route is on, so nothing should have run: %+v", res)
+	}
+	if !strings.Contains(res.Status, "no detection route") {
+		t.Errorf("the status must say why nothing happened, got %q", res.Status)
+	}
+	if rec.count("detection:done") != 1 {
+		t.Error("even a run with nothing to do ends with its terminal event")
+	}
+}
+
+// TestDetectionProgressNeverGoesBackwards guards the second half of the
+// report. With two routes the bar used to rewind to file 1 of a SMALLER total
+// when the AI pass started, which reads as a run that restarted itself.
+func TestDetectionProgressNeverGoesBackwards(t *testing.T) {
+	// A model that answers instantly, so both routes run over all three files.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.Write([]byte(`{"models":[{"name":"m"}]}`))
+		case "/api/chat":
+			resp, _ := json.Marshal(map[string]interface{}{
+				"message": map[string]string{"role": "assistant",
+					"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`},
+			})
+			w.Write(resp)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	app := detectionApp()
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseAI = true
+	rec := withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"a.txt", "b.txt", "c.txt"}, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	if len(res.Phases) != 2 {
+		t.Fatalf("both routes should have run, got %v", res.Phases)
+	}
+
+	events := rec.progress()
+	if len(events) < 4 {
+		t.Fatalf("want progress from both routes, got %d events", len(events))
+	}
+	previous := -1.0
+	for i, p := range events {
+		if p.Fraction < previous {
+			t.Errorf("progress went backwards at event %d: %.3f after %.3f (phase %q)",
+				i, p.Fraction, previous, p.Phase)
+		}
+		if p.Fraction < 0 || p.Fraction > 1 {
+			t.Errorf("event %d reports an impossible fraction %.3f", i, p.Fraction)
+		}
+		previous = p.Fraction
+	}
+	// And the two routes are distinguishable, so the caption can name them.
+	if events[0].Phase != PhaseSmart || events[len(events)-1].Phase != PhaseAI {
+		t.Errorf("the routes must run in order, got %q then %q",
+			events[0].Phase, events[len(events)-1].Phase)
+	}
+}
+
+// TestOverallFractionIsMonotonicAcrossUnevenPhases pins the arithmetic
+// directly, including the case that produced the visible rewind: the second
+// route reading FEWER files than the first.
+func TestOverallFractionIsMonotonicAcrossUnevenPhases(t *testing.T) {
+	previous := -1.0
+	check := func(phaseIndex, phaseCount, docIndex, docCount, chunkIndex, chunkCount int) {
+		got := overallFraction(phaseIndex, phaseCount, docIndex, docCount, chunkIndex, chunkCount)
+		if got < previous {
+			t.Errorf("fraction went backwards: %.3f after %.3f (phase %d, doc %d/%d)",
+				got, previous, phaseIndex, docIndex, docCount)
+		}
+		previous = got
+	}
+	// Phase 0 reads ten files, phase 1 reads two (eight were too large).
+	for i := 0; i < 10; i++ {
+		check(0, 2, i, 10, 0, 0)
+	}
+	for i := 0; i < 2; i++ {
+		for c := 0; c < 4; c++ {
+			check(1, 2, i, 2, c, 4)
+		}
+	}
+	if previous > 1 {
+		t.Errorf("the fraction must stay within 0..1, ended at %.3f", previous)
+	}
+}
+
+// TestDetectionKeepsGoingWhenOneFileFails: one file the model chokes on used
+// to abort the whole run with an error, throwing away every candidate found
+// in the others.
+func TestDetectionKeepsGoingWhenOneFileFails(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.Write([]byte(`{"models":[{"name":"m"}]}`))
+		case "/api/chat":
+			calls++
+			if calls == 2 { // the second document
+				http.Error(w, "model exploded", http.StatusInternalServerError)
+				return
+			}
+			resp, _ := json.Marshal(map[string]interface{}{
+				"message": map[string]string{"role": "assistant",
+					"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`},
+			})
+			w.Write(resp)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	app := detectionApp()
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseAI = true
+	rec := withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"a.txt", "b.txt", "c.txt"}, nil)
+	if err != nil {
+		t.Fatalf("one failing file must not fail the run: %v", err)
+	}
+	if len(res.Errors) != 1 {
+		t.Errorf("the failure must be reported, got %v", res.Errors)
+	}
+	if !strings.Contains(strings.Join(res.Errors, " "), "b.txt") {
+		t.Errorf("the report must name the file that failed: %v", res.Errors)
+	}
+	if len(res.Candidates) == 0 {
+		t.Error("the offline route's candidates must survive an AI failure")
+	}
+	if rec.count("detection:done") != 1 {
+		t.Error("a run with a failed file still ends with detection:done")
+	}
+}
+
+// TestDetectionCancellationIsHonestAboutIt: both results carried a Cancelled
+// flag that the caller never read, so a cancelled run reported "detection
+// done". The flag now comes back on one result, with the partial findings.
+func TestDetectionCancellationIsHonestAboutIt(t *testing.T) {
+	app := detectionApp()
+	// A big document so the offline pass has something to be interrupted in.
+	app.docs = append(app.docs, engine.Document{
+		Name: "big.txt", Format: engine.FormatTXT,
+		Markdown: strings.Repeat("Alpine Trust S.A. met Marie Duval in Luxembourg. ", 20000),
+	})
+	rec := withRecorder(t, app)
+
+	// Cancel as soon as the run has started.
+	go func() {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			app.mu.Lock()
+			running := app.cancelDiscovery != nil
+			app.mu.Unlock()
+			if running {
+				app.CancelDiscovery()
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	res, err := app.RunDetection([]string{"big.txt", "a.txt", "b.txt", "c.txt"}, nil)
+	if err != nil {
+		t.Fatalf("a cancelled run resolves, it does not fail: %v", err)
+	}
+	if !res.Cancelled {
+		t.Error("the result must say it was cancelled; the old code dropped this flag")
+	}
+	if !strings.Contains(res.Status, "cancelled") {
+		t.Errorf("the status must say so too, got %q", res.Status)
+	}
+	if rec.count("detection:done") != 1 {
+		t.Error("a cancelled run still ends with exactly one terminal event")
+	}
+}
+
+// TestDetectionRefusesAConcurrentRun: one cancellation slot means one run.
+func TestDetectionRefusesAConcurrentRun(t *testing.T) {
+	app := detectionApp()
+	_, cancel := context.WithCancel(context.Background())
+	app.cancelDiscovery = cancel
+	defer cancel()
+
+	if _, err := app.RunDetection([]string{"a.txt"}, nil); err == nil {
+		t.Error("a second run must be refused while one is in flight")
+	} else if !strings.Contains(err.Error(), "already in progress") {
+		t.Errorf("the refusal must say why: %v", err)
+	}
+}
+
+// TestDetectionRespectsTheRouteSwitches: Go decides, not the caller.
+func TestDetectionRespectsTheRouteSwitches(t *testing.T) {
+	app := detectionApp()
+	// UseAI is on but there is no Ollama at this port, so the route cannot run
+	// and must not be reported as having run.
+	app.llm = ollama.New("http://127.0.0.1:1")
+	app.settings.UseAI = true
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"a.txt"}, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	if len(res.Phases) != 1 || res.Phases[0] != PhaseSmart {
+		t.Errorf("only the offline route can run without Ollama, got %v", res.Phases)
+	}
+}
