@@ -1,23 +1,43 @@
 <#
 .SYNOPSIS
-  Drives the real doc-anonymiser UI in a real WebView and asserts what a user
-  would actually SEE. Windows only, PowerShell + .NET, no packages.
+  The ADDITIONAL PLATFORM CHECK for the real doc-anonymiser UI: Windows, Edge,
+  the real WebView2, and the packaged .exe. PowerShell + .NET, no packages.
 
 .DESCRIPTION
-  The Go and node test suites prove the HTML this application produces. They
-  cannot prove that a tooltip is VISIBLE rather than clipped by the pane it
-  sits in, that a screen fits the window, or that a run leaves no console
-  error behind. Every one of those was a real defect in this repository, and
-  every one of them passed the unit tests.
+  Layer 3 of the test strategy runs in CI on Linux
+  (scripts/uitest/renderharness, see docs/UITESTING.md). This script is the
+  Windows counterpart, and it owns the two things Linux cannot do:
+
+    the REAL browser engine   The application ships in WebView2 on Windows.
+                              The Linux harness renders in Chromium, which is
+                              close but is not the engine the user gets.
+
+    the PACKAGED .exe         -Packaged builds the binary, starts it, and
+                              inspects the accessibility tree. No Linux check
+                              can see a white-screen boot of a Windows build.
+
+  It shares its ASSERTIONS with the Linux harness rather than restating them:
+  both read scripts/uitest/probes.js, evaluate it in the page, and call the
+  same __uiProbes.* functions. Two copies of "which selector holds the
+  Configure rail" is two copies to forget to update, and the harness that runs
+  less often is the copy that rots. The plumbing differs (PowerShell and
+  ClientWebSocket here, Go and a small RFC 6455 client there); what is
+  asserted does not.
+
+  Note this script has still never been executed on a Windows machine. The
+  Linux harness is the one that gates.
 
   Two checks, both optional and both opt-in:
 
     dev mode (default)  `wails dev` serves the frontend on
-                        http://localhost:34115 with the Go bridge attached, so
+                        http://localhost:34115 WITH THE GO BRIDGE ATTACHED, so
                         the app can be driven by a headless browser over the
                         DevTools Protocol without shipping any test hook into
                         the binary. This is where the layout and visibility
-                        assertions run.
+                        assertions run, and the attached bridge is the one
+                        thing the Linux harness genuinely cannot offer: it
+                        serves the frontend statically, so window.go is absent
+                        there.
 
     -Packaged           builds the .exe, starts it, and uses UI Automation
                         (System.Windows.Automation) to assert the window
@@ -58,6 +78,10 @@ $artifactDir = Join-Path $PSScriptRoot 'artifacts'
 New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
 
 $script:Failures = @()
+# The seed facts the shared probes report back (scripts/uitest/probes.js
+# __uiProbes.fixture), so an expectation is never spelled twice across the two
+# harnesses. Filled by Install-Probes.
+$script:Fixture = $null
 
 # --- Reporting --------------------------------------------------------------
 #
@@ -222,6 +246,16 @@ function Invoke-DevChecks {
                 $cdp.Send('Page.enable', @{}) | Out-Null
                 Start-Sleep -Seconds 2
 
+                # Pin the viewport before measuring anything: --window-size is
+                # only a request (the window subtracts its own chrome), and a
+                # layout contract measured against an unknown height is not a
+                # contract. Same 1440x900 as the Linux harness, so a failure
+                # means the same thing on both.
+                $cdp.Send('Emulation.setDeviceMetricsOverride', @{
+                    width = 1440; height = 900; deviceScaleFactor = 1; mobile = $false
+                }) | Out-Null
+
+                Install-Probes $cdp
                 Test-Layout $cdp
                 Test-ImportPreview $cdp
                 Test-ConfigureRail $cdp
@@ -246,133 +280,174 @@ function Save-Screenshot([CdpSession]$cdp, [string]$name) {
     Write-Host "  saved $path"
 }
 
-# The fixed-height layout contract (frontend/CLAUDE.md): the page body never
-# scrolls, in either direction. Only a real renderer can answer this.
+# --- The shared probes ------------------------------------------------------
+#
+# scripts/uitest/probes.js is the SINGLE definition of what these checks look at
+# and how the application state is seeded. This script and the Linux harness both
+# read that file, evaluate it in the page, and call the same __uiProbes.*
+# functions; only the plumbing around it differs. See the .DESCRIPTION above.
+
+function Install-Probes([CdpSession]$cdp) {
+    Write-Step 'Installing the shared probes'
+    $probesPath = Join-Path $PSScriptRoot 'probes.js'
+    if (-not (Test-Path $probesPath)) {
+        throw "The shared probes are missing from $probesPath. Both harnesses read that one file, so it is not optional; restore it from the repository."
+    }
+    $installed = $cdp.Eval((Get-Content -Raw -Encoding UTF8 $probesPath))
+    if ($installed -ne 'installed') {
+        throw "$probesPath returned '$installed' instead of 'installed', so it may not have run. The file must be ONE expression that ends by returning the string 'installed'."
+    }
+    $script:Fixture = $cdp.Eval('__uiProbes.fixture()')
+}
+
+# The fixed-height layout contract (frontend/CLAUDE.md), in the three parts the
+# probe measures: the page body must not scroll, #view must not CLIP what it
+# holds (overflow: hidden there turns a mis-sized card into cut-off content
+# rather than a scrolling page), and the only things that scroll are card bodies.
+# Only a real renderer can answer any of it.
 function Test-Layout([CdpSession]$cdp) {
-    Write-Step 'Layout contract'
+    Write-Step 'The fixed-height layout contract'
     foreach ($step in @('import', 'identify', 'anonymise', 'export')) {
-        $metrics = $cdp.Eval(@"
-(async () => {
-  const nav = await import('/nav.js');
-  const state = await import('/state.js');
-  state.setState({ screen: 'wizard', step: '$step' });
-  await new Promise(r => setTimeout(r, 250));
-  const b = document.body;
-  return { h: b.scrollHeight - b.clientHeight, w: b.scrollWidth - b.clientWidth };
-})()
-"@)
+        $m = $cdp.Eval("__uiProbes.layout('$step')")
+        $where = "in a $($m.viewport.width)x$($m.viewport.height) viewport (tallest inside #view: $($m.tallest.selector) at $($m.tallest.height) px)"
+
         Assert-That -Name "$step does not scroll the page body" `
-            -Condition ($metrics.h -le 1 -and $metrics.w -le 1) `
-            -Expected 'body scrollHeight and scrollWidth equal to the client size' `
-            -Actual "overflow: $($metrics.h)px down, $($metrics.w)px across" `
-            -Hint 'A link in the chain from #view down to the scrolling card body is missing min-height: 0.'
+            -Condition ($m.down -le 1 -and $m.across -le 1) `
+            -Expected 'the body scroll size equal to its client size, in both directions' `
+            -Actual "$($m.down) px down, $($m.across) px across, $where" `
+            -Hint 'body and #app are 100vh. Chrome past the fixed header/step-bar/footer heights, or wide content outside its own overflow-x: auto container, will do this.'
+
+        Assert-That -Name "$step fits the workspace without being clipped" `
+            -Condition ($m.viewClipsDown -le 1 -and $m.viewClipsAcross -le 1) `
+            -Expected "#view's scroll size equal to its client size: whatever it holds has to fit" `
+            -Actual "$($m.viewClipsDown) px clipped off the bottom, $($m.viewClipsAcross) px off the side, $where" `
+            -Hint 'main#view is overflow: hidden, so a card that does not fit is CUT OFF. A link in the chain from #view down to the scrolling card body is missing min-height: 0.'
+
+        $stray = @($m.scrollers | Where-Object { -not $_.allowed } |
+            ForEach-Object { "$($_.selector) ($($_.down) px down, $($_.across) px across)" })
+        Assert-That -Name "$step scrolls only inside a card body" `
+            -Condition ($stray.Count -eq 0) `
+            -Expected 'every scrolling element to be a card body, a group body, the rail, a card column or a .table-scroll' `
+            -Actual ($stray -join '; ') `
+            -Hint 'Move the overflow down onto the card body, or wrap wide content in its own overflow-x: auto container.'
     }
 }
 
-# Reported issues 1 and 4, seen through the pixels rather than the HTML.
+# Reported issues 1 and 4, seen through the pixels rather than the HTML: the
+# source panes were showing pipeline output. The probe seeds a state that HAS a
+# finished run in it, so there is real anonymised text for a view to reach for by
+# mistake.
 function Test-ImportPreview([CdpSession]$cdp) {
-    Write-Step 'Import preview shows source text'
-    $text = $cdp.Eval(@"
-(async () => {
-  const state = await import('/state.js');
-  state.setState({ screen: 'wizard', step: 'import' });
-  await new Promise(r => setTimeout(r, 250));
-  return document.querySelector('.md-preview')?.innerText ?? '';
-})()
-"@)
-    $flat = ($text -replace '\s+', ' ')
-    $excerpt = $flat.Substring(0, [Math]::Min(120, $flat.Length))
+    Write-Step 'The Import preview shows source text, not pipeline output'
+    $r = $cdp.Eval('__uiProbes.importPreview()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the Import preview renders' -Condition $false `
+            -Expected 'an .md-preview pane inside the Preview card' -Actual $r.error `
+            -Hint 'views/import.js previewCard renders previewBody(doc) when a document is selected.'
+        return
+    }
     Assert-That -Name 'the Import preview contains no placeholder' `
-        -Condition (-not ($text -match '\[[A-Z][A-Z0-9_]*_\d+\]')) `
-        -Expected 'the imported source text' `
-        -Actual $excerpt `
-        -Hint 'views/import.js must render documentSource(), never anything the pipeline produced.'
+        -Condition ([string]::IsNullOrEmpty($r.placeholder)) `
+        -Expected 'no [CATEGORY_N] anywhere in the pane rendered text' `
+        -Actual "found '$($r.placeholder)' around: $($r.excerpt)" `
+        -Hint 'views/import.js must render the imported markdown (state.documentSource), never anything the pipeline produced.'
+    Assert-That -Name 'the Import preview actually shows the document' `
+        -Condition ($r.showsSource -and $r.chars -gt 200) `
+        -Expected 'the seeded source text, several hundred characters of it' `
+        -Actual "$($r.chars) characters, source marker present: $($r.showsSource)" `
+        -Hint 'An empty pane would pass the placeholder check for the wrong reason, so it is asserted separately.'
 }
 
-# Reported issue 3: three switchable sections, not four peer tabs.
+# Reported issue 3: three switchable detection-route sections, not four peer tabs.
 function Test-ConfigureRail([CdpSession]$cdp) {
-    Write-Step 'Configure rail'
-    $rail = $cdp.Eval(@"
-(async () => {
-  const state = await import('/state.js');
-  state.setState({ screen: 'wizard', step: 'identify' });
-  await new Promise(r => setTimeout(r, 250));
-  const sections = [...document.querySelectorAll('#identify-rail .rail-section')];
-  const toggles = [...document.querySelectorAll('#identify-rail .route-toggle')];
-  return {
-    sections: sections.length,
-    tabs: document.querySelectorAll('[data-railtab]').length,
-    smartOn: toggles[0]?.checked ?? null,
-    localOn: toggles[1]?.checked ?? null,
-    cloudDisabled: toggles[2]?.disabled ?? null,
-    categories: document.querySelectorAll('#identify-rail .cat-toggle').length,
-  };
-})()
-"@)
-    Assert-That -Name 'the rail is three route sections' -Condition ($rail.sections -eq 3) `
-        -Expected '3' -Actual "$($rail.sections)"
-    Assert-That -Name 'the old tab strip is gone' -Condition ($rail.tabs -eq 0) `
-        -Expected '0 [data-railtab] chips' -Actual "$($rail.tabs)"
-    Assert-That -Name 'Smart detection is on by default' -Condition ($rail.smartOn -eq $true)
-    Assert-That -Name 'Local AI is off by default' -Condition ($rail.localOn -eq $false)
-    Assert-That -Name 'Cloud AI cannot be switched on' -Condition ($rail.cloudDisabled -eq $true)
-    Assert-That -Name 'every category is reachable without switching tabs' `
-        -Condition ($rail.categories -ge 20) -Expected 'all 22 category checkboxes' -Actual "$($rail.categories)"
+    Write-Step 'The Configure rail is three detection routes'
+    $r = $cdp.Eval('__uiProbes.configureRail()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the Identify rail renders' -Condition $false `
+            -Expected '#identify-rail on the Identify screen' -Actual $r.error `
+            -Hint 'views/identify.js renders the rail section and hands it to renderIdentifyRail.'
+        return
+    }
+    Assert-That -Name 'the rail is three route sections' -Condition ($r.sections -eq 3) `
+        -Expected '3 .rail-section elements' -Actual "$($r.sections), routes: $($r.routes -join ', ')" `
+        -Hint 'views/identifyrail.js RAIL_SECTIONS defines Smart detection, Local AI and Cloud AI.'
+    Assert-That -Name 'the old tab strip is gone' -Condition ($r.railTabs -eq 0) `
+        -Expected '0 [data-railtab] chips anywhere in the document' -Actual "$($r.railTabs)" `
+        -Hint 'The rail switches sections on and off; it does not tab between them (BUILD-06).'
+    Assert-That -Name 'Smart detection is on by default' -Condition ($r.smartOn -eq $true) `
+        -Expected 'the rail-smart route switch checked' -Actual "$($r.smartOn)" `
+        -Hint 'state.js settings.useSmartDetect defaults to true.'
+    Assert-That -Name 'Local AI is off by default' -Condition ($r.localOn -eq $false) `
+        -Expected 'the rail-local route switch unchecked' -Actual "$($r.localOn)" `
+        -Hint 'state.js settings.useAI defaults to false. Detecting Ollama ENABLES this switch, it never flips it.'
+    Assert-That -Name 'Cloud AI cannot be switched on' `
+        -Condition ($r.cloudDisabled -eq $true -and $r.cloudOn -eq $false) `
+        -Expected 'the rail-cloud switch present, unchecked and disabled' `
+        -Actual "disabled: $($r.cloudDisabled), checked: $($r.cloudOn)" `
+        -Hint 'Cloud AI is not built (BUILD-05 decision 8) and renders disabled rather than omitted.'
+    Assert-That -Name 'every category checkbox is present' `
+        -Condition ($r.categories -ge $script:Fixture.categoryCount) `
+        -Expected "at least $($script:Fixture.categoryCount) .cat-toggle checkboxes" -Actual "$($r.categories)" `
+        -Hint 'state.js ALL_CATEGORIES plus the country-specific ID categories must all reach the rail.'
+    Assert-That -Name 'every category checkbox is reachable without clicking' `
+        -Condition ($r.categories -gt 0 -and $r.categoriesWithSize -eq $r.categories) `
+        -Expected 'all of them laid out with a non-zero height' `
+        -Actual "$($r.categoriesWithSize) of $($r.categories) have a height" `
+        -Hint 'A checkbox inside a folded group is in the DOM but not something the user can tick.'
 }
 
 # Reported issue 6. This is the assertion that CANNOT be made without a real
-# renderer: the tooltip was in the HTML all along, and the pane clipped it.
+# renderer: the tooltip was in the HTML all along, and the pane clipped it. Three
+# marks are hovered, including the two nearest the pane right and bottom edges,
+# because the middle of the pane was never where it failed.
 function Test-TooltipVisibility([CdpSession]$cdp) {
-    Write-Step 'Hover tooltip is visible, not clipped'
-    $result = $cdp.Eval(@"
-(async () => {
-  const state = await import('/state.js');
-  state.setState({
-    screen: 'wizard', step: 'anonymise',
-    documents: [{ name: 'probe.txt', markdown: 'Marie Duval wrote to Meridian Consulting.', previewTruncated: false, isGrid: false }],
-    results: { documents: [{ name: 'probe.txt', anonymised: '[PERSON_1] wrote to [ENTITY_1].', byCategory: { person_names: 1 } }],
-               report: { values: [], byCategory: {}, totalReplacements: 2, documents: [] } },
-    mapping: { '[PERSON_1]': { original: 'Marie Duval', category: 'person_names' },
-               '[ENTITY_1]': { original: 'Meridian Consulting', category: 'entity_names' } },
-  });
-  await new Promise(r => setTimeout(r, 300));
-
-  const mark = document.querySelector('#anonymised-pane mark[data-original]');
-  if (!mark) return { error: 'no mark rendered' };
-  mark.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false }));
-  await new Promise(r => setTimeout(r, 120));
-
-  const tip = document.querySelector('#mark-tooltip');
-  if (!tip || tip.hidden) return { error: 'the tooltip did not appear' };
-  const t = tip.getBoundingClientRect();
-  const card = document.querySelector('#compare-card').getBoundingClientRect();
-  const pane = document.querySelector('#anonymised-pane').getBoundingClientRect();
-  // Visible means: inside the card, inside the viewport, and not clipped away
-  // to nothing by the pane it is anchored near.
-  return {
-    text: tip.innerText,
-    insideCard: t.left >= card.left - 1 && t.right <= card.right + 1 && t.bottom <= card.bottom + 1,
-    inViewport: t.top >= 0 && t.left >= 0 && t.right <= innerWidth && t.bottom <= innerHeight,
-    hasSize: t.width > 10 && t.height > 10,
-    paneClips: getComputedStyle(document.querySelector('#anonymised-pane')).overflow,
-    paneRight: pane.right, tipRight: t.right,
-  };
-})()
-"@)
-    if ($result.PSObject.Properties.Name -contains 'error') {
-        Assert-That -Name 'the tooltip appears on hover' -Condition $false `
-            -Expected 'a visible #mark-tooltip' -Actual $result.error `
-            -Hint 'views/anonymise.js wireMarkTooltip must show the tooltip on mouseenter.'
+    Write-Step 'The hover tooltip is visible, not clipped'
+    $r = $cdp.Eval('__uiProbes.tooltipVisibility()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the Compare card renders and a mark can be hovered' -Condition $false `
+            -Expected 'marks in #anonymised-pane and a #mark-tooltip in #compare-card' -Actual $r.error `
+            -Hint 'views/anonymise.js compareCard renders the tooltip node as a child of the CARD, not of the pane.'
         return
     }
-    Assert-That -Name 'the tooltip shows the original value' `
-        -Condition ($result.text -match 'Marie Duval') -Expected 'Marie Duval' -Actual $result.text
-    Assert-That -Name 'the tooltip is rendered inside the Compare card' -Condition ($result.insideCard) `
-        -Expected 'the tooltip rect inside the card rect' `
-        -Actual "tooltip right $($result.tipRight), pane right $($result.paneRight)" `
-        -Hint 'Anchor it to #compare-card, not to the mark: the pane is overflow:auto and clips it.'
-    Assert-That -Name 'the tooltip is on screen' -Condition ($result.inViewport)
-    Assert-That -Name 'the tooltip has a size' -Condition ($result.hasSize)
+    Assert-That -Name 'the anonymised pane has marks a user could hover' -Condition ($r.hoverable -gt 0) `
+        -Expected 'at least one mark[data-original] visible inside the pane' `
+        -Actual "$($r.marks) rendered, $($r.hoverable) visible" `
+        -Hint 'highlight.js renders a mapped placeholder as a mark carrying data-original.'
+
+    foreach ($sample in $r.samples) {
+        $label = "the $($sample.edge) mark"
+        if (-not $sample.appeared) {
+            Assert-That -Name "$label shows a tooltip on mouseenter" -Condition $false `
+                -Expected '#mark-tooltip with hidden cleared' -Actual 'the tooltip stayed hidden' `
+                -Hint 'views/anonymise.js wireMarkTooltip binds mouseenter on every mark[data-original].'
+            continue
+        }
+        $tip = "$($sample.tooltipRect.left),$($sample.tooltipRect.top) to $($sample.tooltipRect.right),$($sample.tooltipRect.bottom)"
+        Assert-That -Name "$label shows the original value belonging to that mark" `
+            -Condition ($sample.markOriginal -and $sample.text -like "*$($sample.markOriginal)*") `
+            -Expected "the hovered mark own original, '$($sample.markOriginal)', in the tooltip" `
+            -Actual "'$($sample.text)'" `
+            -Hint 'The tooltip first line is mark.dataset.original, which comes from state.mapping.'
+        Assert-That -Name "$label tooltip is inside the Compare card" -Condition ($sample.insideCard) `
+            -Expected 'the tooltip rect within the card rect' -Actual "tooltip $tip" `
+            -Hint 'Anchor it to #compare-card and clamp it to the card width, as wireMarkTooltip does.'
+        Assert-That -Name "$label tooltip is on screen" -Condition ($sample.inViewport) `
+            -Expected 'the tooltip rect within the viewport' -Actual "tooltip $tip" `
+            -Hint 'Flip the tooltip above the mark when there is no room below it.'
+        Assert-That -Name "$label tooltip has a size" -Condition ($sample.hasSize) `
+            -Expected 'a tooltip more than 10 px wide and tall' `
+            -Actual "$($sample.tooltipRect.width)x$($sample.tooltipRect.height)" `
+            -Hint 'An empty tooltip means innerHTML was never filled in.'
+        Assert-That -Name "$label tooltip is not inside the scrolling pane" `
+            -Condition (-not $sample.insidePaneSubtree) `
+            -Expected "#mark-tooltip outside #anonymised-pane, which is overflow: $($sample.paneOverflow)" `
+            -Actual 'the tooltip is a descendant of the pane, so the pane clips it' `
+            -Hint 'This is reported issue 6 exactly. Move the tooltip node up to #compare-card.'
+        Assert-That -Name "$label tooltip is painted, not clipped away" -Condition ($sample.paintedOnTop) `
+            -Expected 'elementFromPoint at the tooltip centre returning the tooltip' `
+            -Actual "something else is at $tip" `
+            -Hint 'The rect of a clipped element is still a full-size rect, so this is the check that catches it.'
+    }
 }
 
 # --- Packaged-binary smoke test (UI Automation) -----------------------------
