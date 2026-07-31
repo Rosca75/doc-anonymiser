@@ -1,7 +1,6 @@
 # doc-anonymiser
 
-**Anonymise client documents entirely on your own machine, nothing ever
-leaves it.**
+**Anonymise client documents entirely on your own machine, using smart detection (NER), local LLMs or Cloud LLMs.**
 
 doc-anonymiser is a small desktop application (Windows first, Linux
 secondary, macOS best-effort) that removes personally identifiable
