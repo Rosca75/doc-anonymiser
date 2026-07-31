@@ -71,14 +71,14 @@ const (
 	CatDate      = "date"
 	// BUILD-03 Phase B — extended recognizers inspired by Presidio's
 	// deterministic layer. All are hard PII (fire at every level).
-	CatCreditCard  = "credit_card"   // Visa/Mastercard/Amex, Luhn-validated
-	CatNHS         = "uk_nhs"        // UK National Health Service number, mod-11 validated
-	CatIPAddress   = "ip_address"    // IPv4 + IPv6
-	CatMACAddress  = "mac_address"   // 48-bit MAC (colon/hyphen separated)
-	CatCrypto      = "crypto"        // Bitcoin (P2PKH/P2SH/Bech32)
-	CatDatabaseURI = "database_uri"  // postgres://, mysql://, mongodb://, redis:// with creds
-	CatDESteuerID  = "de_steuer_id"  // Germany national tax ID (11 digits)
-	CatESNIF       = "es_nif"        // Spain NIF (8 digits + letter, letter validated)
+	CatCreditCard  = "credit_card"  // Visa/Mastercard/Amex, Luhn-validated
+	CatNHS         = "uk_nhs"       // UK National Health Service number, mod-11 validated
+	CatIPAddress   = "ip_address"   // IPv4 + IPv6
+	CatMACAddress  = "mac_address"  // 48-bit MAC (colon/hyphen separated)
+	CatCrypto      = "crypto"       // Bitcoin (P2PKH/P2SH/Bech32)
+	CatDatabaseURI = "database_uri" // postgres://, mysql://, mongodb://, redis:// with creds
+	CatDESteuerID  = "de_steuer_id" // Germany national tax ID (11 digits)
+	CatESNIF       = "es_nif"       // Spain NIF (8 digits + letter, letter validated)
 )
 
 // piiPattern couples a compiled regex with its category and the index of
@@ -445,7 +445,6 @@ func effectiveConfidence(s Span) float32 {
 	}
 	return s.Confidence
 }
-
 
 // ResolveOverlaps keeps a non-overlapping subset of spans. Priority order
 // (BUILD-03 Phase F, extending the BUILD.md Phase 2 rule):

@@ -172,11 +172,44 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string) (*DetectionR
 		}
 	}
 
+	// With the AI route on, the model also REFINES the offline route's
+	// categories (span classification: only candidate texts and short context
+	// snippets travel, never documents). This path existed and was reachable
+	// from the bridge, but nothing in the UI ever asked for it, so the local
+	// AI never improved the guesses the heuristic makes from word shape alone.
+	// A classification failure degrades to the heuristic categories with a
+	// note: the offline route's findings are the point, the labels are polish.
+	if useAI && ctx.Err() == nil && len(res.Candidates) > 0 {
+		if err := a.refineCategories(ctx, llm, res); err != nil && ctx.Err() == nil {
+			res.Errors = append(res.Errors,
+				fmt.Sprintf("the local AI could not refine the categories, the offline guesses were kept: %v", err))
+		}
+	}
+
 	res.Cancelled = ctx.Err() != nil
 	res.Status = detectionStatus(res, len(docs))
 	emitted = true
 	a.emit("detection:done", res)
 	return res, nil
+}
+
+// refineCategories asks the local model to categorise the offline route's
+// candidates, and applies whatever it recognised.
+func (a *App) refineCategories(ctx context.Context, llm *ollama.Client, res *DetectionResult) error {
+	proposals, err := llm.ClassifyCandidates(ctx, res.Candidates)
+	if err != nil {
+		return err
+	}
+	refined := map[string]string{}
+	for _, p := range proposals {
+		refined[p.Text] = p.Category
+	}
+	for i := range res.Candidates {
+		if category, ok := refined[res.Candidates[i].Text]; ok {
+			res.Candidates[i].Category = category
+		}
+	}
+	return nil
 }
 
 // runSmartPhase is the offline route. Every document is scanned; a document

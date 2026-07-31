@@ -399,6 +399,13 @@ export const WORKSPACE = {
 
   // My values.
   addValueLabel: "A value to replace",
+  /** valueMatches(count, documents) is the live read-out under the add row.
+   *  A value that matches nothing is almost always a typo, and saying so
+   *  before the run is the cheapest correction there is. */
+  valueMatches(count, documents) {
+    if (count === 0) return "Not found in any imported document. Check the spelling.";
+    return `Found ${count} time${count === 1 ? "" : "s"} in ${documents} document${documents === 1 ? "" : "s"}.`;
+  },
   addValuePlaceholder: "add a value to replace, e.g. Meridian Consulting",
   addValueCategory: "The type of value",
   addValue: "Add value",
@@ -434,6 +441,14 @@ export const WORKSPACE = {
   addPatternPlaceholder: "add an expression, e.g. INV-\\d{6}",
   patternValid: "valid",
   patternCompiles: "this expression compiles",
+  patternNoMatches: "This expression compiles but matches nothing in the imported documents.",
+  /** patternSamples(samples) shows what a regex actually catches, which is the
+   *  question "it compiles" never answered. */
+  patternSamples(samples) {
+    const shown = samples.slice(0, 5).join(", ");
+    const more = samples.length > 5 ? `, and ${samples.length - 5} more` : "";
+    return `Matches ${shown}${more}.`;
+  },
   removePattern: "Remove this pattern",
 };
 

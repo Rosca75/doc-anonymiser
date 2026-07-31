@@ -30,7 +30,7 @@
 // once, on purpose: a label is a display string, an identifier is a contract.
 
 import {
-  runDetection, cancelDetection,
+  runDetection, cancelDetection, countTermMatches, patternMatches,
   expandVariants, validatePattern, setEntityPlaceholder, entityPlaceholder,
 } from "../api.js";
 import {
@@ -75,7 +75,11 @@ let activeTab = "suggestions";
 let candidateFilter = { ...DEFAULT_CANDIDATE_FILTER, source: "" };
 // The draft text of the three add rows, kept across repaints so a state change
 // elsewhere does not empty a half-typed value.
-const drafts = { value: "", valueCategory: "entity_names", allow: "", pattern: "" };
+const drafts = {
+  value: "", valueCategory: "entity_names", allow: "", pattern: "",
+  // The live "found N times in M documents" read-out under the add row.
+  valueMatches: "",
+};
 // Per-entity inline feedback (a refused placeholder, a duplicate variant),
 // keyed by entityKey. Cleared for a row as soon as it succeeds at anything.
 const rowFeedback = new Map();
@@ -339,7 +343,12 @@ function valuesTab(s) {
       `${escapeHTML(label)}</option>`).join("") +
     `</select>` +
     button(WORKSPACE.addValue, { kind: "secondary", id: "btn-add-value" }) +
-    `</div>`;
+    `</div>` +
+    // The live match count (BUILD-06). The bridge method for it has existed
+    // since BUILD-02 and nothing called it, so a user typing a value had no
+    // way of knowing whether it occurs in their documents at all until after a
+    // run. A value that matches nothing is almost always a typo.
+    `<p class="hint" id="value-matches">${escapeHTML(drafts.valueMatches)}</p>`;
 
   const cards = s.entities.map((e) => valueCard(e)).join("") ||
     `<div class="grid-empty">${escapeHTML(WORKSPACE.noValues)}</div>`;
@@ -597,7 +606,32 @@ function wireSuggestions(container, shown) {
 function wireValues(container) {
   const draft = container.querySelector("#value-draft");
   const category = container.querySelector("#value-category");
-  draft?.addEventListener("input", () => { drafts.value = draft.value; });
+  const matches = container.querySelector("#value-matches");
+  // Debounced: one bridge round-trip per keystroke over a batch of documents
+  // would be a count nobody waits for.
+  let matchTimer = null;
+  draft?.addEventListener("input", () => {
+    drafts.value = draft.value;
+    if (matchTimer) clearTimeout(matchTimer);
+    const term = draft.value.trim();
+    if (!term) {
+      drafts.valueMatches = "";
+      if (matches) matches.textContent = "";
+      return;
+    }
+    matchTimer = setTimeout(async () => {
+      try {
+        const info = await countTermMatches(term);
+        // The field may have moved on while the count was in flight; a stale
+        // answer under a different word is worse than no answer.
+        if (draft.value.trim() !== term) return;
+        drafts.valueMatches = WORKSPACE.valueMatches(info?.count ?? 0, info?.documents ?? 0);
+      } catch {
+        drafts.valueMatches = ""; // no bridge: say nothing rather than guess
+      }
+      if (matches) matches.textContent = drafts.valueMatches;
+    }, 250);
+  });
   category?.addEventListener("change", () => { drafts.valueCategory = category.value; });
 
   const add = async () => {
@@ -605,6 +639,7 @@ function wireValues(container) {
     if (!value) return;
     const n = addEntities([{ category: drafts.valueCategory, canonical: value }]);
     drafts.value = "";
+    drafts.valueMatches = "";
     if (n === 0) notify(WORKSPACE.valueAlreadyThere(value), "info");
     setState({});
     await refreshVariants();
@@ -856,11 +891,30 @@ function wirePatterns(container) {
   input?.addEventListener("input", async () => {
     drafts.pattern = input.value;
     const expr = input.value.trim();
+    if (!expr) {
+      feedback.textContent = "";
+      return;
+    }
     // Live compile validation (a cheap round-trip), so a broken expression is
     // visible before it is added rather than after.
-    feedback.textContent = expr
-      ? (await validatePattern(expr)) || WORKSPACE.patternCompiles
-      : "";
+    const error = await validatePattern(expr);
+    if (error) {
+      feedback.textContent = error;
+      return;
+    }
+    // It compiles: now say what it actually MATCHES (BUILD-06). The sample
+    // matches existed behind a bridge method nothing called, which left
+    // "this expression compiles" as the only feedback a regex ever got, and
+    // a regex that compiles and matches nothing is the common mistake.
+    try {
+      const samples = await patternMatches(expr);
+      if (input.value.trim() !== expr) return; // the field moved on
+      feedback.textContent = samples?.length
+        ? WORKSPACE.patternSamples(samples)
+        : WORKSPACE.patternNoMatches;
+    } catch {
+      feedback.textContent = WORKSPACE.patternCompiles;
+    }
   });
 
   const add = async () => {

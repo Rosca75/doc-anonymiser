@@ -12,6 +12,10 @@
 package backend
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,6 +23,7 @@ import (
 	"testing"
 
 	"doc-anonymiser/backend/engine"
+	"doc-anonymiser/backend/ollama"
 )
 
 // placeholderShape matches any placeholder the registry can emit, e.g.
@@ -288,5 +293,71 @@ func TestSessionSettingsRoundTrip(t *testing.T) {
 	}
 	if !got.UseSmartDetect {
 		t.Error("a file that says nothing about the smart route must restore it ON")
+	}
+}
+
+// TestDeepScanRefusedWhenTheRouteIsOff: Settings.UseAI was stored, written
+// into every session file, and read by no decision path. The only thing
+// standing between a switched-off route and a running model was a boolean the
+// frontend computed, so a stale request could start the AI pass the user had
+// turned off. Go decides now, and says so in the report.
+func TestDeepScanRefusedWhenTheRouteIsOff(t *testing.T) {
+	var chatCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.Write([]byte(`{"models":[{"name":"m"}]}`))
+		case "/api/chat":
+			chatCalls++
+			resp, _ := json.Marshal(map[string]interface{}{
+				"message": map[string]string{"role": "assistant",
+					"content": `{"entity_names":[],"project_names":[],"person_names":[]}`},
+			})
+			w.Write(resp)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	app := NewApp()
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseAI = false // the switch the user operates
+	app.docs = []engine.Document{
+		{Name: "a.txt", Format: engine.FormatTXT, Markdown: "Marie Duval wrote."},
+	}
+
+	// The request asks for the deep scan anyway.
+	res, err := app.runPipelineBlocking(context.Background(), RunRequest{UseDeepScan: true})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if chatCalls != 0 {
+		t.Errorf("the model was called %d time(s) with the route switched off", chatCalls)
+	}
+	if !strings.Contains(res.Report.LLMPass, "switched off") {
+		t.Errorf("the report must say why the deep scan did not run, got %q", res.Report.LLMPass)
+	}
+	if len(res.Report.Warnings) == 0 {
+		t.Error("a requested pass that did not run is worth a warning")
+	}
+}
+
+// TestDeepScanSkippedWhenOllamaIsAbsent: the switch being on is not enough
+// either. Reaching for a model that is not there used to surface as a
+// per-document failure warning; it is now one clear sentence.
+func TestDeepScanSkippedWhenOllamaIsAbsent(t *testing.T) {
+	app := NewApp()
+	app.llm = ollama.New("http://127.0.0.1:1") // nothing listening
+	app.settings.UseAI = true
+	app.docs = []engine.Document{
+		{Name: "a.txt", Format: engine.FormatTXT, Markdown: "Marie Duval wrote."},
+	}
+	res, err := app.runPipelineBlocking(context.Background(), RunRequest{UseDeepScan: true})
+	if err != nil {
+		t.Fatalf("a missing Ollama must degrade, not fail: %v", err)
+	}
+	if !strings.Contains(res.Report.LLMPass, "Ollama did not answer") {
+		t.Errorf("the report must name the reason, got %q", res.Report.LLMPass)
 	}
 }

@@ -62,6 +62,9 @@ func TestFastRerunAppliesEntityWithoutLLM(t *testing.T) {
 
 	app := NewApp()
 	app.llm = ollama.New(srv.URL)
+	// The deep scan is gated on the Local AI switch in Go (BUILD-06), so a
+	// test that exercises it has to turn the route on, exactly like a user.
+	app.settings.UseAI = true
 	app.docs = []engine.Document{{
 		Name: "a.txt", Format: engine.FormatTXT,
 		Markdown: "Alpine Trust met Marie Duval by mail marie.duval@example.com.",

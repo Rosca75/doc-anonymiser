@@ -124,6 +124,9 @@ func TestMidRunOllamaCrashDegrades(t *testing.T) {
 
 	app := NewApp()
 	app.llm = ollama.New(srv.URL)
+	// The deep scan is gated on the Local AI switch in Go (BUILD-06), so a
+	// test that exercises it has to turn the route on, exactly like a user.
+	app.settings.UseAI = true
 	app.docs = []engine.Document{
 		{Name: "1.txt", Format: engine.FormatTXT, Markdown: "first mail one@example.com"},
 		{Name: "2.txt", Format: engine.FormatTXT, Markdown: "second mail two@example.com"},

@@ -87,9 +87,9 @@ Ollama probe. There is no cloud route and no `useCloudAI` on the Go side
 | `estimateDiscovery(fileNames)` | names | `[{name, chunks, tooLarge, message}]` so oversized files can be excluded BEFORE the run |
 | `expandVariants(entity)` | entity | `{category, canonical, manualVariants, excludedVariants}` |
 | `runSmartDetection(fileNames, allowTerms, classify, options)` | names, allowlist, bool, `SmartDetectOptions {minLength, minOccurrences, excludeCommonWords, minConfidence}` | `SmartDetectionResult {candidates, status, cancelled}`; works fully offline, `classify=true` refines categories via local AI |
-| `countTermMatches(term)` | term | `{count, documents}` (live manual-entry preview) |
+| `countTermMatches(term)` | term | `{count, documents}`, the live read-out under the manual add-value row (debounced) |
 | `validatePattern(expr)` | regex | `""` (valid) or the error message |
-| `patternMatches(expr)` | regex | up to 20 sample matches across the loaded documents |
+| `patternMatches(expr)` | regex | up to 20 sample matches across the loaded documents, shown live under the pattern field: a regex that compiles and matches nothing is the common mistake |
 | `entityPlaceholder(category, canonical)` | engine category id, value | the placeholder currently assigned to that value, or `""` before the first run |
 | `setEntityPlaceholder(category, canonical, placeholder)` | engine category id, value, `[NAME_N]` | resolves on success; REJECTS with an actionable message when the shape is wrong or the placeholder already belongs to another value. Takes effect on the next run or fast re-run, never retroactively (BUILD-05 Phase 3) |
 
