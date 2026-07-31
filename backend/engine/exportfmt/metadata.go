@@ -11,12 +11,13 @@
 package exportfmt
 
 import (
-	"archive/zip"
 	"bytes"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
+
+	"doc-anonymiser/backend/engine/ooxml"
 )
 
 // MetaField is one document property: Part is the archive entry, Name the
@@ -51,31 +52,28 @@ var metaParts = []string{"docProps/core.xml", "docProps/app.xml", "docProps/cust
 // (docx/pptx/xlsx alike; they share the docProps layout). Missing parts
 // simply yield no fields.
 func ExtractMetadata(raw []byte) ([]MetaField, error) {
-	reader, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	// The zip walk lives in engine/ooxml (BUILD-05 Phase 3), because the
+	// converters need the same "pull a named docProps part out of the archive"
+	// step to read the cached page and slide counts. Reading it in one place
+	// also means an absent part behaves identically for both callers: no entry
+	// in the map, no error, no field.
+	parts, err := ooxml.ReadParts(raw, metaParts...)
 	if err != nil {
-		return nil, fmt.Errorf("the original file could not be opened as a zip archive (%v); re-import the document and try again", err)
+		return nil, err
 	}
 	var out []MetaField
+	// Iterate metaParts rather than the map, so the review panel's field order
+	// is stable (core, then app, then custom) rather than map-random.
 	for _, part := range metaParts {
-		for _, entry := range reader.File {
-			if entry.Name != part {
-				continue
-			}
-			src, err := entry.Open()
-			if err != nil {
-				return nil, fmt.Errorf("could not read %q: %w", part, err)
-			}
-			data, err := io.ReadAll(src)
-			src.Close()
-			if err != nil {
-				return nil, fmt.Errorf("could not read %q: %w", part, err)
-			}
-			fields, err := extractPartFields(part, data)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, fields...)
+		data, ok := parts[part]
+		if !ok {
+			continue
 		}
+		fields, err := extractPartFields(part, data)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, fields...)
 	}
 	return out, nil
 }

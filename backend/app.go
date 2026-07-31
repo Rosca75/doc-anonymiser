@@ -81,6 +81,16 @@ type DocumentInfo struct {
 	// engine.MaxPreviewLines lines of a very large document — the FULL
 	// content is still processed; only this preview copy is cut.
 	PreviewTruncated bool `json:"previewTruncated"`
+	// UnitCount and Unit are the document's size in its OWN terms, for the
+	// import list (BUILD-05 Phase 3): "6 pages", "12 slides", "48 rows",
+	// "412 lines". Unit is singular ("page"); the frontend pluralises,
+	// because only the side printing the number knows which form it needs.
+	//
+	// A byte size does not tell a user whether they picked the right file. A
+	// page count does. See engine.Document for why "line" is the common
+	// fallback rather than an error case.
+	UnitCount int    `json:"unitCount"`
+	Unit      string `json:"unit"`
 }
 
 // ImportResult reports one import action: what loaded and what failed.
@@ -302,6 +312,8 @@ func (a *App) documentInfosLocked() []DocumentInfo {
 			Experimental:     d.Format == engine.FormatPDF,
 			IsGrid:           d.Grid != nil,
 			PreviewTruncated: truncated,
+			UnitCount:        d.UnitCount,
+			Unit:             d.Unit,
 		})
 	}
 	return infos

@@ -194,6 +194,25 @@ export function patternMatches(expr) {
   return bridge().PatternMatches(expr);
 }
 
+/**
+ * setEntityPlaceholder(category, canonical, placeholder) renames the
+ * placeholder one value is replaced with (BUILD-05 Phase 3).
+ *
+ * REJECTS with an actionable message when the shape is wrong or the
+ * placeholder already belongs to another value; the caller shows that message
+ * verbatim. The rename takes effect on the next run or fast re-run, not
+ * retroactively.
+ */
+export function setEntityPlaceholder(category, canonical, placeholder) {
+  return bridge().SetEntityPlaceholder(category, canonical, placeholder);
+}
+
+/** entityPlaceholder(category, canonical) resolves to the placeholder
+ *  currently assigned to a value, or "" before the first run. */
+export function entityPlaceholder(category, canonical) {
+  return bridge().EntityPlaceholder(category, canonical);
+}
+
 // --- Run screen (Phase 8) -------------------------------------------------
 
 /** runPipeline(request) starts the pipeline; resolves immediately (results
@@ -250,9 +269,32 @@ export function saveSameFormat(name, ext, fields, filename) {
   return bridge().SaveSameFormat(name, ext, fields, filename);
 }
 
-/** exportAllZip() saves every anonymised document into one zip. */
+/** exportAllZip() saves every anonymised document into one zip, asking for a
+ *  location with the native save dialog. */
 export function exportAllZip() {
   return bridge().ExportAllZip();
+}
+
+/**
+ * chooseExportFolder() opens the native folder picker and resolves to the
+ * chosen path, or "" when the user cancelled (BUILD-05 Phase 3).
+ * Nothing is written; it only picks.
+ */
+export function chooseExportFolder() {
+  return bridge().ChooseExportFolder();
+}
+
+/**
+ * exportAllZipTo(dir) writes the batch zip straight into a folder the user
+ * already chose, with no second dialog, and resolves to the full path written.
+ *
+ * This is the only write with no dialog in front of it, and it is allowed
+ * because the folder was chosen explicitly and the zip carries no
+ * re-identification key (BUILD-05 decision 4). An existing archive is never
+ * overwritten: the new one is numbered.
+ */
+export function exportAllZipTo(dir) {
+  return bridge().ExportAllZipTo(dir);
 }
 
 /** copyDocument(name) puts the anonymised text on the clipboard. */

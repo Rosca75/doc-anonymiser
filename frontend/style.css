@@ -11,6 +11,21 @@
 
 * { box-sizing: border-box; }
 
+/* --- Chrome heights ------------------------------------------------------
+   Fixed, and taken straight from the mock-ups: header 80px, step bar 68px,
+   app footer 60px. They are fixed because the workspace between them is
+   what has to fit the window; a chrome bar that grew would push a card body
+   out of view instead of scrolling it. Declared as variables so a screen can
+   compute against them if it ever needs to. */
+:root {
+  --chrome-header: 5rem;    /* 80px */
+  --chrome-stepbar: 4.25rem;/* 68px */
+  --chrome-footer: 3.75rem; /* 60px */
+  --card-radius: 8px;
+  --workspace-pad: 1.5rem 2.5rem;  /* the mock-ups' 24px 40px */
+}
+
+
 body {
   margin: 0;
   font-family: var(--font-body);
@@ -39,7 +54,7 @@ h1, h2, h3, h4 {
   display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
   gap: 1.25rem;
   padding: 0 2.5rem;
-  height: 5rem;
+  height: var(--chrome-header);
   background: var(--bg);
   border-bottom: 1px solid var(--gray-4);
 }
@@ -68,29 +83,59 @@ h1, h2, h3, h4 {
 }
 .topnav .topnav-active:hover { border-bottom-color: var(--gray-1); }
 
-/* Anonymisation workflow banner (BUILD-04 CR7): the five step chips moved
-   out of the header into this strip, which appears only on the wizard
-   screen. The header above it is now identical everywhere. */
-.workflow-banner {
-  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
-  padding: 0.5rem 1rem;
-  background: var(--gray-6);
+/* The wizard step bar (BUILD-04 CR7, relaid out for BUILD-05 Phase 2): the
+   step indicators live here rather than in the header, and only on the wizard
+   screen, so the header above is identical everywhere.
+
+   The bar is a FIXED 68px and never wraps: it is chrome, and chrome that
+   reflows moves the workspace boundary under the user's cursor. White, not
+   grey, because it now reads as a continuation of the header. */
+.stepbar {
+  flex: none;
+  display: flex; align-items: center; gap: 1.75rem;
+  padding: 0 2.5rem;
+  height: var(--chrome-stepbar);
+  background: var(--bg);
   border-bottom: 1px solid var(--gray-4);
 }
-.workflow-title {
-  font-family: var(--font-heading); font-size: 0.95rem; color: var(--text);
-}
-.workflow-steps { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+/* The back link that replaced the "Anonymisation workflow" title. Larger than
+   body text because it is the bar's one piece of prose, and quiet because it
+   is a way out, not the way forward. */
+.stepbar-home { font-size: 1.15rem; letter-spacing: -0.01em; padding: 0.2rem 0; }
+.stepbar-home:hover { background: none; color: var(--accent); }
+.stepbar-divider { flex: none; width: 1px; height: 1.875rem; background: var(--gray-4); }
+.steps { display: flex; align-items: stretch; gap: 0.4rem; height: 100%; }
 
-/* Step chips: quiet grey fill; the ACTIVE chip is marked by an orange
-   underline, not an orange flood fill (one loud element per view rule). */
-.chip {
-  border: 1px solid var(--gray-4); background: var(--gray-5); color: var(--text);
-  border-bottom: 3px solid transparent;
-  border-radius: 6px; padding: 0.3rem 0.9rem; font-size: 0.85rem; cursor: pointer;
+/* One step: a numbered circle and its label, sharing a full-height hit area
+   so the whole thing is clickable. The ACTIVE step is marked by an orange
+   underline and an orange circle outline, never an orange flood fill: the one
+   loud element per view belongs to that view's primary button. */
+.step-item {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0 0.5rem; height: 100%;
+  border: none; border-radius: 0; background: none;
+  border-bottom: 2px solid transparent;
 }
-.chip.active { border-bottom-color: var(--accent); background: var(--gray-6); }
-.chip.disabled { opacity: 0.45; cursor: not-allowed; }
+.step-item:hover { background: none; }
+.step-circle {
+  display: grid; place-items: center; flex: none;
+  width: 1.6rem; height: 1.6rem; border-radius: 50%;
+  border: 1.5px solid var(--gray-3);
+  font-size: 0.8rem; color: var(--muted);
+}
+.step-circle .icon svg { width: 0.95em; height: 0.95em; }
+.step-label { font-size: 1rem; color: var(--muted); }
+
+.step-item.active { border-bottom-color: var(--accent); }
+.step-item.active .step-circle { border-color: var(--accent); color: var(--accent); }
+.step-item.active .step-label { color: var(--text); }
+
+/* A step already passed through: darker than a step not yet reached, quieter
+   than the one the user is on. The check mark is what says "done". */
+.step-item.done .step-circle { border-color: var(--ink-2); color: var(--ink-2); }
+.step-item.done .step-label { color: var(--ink-2); }
+
+.step-item.disabled { opacity: 0.55; cursor: not-allowed; }
 
 /* Right-hand header cluster (BUILD-05 CR2): the live status badges, then
    the Help/Settings icon buttons from the mockup, justified to the grid's
@@ -108,14 +153,24 @@ h1, h2, h3, h4 {
 .header-actions .icon-btn:hover { background: none; color: var(--text); }
 .header-actions .icon-btn .icon svg { width: 1.4em; height: 1.4em; }
 
-/* #view is the scroll owner AND a flex column, so a step view can ask to
-   fill the leftover height instead of collapsing to its content
-   (BUILD-04 CR8). Steps that do not ask keep content height, exactly as
-   before, because a flex item only grows when it says so. */
+/* #view is the WORKSPACE HOST, and under the BUILD-05 fixed-height contract
+   it is emphatically NOT a scroll owner: it takes the height the chrome
+   leaves, and whatever it holds has to fit. overflow: hidden is the
+   load-bearing declaration. Without it, a card that mis-sized itself would
+   scroll the page instead of showing the bug, which is how the previous
+   layout drifted into scrolling in two places at once.
+
+   min-height: 0 lets it shrink below its content, so the cards inside can
+   scroll their own bodies (frontend/CLAUDE.md, the layout contract). */
 main#view {
-  flex: 1; overflow: auto; padding: 1rem; background: var(--gray-6);
+  flex: 1; min-height: 0; overflow: hidden;
+  padding: var(--workspace-pad);
+  background: var(--gray-6);
   display: flex; flex-direction: column;
 }
+/* Home is the one screen that is a page rather than a workspace: it is read
+   top to bottom, so it may scroll. */
+main#view.page { overflow-y: auto; }
 
 /* Chrome-level error strip (BUILD-04 CR6), e.g. the documentation window
    refusing to open. It sits between the banner and the view so it is
@@ -123,19 +178,12 @@ main#view {
 .shell-error { padding: 0.75rem 1rem 0; }
 .shell-error .banner { margin-bottom: 0; }
 
-.navbar {
-  display: flex; justify-content: space-between;
-  padding: 0.6rem 1rem;
-  background: var(--bg);
-  border-top: 1px solid var(--gray-4);
-}
-
 /* Permanent app footer (BUILD-05 CR2), shown under every screen: the
    version string and the local-processing reassurance from the mockup. */
 .appfooter {
   flex: none;
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0 2.5rem; height: 3.5rem;
+  padding: 0 2.5rem; height: var(--chrome-footer);
   background: var(--bg);
   border-top: 1px solid var(--gray-4);
   font-size: 0.85rem; color: var(--muted);
@@ -143,6 +191,425 @@ main#view {
 .local-processing { display: flex; align-items: center; gap: 0.55rem; }
 /* Status colour is functional (processing IS local), not decorative. */
 .status-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--ok); }
+
+/* ========================================================================
+   BUILD-05 design system: the fixed-height card workspace.
+
+   Everything from here to the "Buttons" heading is the shared kit every
+   wizard screen draws from, so no screen invents its own spacing, tint or
+   card. The builders that emit this markup live in ui.js; the layout
+   contract they assume is documented in frontend/CLAUDE.md.
+   ======================================================================== */
+
+/* --- The workspace ------------------------------------------------------
+   A screen's root element. Two columns by default (rail + workspace, the
+   Identify proportion); screens override grid-template-columns.
+
+   min-height: 0 appears on EVERY link of the chain from here down to the
+   scrolling element. Without it a flex or grid item keeps its default
+   min-height: auto, refuses to shrink below its content, and pushes the
+   whole column taller than the window: the symptom is the page body
+   scrolling instead of the card. */
+.workspace {
+  flex: 1; min-height: 0;
+  display: grid; gap: 1.25rem;
+  grid-template-columns: 1fr 2fr;
+}
+/* Import: a narrower list column beside a wider preview. */
+.workspace-import { grid-template-columns: minmax(23rem, 0.9fr) 1.1fr; }
+/* Anonymise and Export: a fixed-measure column of cards beside one big card.
+   Fixed rather than fractional because the cards in it are forms, and a form
+   that changes width between screens reads as a different form. */
+.workspace-side { grid-template-columns: 24.5rem minmax(0, 1fr); }
+
+/* A column of stacked cards that scrolls as a whole, used for the left side
+   of Anonymise and Export. The cards inside it do NOT scroll individually:
+   they are short forms, and nesting a second scroller inside a scroller is
+   how a user loses their place. */
+.card-column {
+  display: flex; flex-direction: column; gap: 1rem;
+  min-height: 0; overflow-y: auto; padding-right: 2px;
+}
+.card-column > .card { flex: none; }
+
+/* --- The card ----------------------------------------------------------
+   White surface, hairline border, and a head/body/foot split where the head
+   and foot stay put and only the body scrolls. overflow: hidden on the card
+   is what keeps the head's background inside the rounded corner. */
+.card {
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--bg);
+  border: 1px solid var(--gray-4);
+  border-radius: var(--card-radius);
+  overflow: hidden;
+}
+
+.card-head {
+  flex: none;
+  display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+  padding: 1.25rem 1.5rem 1rem;
+  border-bottom: 1px solid var(--gray-5);
+}
+/* Head content that is a row of controls rather than a title sits on the
+   centre line instead of the baseline. */
+.card-head.with-controls { align-items: center; }
+.card-head h2 { margin: 0; font-size: 1.2rem; letter-spacing: -0.01em; }
+.card-head-left { display: flex; align-items: baseline; gap: 0.75rem; min-width: 0; }
+.card-head-right { display: flex; align-items: center; gap: 0.6rem; flex: none; }
+/* The card subtitle carries the sentence the deleted per-step explainer
+   banner used to carry (BUILD-05 section 2). */
+.card-sub { font-size: 0.85rem; color: var(--muted); }
+/* A right-aligned uppercase caption ("WORKING FORM", "SAVE ONE FILE AT A
+   TIME"): states a fact about the card, never a control. */
+.card-caption {
+  flex: none; font-size: 0.75rem; letter-spacing: 0.06em;
+  color: var(--ink-3); white-space: nowrap;
+}
+
+/* THE scroll owner. Nothing else in a card scrolls. */
+.card-body {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 1.25rem 1.5rem 1.5rem;
+}
+/* A body that lays its children out as a column with consistent spacing,
+   which is what most of them want. */
+.card-body.stack { display: flex; flex-direction: column; gap: 0.9rem; }
+/* A body holding a monospaced preview: it may scroll in BOTH directions,
+   because a markdown table is legitimately wider than the card and must not
+   widen the page instead. */
+.card-body.pane { overflow: auto; padding: 1.5rem 1.75rem; }
+
+.card-foot {
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--gray-5);
+  background: var(--bg);
+}
+
+/* The rail is a card; it is named separately because its padding is tighter
+   (it is a third of the width and holds a form, not a table). */
+.rail .card-head { padding: 1.25rem 1.4rem 1rem; }
+.rail .card-body { padding: 1.25rem 1.4rem 1.5rem; display: flex; flex-direction: column; gap: 1.6rem; }
+
+/* A card whose content can re-identify people (the value mapping, the
+   session file, a properties review). The tint is functional, not
+   decorative: it marks "this is the key". */
+.card.key-bearing { border-color: var(--key-edge); }
+.card.key-bearing > .card-head {
+  background: var(--key-bg);
+  border-bottom: 1px solid var(--key-edge-soft);
+}
+.key-tag {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--key-fg); white-space: nowrap;
+}
+
+/* --- Section labels ----------------------------------------------------
+   The uppercase tracked label that opens each block of the rail. */
+.section-label {
+  font-size: 0.75rem; font-weight: 700; letter-spacing: 0.1em;
+  color: var(--ink-3); text-transform: uppercase;
+}
+/* A quieter, smaller variant for a table's own column captions. */
+.section-label.mini { font-size: 0.65rem; letter-spacing: 0.06em; color: var(--muted); }
+
+/* --- Tab bars ----------------------------------------------------------
+   Two kinds, and the difference is deliberate. A `.tabbar` switches the
+   MAIN content of a card, so it is an underlined row that reads as
+   navigation. A `.chip-row` picks one option out of a set, so it is a row of
+   pills. Neither uses orange: the one loud element belongs to the primary
+   button in the footer. */
+.tabbar {
+  flex: none;
+  display: flex; align-items: stretch; gap: 1.5rem;
+  padding: 0 1.5rem;
+  border-bottom: 1px solid var(--gray-5);
+}
+.tabbar .tab {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.75rem 0 0.8rem;
+  border: none; border-bottom: 2px solid transparent; border-radius: 0;
+  background: none; color: var(--muted);
+  font-size: 0.9rem;
+  margin-bottom: -1px;
+}
+.tabbar .tab:hover { background: none; color: var(--text); }
+.tabbar .tab.active { color: var(--text); border-bottom-color: var(--text); }
+.tabbar .tab:disabled { color: var(--gray-3); }
+
+.count-badge {
+  font-size: 0.72rem; padding: 0.05rem 0.45rem; border-radius: 10px;
+  background: var(--gray-5); color: var(--ink-3);
+}
+.count-badge.active { background: var(--text); color: #FFFFFF; }
+
+/* --- Chip rows ---------------------------------------------------------
+   The preset picker and the rail's own tab picker. The selected chip is
+   black on white text, which is the loudest a non-hero control gets. */
+.chip-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.tint-chip {
+  padding: 0.4rem 0.85rem; border-radius: 20px;
+  border: 1px solid var(--gray-4); background: var(--bg); color: var(--ink-2);
+  font-size: 0.8rem;
+}
+.tint-chip:hover { border-color: var(--text); background: var(--bg); }
+.tint-chip.active { border-color: var(--text); background: var(--text); color: #FFFFFF; }
+.tint-chip.active:hover { background: var(--text); }
+/* The rail's tab chips are squarer and smaller: they switch a panel, they do
+   not pick a value. */
+.tint-chip.square { border-radius: 6px; padding: 0.35rem 0.7rem; font-size: 0.78rem; }
+
+/* --- Collapsible groups (ui.js collapsibleGroup) ----------------------- */
+.cgroup { border: 1px solid var(--gray-5); border-radius: var(--card-radius); overflow: hidden; }
+.cgroup-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  padding: 0.55rem 0.8rem;
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--gray-5);
+}
+.cgroup-title {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 0.45rem;
+  font-size: 0.85rem; cursor: pointer; user-select: none;
+}
+.cgroup-head-right { display: flex; align-items: center; gap: 0.25rem; flex: none; }
+.cgroup-count { font-size: 0.75rem; color: var(--muted); }
+.cgroup-body { display: flex; flex-direction: column; }
+.cgroup[data-open="false"] > .cgroup-body { display: none; }
+.cgroup[data-open="false"] > .cgroup-head { border-bottom: none; }
+/* The chevron points down when open, right when closed. Rotating one icon
+   beats swapping two: the transition then reads as the same thing moving. */
+.chevron { flex: none; color: var(--muted); transition: transform 0.15s; }
+.chevron.closed { transform: rotate(-90deg); }
+
+/* Icon-only bulk buttons in a group header (select all / deselect all). */
+.icon-action {
+  width: 1.5rem; height: 1.5rem; padding: 0;
+  border: none; background: none; color: var(--muted);
+}
+.icon-action:hover { background: none; color: var(--text); }
+.icon-action.danger:hover { color: var(--err); }
+.icon-action.ok:hover { color: var(--ok); }
+/* A bordered variant for the per-row accept/reject pair, where the buttons
+   need to read as two distinct targets. */
+.icon-action.boxed {
+  width: 1.9rem; height: 1.9rem;
+  border: 1px solid var(--gray-4); border-radius: 6px;
+  background: var(--bg); color: var(--ink-2);
+}
+.icon-action.boxed:hover { background: var(--bg); }
+.icon-action.boxed.ok:hover { border-color: var(--ok); color: var(--ok); }
+.icon-action.boxed.danger:hover { border-color: var(--err); color: var(--err); }
+
+/* --- Sortable table headers ------------------------------------------- */
+.grid-head {
+  display: grid; gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--gray-5);
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.07em;
+  color: var(--ink-3);
+}
+.grid-row {
+  display: grid; gap: 0.75rem; align-items: center;
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--gray-6);
+  font-size: 0.85rem;
+}
+.grid-row:hover { background: var(--surface-subtle); }
+.grid-box { border: 1px solid var(--gray-5); border-radius: var(--card-radius); overflow: hidden; }
+.grid-empty { padding: 2rem 1rem; text-align: center; font-size: 0.85rem; color: var(--muted); }
+
+/* A sort button looks like the heading it replaces, not like an action: the
+   table has enough buttons already. The arrow shows which column is sorted
+   and which way, and dims when the column is not the sort key. */
+.sort-btn {
+  display: flex; align-items: center; gap: 0.25rem;
+  padding: 0; border: none; background: none;
+  font: inherit; font-weight: 700; letter-spacing: 0.07em;
+  color: var(--ink-3);
+}
+.sort-btn:hover { background: none; color: var(--text); }
+.sort-btn.active { color: var(--text); }
+.sort-arrow { flex: none; opacity: 0.35; transition: transform 0.15s; }
+.sort-btn.active .sort-arrow { opacity: 1; }
+.sort-arrow.asc { transform: rotate(180deg); }
+
+/* A filter select living IN a header cell: no border, no background, so the
+   header row still reads as one strip of captions. */
+.head-select {
+  width: 100%; min-width: 0; padding: 0;
+  border: none; background: none;
+  font: inherit; font-weight: 700; letter-spacing: 0.07em;
+  color: var(--ink-3); cursor: pointer;
+}
+.head-select.filtered { color: var(--text); }
+
+/* --- Stat tiles ------------------------------------------------------- */
+.stat-row {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.4rem 1.2rem;
+  border-top: 1px solid var(--gray-5); padding-top: 0.6rem;
+}
+.stat-tile { display: flex; align-items: baseline; gap: 0.35rem; }
+.stat-value { font-size: 1.15rem; letter-spacing: -0.01em; }
+.stat-label { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.06em; color: var(--ink-3); }
+
+/* --- Per-screen step footer (ui.js stepFooter) ------------------------ */
+.step-footer {
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--gray-5);
+  background: var(--bg);
+}
+/* A standalone footer card, for screens whose footer is a card of its own
+   rather than the foot of the workspace card (Anonymise, Export). */
+.step-footer.standalone {
+  border: 1px solid var(--gray-4); border-radius: var(--card-radius);
+  padding: 0.85rem 1.5rem;
+}
+.step-back { color: var(--ink-2); font-size: 0.875rem; padding: 0.2rem 0; }
+.step-back:hover { background: none; color: var(--accent); }
+.step-footer-right { display: flex; align-items: center; gap: 1rem; }
+.step-hint { font-size: 0.8rem; color: var(--muted); }
+/* The step's primary action is the ONE loud element on the screen. */
+.step-next { height: 2.6rem; padding: 0 1.4rem; letter-spacing: 0.04em; }
+
+/* --- Notices (toast.js) ---------------------------------------------- */
+.notice {
+  flex: none;
+  display: flex; align-items: center; gap: 0.55rem;
+  padding: 0.7rem 1.25rem;
+  border-top: 1px solid var(--notice-info-edge);
+  background: var(--notice-info-bg); color: var(--notice-info-fg);
+  font-size: 0.8rem; line-height: 1.45;
+}
+.notice .notice-text { flex: 1; min-width: 0; }
+.notice .icon { flex: none; }
+.notice-ok { border-top-color: var(--notice-ok-edge); background: var(--notice-ok-bg); color: var(--notice-ok-fg); }
+.notice-warn { border-top-color: var(--notice-warn-edge); background: var(--notice-warn-bg); color: var(--notice-warn-fg); }
+.notice .notice-dismiss {
+  flex: none; width: 1.25rem; height: 1.25rem; padding: 0;
+  border: none; background: none; color: inherit; opacity: 0.7;
+}
+.notice .notice-dismiss:hover { background: none; opacity: 1; }
+
+/* --- The in-app confirm (modal.js) ----------------------------------- */
+/* Replaces every native confirm() (BUILD-05 decision 10). Fixed rather than
+   absolute so it covers the whole window including the chrome: a question
+   the user must answer should not leave the step bar clickable behind it. */
+.modal-layer {
+  position: fixed; inset: 0; z-index: 60;
+  display: grid; place-items: center;
+  background: rgba(0, 0, 0, 0.28);
+  padding: 2.5rem;
+}
+.modal {
+  width: 27.5rem; max-width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--gray-4); border-radius: var(--card-radius);
+  overflow: hidden;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
+}
+/* A question about something key-bearing wears the key tint, so "this
+   exports the re-identification key" looks different from "this clears a
+   step". */
+.modal.key-bearing { border-color: var(--key-edge); }
+.modal-head {
+  display: flex; align-items: center; gap: 0.55rem;
+  padding: 0.75rem 1.15rem;
+  border-bottom: 1px solid var(--gray-5);
+  font-size: 0.95rem;
+}
+.modal.key-bearing .modal-head {
+  background: var(--key-bg); border-bottom-color: var(--key-edge-soft);
+}
+.modal.key-bearing .modal-head .icon { color: var(--key-fg); }
+.modal-body { padding: 1rem 1.15rem; display: flex; flex-direction: column; gap: 0.9rem; }
+.modal-body p { margin: 0; font-size: 0.82rem; line-height: 1.55; color: var(--ink-2); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
+
+/* --- Shared small pieces --------------------------------------------- */
+/* A format badge (DOCX, PPTX) and the source badges. Both are read-only
+   labels, so neither is a button. */
+.fmt-badge {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--ink-2); background: var(--gray-5);
+  padding: 0.1rem 0.4rem; border-radius: 4px; white-space: nowrap;
+}
+.src-badge {
+  justify-self: start;
+  font-size: 0.72rem; letter-spacing: 0.03em;
+  padding: 0.15rem 0.55rem; border-radius: 4px; white-space: nowrap;
+  color: var(--src-smart-fg); background: var(--src-smart-bg);
+}
+.src-badge.src-local-ai { color: var(--src-ai-fg); background: var(--src-ai-bg); }
+.src-badge.src-pattern { color: var(--src-pattern-fg); background: var(--src-pattern-bg); }
+.badge-experimental {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--experimental-fg); background: var(--experimental-bg);
+  padding: 0.1rem 0.4rem; border-radius: 4px; white-space: nowrap;
+}
+.state-tag {
+  font-size: 0.75rem; padding: 0.1rem 0.5rem; border-radius: 4px; white-space: nowrap;
+  color: var(--valid-fg); background: var(--valid-bg);
+}
+.state-tag.bad { color: var(--invalid-fg); background: var(--invalid-bg); }
+/* The caution strip: a warning from the run that the user can dismiss. */
+.caution {
+  display: flex; align-items: flex-start; gap: 0.55rem;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--caution-edge); border-radius: 6px;
+  background: var(--caution-bg); color: var(--caution-fg);
+  font-size: 0.8rem; line-height: 1.5;
+}
+.caution .icon { flex: none; margin-top: 1px; }
+.caution-text { flex: 1; min-width: 0; }
+
+/* A removable chip: the allowlist terms, an entity's variants, a pending
+   value. The label is text, the × is the only control. */
+.chip-tag {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-size: 0.8rem; color: var(--text);
+  background: var(--gray-6); border: 1px solid var(--gray-5);
+  padding: 0.2rem 0.4rem 0.2rem 0.65rem; border-radius: 20px;
+}
+.chip-tag.pending { background: var(--key-bg); border-color: var(--key-edge-soft); }
+.chip-tag .chip-remove {
+  width: 1.05rem; height: 1.05rem; padding: 0;
+  border: none; border-radius: 50%; background: none; color: var(--muted);
+}
+.chip-tag .chip-remove:hover { background: none; color: var(--err); }
+/* The dashed "add" chip that ends a chip row. */
+.chip-add {
+  border: 1px dashed var(--gray-3); background: none; color: var(--ink-2);
+  border-radius: 20px; padding: 0.2rem 0.65rem; font-size: 0.8rem;
+}
+.chip-add:hover { border-color: var(--text); color: var(--text); background: none; }
+
+/* The drop zone on the import screen. */
+.drop-zone {
+  display: flex; flex-direction: column; align-items: center; gap: 0.6rem;
+  text-align: center; padding: 2rem 1.75rem;
+  border: 2px dashed var(--gray-3); border-radius: 10px;
+  background: var(--surface-subtle);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.drop-zone:hover { border-color: var(--gray-1); background: var(--gray-6); }
+.drop-zone.dragging { border-color: var(--accent); background: var(--tint-orange-3); }
+.drop-zone .icon svg { width: 2.4rem; height: 2.4rem; color: var(--gray-2); }
+.drop-title { font-size: 0.95rem; }
+.drop-hint { font-size: 0.8rem; color: var(--muted); }
+
+/* A monospaced read-only value: a placeholder, an occurrence count, a path. */
+.mono { font-family: var(--font-mono); }
+.ph-chip {
+  font-family: var(--font-mono); font-size: 0.78rem;
+  color: var(--text); background: var(--gray-6);
+  border: 1px solid var(--gray-5); padding: 0.15rem 0.5rem; border-radius: 4px;
+}
 
 /* --- Buttons (ui.js kinds) ---------------------------------------------- */
 
@@ -188,48 +655,24 @@ input, select {
   background: var(--bg); color: var(--text);
 }
 
-.form-row { display: flex; align-items: center; gap: 0.6rem; margin: 0.5rem 0; flex-wrap: wrap; }
-.form-row label { min-width: 4.5rem; color: var(--muted); font-size: 0.9rem; }
-
-.radio-row { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.3rem 0; cursor: pointer; }
+/* .form-row and .radio-row are GONE (BUILD-05 Phase 9). They were the generic
+   "label plus control" and "checkbox plus label" rows every panel used. Three
+   named rules replaced them, because the three cases they were serving want
+   different things: .add-row (a growing input beside fixed companions),
+   .cat-row (a checkbox, a label and a right-aligned example) and .rail-field
+   (a fixed-measure label so a column of inputs lines up). */
 
 /* --- Generic building blocks -------------------------------------------- */
 
-.panel {
-  background: var(--bg);
-  border: 1px solid var(--gray-4);
-  border-radius: 8px;
-  padding: 1rem 1.25rem;
-  margin-bottom: 1rem;
-}
-
-.panel-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-  margin-bottom: 0.6rem;
-}
-.panel-head h2 { margin: 0; font-size: 1.15rem; }
-.panel-head-right { display: flex; align-items: center; gap: 0.5rem; }
-
-/* Collapsible panels (ui.js panel helper): the header row toggles
-   data-collapsed on the section; the body then hides. */
-.panel > .panel-head.collapsible { cursor: pointer; user-select: none; }
-.panel[data-collapsed="true"] > .panel-body { display: none; }
-.panel[data-collapsed="true"] { padding-bottom: 0.6rem; }
-.panel-toggle { border: none; background: none; padding: 0.1rem; color: var(--muted); }
+/* The .panel system is GONE (BUILD-05 Phase 9), with ui.js panel() and
+   wirePanels(). It was the collapsible box every screen was built from before the
+   relayout. Two rules replaced it, each doing one of the two jobs it did at once:
+   .card is the fixed-height surface whose body is the only scroll owner, and
+   .cgroup is the foldable block. */
 
 .hint { color: var(--muted); font-size: 0.85rem; }
 /* Muted hint text still sits on light surfaces; keep it readable. */
 .hint strong { color: var(--text); font-weight: 700; }
-
-/* Step banner: the per-step explainer strip (quiet grey, black text). */
-.step-banner {
-  display: flex; align-items: center; gap: 0.75rem;
-  background: var(--gray-6); border: 1px solid var(--gray-4);
-  border-radius: 8px; padding: 0.6rem 0.9rem; margin-bottom: 1rem;
-  font-size: 0.9rem; color: var(--text);
-}
-.step-banner .icon { color: var(--gray-1); }
-.step-banner .banner-title { font-family: var(--font-heading); margin-right: 0.5rem; }
 
 .badge {
   display: inline-block; padding: 0.2rem 0.7rem; border-radius: 999px;
@@ -259,24 +702,81 @@ input, select {
 .banner.warn  { background: var(--gray-6); border: 1px solid var(--warn); color: var(--text); }
 .banner .dismiss { border: none; background: none; font-weight: 700; }
 
-/* --- Configure sub-tabs (BUILD-02 Phase 6a) -------------------------------- */
+/* --- Identify rail (BUILD-05 Phase 5) ------------------------------------ */
 
-.subtabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+/* The rail's own tab row sits between the head and the body, so it does not
+   scroll with the tab's content. */
+.rail-tabs {
+  flex: none;
+  padding: 0.75rem 1.4rem;
+  border-bottom: 1px solid var(--gray-5);
+}
 
-/* Panel-header actions (BUILD-04 CR10 select-all, CR11 clear-all). They
-   stay quiet ghost buttons: a bulk action is not the hero of the view. */
-.panel-head-right .btn-ghost { font-size: 0.85rem; padding: 0.2rem 0.5rem; }
+/* One block of the Scope tab: a section label, its control, and its hint. The
+   rail's card-body already spaces the blocks apart, so a block only has to
+   space its own parts. */
+.rail-block { display: flex; flex-direction: column; gap: 0.6rem; }
+.rail-block .hint { margin: 0; line-height: 1.5; }
 
-/* Detection confidence slider (BUILD-04 CR9). The read-out sits next to
-   the track so the number and its plain-language effect are read
-   together. */
-#min-confidence { flex: 1; min-width: 12rem; max-width: 24rem; accent-color: var(--accent); }
-#min-confidence-value {
-  font-family: var(--font-mono); font-size: 0.9rem;
+.rail-select { width: 100%; padding: 0.5rem; cursor: pointer; }
+
+/* A labelled field: the label keeps a fixed measure so the inputs of a tab line
+   up in a column, which is what makes a stack of them read as one form. */
+.rail-field {
+  display: grid; grid-template-columns: 1fr 6rem; gap: 0.6rem;
+  align-items: center; font-size: 0.85rem;
+}
+.rail-field-label { color: var(--text); }
+.rail-field input, .rail-field select { width: 100%; min-width: 0; }
+
+.rail-status { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.rail-status .hint { font-size: 0.78rem; }
+
+/* The confidence slider and its read-out sit on one line, so the number and the
+   sentence explaining it are read together. */
+.rail-slider { display: flex; align-items: center; gap: 0.75rem; }
+.rail-slider input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.rail-slider output {
+  font-family: var(--font-mono); font-size: 0.85rem;
   min-width: 2.5rem; text-align: right;
 }
-.preset-chip { cursor: pointer; }
-.preset-chip.active { border-bottom-color: var(--accent); background: var(--gray-6); font-weight: 700; }
+
+/* One category row: a checkbox, its label, and its example right-aligned and
+   truncated. The example is a reminder of the FORMAT, so losing its tail to an
+   ellipsis costs nothing (the full string is the title attribute). */
+.cat-row {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.4rem 0.8rem;
+  border-top: 1px solid var(--gray-6);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.cat-row:first-child { border-top: none; }
+.cat-row:hover { background: var(--surface-subtle); }
+.cat-row input[type="checkbox"] { flex: none; accent-color: var(--text); }
+.cat-label { flex: 1; min-width: 0; }
+.cat-example {
+  flex: none; max-width: 58%;
+  text-align: right; font-size: 0.78rem; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* The Cloud AI placeholder: dashed, because a dashed border is the standard
+   visual language for "this will hold something later" and it stops the panel
+   reading as a control that is merely disabled. */
+.placeholder-panel {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0.75rem;
+  padding: 1.4rem 1.1rem;
+  border: 1px dashed var(--gray-3); border-radius: var(--card-radius);
+  background: var(--surface-subtle);
+}
+.placeholder-panel .hint { margin: 0; line-height: 1.55; }
+
+/* The settings error strip lives at the rail's foot, outside the scrolling
+   body, so a rejected setting cannot scroll out of sight. */
+#settings-error { flex: none; }
+#settings-error:empty { display: none; }
+#settings-error .banner { margin: 0; border-radius: 0; }
 
 /* --- Home / documentation screens ---------------------------------------- */
 
@@ -332,162 +832,371 @@ input, select {
 .home-step-label { font-size: 0.9rem; margin-bottom: 0.2rem; }
 .home-step-body { font-size: 0.8rem; line-height: 1.45; color: var(--muted); }
 
-/* --- Import view ---------------------------------------------------------- */
+/* --- Import screen (BUILD-05 Phase 4) ------------------------------------ */
 
-/* The import step is the one step that fills the available height, so its
-   pane divider spans top to bottom BEFORE any preview is loaded
-   (BUILD-04 CR8). Previously the grid row was as tall as its tallest
-   child, which with an empty preview pane was a couple of lines of hint
-   text, leaving a stub of a divider. min-height: 0 on each link of the
-   chain is what lets the inner panes scroll instead of pushing the grid
-   taller than the window. */
-.step-view-import { flex: 1; min-height: 0; }
-.step-view-import .import-view { height: 100%; display: flex; flex-direction: column; }
-.step-view-import .import-columns { flex: 1; min-height: 0; }
-/* Each pane is itself a column: its heading stays put and only the list
-   or the preview inside it scrolls, so the two panes and the divider
-   between them keep their full height. The max-height override undoes the
-   60vh cap those blocks carry when they are NOT inside a filled pane. */
-.step-view-import .import-columns > .panel { min-height: 0; display: flex; flex-direction: column; }
-.step-view-import .import-columns .doc-list,
-.step-view-import .import-columns .table-scroll,
-.step-view-import .import-columns .md-preview {
-  flex: 1; min-height: 0; overflow: auto; max-height: none;
+/* The document rows. Each is a click target for the preview, with the remove
+   button as the one thing inside it that is NOT that. */
+.doc-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 0.5rem;
 }
-
-/* Two resizable panes separated by a draggable divider (BUILD-02 2g).
-   The column template is set inline from state.importSplit. align-items:
-   stretch (the grid default, spelled out here because it is load-bearing)
-   makes the divider as tall as the row. */
-.import-columns { display: grid; gap: 0; align-items: stretch; }
-.import-divider {
-  width: 6px; cursor: col-resize; align-self: stretch;
-  background: var(--gray-4); border-radius: 3px; margin: 0 0.35rem;
-}
-.import-divider:hover, .import-divider.dragging { background: var(--accent-light); }
-
-.doc-list { list-style: none; margin: 0; padding: 0; }
-.doc-list .empty { color: var(--muted); padding: 0.75rem 0.25rem; }
 
 .doc-row {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.45rem 0.5rem; border-radius: 6px; cursor: pointer;
+  position: relative;
+  display: flex; align-items: center; gap: 0.85rem;
+  padding: 0.7rem 0.85rem 0.7rem 1rem;
+  border: 1px solid var(--gray-5); border-radius: var(--card-radius);
+  background: var(--bg);
+  cursor: pointer;
+  transition: background 0.12s;
 }
 .doc-row:hover { background: var(--gray-6); }
-.doc-row.selected { background: var(--tint-orange-3); }
-.doc-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.doc-size { color: var(--muted); font-size: 0.8rem; }
-.doc-remove { border: none; background: none; color: var(--muted); }
-.doc-remove:hover { color: var(--err); }
 
+/* The SELECTED row: a tinted fill plus an orange bar down its left edge. The
+   bar is the accent's only appearance here, and it is a 3px rule rather than a
+   flood fill, so the card's primary button stays the loud element. */
+.doc-row.selected { border-color: var(--tint-orange-1); background: var(--tint-orange-3); }
+.doc-bar {
+  position: absolute; left: 0; top: 0.5rem; bottom: 0.5rem;
+  width: 3px; border-radius: 3px; background: transparent;
+}
+.doc-row.selected .doc-bar { background: var(--accent); }
+
+.doc-icon {
+  flex: none; display: grid; place-items: center;
+  width: 2.35rem; height: 2.35rem; border-radius: 6px;
+  background: var(--gray-6); color: var(--ink-3);
+}
+.doc-icon svg { width: 1.25rem; height: 1.25rem; }
+
+.doc-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.doc-name { font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+.doc-size, .doc-units { font-size: 0.8rem; color: var(--muted); }
+/* The separator dot between the size and the unit count: decoration only, so
+   it is hidden from assistive technology at the markup level. */
+.doc-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--gray-3); }
+/* The warning count wears the caution foreground so it reads as "look at this"
+   without the full strip's fill, which would dominate the row. */
+.doc-warn {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  font-size: 0.78rem; color: var(--caution-fg); cursor: help;
+}
+.doc-warn .icon svg { width: 0.95rem; height: 0.95rem; }
+.doc-row .doc-remove { flex: none; }
+
+/* --- Preview pane ------------------------------------------------------- */
+
+/* The markdown preview. It sets no max-height: the card body is the scroll
+   owner (the BUILD-05 layout contract), so a preview that tried to cap its own
+   height would leave the card scrolling an element that never overflows. */
 .md-preview {
-  margin: 0; padding: 0.75rem;
-  background: var(--gray-6); border-radius: 8px;
+  margin: 0;
   white-space: pre-wrap; word-break: break-word;
   font-family: var(--font-mono);
-  font-size: 0.85rem;
-  max-height: 60vh; overflow: auto;
+  font-size: 0.85rem; line-height: 1.7;
 }
 
-.table-scroll { max-height: 60vh; overflow: auto; }
+/* A grid preview may be wider than the card, so it scrolls sideways inside its
+   own box rather than widening the page. */
+.table-scroll { overflow-x: auto; }
 
 .grid-table { border-collapse: collapse; font-size: 0.85rem; width: 100%; }
 .grid-table th, .grid-table td {
   border: 1px solid var(--gray-4); padding: 0.3rem 0.55rem; text-align: left;
 }
+/* A sticky header inside the scrolling card body, so the column names stay
+   visible while reading a long sheet. */
 .grid-table th { background: var(--gray-5); position: sticky; top: 0; }
 
-/* --- Values view ----------------------------------------------------------- */
+/* --- Identify workspace (BUILD-05 Phase 6) ------------------------------- */
 
-.entity-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-.entity-table th, .entity-table td { border-bottom: 1px solid var(--gray-4); padding: 0.4rem 0.5rem; text-align: left; }
+/* The tab row sits between the head and the body, so it does not scroll with
+   the tab's content. */
+.workspace-tabs { flex: none; }
 
-/* Suggestions table (BUILD-04 CR14): a real header row, a filter row
-   under it, and the bulk actions above the whole thing (CR15). */
-.candidate-table thead th { background: var(--gray-6); font-weight: 700; }
-.candidate-table thead th:first-child { border-top-left-radius: 6px; }
-.candidate-table .filter-row th { background: var(--bg); font-weight: 400; padding-top: 0.5rem; }
-.candidate-table .filter-row input,
-.candidate-table .filter-row select { width: 100%; font-size: 0.85rem; }
-/* Sort buttons look like headings, not like actions: the table has enough
-   buttons already. The arrow shows which column is sorted. */
-.candidate-table .cand-sort {
-  border: none; background: none; padding: 0; font-weight: 700;
-  color: var(--text); gap: 0.25rem;
+/* The header's search box: a bordered label wrapping an unstyled input, so the
+   magnifier and the field read as one control. */
+.search-box {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0 0.6rem; height: 2.25rem;
+  border: 1px solid var(--gray-4); border-radius: 6px;
+  color: var(--muted);
 }
-.candidate-table .cand-sort:hover { text-decoration: underline; }
-
-/* Bulk Accept all / Deny all, kept as a pair per category so the two
-   always read together. */
-.bulk-row { gap: 1rem; }
-.bulk-pair { display: inline-flex; gap: 0.25rem; }
-
-/* Smart detection settings (BUILD-04 CR13): a folded block, so the tuning
-   is available without pushing the buttons off the screen. */
-.smart-settings {
-  border: 1px solid var(--gray-4); border-radius: 8px;
-  padding: 0.4rem 0.75rem; margin: 0.5rem 0; background: var(--gray-6);
+.search-box:focus-within { border-color: var(--text); }
+.search-box input {
+  width: 9.5rem; border: none; outline: none; background: none;
+  font-size: 0.85rem; color: var(--text); padding: 0;
 }
-.smart-settings > summary { cursor: pointer; font-size: 0.9rem; padding: 0.15rem 0; }
-.smart-settings[open] > summary { margin-bottom: 0.4rem; }
-.smart-settings input[type="number"] { width: 5rem; }
-.smart-settings input[type="range"] { flex: 1; min-width: 8rem; max-width: 16rem; accent-color: var(--accent); }
-.smart-settings output { font-family: var(--font-mono); font-size: 0.9rem; min-width: 2.5rem; }
-.entity-table tr.denied td { opacity: 0.45; text-decoration: line-through; }
 
-/* The variant area is secondary text, but the CHIPS inside it are live
-   controls and must not inherit the muted colour: greyed-out chips read
-   as disabled, which is exactly what was reported (BUILD-04 CR17). */
-.variant-list { color: var(--muted); font-size: 0.8rem; }
-.variant-list .variant-chip {
-  color: var(--text);
-  background: var(--gray-5);
-  border-color: var(--gray-3);
-  font-size: 0.85rem;
-  cursor: grab;                 /* says "you can drag this" before you try */
-  user-select: none;            /* a text selection would cancel the drag */
+/* The detection progress strip, between the head and the tabs so it appears
+   without pushing the tabs around. */
+.detect-progress {
+  flex: none;
+  display: flex; flex-direction: column; gap: 0.4rem;
+  padding: 0.6rem 1.5rem;
+  border-bottom: 1px solid var(--gray-5);
 }
-.variant-list .variant-chip:active { cursor: grabbing; }
-.variant-list .variant-chip:hover { background: var(--tint-orange-3); border-color: var(--accent-light); }
-.variant-list .drag-handle { color: var(--gray-1); cursor: grab; }
-/* The move button is the keyboard and mouse fallback for the drag, so it
-   stays legible rather than fading into the chip. */
-.variant-list .variant-chip .variant-move {
-  color: var(--muted); font-size: 0.75rem; text-decoration: underline;
-  cursor: pointer; border: none; background: none; padding: 0;
-}
-.variant-list .variant-chip .variant-move:hover { color: var(--text); }
-/* Drop target feedback while a chip is being dragged over a value row. */
-.entity-table tr.drop-target > td { background: var(--tint-orange-3); }
-.variant-note:empty { display: none; }
-.variant-note { margin-top: 0.25rem; }
-
-.pill-list { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-.pill {
-  display: inline-flex; align-items: center; gap: 0.35rem;
-  background: var(--gray-5); border: 1px solid var(--gray-3);
-  border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.85rem;
-}
-.pill button { border: none; background: none; padding: 0; color: var(--muted); }
-
-/* --- Run view --------------------------------------------------------------- */
-
-.progress-bar { height: 8px; background: var(--gray-5); border-radius: 4px; overflow: hidden; }
+.detect-progress .hint { margin: 0; font-size: 0.78rem; }
+.progress-bar { height: 6px; background: var(--gray-5); border-radius: 4px; overflow: hidden; }
 .progress-bar > div { height: 100%; background: var(--accent); transition: width 0.2s; }
 
-.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+/* A row with something on the left and controls on the right, wrapping rather
+   than squeezing on a narrow window. */
+.row-between {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.75rem; flex-wrap: wrap;
+}
+.row-between .hint { margin: 0; flex: 1; min-width: 14rem; }
+.bulk-actions { display: flex; gap: 0.5rem; flex: none; }
 
-/* Highlight tints per category family: black text on every fill
-   (BUILD-02 section 5 remapping). */
+/* An add row: a growing input, then its fixed-width companions. */
+.add-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.add-row .grow { flex: 1; min-width: 12rem; }
+.add-row input, .add-row select { padding: 0.5rem 0.65rem; font-size: 0.85rem; }
+
+/* --- The suggestions grid ------------------------------------------------ */
+
+.grid-head .col-actions { text-align: right; }
+.cell-value, .cell-type {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cell-type { font-size: 0.8rem; color: var(--ink-2); }
+.cell-count { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-2); }
+.cell-actions { display: flex; align-items: center; justify-content: flex-end; gap: 0.25rem; }
+
+/* --- Value cards -------------------------------------------------------- */
+
+.value-card {
+  display: flex; flex-direction: column; gap: 0.7rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--gray-5); border-radius: var(--card-radius);
+}
+/* The drop target while a variant chip is being dragged over it. */
+.value-card.drop-target { border-color: var(--accent-light); background: var(--tint-orange-3); }
+
+.value-head { display: flex; align-items: center; gap: 0.6rem; min-width: 0; flex-wrap: wrap; }
+.value-name { font-size: 0.95rem; }
+
+/* The editable placeholder. It reads as a read-only chip until focused, which
+   is the right emphasis: it is editable but rarely edited. */
+.ph-input {
+  width: 7.5rem;
+  font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-2);
+  background: var(--gray-6); border: 1px solid var(--gray-5);
+  padding: 0.15rem 0.5rem; border-radius: 4px;
+}
+.ph-input:focus { border-color: var(--text); color: var(--text); background: var(--bg); }
+.ph-input:disabled { color: var(--muted); cursor: not-allowed; }
+
+.variant-row { align-items: center; gap: 0.45rem; }
+.variant-row .hint { margin: 0; font-size: 0.78rem; }
+.value-note { font-size: 0.78rem; }
+.value-note .hint { margin: 0; }
+/* An error on a row: the invalid tint's foreground, no fill, so it reads as a
+   correction rather than as a warning strip inside a card. */
+.hint.bad { color: var(--invalid-fg); }
+
+/* A variant chip is a DRAG HANDLE as well as a label (BUILD-02 Phase 9d): drag
+   it onto another value card to regroup it. The cursor says so before the user
+   tries, and the text selection is suppressed because selecting text cancels a
+   drag mid-gesture. */
+.variant-chip { cursor: grab; user-select: none; color: var(--text); }
+.variant-chip:active { cursor: grabbing; }
+.variant-chip:hover { background: var(--tint-orange-3); border-color: var(--accent-light); }
+
+/* --- The never-anonymise chip box --------------------------------------- */
+
+.chip-box {
+  display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-start;
+  padding: 1rem;
+  border: 1px solid var(--gray-5); border-radius: var(--card-radius);
+}
+.chip-box .hint { margin: 0; }
+
+/* --- Pattern rows ------------------------------------------------------- */
+
+.pattern-row {
+  display: flex; align-items: center; gap: 0.85rem;
+  padding: 0.7rem 1rem;
+  border-top: 1px solid var(--gray-6);
+  font-size: 0.85rem;
+}
+.pattern-row:first-child { border-top: none; }
+.pattern-row:hover { background: var(--surface-subtle); }
+.pattern-row .spacer { flex: 1; }
+
+/* An inline input that replaces the "add" chip, so adding a variant never opens
+   a dialog (decision 10). */
+.variant-input {
+  width: 11rem; padding: 0.15rem 0.5rem;
+  font-size: 0.8rem; border-radius: 20px;
+}
+
+/* --- Anonymise screen (BUILD-05 Phase 7) --------------------------------- */
+
+/* The screen is a column: the two-column workspace, then its own footer card.
+   min-height: 0 on the workspace is what keeps the footer visible rather than
+   pushed off the bottom by a long left column. */
+.anonymise-view {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; gap: 1rem;
+}
+.anonymise-view > .workspace { flex: 1; min-height: 0; }
+
+.run-actions { display: flex; gap: 0.6rem; }
+.run-actions .btn { flex: 1; }
+.run-progress { display: flex; flex-direction: column; gap: 0.4rem; }
+.run-progress .hint { margin: 0; font-size: 0.78rem; }
+
+/* A foldable card in the left column. It reuses the collapsible-group markup
+   rather than the card head/body split, because these cards do NOT scroll
+   individually: the whole column is one scroller, and a scroller inside a
+   scroller is how a user loses their place. */
+.fold-card { flex: none; }
+.fold-card > .cgroup { border: none; border-radius: inherit; }
+.fold-card > .cgroup > .cgroup-head { padding: 0.7rem 1.1rem; background: var(--bg); }
+.fold-card > .cgroup > .cgroup-head .cgroup-title { font-size: 1rem; }
+.fold-card .fold-body {
+  display: flex; flex-direction: column; gap: 0.8rem;
+  padding: 1rem 1.1rem;
+}
+.fold-card .fold-body > .hint { margin: 0; line-height: 1.5; }
+
+/* --- The selected-placeholder card -------------------------------------- */
+
+.selected-pair { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.selected-pair .hint { margin: 0; }
+.selected-original { font-size: 0.875rem; }
+/* A label above its input rather than beside it: the rail's two-column field
+   grid is too tight for a sentence-length label. */
+.rail-field-stack { display: flex; flex-direction: column; gap: 0.4rem; }
+.rail-field-stack .hint { margin: 0; font-size: 0.8rem; }
+.reassign-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.reassign-list .btn {
+  justify-content: space-between; width: 100%;
+  background: var(--bg); border-color: var(--gray-5);
+  font-size: 0.85rem; text-align: left;
+}
+.reassign-list .btn:hover { border-color: var(--text); }
+.reassign-list .hint { font-size: 0.75rem; }
+
+/* --- The report drill-down ---------------------------------------------- */
+
+.report-rows { display: flex; flex-direction: column; }
+.report-row {
+  display: grid; grid-template-columns: 1fr auto; align-items: center;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--gray-6);
+  font-size: 0.85rem;
+}
+.report-toggle {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.4rem 0; border: none; background: none; border-radius: 0;
+  font: inherit; text-align: left;
+}
+.report-toggle:hover { background: none; text-decoration: underline; }
+.report-count { color: var(--ink-2); font-size: 0.8rem; }
+
+/* The expanded detail spans both grid columns and indents, so the values read
+   as belonging to the category above them. */
+.report-detail {
+  grid-column: 1 / -1;
+  display: flex; flex-direction: column; gap: 0.4rem;
+  padding: 0.3rem 0 0.75rem 1.25rem;
+}
+.report-detail-head, .report-item {
+  display: grid; grid-template-columns: 1fr auto; gap: 0.6rem; align-items: baseline;
+}
+.report-detail-head .section-label:last-child { text-align: right; }
+.report-item-value { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.report-original {
+  font-size: 0.78rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.report-placeholder { font-size: 0.72rem; color: var(--ink-3); }
+
+/* --- The ordered rules -------------------------------------------------- */
+
+.rule-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.rule-row {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--gray-5); border-radius: 6px;
+  font-size: 0.78rem;
+}
+.rule-text {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 0.4rem; overflow: hidden;
+}
+.rule-find, .rule-replace {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rule-text .hint { flex: none; margin: 0; }
+.rule-case { flex: none; font-size: 0.7rem; }
+.rule-actions { display: flex; align-items: center; gap: 0.1rem; flex: none; }
+
+/* --- The Compare card --------------------------------------------------- */
+
+/* position: relative anchors the floating selection panel, which is positioned
+   against the CARD rather than against a pane: scrolling a pane then moves the
+   text out from under the panel instead of dragging the panel off-screen. */
+.compare-card { position: relative; }
+.compare-select { max-width: 16rem; padding: 0.4rem 0.6rem; cursor: pointer; }
+
+.compare-panes {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: 1fr 1fr;
+}
+.compare-pane {
+  display: flex; flex-direction: column; min-height: 0;
+  border-right: 1px solid var(--gray-5);
+}
+.compare-pane:last-child { border-right: none; }
+.pane-caption {
+  flex: none;
+  padding: 0.7rem 1.25rem;
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--ink-3);
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--gray-5);
+}
+/* THE scroll owner of each pane. Both directions: a long unbroken line in an
+   extracted pdf is legitimately wider than the pane and must not widen the page.
+   word-break keeps ordinary prose wrapping. */
+.pane-body {
+  flex: 1; min-height: 0; overflow: auto;
+  margin: 0; padding: 1.1rem 1.25rem;
+  font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.75;
+  white-space: pre-wrap; word-break: break-word;
+}
+
+/* The floating REPLACE SELECTION panel, anchored above the selection. */
+.selection-card {
+  position: absolute; z-index: 6;
+  transform: translate(-50%, -100%);
+  width: 19rem; padding: 0.9rem;
+  display: flex; flex-direction: column; gap: 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--gray-4); border-radius: var(--card-radius);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.16);
+}
+.selection-text {
+  font-size: 0.78rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Highlight tints per category family: black text on every fill (BUILD-02
+   section 5 remapping). */
 mark { border-radius: 3px; padding: 0 2px; color: var(--text); }
-mark.pii { background: var(--tint-orange-1); }
-mark.entity { background: var(--gray-4); }
-mark.custom { background: var(--tint-orange-3); }
+mark.pii { background: var(--tint-orange-2); border-bottom: 1px solid var(--tint-orange-1); }
+mark.entity { background: var(--gray-5); border-bottom: 1px solid var(--gray-3); }
+mark.custom { background: var(--src-ai-bg); border-bottom: 1px solid var(--src-ai-fg); }
 
-/* --- Run view: original-term tooltip + reassign popover (BUILD-02 10c/d) --- */
+/* --- The original-term tooltip (BUILD-02 10c) ---------------------------- */
 
-/* Styled tooltip in pure CSS reading data-original; the native title
-   attribute stays as the accessibility fallback. */
+/* A styled tooltip in pure CSS reading data-original; the native title attribute
+   stays as the accessibility fallback. */
 mark[data-original] { cursor: pointer; position: relative; }
 mark[data-original]:hover::after {
   content: "Original: " attr(data-original);
@@ -498,14 +1207,85 @@ mark[data-original]:hover::after {
   font-family: var(--font-body);
 }
 
-.reassign-popover {
-  position: absolute; z-index: 40;
-  background: var(--bg); border: 1px solid var(--gray-3); border-radius: 8px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
-  padding: 0.6rem 0.8rem; min-width: 18rem;
-  font-family: var(--font-body); font-size: 0.85rem;
-  white-space: normal;
+/* The floating reassign popover is GONE (BUILD-05 Phase 7). It was anchored to a
+   mark inside a scrolling pane, so it drifted away from its own mark the moment
+   the pane scrolled, and it could not be reached from the keyboard at all. The
+   Selected placeholder card in the left column replaced it. */
+
+/* --- Export screen (BUILD-05 Phase 8) ------------------------------------ */
+
+/* Same column shape as Anonymise: the two-column workspace, then the footer. */
+.export-view {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; gap: 1rem;
 }
-.reassign-popover p { margin: 0 0 0.4rem; }
-.reassign-suggestions { list-style: none; margin: 0.3rem 0 0; padding: 0; }
-.reassign-suggestions li { margin: 0; }
+.export-view > .workspace { flex: 1; min-height: 0; }
+
+/* A pair of equal-width buttons (CSV / JSON, Save / Load). A grid rather than
+   flex, so the two are the same width whatever their labels say. */
+.button-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+
+/* The key-bearing card's header wears the key tint, which is the ONE place in
+   the application the orange family is used as a fill rather than as the hero
+   button. It is doing real work there: it marks the two exports that can
+   re-identify people. */
+.fold-card.key-bearing > .cgroup > .cgroup-head {
+  background: var(--key-bg);
+  border-bottom-color: var(--key-edge-soft);
+}
+.fold-card.key-bearing .cgroup-count {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; color: var(--key-fg);
+}
+
+/* --- Document rows ------------------------------------------------------- */
+
+.export-row {
+  display: flex; align-items: center; gap: 0.85rem;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--gray-6);
+}
+.export-name { display: flex; flex-direction: column; gap: 2px; width: 13rem; flex: none; min-width: 0; }
+.export-out {
+  font-size: 0.85rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.export-name .hint { margin: 0; font-size: 0.72rem; }
+.export-formats { display: flex; flex-wrap: wrap; gap: 0.4rem; flex: 1; min-width: 0; }
+
+/* A format button. The MONOSPACED label is deliberate: ".docx (same format)" is
+   a file extension, and reading it as one is the point. */
+.fmt-btn {
+  padding: 0 0.7rem; height: 1.75rem;
+  font-family: var(--font-mono); font-size: 0.72rem;
+  white-space: nowrap;
+  border-color: var(--gray-4); color: var(--ink-2);
+}
+/* A same-format button wears the key tint, because a same-format copy LOOKS like
+   the original: the tint is the only warning the user gets before they have a
+   file on disk that is easy to mistake for the source document. */
+.fmt-btn.same-format {
+  border-color: var(--key-edge); background: var(--key-bg); color: var(--text);
+}
+
+/* --- The properties review ---------------------------------------------- */
+
+.meta-review { margin: 1rem 0 0.5rem; }
+.meta-review .card-head h2 { font-size: 0.95rem; }
+.meta-grid {
+  display: grid; grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 0.4rem 0.75rem; align-items: center;
+}
+.meta-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.meta-name .hint { margin: 0; font-size: 0.7rem; }
+.meta-current {
+  font-size: 0.78rem; color: var(--ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.meta-value { min-width: 0; font-size: 0.75rem; padding: 0.3rem 0.5rem; }
+.meta-keep { font-size: 0.72rem; padding: 0 0.6rem; height: 1.75rem; white-space: nowrap; }
+.meta-unchanged { font-size: 0.72rem; white-space: nowrap; }
+
+/* The footer's right-hand action on the LAST step. It is a neutral button, not
+   the accent primary the other three screens use: nothing about finishing should
+   invite the same reflex click as CONTINUE. */
+.new-batch { font-weight: 700; }

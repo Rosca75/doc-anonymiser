@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { HOME, STEP_BANNERS } from "./copy.js";
+import { HOME, CARDS, NAV, WORKFLOW } from "./copy.js";
 
 const staticDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -64,12 +64,68 @@ test("home body is a non-empty list of non-empty paragraphs", () => {
   }
 });
 
-// --- Step 3 wording (BUILD-04 CR3) ----------------------------------------
+// --- The four-step vocabulary (BUILD-05 Phase 2) -------------------------
 
-test("the third step banner is keyed and titled Values, not Entities", () => {
-  assert.equal(STEP_BANNERS.entities, undefined, "the legacy key must be gone");
-  assert.equal(STEP_BANNERS.values.title, "Values");
-  assert.doesNotMatch(STEP_BANNERS.values.body, /entit/i);
+test("the home sidebar teaches the wizard's own step names", () => {
+  // The sidebar used to say "Configure / Identify" for steps the wizard called
+  // "Values / Run", so the landing page taught a vocabulary the application
+  // then did not use. Every sidebar label must now be a real step name.
+  const stepNames = new Set(Object.values(NAV.stepNames));
+  for (const step of HOME.steps) {
+    assert.ok(stepNames.has(step.label),
+      `the home sidebar names a step the wizard does not have: ${step.label}`);
+  }
+  assert.equal(HOME.steps.length, stepNames.size,
+    "the sidebar must cover every step exactly once");
+});
+
+test("no user-visible copy still calls a step Configure, Values or Run", () => {
+  // Those three labels were retired by BUILD-05 Phase 2. Configure survives as
+  // the name of the Identify RAIL, which is a card heading rather than a step,
+  // so CARDS.configure is expected and only the step vocabulary is checked.
+  for (const [token, name] of Object.entries(NAV.stepNames)) {
+    assert.ok(!["Configure", "Values", "Run"].includes(name),
+      `${token} is still labelled ${name}`);
+  }
+  assert.deepEqual(Object.values(NAV.stepNames),
+    ["Import", "Identify", "Anonymise", "Export"]);
+});
+
+test("the navigation labels are built from the step names", () => {
+  assert.equal(NAV.back("import"), "Back to Import");
+  assert.equal(NAV.next("anonymise"), "CONTINUE TO ANONYMISE");
+  // An unknown token degrades to itself rather than rendering "undefined".
+  assert.equal(NAV.back("nonesuch"), "Back to nonesuch");
+});
+
+test("the reset question names the step and says what survives", () => {
+  const body = NAV.backConfirmBody("identify");
+  assert.match(NAV.backConfirmTitle("identify"), /Identify/);
+  assert.match(body, /Identify/);
+  assert.match(body, /imported documents/i, "the user must be told what is kept");
+  assert.match(body, /never anonymise/i);
+});
+
+test("the step bar keeps an accessible name even though it shows no title", () => {
+  assert.equal(WORKFLOW.title, "Anonymisation workflow");
+  assert.ok(WORKFLOW.backToFlow.length > 0);
+});
+
+test("every card that carries a screen's content has a heading", () => {
+  for (const [key, card] of Object.entries(CARDS)) {
+    assert.equal(typeof card.title, "string", `${key} needs a title`);
+    assert.ok(card.title.trim().length > 0, `${key} has an empty title`);
+  }
+});
+
+test("the per-step explainer banner is gone and its copy moved into subtitles", () => {
+  // STEP_BANNERS was a band of prose above every screen. Its useful sentences
+  // are card subtitles now, next to the heading they explain.
+  assert.ok(!("STEP_BANNERS" in CARDS));
+  for (const key of ["documents", "identify", "run", "export"]) {
+    assert.ok(CARDS[key].subtitle?.length > 0,
+      `${key} must carry the explaining sentence the banner used to`);
+  }
 });
 
 // --- Brand guards (BUILD-04 CR2) ------------------------------------------

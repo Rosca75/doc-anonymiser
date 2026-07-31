@@ -280,6 +280,57 @@ func (a *App) ExpandEntityVariants(e engine.Entity) []string {
 	return engine.ExpandVariants(e)
 }
 
+// SetEntityPlaceholder renames the placeholder one value gets replaced with
+// (BUILD-05 Phase 3): the editable field on an entity card in the Identify
+// workspace.
+//
+// It exists because "[CLIENT_1]" is sometimes less useful downstream than a
+// name the reader recognises, and the user is the only one who knows which.
+// The engine validates the shape and refuses a collision (engine.Registry
+// SetPlaceholder); this method only finds the registry and reports back.
+//
+// The rename takes effect on the NEXT run or fast re-run, not retroactively:
+// the anonymised text already on screen was produced with the old placeholder,
+// and silently rewriting it here would leave the report and the mapping
+// describing text that no longer exists.
+//
+// @param category the engine category identifier (never a visible label)
+// @param canonical the real-world value whose placeholder is being renamed
+// @param placeholder the new placeholder, in [NAME_N] form
+// @return an actionable error the UI shows verbatim, or nil
+func (a *App) SetEntityPlaceholder(category, canonical, placeholder string) error {
+	a.mu.Lock()
+	reg := a.registry
+	a.mu.Unlock()
+
+	if reg == nil {
+		return fmt.Errorf(
+			"there are no placeholders to rename yet: run the anonymisation once, " +
+				"then edit the placeholder of any value it replaced")
+	}
+	return reg.SetPlaceholder(category, canonical, placeholder)
+}
+
+// EntityPlaceholder returns the placeholder currently assigned to one value,
+// or "" when it has not been assigned one yet (BUILD-05 Phase 3).
+//
+// The entity cards render the field read-only-looking-but-empty in that case,
+// which is honest: before a run there is nothing to rename.
+//
+// @param category the engine category identifier
+// @param canonical the real-world value
+// @return the placeholder, or "" when none is assigned
+func (a *App) EntityPlaceholder(category, canonical string) string {
+	a.mu.Lock()
+	reg := a.registry
+	a.mu.Unlock()
+	if reg == nil {
+		return ""
+	}
+	placeholder, _ := reg.Lookup(category, canonical)
+	return placeholder
+}
+
 // TermMatchInfo is the live manual-entry preview payload (BUILD-02
 // Phase 9c): how often a term occurs, and in how many documents.
 type TermMatchInfo struct {

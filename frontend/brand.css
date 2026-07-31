@@ -48,10 +48,88 @@
   --gray-5: #EEEFF1;
   --gray-6: #F5F7F8;
 
+  /* Two darker greys from the same brand family, both straight out of
+     docs/brand/color-palette.json (theme_grid row_5 "slate" and row_4
+     "light_blue_gray"). BUILD-05 needs text that is quieter than black but
+     still comfortably readable, which --muted (#A1A8B3) is not: the mock-ups
+     use these for the uppercase section labels and for secondary row text.
+     --ink-2 is the darker of the two, so it carries actual sentences;
+     --ink-3 carries labels. */
+  --ink-2: #54616C;
+  --ink-3: #717C8D;
+
+  /* A surface one step lighter than --gray-6, for the inside of a card:
+     table header rows, group headers, pane captions. NOT in the palette
+     JSON (it is a near-white the brand spec does not enumerate), and it is
+     the ONLY value here that is not, which is why it is called out. It reads
+     as "barely tinted white" and never carries text of its own. */
+  --surface-subtle: #F9FAFB;
+
   /* Status (functional only, never decorative) */
   --ok: #059669;
   --warn: #E9B01F;
   --err: #DC2626;
+
+  /* --- Functional tint pairs (BUILD-05 Phase 1) -------------------------
+     Every pair below is FUNCTIONAL: it encodes a state the user has to be
+     able to tell apart at a glance, and each is only ever used for that one
+     state. None of them is available as decoration, and none of them is an
+     alternative accent: the one-loud-orange-element-per-view rule still
+     holds, and orange is still the only thing allowed to shout.
+
+     Each pair is (foreground, background), always dark text on a pale fill,
+     so contrast holds without a border. Where a border is also needed the
+     pair has a third -edge value. */
+
+  /* Suggestion source badges: which pass proposed a value. Three distinct
+     hues because the answer "who found this?" changes how much the user
+     trusts the row, and a shared grey would hide that. */
+  --src-smart-fg: #54616C;      /* the offline heuristic pass */
+  --src-smart-bg: #EEEFF1;
+  --src-ai-fg: #5B4B8A;         /* the local language model */
+  --src-ai-bg: #EEEAF6;
+  --src-pattern-fg: #1F5F4A;    /* a deterministic pattern match */
+  --src-pattern-bg: #E3F1EC;
+
+  /* Custom-pattern validity: a regex either compiles or it does not, and an
+     expression that never runs must not look like one that does. */
+  --valid-fg: #1F5F4A;
+  --valid-bg: #E3F1EC;
+  --invalid-fg: #9A2020;
+  --invalid-bg: #FBE6E6;
+
+  /* Notice (toast) tones. ok = something was written or saved; info = a
+     statement of fact with nothing to fix; warn = it worked AND the result
+     needs care (a key left the application, a source-format copy was
+     written). */
+  --notice-ok-fg: #0A6B3D;
+  --notice-ok-bg: #F0FBF4;
+  --notice-ok-edge: #BFE6CE;
+  --notice-info-fg: #54616C;
+  --notice-info-bg: #F5F7F8;
+  --notice-info-edge: #EEEFF1;
+  --notice-warn-fg: #6B5310;
+  --notice-warn-bg: #FBF6E6;
+  --notice-warn-edge: #F5E3B8;
+
+  /* The warning strip inside the run report, and the EXPERIMENTAL badge on
+     a pdf import. Same family as the warn notice: "this worked, read it
+     before you trust it". */
+  --caution-fg: #6B5310;
+  --caution-bg: #FBF6E6;
+  --caution-edge: #F5E3B8;
+  --experimental-fg: #946A0B;
+  --experimental-bg: #FBF0CE;
+
+  /* The key-bearing surface: a card whose content can re-identify people
+     (the value mapping, the session file, a same-format properties review).
+     It is the ONE place the orange family is used as a fill rather than as
+     the hero button, and it is used precisely because it borrows the accent's
+     urgency without being a control the user can press by accident. */
+  --key-fg: #B4551A;
+  --key-bg: #FFF5ED;
+  --key-edge: #FFCDA8;
+  --key-edge-soft: #FFE8D4;
 
   /* Typography: Windows system fonts only, no font files, no CDNs */
   /* Helvetica first, Arial as the fallback on machines without it, then the

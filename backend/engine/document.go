@@ -97,6 +97,78 @@ type Document struct {
 	// dropped images, complex-sheet routing, PDF repair applied).
 	// A warning never blocks processing — that is what errors are for.
 	Warnings []string
+	// UnitCount and Unit are the document's SIZE IN ITS OWN TERMS, for the
+	// import list (BUILD-05 Phase 3, decision 5): "6 pages", "12 slides",
+	// "48 rows", "412 lines". A byte size tells a user nothing about whether
+	// they picked the right file; the number of pages does.
+	//
+	// Unit is one of "page", "slide", "row" or "line", singular. The UI
+	// pluralises, because only the UI knows the number it is about to print.
+	//
+	// The fallback to "line" is not a failure case, it is the COMMON case: a
+	// page count has to come from what the writing application cached in
+	// docProps/app.xml, and that part is optional (see ooxml.AppProps for the
+	// two caveats). Counting lines is always possible and never wrong, so it
+	// is what every format that cannot do better reports.
+	UnitCount int
+	Unit      string
+}
+
+// The unit names Document.Unit may hold. Constants rather than bare strings so
+// a typo in one converter cannot invent a fifth unit the UI has no plural for.
+const (
+	UnitPage  = "page"
+	UnitSlide = "slide"
+	UnitRow   = "row"
+	UnitLine  = "line"
+)
+
+// countLines is the universal fallback unit: how many lines the markdown
+// working form has.
+//
+// A trailing newline does NOT count as an extra empty line, because "412
+// lines" for a file whose last line ends properly should not become 413. An
+// empty document is 0 lines rather than 1.
+func countLines(markdown string) int {
+	if markdown == "" {
+		return 0
+	}
+	return strings.Count(strings.TrimSuffix(markdown, "\n"), "\n") + 1
+}
+
+// gridRows reports how many RECORDS a grid holds, which is its rows minus the
+// header row, so "48 rows" means 48 records rather than 47 records and a
+// header. A grid with only a header is 0 rows, which is honest: there is
+// nothing in it to anonymise.
+//
+// It lives here rather than in engine/convert because it is about the Grid
+// model, which is this package's, and because both CSV and a flat xlsx sheet
+// need it.
+func gridRows(grid [][]string) int {
+	if len(grid) <= 1 {
+		return 0
+	}
+	return len(grid) - 1
+}
+
+// setUnitCount fills a Document's UnitCount and Unit, falling back to lines
+// whenever the preferred count is unavailable or zero.
+//
+// The zero check is what stops "0 pages" reaching the UI: a docx whose
+// app.xml is missing, or present but caching Pages as 0, has to say something
+// true instead, and "412 lines" is true for every text-bearing document.
+//
+// @param doc the document to annotate, modified in place
+// @param count the preferred count (0 when unavailable)
+// @param unit the unit that count is in
+func setUnitCount(doc *Document, count int, unit string) {
+	if count > 0 && unit != "" {
+		doc.UnitCount = count
+		doc.Unit = unit
+		return
+	}
+	doc.UnitCount = countLines(doc.Markdown)
+	doc.Unit = UnitLine
 }
 
 // LoadAll is the single ingestion entry point used by app.go: it accepts
@@ -129,26 +201,35 @@ func LoadAll(name string, raw []byte) ([]Document, error) {
 		if err != nil {
 			return nil, fmt.Errorf("could not import %q: %w", name, err)
 		}
-		return []Document{{
+		doc := Document{
 			Name:     name,
 			Format:   FormatDOCX,
 			Raw:      raw,
 			Markdown: md,
 			Warnings: append(sizeWarnings, warns...),
-		}}, nil
+		}
+		// A page count is what a Word user recognises, but it can only come
+		// from what Word cached at save time, and plenty of files carry no
+		// cached count at all (decision 5). Zero falls back to lines.
+		setUnitCount(&doc, convert.DocxPages(raw), UnitPage)
+		return []Document{doc}, nil
 
 	case ".pptx":
 		md, warns, err := convert.Pptx(raw)
 		if err != nil {
 			return nil, fmt.Errorf("could not import %q: %w", name, err)
 		}
-		return []Document{{
+		doc := Document{
 			Name:     name,
 			Format:   FormatPPTX,
 			Raw:      raw,
 			Markdown: md,
 			Warnings: append(sizeWarnings, warns...),
-		}}, nil
+		}
+		// Counting slide parts beats reading the cached <Slides> property: the
+		// part count comes from the archive's shape, so it cannot go stale.
+		setUnitCount(&doc, convert.PptxSlides(raw), UnitSlide)
+		return []Document{doc}, nil
 
 	case ".xlsx":
 		sheets, workbookWarns, err := convert.Xlsx(raw)
@@ -176,12 +257,17 @@ func LoadAll(name string, raw []byte) ([]Document, error) {
 				doc.Format = FormatXLSX
 				doc.Grid = s.Grid
 				doc.Markdown = GridToMarkdownTable(s.Grid)
+				// A grid's own unit is its records, not its lines.
+				setUnitCount(&doc, gridRows(s.Grid), UnitRow)
 			} else {
 				// COMPLEX sheet: structured JSON anonymised as text
 				// inside a fenced code block.
 				doc.Format = FormatXLSXJSON
 				doc.JSON = s.JSON
 				doc.Markdown = "```json\n" + s.JSON + "\n```\n"
+				// A complex sheet has no meaningful row count (that is exactly
+				// why it was routed to JSON), so it reports lines.
+				setUnitCount(&doc, 0, "")
 			}
 			docs = append(docs, doc)
 		}
@@ -192,13 +278,16 @@ func LoadAll(name string, raw []byte) ([]Document, error) {
 		if err != nil {
 			return nil, fmt.Errorf("could not import %q: %w", name, err)
 		}
-		return []Document{{
+		doc := Document{
 			Name:     name,
 			Format:   FormatPDF,
 			Raw:      raw,
 			Markdown: md,
 			Warnings: append(sizeWarnings, warns...),
-		}}, nil
+		}
+		// The PDF's own page tree, so this figure is exact.
+		setUnitCount(&doc, convert.PDFPages(raw), UnitPage)
+		return []Document{doc}, nil
 
 	default:
 		return nil, fmt.Errorf(
@@ -242,26 +331,31 @@ func Load(name string, raw []byte) (Document, error) {
 
 	switch ext {
 	case ".txt":
-		return Document{
+		doc := Document{
 			Name:     name,
 			Format:   FormatTXT,
 			Raw:      raw,
 			Markdown: normaliseLineEndings(string(raw)),
 			Warnings: warnings,
-		}, nil
+		}
+		// Plain text has no pages or slides; its own unit is the line.
+		setUnitCount(&doc, 0, "")
+		return doc, nil
 
 	case ".md":
 		// Markdown is already our working form — pass it through with
 		// only line-ending normalisation so downstream regexes can
 		// assume "\n" everywhere. Content inside code fences is treated
 		// like any other text in v1 (BUILD.md Phase 1 activity 4).
-		return Document{
+		doc := Document{
 			Name:     name,
 			Format:   FormatMD,
 			Raw:      raw,
 			Markdown: normaliseLineEndings(string(raw)),
 			Warnings: warnings,
-		}, nil
+		}
+		setUnitCount(&doc, 0, "")
+		return doc, nil
 
 	case ".csv":
 		grid, csvWarnings, err := ParseCSV(raw)
@@ -272,14 +366,17 @@ func Load(name string, raw []byte) (Document, error) {
 				"could not read %q as CSV: %w, check that the file is a plain comma-separated file (open it in a text editor to verify); if it is a semicolon-separated export, re-export it with commas",
 				name, err)
 		}
-		return Document{
+		doc := Document{
 			Name:     name,
 			Format:   FormatCSV,
 			Raw:      raw,
 			Markdown: GridToMarkdownTable(grid),
 			Grid:     grid,
 			Warnings: append(warnings, csvWarnings...),
-		}, nil
+		}
+		// A CSV's unit is its records, so the header row does not count.
+		setUnitCount(&doc, gridRows(grid), UnitRow)
+		return doc, nil
 
 	default:
 		// Clear, actionable rejection for everything else. The binary

@@ -10,22 +10,32 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  COUNTRIES, DEFAULT_COUNTRY, countryIDCategories, COUNTRY_ID_CATEGORIES,
+} from "./countries.js";
+
+import {
   getState, setState, resetState, subscribe,
-  WIZARD_STEPS, canGoTo, goTo, nextStep, prevStep,
-  goToScreen, setImportSplit,
+  WIZARD_STEPS, canGoTo, goTo, nextStep,
+  goToScreen,
   applyPreset, toggleCategory, selectionPresetName, presetCategories,
   setUseAI, defaultUseAIFromProbe, llmEnabled,
-  addCandidates, acceptCandidate, rejectCandidate, updateCandidate, acceptAllInCategory,
+  addCandidates, acceptCandidate, rejectCandidate,
   moveVariant, entityAutocomplete, reassignOriginal,
   applyImportResult,
+  setNotice, clearNotice, NOTICE_TONES,
+  setDocumentCountry,
+  addPendingValue, removePendingValue, clearPendingValues,
+  dismissWarning, visibleWarnings,
+  setExportDir, startNewBatch, setMetaReview,
+  askConfirm, answerConfirm,
 } from "./state.js";
 
 test("setState merges and notifies subscribers", () => {
   resetState();
   let seen = null;
   const unsub = subscribe((s) => { seen = s.step; });
-  setState({ step: "configure" });
-  assert.equal(seen, "configure");
+  setState({ step: "identify" });
+  assert.equal(seen, "identify");
   unsub();
 });
 
@@ -35,15 +45,15 @@ test("guards: no step beyond import without documents", () => {
   for (const step of WIZARD_STEPS.slice(1)) {
     assert.equal(canGoTo(step), false, `${step} must be locked without documents`);
   }
-  assert.equal(goTo("configure"), false);
+  assert.equal(goTo("identify"), false);
   assert.equal(getState().step, "import");
 });
 
 test("guards: documents unlock middle steps, results unlock export", () => {
   resetState();
   setState({ documents: [{ name: "a.txt" }] });
-  assert.equal(canGoTo("configure"), true);
-  assert.equal(canGoTo("run"), true);
+  assert.equal(canGoTo("identify"), true);
+  assert.equal(canGoTo("anonymise"), true);
   assert.equal(canGoTo("export"), false, "export needs results");
   setState({ results: { documents: [] } });
   assert.equal(canGoTo("export"), true);
@@ -54,15 +64,19 @@ test("guards: unknown step is rejected", () => {
   assert.equal(canGoTo("teleport"), false);
 });
 
-test("next/prev walk the wizard linearly and respect guards", () => {
+test("nextStep walks the wizard forward and respects the guards", () => {
+  // There is no prevStep() any more (BUILD-05 Phase 9): moving BACK goes through
+  // nav.js goBack(), which asks the reset question first. A reducer that moved
+  // back without asking was a way around that rule.
   resetState();
   assert.equal(nextStep(), false, "cannot advance with no documents");
   setState({ documents: [{ name: "a.txt" }] });
   assert.equal(nextStep(), true);
-  assert.equal(getState().step, "configure");
-  assert.equal(prevStep(), true);
-  assert.equal(getState().step, "import");
-  assert.equal(prevStep(), false, "cannot go back from the first step");
+  assert.equal(getState().step, "identify");
+  assert.equal(nextStep(), true);
+  assert.equal(getState().step, "anonymise");
+  assert.equal(nextStep(), false, "export needs results");
+  assert.equal(getState().step, "anonymise");
 });
 
 test("applyImportResult updates documents, errors and preview selection", () => {
@@ -88,7 +102,7 @@ test("applyImportResult updates documents, errors and preview selection", () => 
 // --- Phase 7: entity review reducers -----------------------------------------
 
 import {
-  addEntities, setEntityStatus, editEntity, removeEntity,
+  addEntities, removeEntity,
   setEntityVariants, addManualVariant, acceptedEntities,
   addAllowTerm, removeAllowTerm, addPattern, removePattern, validPatterns,
 } from "./state.js";
@@ -107,28 +121,19 @@ test("addEntities dedupes case-insensitively and defaults to accepted", () => {
   assert.equal(s.entities[0].status, "accepted");
 });
 
-test("accept/deny reducers flip status; acceptedEntities filters", () => {
+test("acceptedEntities filters on status, as the belt to a removed brace", () => {
+  // setEntityStatus() is gone (BUILD-05 Phase 9): the redesign has no denied
+  // state, so nothing can produce one. The filter stays, because a row that
+  // somehow arrived denied must still not reach the pipeline, and asserting it
+  // directly is the only way to keep that guard honest now that no reducer
+  // exercises it.
   resetState();
   addEntities([{ category: "client_names", canonical: "Alpine Trust" }]);
-  setEntityStatus("client_names", "Alpine Trust", "denied");
-  assert.equal(getState().entities[0].status, "denied");
-  assert.equal(acceptedEntities().length, 0, "denied entities never reach the pipeline");
-  setEntityStatus("client_names", "ALPINE trust", "accepted"); // case-insensitive key
+  assert.equal(getState().entities[0].status, "accepted", "every new value is accepted");
   assert.equal(acceptedEntities().length, 1);
-});
 
-test("editEntity renames, clears variants, and rejects collisions", () => {
-  resetState();
-  addEntities([
-    { category: "client_names", canonical: "Alpine", variants: ["Alpine"] },
-    { category: "client_names", canonical: "Borealis" },
-  ]);
-  assert.equal(editEntity("client_names", "Alpine", "Alpine Trust"), true);
-  const e = getState().entities[0];
-  assert.equal(e.canonical, "Alpine Trust");
-  assert.equal(e.variants, null, "variants must be back to pending (null) after a rename");
-  assert.equal(editEntity("client_names", "Alpine Trust", "borealis"), false, "collision rejected");
-  assert.equal(editEntity("client_names", "Alpine Trust", "   "), false, "blank rejected");
+  setState({ entities: getState().entities.map((e) => ({ ...e, status: "denied" })) });
+  assert.equal(acceptedEntities().length, 0, "a denied entity never reaches the pipeline");
 });
 
 test("manual variants dedupe and clear the expansion cache", () => {
@@ -195,7 +200,12 @@ test("buildRunRequest assembles only pipeline-ready inputs", () => {
     { category: "client_names", canonical: "Alpine" },
     { category: "person_names", canonical: "Denied Person" },
   ]);
-  setEntityStatus("person_names", "Denied Person", "denied");
+  // No reducer can deny a value any more (BUILD-05 Phase 9), so the state is set
+  // directly: the point of the test is that buildRunRequest FILTERS on status.
+  setState({
+    entities: getState().entities.map((e) =>
+      e.canonical === "Denied Person" ? { ...e, status: "denied" } : e),
+  });
   addAllowTerm("CSSF");
   addPattern("PRJ-[0-9]+", null);
   addPattern("[", "broken");
@@ -226,33 +236,22 @@ test("wizard state survives navigating to home and back", () => {
   resetState();
   setState({ documents: [{ name: "a.txt" }] });
   goToScreen("wizard");
-  goTo("configure");
+  goTo("identify");
   goToScreen("home");
   goToScreen("wizard");
-  assert.equal(getState().step, "configure");
+  assert.equal(getState().step, "identify");
   assert.equal(getState().documents.length, 1);
 });
 
-test("setImportSplit clamps and rejects non-numbers", () => {
-  resetState();
-  const cases = [
-    [0, 0.2],
-    [0.1, 0.2],
-    [0.5, 0.5],
-    [0.95, 0.8],
-  ];
-  for (const [input, want] of cases) {
-    assert.equal(setImportSplit(input), want, `split(${input})`);
-    assert.equal(getState().importSplit, want);
-  }
-  // NaN and non-numbers are rejected, leaving the stored value untouched.
-  setImportSplit(0.5);
-  assert.equal(setImportSplit(NaN), null);
-  assert.equal(setImportSplit("0.7"), null);
-  assert.equal(getState().importSplit, 0.5);
+test("the import divider state is gone, not merely unused (decision 6)", async () => {
+  // A reducer nothing calls is a reducer someone reinstates. The mock-up uses a
+  // fixed two-column grid, so the ratio has no meaning any more.
+  const state = await import("./state.js");
+  assert.equal(state.setImportSplit, undefined,
+    "setImportSplit must be deleted, not left exported");
+  assert.ok(!("importSplit" in getState()),
+    "importSplit must be gone from the state shape too");
 });
-
-// --- Category presets and granular switches (BUILD-02 Phase 3) ---------------
 
 test("applyPreset fills the expected switches per level", () => {
   resetState();
@@ -295,7 +294,12 @@ test("buildRunRequest carries the category selection", () => {
   resetState();
   applyPreset("soft");
   const req = buildRunRequest(false);
-  assert.deepEqual(req.categories, presetCategories("soft"));
+  // The preset plus the country's identifier switches, which is what the rail
+  // actually shows and therefore what the pipeline must obey.
+  assert.deepEqual(req.categories, {
+    ...presetCategories("soft"),
+    ...countryIDCategories(DEFAULT_COUNTRY),
+  });
   toggleCategory("iban", false);
   assert.equal(buildRunRequest(false).categories.iban, false);
 });
@@ -356,33 +360,6 @@ test("reject removes, duplicates and existing entities are skipped", () => {
   rejectCandidate("Fresh Co");
   assert.equal(getState().candidates.length, 0);
   assert.equal(getState().entities.length, 1, "reject never touches entities");
-});
-
-test("edit then accept uses the edited text and category", () => {
-  resetState();
-  addCandidates([{ text: "alpin trust", category: "person_names" }], "smart");
-  assert.equal(updateCandidate("alpin trust", { text: "Alpine Trust", category: "client_names" }), true);
-  // A collision with another candidate is rejected.
-  addCandidates([{ text: "Other Co", category: "client_names" }], "smart");
-  assert.equal(updateCandidate("Other Co", { text: "Alpine Trust" }), false);
-
-  acceptCandidate("Alpine Trust");
-  const e = getState().entities[0];
-  assert.equal(e.canonical, "Alpine Trust");
-  assert.equal(e.category, "client_names");
-});
-
-test("bulk accept drains one category only", () => {
-  resetState();
-  addCandidates([
-    { text: "C One", category: "client_names" },
-    { text: "C Two", category: "client_names" },
-    { text: "P One", category: "person_names" },
-  ], "smart");
-  assert.equal(acceptAllInCategory("client_names"), 2);
-  assert.equal(getState().entities.length, 2);
-  assert.equal(getState().candidates.length, 1);
-  assert.equal(getState().candidates[0].text, "P One");
 });
 
 // --- Variant regrouping (BUILD-02 Phase 9d) ------------------------------------
@@ -470,44 +447,27 @@ test("reassignOriginal removes a standalone entity and adds the variant", () => 
   assert.equal(reassignOriginal("X", "person_names", "Ghost"), false);
 });
 
-// --- Step token rename and migration (BUILD-04 CR3) ------------------------
+// --- The four-step wizard (BUILD-05 Phase 2) ------------------------------
 
-import { migrateStep, LEGACY_STEP_TOKENS } from "./state.js";
-import { STEP_BANNERS } from "./copy.js";
+import { knownStep } from "./state.js";
 
-test("the wizard's third step token is values, not entities", () => {
-  assert.deepEqual(WIZARD_STEPS, ["import", "configure", "values", "run", "export"]);
+test("the wizard has exactly four steps, in order", () => {
+  assert.deepEqual(WIZARD_STEPS, ["import", "identify", "anonymise", "export"]);
 });
 
-test("migrateStep maps the legacy entities token onto values", () => {
-  assert.equal(migrateStep("entities"), "values");
-  assert.equal(LEGACY_STEP_TOKENS.entities, "values");
-});
-
-test("migrateStep passes current tokens through untouched", () => {
+test("knownStep passes current tokens through untouched", () => {
   for (const step of WIZARD_STEPS) {
-    assert.equal(migrateStep(step), step);
+    assert.equal(knownStep(step), step);
   }
 });
 
-test("migrateStep falls back to import for unknown or missing tokens", () => {
-  // A hand-edited or corrupted session must never strand the wizard on a
-  // step that does not exist; import is the only always-reachable step.
-  assert.equal(migrateStep("teleport"), "import");
-  assert.equal(migrateStep(undefined), "import");
-  assert.equal(migrateStep(""), "import");
-});
-
-test("every wizard step has a banner keyed by its current token", () => {
-  for (const step of WIZARD_STEPS) {
-    assert.ok(STEP_BANNERS[step], `no step banner for ${step}`);
-  }
-});
-
-test("no user-visible step wording still says Entities", () => {
-  for (const [step, banner] of Object.entries(STEP_BANNERS)) {
-    assert.doesNotMatch(banner.title, /entit/i, `${step} title`);
-    assert.doesNotMatch(banner.body, /entit/i, `${step} body`);
+test("an unknown persisted step token lands on import", () => {
+  // BUILD-05 decision 1: there is no migration table any more. A session file
+  // this build does not understand is refused by the loader, so the only
+  // tokens that reach here are corrupted or hand-edited ones, and the answer
+  // is the one step that is always reachable.
+  for (const bad of ["configure", "values", "run", "entities", "teleport", "", undefined, null]) {
+    assert.equal(knownStep(bad), "import", `knownStep(${JSON.stringify(bad)})`);
   }
 });
 
@@ -541,7 +501,7 @@ test("a failed documentation open is recorded as a dismissible shell error", () 
 
 import {
   EXTENDED_PII_CATEGORIES, ALL_CATEGORIES,
-  setCategoryGroup, setMinConfidence, clearAllowlist,
+  setCategoryGroup, setMinConfidence,
 } from "./state.js";
 import { CATEGORY_LABELS } from "./copy.js";
 
@@ -644,30 +604,10 @@ test("minConfidence rejects values outside 0 to 1 (CR9)", () => {
   assert.equal(getState().settings.minConfidence, 0, "a rejected value changes nothing");
 });
 
-test("clearAllowlist empties the list and reports the count (CR11)", () => {
-  resetState();
-  for (const term of ["CSSF", "EUR", "GDPR"]) addAllowTerm(term);
-  assert.equal(getState().allowlist.length, 3);
-  assert.equal(clearAllowlist(), 3);
-  assert.deepEqual(getState().allowlist, []);
-  // Clearing an empty list is a no-op that reports zero.
-  assert.equal(clearAllowlist(), 0);
-});
-
-test("clearAllowlist touches nothing but the allowlist (CR11)", () => {
-  resetState();
-  setState({ documents: [{ name: "a.txt" }] });
-  addAllowTerm("CSSF");
-  addEntities([{ category: "client_names", canonical: "Alpine Trust" }]);
-  clearAllowlist();
-  assert.equal(getState().entities.length, 1);
-  assert.equal(getState().documents.length, 1);
-});
-
 // --- BUILD-04 Phase 5: smart-detection tuning and bulk deny ----------------
 
 import {
-  denyAllInCategory, setSmartDetectOptions, smartDetectOptions,
+  setSmartDetectOptions, smartDetectOptions,
   SMART_DETECT_DEFAULTS,
 } from "./state.js";
 
@@ -680,47 +620,6 @@ function seedCandidates() {
     { text: "Alpine Trust", category: "client_names", count: 3 },
   ], "smart");
 }
-
-test("denyAllInCategory drops that category and adds no entity (CR15)", () => {
-  seedCandidates();
-  assert.equal(denyAllInCategory("person_names"), 2);
-  const s = getState();
-  assert.deepEqual(s.candidates.map((c) => c.text), ["Alpine Trust"]);
-  assert.equal(s.entities.length, 0, "denying must never promote anything");
-});
-
-test("denyAllInCategory on an absent category is a no-op (CR15)", () => {
-  seedCandidates();
-  assert.equal(denyAllInCategory("project_names"), 0);
-  assert.equal(getState().candidates.length, 3);
-});
-
-test("bulk actions restricted to the visible rows touch only those (CR15)", () => {
-  // This is the filtered-set semantics the Values table relies on: a
-  // search hiding a row must also protect it from a bulk button.
-  seedCandidates();
-  assert.equal(denyAllInCategory("person_names", ["Anouk Berger"]), 1);
-  assert.deepEqual(getState().candidates.map((c) => c.text), ["Marie Duval", "Alpine Trust"]);
-
-  seedCandidates();
-  assert.equal(acceptAllInCategory("person_names", ["Marie Duval"]), 1);
-  const s = getState();
-  assert.deepEqual(s.entities.map((e) => e.canonical), ["Marie Duval"]);
-  assert.deepEqual(s.candidates.map((c) => c.text), ["Anouk Berger", "Alpine Trust"]);
-});
-
-test("a restriction listing nothing visible changes nothing (CR15)", () => {
-  seedCandidates();
-  assert.equal(denyAllInCategory("person_names", []), 0);
-  assert.equal(acceptAllInCategory("person_names", []), 0);
-  assert.equal(getState().candidates.length, 3);
-});
-
-test("bulk restrictions match case-insensitively, like every candidate key", () => {
-  seedCandidates();
-  assert.equal(denyAllInCategory("person_names", ["marie duval"]), 1);
-  assert.deepEqual(getState().candidates.map((c) => c.text), ["Anouk Berger", "Alpine Trust"]);
-});
 
 test("smart detection ships with the stricter defaults (CR13)", () => {
   resetState();
@@ -802,17 +701,21 @@ function fullSession() {
 }
 
 test("isBackward only reports moves toward the start of the wizard", () => {
-  assert.equal(isBackward("values", "configure"), true);
+  assert.equal(isBackward("anonymise", "identify"), true);
   assert.equal(isBackward("export", "import"), true);
-  assert.equal(isBackward("configure", "values"), false);
-  assert.equal(isBackward("run", "run"), false);
-  assert.equal(isBackward("run", "nowhere"), false, "an unknown step is not a backward move");
+  assert.equal(isBackward("identify", "anonymise"), false);
+  assert.equal(isBackward("anonymise", "anonymise"), false);
+  assert.equal(isBackward("anonymise", "nowhere"), false, "an unknown step is not a backward move");
 });
 
 test("resetStep rejects an unknown step instead of silently doing nothing", () => {
   resetState();
   assert.equal(resetStep("teleport"), false);
-  assert.equal(resetStep("values"), true);
+  // The retired tokens are unknown steps now, not aliases for the new ones.
+  assert.equal(resetStep("configure"), false);
+  assert.equal(resetStep("values"), false);
+  assert.equal(resetStep("run"), false);
+  assert.equal(resetStep("identify"), true);
 });
 
 test("every wizard step has a reset entry (CR16)", () => {
@@ -841,48 +744,55 @@ test("NO reset ever clears the allowlist (CR16)", () => {
   }
 });
 
-test("resetStep(configure) restores the preset and the detection defaults", () => {
+test("resetStep(identify) restores the preset and the detection defaults", () => {
+  // Identify owns BOTH halves of its screen now (BUILD-05 Phase 2): the rail's
+  // choices, which used to be a Configure step, and the workspace's values.
   fullSession();
   assert.equal(getState().settings.categories.email, false);
   assert.equal(getState().settings.minConfidence, 0.9);
 
-  assert.equal(resetStep("configure"), true);
+  assert.equal(resetStep("identify"), true);
   const s = getState();
-  assert.deepEqual(s.settings.categories, presetCategories(s.settings.level));
+  // The preset, with the DEFAULT COUNTRY's identifier switches on top. Every
+  // preset switches all three country-specific identifiers on, because to the
+  // engine they are hard PII, so the reset has to re-apply the country or the
+  // rail would show Luxembourg beside an active German tax identifier.
+  assert.deepEqual(s.settings.categories, {
+    ...presetCategories(s.settings.level),
+    ...countryIDCategories(DEFAULT_COUNTRY),
+  });
+  assert.equal(s.documentCountry, DEFAULT_COUNTRY);
   assert.equal(s.settings.minConfidence, 0);
   assert.deepEqual(s.settings.smartDetect, SMART_DETECT_DEFAULTS);
-  // The values step is untouched by a configure reset.
-  assert.equal(s.entities.length, 1);
 });
 
-test("resetStep(configure) keeps the machine's connection settings", () => {
+test("resetStep(identify) clears values, suggestions, patterns and discovery", () => {
+  fullSession();
+  assert.equal(resetStep("identify"), true);
+  const s = getState();
+  assert.deepEqual(s.entities, []);
+  assert.deepEqual(s.candidates, []);
+  assert.deepEqual(s.patterns, []);
+  assert.equal(s.discovery, null);
+  // The run is untouched: it belongs to the next step.
+  assert.ok(s.results);
+});
+
+test("resetStep(identify) keeps the machine's connection settings", () => {
   // Port, model and the AI toggle describe the machine, not this batch of
   // documents, so stepping back must not make the user reconfigure Ollama.
   fullSession();
   setState({ settings: { ...getState().settings, ollamaPort: 12345, model: "custom:7b", useAI: true } });
-  resetStep("configure");
+  resetStep("identify");
   const s = getState();
   assert.equal(s.settings.ollamaPort, 12345);
   assert.equal(s.settings.model, "custom:7b");
   assert.equal(s.settings.useAI, true);
 });
 
-test("resetStep(values) clears values, suggestions, patterns and discovery", () => {
+test("resetStep(anonymise) clears the run and its re-identification mapping", () => {
   fullSession();
-  assert.equal(resetStep("values"), true);
-  const s = getState();
-  assert.deepEqual(s.entities, []);
-  assert.deepEqual(s.candidates, []);
-  assert.deepEqual(s.patterns, []);
-  assert.equal(s.discovery, null);
-  // Configure and Run are untouched.
-  assert.equal(s.settings.minConfidence, 0.9);
-  assert.ok(s.results);
-});
-
-test("resetStep(run) clears the run and its re-identification mapping", () => {
-  fullSession();
-  assert.equal(resetStep("run"), true);
+  assert.equal(resetStep("anonymise"), true);
   const s = getState();
   assert.equal(s.running, false);
   assert.equal(s.progress, null);
@@ -892,10 +802,24 @@ test("resetStep(run) clears the run and its re-identification mapping", () => {
   assert.equal(s.entities.length, 1);
 });
 
-test("resetStep(run) re-locks the export step, which needs results", () => {
+test("resetStep(anonymise) clears the editing surfaces the run screen owns", () => {
+  // The find-and-replace rules and the dismissed warnings only exist once
+  // there is a result to edit, so they are the Anonymise step's own data.
+  fullSession();
+  setState({
+    simpleRules: [{ find: "x", replace: "[CUSTOM_1]", caseSensitive: true }],
+    dismissedWarnings: ["skipped-pdf"],
+  });
+  resetStep("anonymise");
+  const s = getState();
+  assert.deepEqual(s.simpleRules, []);
+  assert.deepEqual(s.dismissedWarnings, []);
+});
+
+test("resetStep(anonymise) re-locks the export step, which needs results", () => {
   fullSession();
   assert.equal(canGoTo("export"), true);
-  resetStep("run");
+  resetStep("anonymise");
   assert.equal(canGoTo("export"), false);
 });
 
@@ -904,7 +828,7 @@ test("resetStep(export) clears only the metadata review decisions", () => {
   assert.equal(resetStep("export"), true);
   const s = getState();
   assert.deepEqual(s.metaReview, {});
-  assert.ok(s.results, "the results are the Run step's, not Export's");
+  assert.ok(s.results, "the results belong to the Anonymise step, not Export");
 });
 
 test("resetStep(import) clears the error strip but nothing else", () => {
@@ -913,4 +837,474 @@ test("resetStep(import) clears the error strip but nothing else", () => {
   const s = getState();
   assert.deepEqual(s.importErrors, []);
   assert.equal(s.documents.length, 2);
+});
+
+// --- Notices (BUILD-05 Phase 1) ---------------------------------------
+
+test("setNotice stores the sentence and its tone", () => {
+  resetState();
+  assert.equal(getState().notice, null);
+  const notice = setNotice("Saved report.md to the destination folder.", "ok");
+  assert.deepEqual(notice, { text: "Saved report.md to the destination folder.", tone: "ok" });
+  assert.deepEqual(getState().notice, notice);
+});
+
+test("setNotice defaults to info and degrades an unknown tone to info", () => {
+  resetState();
+  assert.equal(setNotice("a fact").tone, "info");
+  // A typo in the tone must not swallow the sentence: the user still needs to
+  // read it.
+  const bad = setNotice("still shown", "chartreuse");
+  assert.equal(bad.tone, "info");
+  assert.equal(bad.text, "still shown");
+});
+
+test("setNotice keeps only the newest notice", () => {
+  resetState();
+  setNotice("first", "ok");
+  setNotice("second", "warn");
+  assert.deepEqual(getState().notice, { text: "second", tone: "warn" });
+});
+
+test("setNotice trims, and empty text clears rather than showing a blank strip", () => {
+  resetState();
+  assert.deepEqual(setNotice("  padded  "), { text: "padded", tone: "info" });
+  assert.equal(setNotice("   "), null);
+  assert.equal(getState().notice, null);
+  setNotice("something");
+  assert.equal(setNotice(""), null);
+  assert.equal(getState().notice, null);
+});
+
+test("clearNotice dismisses the strip and is a no-op when it is already empty", () => {
+  resetState();
+  let paints = 0;
+  const off = subscribe(() => paints++);
+  clearNotice();
+  assert.equal(paints, 0, "clearing nothing must not repaint");
+  setNotice("x");
+  clearNotice();
+  assert.equal(getState().notice, null);
+  off();
+});
+
+test("NOTICE_TONES is exactly the three tones brand.css defines", () => {
+  assert.deepEqual([...NOTICE_TONES].sort(), ["info", "ok", "warn"]);
+});
+
+// --- The in-app confirm (BUILD-05 decision 10) ------------------------
+
+test("askConfirm stores the question with its defaults filled in", () => {
+  resetState();
+  const answer = askConfirm({ title: "Clear the step", body: "Your documents are kept." });
+  const q = getState().confirm;
+  assert.equal(q.title, "Clear the step");
+  assert.equal(q.body, "Your documents are kept.");
+  assert.equal(q.confirmLabel, "Continue");
+  assert.equal(q.cancelLabel, "Cancel");
+  assert.equal(q.keyBearing, false);
+  answerConfirm(false);
+  return answer; // settle it so the test does not leave a pending promise
+});
+
+test("askConfirm resolves true on confirm and clears the question", async () => {
+  resetState();
+  const pending = askConfirm({ title: "t", body: "b", confirmLabel: "Export CSV", keyBearing: true });
+  assert.equal(getState().confirm.confirmLabel, "Export CSV");
+  assert.equal(getState().confirm.keyBearing, true);
+  assert.equal(answerConfirm(true), true, "there was a question to answer");
+  assert.equal(await pending, true);
+  assert.equal(getState().confirm, null);
+});
+
+test("askConfirm resolves false on cancel", async () => {
+  resetState();
+  const pending = askConfirm({ title: "t", body: "b" });
+  answerConfirm(false);
+  assert.equal(await pending, false);
+  assert.equal(getState().confirm, null);
+});
+
+test("answerConfirm reports that there was nothing to answer", () => {
+  resetState();
+  assert.equal(answerConfirm(true), false);
+  assert.equal(getState().confirm, null);
+});
+
+test("a second question answers the first one no rather than stranding it", async () => {
+  resetState();
+  const first = askConfirm({ title: "first", body: "b" });
+  const second = askConfirm({ title: "second", body: "b" });
+  // The new question is the one on screen...
+  assert.equal(getState().confirm.title, "second");
+  // ...and the old promise settled false instead of hanging forever.
+  assert.equal(await first, false);
+  answerConfirm(true);
+  assert.equal(await second, true);
+});
+
+test("resetState answers a pending question no instead of leaving it hanging", async () => {
+  resetState();
+  const pending = askConfirm({ title: "t", body: "b" });
+  resetState();
+  assert.equal(await pending, false);
+  assert.equal(getState().confirm, null);
+});
+
+test("the notice and the question are cleared by resetState", () => {
+  resetState();
+  setNotice("x", "ok");
+  resetState();
+  assert.equal(getState().notice, null);
+  assert.equal(getState().confirm, null);
+});
+
+// --- The document country (BUILD-05 Phase 5, decision 2) ----------------
+
+test("setDocumentCountry records the country and switches its identifiers", () => {
+  resetState();
+  assert.equal(getState().documentCountry, DEFAULT_COUNTRY);
+
+  assert.equal(setDocumentCountry("DE"), "DE");
+  let s = getState();
+  assert.equal(s.documentCountry, "DE");
+  assert.equal(s.settings.categories.de_steuer_id, true);
+  assert.equal(s.settings.categories.es_nif, false);
+  assert.equal(s.settings.categories.uk_nhs, false);
+});
+
+test("switching country turns the previous country's identifier OFF", () => {
+  // The whole point of the control: Germany then France must not leave the
+  // German tax identifier active beside nothing.
+  resetState();
+  setDocumentCountry("DE");
+  assert.equal(getState().settings.categories.de_steuer_id, true);
+  setDocumentCountry("FR");
+  const s = getState();
+  assert.equal(s.documentCountry, "FR");
+  for (const key of COUNTRY_ID_CATEGORIES) {
+    assert.equal(s.settings.categories[key], false, `${key} must be off for France`);
+  }
+});
+
+test("setDocumentCountry touches NOTHING but the three identifiers", () => {
+  resetState();
+  const before = { ...getState().settings.categories };
+  setDocumentCountry("UK");
+  const after = getState().settings.categories;
+  for (const key of Object.keys(before)) {
+    if (COUNTRY_ID_CATEGORIES.includes(key)) continue;
+    assert.equal(after[key], before[key],
+      `${key} changed, but the country only decides the three national identifiers`);
+  }
+});
+
+test("setDocumentCountry rejects an unknown code instead of storing it", () => {
+  // Storing a code the table does not know would leave the selector showing one
+  // country and the switches set for another.
+  resetState();
+  setDocumentCountry("ES");
+  const snapshot = { ...getState().settings.categories };
+  for (const bad of ["ZZ", "", undefined, null, "de"]) {
+    assert.equal(setDocumentCountry(bad), null, JSON.stringify(bad));
+    assert.equal(getState().documentCountry, "ES", "the stored country must not change");
+    assert.deepEqual(getState().settings.categories, snapshot);
+  }
+});
+
+test("setDocumentCountry repaints exactly once", () => {
+  // Both halves of the change land in ONE setState, so the country and its
+  // switches can never be observed disagreeing, and a long category list is not
+  // re-rendered four times.
+  resetState();
+  let paints = 0;
+  const off = subscribe(() => paints++);
+  setDocumentCountry("DE");
+  assert.equal(paints, 1);
+  off();
+});
+
+test("a preset does not overrule the country's identifier choice", () => {
+  // presetCategories() switches all three national identifiers ON, because to
+  // the engine they are hard PII. The country is an ORTHOGONAL choice, so
+  // applyPreset re-applies it: picking Soft on a German document must not
+  // silently start looking for Spanish tax numbers.
+  resetState();
+  setDocumentCountry("DE");
+  for (const level of ["soft", "medium", "advanced"]) {
+    applyPreset(level);
+    const categories = getState().settings.categories;
+    assert.equal(categories.de_steuer_id, true, `${level}: Germany's identifier stays on`);
+    assert.equal(categories.es_nif, false, `${level}: Spain's must not come back`);
+    assert.equal(categories.uk_nhs, false, `${level}: the UK's must not come back`);
+  }
+});
+
+test("the preset chip does not read Custom just because of the country", () => {
+  // The three country-driven identifiers are excluded from the preset
+  // comparison. Otherwise a Luxembourg document, where all three are off, would
+  // show "Custom" the instant the user picked Standard, which makes the chips
+  // look broken.
+  resetState();
+  for (const code of COUNTRIES.map((c) => c.code)) {
+    setDocumentCountry(code);
+    for (const level of ["soft", "medium", "advanced"]) {
+      applyPreset(level);
+      assert.equal(selectionPresetName(getState().settings.categories), level,
+        `${code} + ${level} must still read as ${level}`);
+    }
+  }
+});
+
+test("a real category change still reads as Custom", () => {
+  // The exclusion must not swallow genuine divergence.
+  resetState();
+  applyPreset("medium");
+  toggleCategory("email", false);
+  assert.equal(selectionPresetName(getState().settings.categories), "custom");
+});
+
+// --- The Anonymise screen's editing surfaces (BUILD-05 Phase 7) ----------
+
+test("addPendingValue records the chip AND adds the value to replace", () => {
+  // The two go together: the entity is what makes a fast re-run replace the
+  // value, the chip is what says it will not happen until the user presses it.
+  resetState();
+  assert.equal(addPendingValue("person_names", "P. Stone"), true);
+  const s = getState();
+  assert.deepEqual(s.pendingValues, [{ category: "person_names", text: "P. Stone" }]);
+  assert.equal(s.entities.length, 1);
+  assert.equal(s.entities[0].canonical, "P. Stone");
+  assert.equal(s.entities[0].category, "person_names");
+});
+
+test("addPendingValue trims, and refuses an empty value", () => {
+  resetState();
+  assert.equal(addPendingValue("person_names", "  P. Stone  "), true);
+  assert.equal(getState().pendingValues[0].text, "P. Stone");
+  for (const empty of ["", "   ", undefined, null]) {
+    assert.equal(addPendingValue("person_names", empty), false, JSON.stringify(empty));
+  }
+  assert.equal(getState().pendingValues.length, 1);
+});
+
+test("addPendingValue refuses a duplicate, case-insensitively", () => {
+  resetState();
+  addPendingValue("person_names", "P. Stone");
+  assert.equal(addPendingValue("person_names", "p. stone"), false);
+  assert.equal(addPendingValue("client_names", "P. STONE"), false,
+    "the category does not make it a different value");
+  assert.equal(getState().pendingValues.length, 1);
+});
+
+test("addPendingValue refuses a value that is already on the list to replace", () => {
+  // A chip for something already being replaced would promise a change the
+  // re-run cannot make.
+  resetState();
+  addEntities([{ category: "client_names", canonical: "Aurora Group" }]);
+  assert.equal(addPendingValue("client_names", "Aurora Group"), false);
+  assert.deepEqual(getState().pendingValues, []);
+});
+
+test("removePendingValue undoes the WHOLE of what Add did", () => {
+  // The chip's cross has to remove the entity too, or the value would keep being
+  // replaced with no chip left to say so.
+  resetState();
+  addPendingValue("person_names", "P. Stone");
+  addPendingValue("client_names", "Aurora Group");
+  removePendingValue("P. Stone");
+  const s = getState();
+  assert.deepEqual(s.pendingValues.map((p) => p.text), ["Aurora Group"]);
+  assert.deepEqual(s.entities.map((e) => e.canonical), ["Aurora Group"]);
+});
+
+test("removePendingValue ignores a value that is not pending", () => {
+  resetState();
+  addEntities([{ category: "client_names", canonical: "Aurora Group" }]);
+  removePendingValue("Aurora Group");
+  assert.equal(getState().entities.length, 1,
+    "a value that was never pending must not be removed by the chip handler");
+});
+
+test("clearPendingValues empties the chips but KEEPS the values", () => {
+  // The re-run just used those entities; dropping them would undo the re-run.
+  resetState();
+  addPendingValue("person_names", "P. Stone");
+  addPendingValue("client_names", "Aurora Group");
+  assert.equal(clearPendingValues(), 2);
+  assert.deepEqual(getState().pendingValues, []);
+  assert.equal(getState().entities.length, 2);
+  assert.equal(clearPendingValues(), 0, "clearing an empty list is a no-op");
+});
+
+test("dismissWarning hides one warning and visibleWarnings drops it", () => {
+  resetState();
+  setState({ results: { report: { warnings: ["pdf skipped", "extras in headers"] } } });
+  assert.deepEqual(visibleWarnings(), ["pdf skipped", "extras in headers"]);
+  assert.equal(dismissWarning("pdf skipped"), true);
+  assert.deepEqual(visibleWarnings(), ["extras in headers"]);
+  assert.deepEqual(getState().dismissedWarnings, ["pdf skipped"]);
+});
+
+test("dismissWarning is keyed by TEXT, so order changes cannot mis-hide one", () => {
+  // Go sends warnings as plain strings with no identifier. An index would hide
+  // the wrong warning the moment a run produced them in a different order.
+  resetState();
+  setState({ results: { report: { warnings: ["a", "b"] } } });
+  dismissWarning("b");
+  setState({ results: { report: { warnings: ["b", "a"] } } });
+  assert.deepEqual(visibleWarnings(), ["a"], "the same warning stays hidden after a reorder");
+});
+
+test("dismissWarning ignores an empty id and refuses to double-dismiss", () => {
+  resetState();
+  setState({ results: { report: { warnings: ["a"] } } });
+  assert.equal(dismissWarning(""), false);
+  assert.equal(dismissWarning(undefined), false);
+  assert.equal(dismissWarning("a"), true);
+  assert.equal(dismissWarning("a"), false, "already dismissed");
+  assert.deepEqual(getState().dismissedWarnings, ["a"]);
+});
+
+test("a new run re-raises every warning", () => {
+  // resetStep("anonymise") empties the dismissed list, because a warning about
+  // the run you are looking at NOW has to be visible.
+  resetState();
+  setState({
+    documents: [{ name: "a.txt" }],
+    results: { report: { warnings: ["pdf skipped"] } },
+  });
+  dismissWarning("pdf skipped");
+  assert.deepEqual(visibleWarnings(), []);
+  resetStep("anonymise");
+  setState({ results: { report: { warnings: ["pdf skipped"] } } });
+  assert.deepEqual(visibleWarnings(), ["pdf skipped"]);
+});
+
+test("visibleWarnings copes with no run and no report", () => {
+  resetState();
+  assert.deepEqual(visibleWarnings(), []);
+  setState({ results: {} });
+  assert.deepEqual(visibleWarnings(), []);
+});
+
+// --- startNewBatch (BUILD-05 Phase 8) ------------------------------------
+//
+// The SPLIT is the whole point of this button, so both halves are pinned: what
+// it clears, and just as importantly what it keeps. Getting the second half
+// wrong would make the button useless (the user re-enters their settings every
+// batch) or unsafe (the previous batch's key stays in memory).
+
+/** finishedBatch() is the state at the end of a completed batch. */
+function finishedBatch() {
+  resetState();
+  setState({
+    step: "export",
+    documents: [{ name: "a.docx" }, { name: "b.pptx" }],
+    previewDoc: "a.docx",
+    importErrors: ["a stale error"],
+    results: { documents: [{ name: "a.docx" }], report: { warnings: ["w"] } },
+    mapping: { "[PERSON_1]": { original: "Marie Duval", category: "person_names" } },
+    resultDoc: "a.docx",
+    metaReview: { "a.docx": { ext: "docx", filename: "a_anon.docx", fields: [] } },
+    exportDir: "C:\\Users\\o\\anonymised",
+  });
+  addEntities([{ category: "person_names", canonical: "Marie Duval" }]);
+  addCandidates([{ text: "Thomas Berger", category: "person_names" }], "smart");
+  addPattern("INV-\\d{6}");
+  addSimpleRule({ find: "4471-B", replace: "[CUSTOM_1]", caseSensitive: true });
+  addPendingValue("client_names", "Aurora Group");
+  dismissWarning("w");
+  addAllowTerm("CSSF");
+  setDocumentCountry("DE");
+  setMinConfidence(0.9);
+}
+
+test("startNewBatch clears everything about THIS batch", () => {
+  finishedBatch();
+  startNewBatch();
+  const s = getState();
+  assert.deepEqual(s.documents, []);
+  assert.equal(s.previewDoc, null);
+  assert.deepEqual(s.importErrors, []);
+  assert.deepEqual(s.entities, []);
+  assert.deepEqual(s.candidates, []);
+  assert.deepEqual(s.patterns, []);
+  assert.deepEqual(s.simpleRules, []);
+  assert.deepEqual(s.pendingValues, []);
+  assert.deepEqual(s.dismissedWarnings, []);
+  assert.deepEqual(s.metaReview, {});
+  assert.equal(s.results, null);
+  assert.equal(s.resultDoc, null);
+  assert.equal(s.running, false);
+  assert.equal(s.progress, null);
+  assert.equal(s.discovery, null);
+});
+
+test("startNewBatch clears the MAPPING, which is the previous batch's key", () => {
+  // Not tidiness: leaving it in memory across an explicit "start again" keeps
+  // sensitive data alive with nothing on screen referring to it.
+  finishedBatch();
+  assert.ok(getState().mapping, "the fixture must have a mapping to clear");
+  startNewBatch();
+  assert.equal(getState().mapping, null);
+});
+
+test("startNewBatch KEEPS the settings, the country and the allowlist", () => {
+  // All of it describes how this user works. Re-entering it for every batch is
+  // exactly the tedium the button exists to avoid.
+  finishedBatch();
+  const before = {
+    categories: { ...getState().settings.categories },
+    minConfidence: getState().settings.minConfidence,
+    smartDetect: { ...getState().settings.smartDetect },
+    ollamaPort: getState().settings.ollamaPort,
+    country: getState().documentCountry,
+    allowlist: [...getState().allowlist],
+    exportDir: getState().exportDir,
+  };
+  startNewBatch();
+  const s = getState();
+  assert.deepEqual(s.settings.categories, before.categories);
+  assert.equal(s.settings.minConfidence, before.minConfidence);
+  assert.deepEqual(s.settings.smartDetect, before.smartDetect);
+  assert.equal(s.settings.ollamaPort, before.ollamaPort);
+  assert.equal(s.documentCountry, before.country, "the country is a setting, not batch data");
+  assert.deepEqual(s.allowlist, before.allowlist, "the never-anonymise list is curated across batches");
+  assert.equal(s.exportDir, before.exportDir, "the destination folder is a convenience worth keeping");
+});
+
+test("startNewBatch returns the wizard to Import", () => {
+  // It is the only step a cleared batch can stand on: every guard past it needs
+  // documents.
+  finishedBatch();
+  startNewBatch();
+  assert.equal(getState().step, "import");
+  assert.deepEqual(WIZARD_STEPS.filter((step) => canGoTo(step)), ["import"]);
+});
+
+test("startNewBatch reports what it cleared", () => {
+  finishedBatch();
+  const cleared = startNewBatch();
+  assert.equal(cleared.documents, 2);
+  assert.equal(cleared.rules, 1);
+  assert.ok(cleared.values >= 1);
+});
+
+test("startNewBatch dismisses any notice on screen", () => {
+  // A notice about the batch that just ended would read as being about the empty
+  // screen that replaced it.
+  finishedBatch();
+  setNotice("Batch exported to C:\\out.zip", "ok");
+  startNewBatch();
+  assert.equal(getState().notice, null);
+});
+
+test("setExportDir stores and trims, and can forget the folder", () => {
+  resetState();
+  assert.equal(setExportDir("  C:\\out  "), "C:\\out");
+  assert.equal(getState().exportDir, "C:\\out");
+  assert.equal(setExportDir(""), "");
+  assert.equal(getState().exportDir, "");
+  assert.equal(setExportDir(undefined), "");
 });

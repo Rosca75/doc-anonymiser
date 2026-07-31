@@ -84,7 +84,7 @@ func TestEveryEngineCategoryIsKnownToTheFrontend(t *testing.T) {
 	if len(missing) > 0 {
 		t.Errorf("the Go engine detects categories the Configure screen never shows or sends: %s\n"+
 			"Add each one to a list in frontend/state.js, to CATEGORY_LABELS in frontend/copy.js, "+
-			"and to a group in frontend/views/configure.js. Detecting a category the UI cannot "+
+			"and to a group in frontend/views/identifyrail.js. Detecting a category the UI cannot "+
 			"switch means it is silently inactive (BUILD-04 CR9).",
 			strings.Join(missing, ", "))
 	}

@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -149,5 +151,94 @@ func TestMidRunOllamaCrashDegrades(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("degradation warning missing: %+v", res.Report.Warnings)
+	}
+}
+
+// TestExportAllZipToRefusesABadDestination covers the ONE dialog-free write in
+// the whole application (BUILD-05 Phase 3, decision 4). It is allowed to skip
+// the dialog because the user chose the folder explicitly and the zip carries
+// no re-identification key, which makes its input validation the only thing
+// standing between a typo and a confusing failure.
+func TestExportAllZipToRefusesABadDestination(t *testing.T) {
+	app := NewApp()
+
+	// No folder chosen at all.
+	_, err := app.ExportAllZipTo("")
+	if err == nil {
+		t.Fatal("an empty destination must be refused")
+	}
+	if !strings.Contains(err.Error(), "Browse") {
+		t.Errorf("the refusal must say how to pick one, got: %v", err)
+	}
+
+	// A folder that does not exist.
+	missing := filepath.Join(t.TempDir(), "no-such-folder")
+	if _, err := app.ExportAllZipTo(missing); err == nil {
+		t.Error("a missing destination folder must be refused")
+	}
+
+	// A path that is a FILE, which is the shape a hand-typed path most often
+	// has when it is wrong.
+	file := filepath.Join(t.TempDir(), "not-a-folder.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatalf("preparing the fixture: %v", err)
+	}
+	_, err = app.ExportAllZipTo(file)
+	if err == nil {
+		t.Fatal("a file as the destination must be refused")
+	}
+	if !strings.Contains(err.Error(), "not a folder") {
+		t.Errorf("the refusal must say what is wrong with it, got: %v", err)
+	}
+}
+
+// TestFreePathNumbersInsteadOfOverwriting: a user who exports twice has almost
+// certainly changed something in between, so silently replacing the first
+// archive would destroy a copy they may still need.
+func TestFreePathNumbersInsteadOfOverwriting(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "3_anonymised.zip")
+
+	// Nothing there yet: the plain name is free.
+	got, err := freePath(first)
+	if err != nil {
+		t.Fatalf("freePath: %v", err)
+	}
+	if got != first {
+		t.Errorf("freePath on an empty folder = %q, want %q", got, first)
+	}
+
+	// Occupy it, then the next one must be numbered rather than the same name.
+	if err := os.WriteFile(first, []byte("x"), 0o644); err != nil {
+		t.Fatalf("preparing the fixture: %v", err)
+	}
+	got, err = freePath(first)
+	if err != nil {
+		t.Fatalf("freePath: %v", err)
+	}
+	want := filepath.Join(dir, "3_anonymised (2).zip")
+	if got != want {
+		t.Errorf("freePath = %q, want %q", got, want)
+	}
+	// The extension has to stay last, or Windows stops recognising the file.
+	if filepath.Ext(got) != ".zip" {
+		t.Errorf("the number must go BEFORE the extension, got %q", got)
+	}
+}
+
+// TestSetEntityPlaceholderBeforeAnyRun: the field exists on the entity cards
+// from the start, so pressing it before a run has to say what to do rather than
+// fail obscurely.
+func TestSetEntityPlaceholderBeforeAnyRun(t *testing.T) {
+	app := NewApp()
+	err := app.SetEntityPlaceholder("client_names", "Meridian Consulting", "[BANK_A_1]")
+	if err == nil {
+		t.Fatal("there is nothing to rename before the first run")
+	}
+	if !strings.Contains(err.Error(), "run the anonymisation") {
+		t.Errorf("the refusal must say what to do first, got: %v", err)
+	}
+	if got := app.EntityPlaceholder("client_names", "Meridian Consulting"); got != "" {
+		t.Errorf("EntityPlaceholder before a run = %q, want \"\"", got)
 	}
 }

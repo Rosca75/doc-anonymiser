@@ -10,12 +10,27 @@
 // unit-testable with `node --test` (state.test.js), the reason views must
 // stay logic-free (BUILD.md Phase 6).
 
+import {
+  COUNTRIES, DEFAULT_COUNTRY, countryIDCategories, COUNTRY_ID_CATEGORIES,
+} from "./countries.js";
+
 // WIZARD_STEPS defines the fixed wizard order (CLAUDE.md wizard flow).
-// BUILD-04 CR3 renamed the third step's token from "entities" to
-// "values". Saved sessions written before that rename are migrated by
-// migrateStep() below, so an older file never lands the wizard on a step
-// that no longer exists.
-export const WIZARD_STEPS = ["import", "configure", "values", "run", "export"];
+//
+// BUILD-05 cut five steps to four: Configure stopped being a screen and
+// became the left rail of Identify, which now owns both the choices
+// (categories, confidence, local AI) and the values those choices produce.
+// The tokens ARE the visible labels this time, capitalised: Import, Identify,
+// Anonymise, Export.
+//
+// There is deliberately no migration table for the old tokens. Session files
+// are read only by the version that wrote them (BUILD-05 decision 1), and an
+// unknown persisted token falls back to "import", the one step that is always
+// reachable. A table of every token this application ever used would grow
+// forever to serve files the session loader now refuses anyway.
+//
+// The four tokens are cross-checked against main.js STEP_LABELS and VIEWS,
+// STEP_RESETS below, and copy.js NAV.stepNames by ../step_parity_test.go.
+export const WIZARD_STEPS = ["import", "identify", "anonymise", "export"];
 
 // The initial application state. Every field is documented; grow it here,
 // never ad hoc in views.
@@ -53,10 +68,12 @@ const initialState = {
   // Name of the document selected in the preview pane (or null).
   previewDoc: null,
 
-  // Import screen split ratio: fraction of width given to the document
-  // list pane (the preview takes the rest). User-draggable divider,
-  // clamped to keep both panes usable (BUILD-02 Phase 2g).
-  importSplit: 0.5,
+  // The DOCUMENT COUNTRY (BUILD-05 Phase 5, decision 2), an entry code from
+  // countries.js. It is frontend-only and does exactly two things: it swaps the
+  // example strings beside the phone / VAT / national identification labels,
+  // and it switches the three country-specific ID categories. There is no
+  // locale-aware engine behind it and engine/pii.go is untouched.
+  documentCountry: DEFAULT_COUNTRY,
 
   // Settings mirror (source of truth lives in Go; this copy renders the
   // Configure screen): {level, categories, ollamaPort, model}. level is
@@ -105,6 +122,20 @@ const initialState = {
   progress: null, // {stage, docIndex, docCount, docName} or null
   results: null,  // engine.Results mirror or null
 
+  // Values added on the Anonymise screen that a fast re-run has not applied yet
+  // (BUILD-05 Phase 7): [{category, text}]. They are ALSO added to `entities`
+  // straight away, so a re-run picks them up; this list exists only so the user
+  // can see what is waiting and remove one before re-running. Cleared by the
+  // re-run that applies them.
+  pendingValues: [],
+
+  // Warnings from the last run that the user has dismissed, by id
+  // (BUILD-05 Phase 7). A warning is advice, not an error: once it has been
+  // read it should stop taking up room in the report, but it must come back
+  // if a new run raises it again, which is why the reset for the Anonymise
+  // step empties this list.
+  dismissedWarnings: [],
+
   // Discovery run state (BUILD-02 Phase 7c):
   // {running, current, total, file} or null when idle.
   discovery: null,
@@ -121,6 +152,26 @@ const initialState = {
   // cleared with the results.
   mapping: null,
 
+  // The notice strip (BUILD-05 Phase 1): {text, tone} or null. ONE notice at
+  // a time, deliberately: a stack of them turns into a log nobody reads, and
+  // the newest statement is always the one that matters. tone is
+  // "ok" | "info" | "warn" (brand.css notice tint pairs).
+  notice: null,
+
+  // The in-app confirm's pending question (BUILD-05 decision 10), or null
+  // when nothing is being asked: {title, body, confirmLabel, cancelLabel,
+  // keyBearing}. The PROMISE that resolves it is module-private below, not
+  // stored here, because state must stay clonable (resetState uses
+  // structuredClone, which cannot copy a function).
+  confirm: null,
+
+  // The destination folder for the batch zip (BUILD-05 Phase 3, decision 4), or
+  // "" when none has been chosen. It is FRONTEND state, not a Go setting: it is
+  // a convenience for one batch and has no business sitting in a session file
+  // next to the re-identification key. It drives the zip and nothing else;
+  // every other export keeps its own save dialog.
+  exportDir: "",
+
   // Same-format metadata review state per document (BUILD-02 Phase 12):
   // {docName: {ext, filename, fields: [{part, name, value, proposed,
   // changed, finalValue}]}}. Decisions persist for the session so the
@@ -133,6 +184,9 @@ const initialState = {
 // Category keys, split by preset tier. Must stay in sync with the Go side
 // (engine/pipeline.go AllPIICategories / AllEntityCategories).
 export const HARD_PII_CATEGORIES = ["email", "url", "iban", "vat", "matricule", "phone"];
+// COUNTRIES_BY_CODE is the membership check setDocumentCountry needs: a Set
+// rather than a repeated find(), and built once at module load.
+const COUNTRIES_BY_CODE = new Set(COUNTRIES.map((c) => c.code));
 // The extended recognizers BUILD-03 added to the engine. They are HARD
 // PII exactly like the group above, so every preset switches them on
 // (engine/pipeline.go PresetSelection). BUILD-04 CR9 finally surfaces
@@ -185,8 +239,17 @@ export function getState() {
   return state;
 }
 
-/** resetState() restores the initial state (used by tests and session load). */
+/** resetState() restores the initial state (used by tests and session load).
+ *
+ *  A question that was on screen is answered "no" first: dropping the state
+ *  without settling the promise would leave whoever awaited askConfirm()
+ *  hanging forever. */
 export function resetState() {
+  if (confirmResolve) {
+    const stale = confirmResolve;
+    confirmResolve = null;
+    stale(false);
+  }
   state = structuredClone(initialState);
   notify();
 }
@@ -210,6 +273,98 @@ function notify() {
   for (const fn of listeners) fn(state);
 }
 
+// --- Notices and the in-app confirm (BUILD-05 Phase 1) ----------------------
+
+// NOTICE_TONES are the only tones there are. An unknown tone is stored as
+// "info" rather than rejected: a notice is the application telling the user
+// something, so a typo in the tone must not swallow the sentence.
+export const NOTICE_TONES = ["ok", "info", "warn"];
+
+/**
+ * setNotice(text, tone) shows one statement in the notice strip, replacing
+ * whatever was there. Empty text CLEARS the strip, so a caller that computes
+ * its message does not need a second branch.
+ * @param {string} text the sentence to show
+ * @param {string} [tone] "ok" | "info" | "warn" (default "info")
+ * @returns {object|null} the stored notice, or null when cleared
+ */
+export function setNotice(text, tone = "info") {
+  const message = (text ?? "").trim();
+  if (!message) {
+    clearNotice();
+    return null;
+  }
+  const notice = { text: message, tone: NOTICE_TONES.includes(tone) ? tone : "info" };
+  setState({ notice });
+  return notice;
+}
+
+/** clearNotice() dismisses the notice strip. */
+export function clearNotice() {
+  if (state.notice) setState({ notice: null });
+}
+
+// confirmResolve holds the resolve function of the promise askConfirm handed
+// out, for exactly as long as the question is on screen. It lives here rather
+// than in the state object because state has to stay structuredClone-able
+// (resetState), and because nothing outside this module should be able to
+// answer a question the user has not answered.
+let confirmResolve = null;
+
+/**
+ * askConfirm(question) shows the in-app confirm and resolves to the user's
+ * answer (BUILD-05 decision 10, replacing every native confirm()).
+ *
+ * Asking while a question is already open ANSWERS THE OLD ONE "no" and then
+ * asks the new one. That is the safe direction: the alternative is either
+ * losing the new question silently or leaving the first promise pending
+ * forever, and a promise that never settles is a caller stuck mid-action.
+ *
+ * @param {object} question
+ * @param {string} question.title the short heading
+ * @param {string} question.body what will happen, in full sentences
+ * @param {string} [question.confirmLabel] the affirmative button (default
+ *   "Continue")
+ * @param {string} [question.cancelLabel] default "Cancel"
+ * @param {boolean} [question.keyBearing] the action exposes the
+ *   re-identification key; tints the dialog accordingly
+ * @returns {Promise<boolean>} true when confirmed, false when cancelled
+ */
+export function askConfirm(question) {
+  if (confirmResolve) {
+    const stale = confirmResolve;
+    confirmResolve = null;
+    stale(false);
+  }
+  return new Promise((resolve) => {
+    confirmResolve = resolve;
+    setState({
+      confirm: {
+        title: question?.title ?? "Confirm",
+        body: question?.body ?? "",
+        confirmLabel: question?.confirmLabel ?? "Continue",
+        cancelLabel: question?.cancelLabel ?? "Cancel",
+        keyBearing: !!question?.keyBearing,
+      },
+    });
+  });
+}
+
+/**
+ * answerConfirm(answer) closes the open question and settles its promise.
+ * modal.js calls it from the two buttons and from the Escape key (which
+ * answers false, the same as Cancel).
+ * @param {boolean} answer
+ * @returns {boolean} whether there was a question to answer
+ */
+export function answerConfirm(answer) {
+  const resolve = confirmResolve;
+  confirmResolve = null;
+  if (state.confirm) setState({ confirm: null });
+  if (resolve) resolve(!!answer);
+  return !!resolve;
+}
+
 // --- Category selection reducers (BUILD-02 Phase 3) --------------------------
 
 /**
@@ -218,7 +373,20 @@ function notify() {
  */
 export function applyPreset(level) {
   setState({
-    settings: { ...state.settings, level, categories: presetCategories(level) },
+    settings: {
+      ...state.settings,
+      level,
+      // The preset, then the CURRENT COUNTRY's identifier switches on top of it
+      // (BUILD-05 Phase 5). Every preset switches all three country-specific
+      // identifiers on, because to the engine they are hard PII; re-applying the
+      // country here is what stops picking a preset silently re-enabling the
+      // German tax identifier on a French document. The country is an
+      // orthogonal choice, so a preset must not overrule it.
+      categories: {
+        ...presetCategories(level),
+        ...countryIDCategories(state.documentCountry),
+      },
+    },
   });
 }
 
@@ -267,6 +435,48 @@ export function setCategoryGroup(keys, on) {
   }
   if (changed) setState({ settings: { ...state.settings, categories } });
   return changed;
+}
+
+/**
+ * setDocumentCountry(code) records the document country and applies its
+ * consequence: the three country-specific ID categories are switched to match
+ * (BUILD-05 Phase 5, decision 2).
+ *
+ * Both halves happen in ONE state change, so the country selector repaints once
+ * rather than three times, and so the country and the switches can never be
+ * observed disagreeing.
+ *
+ * The switch set is applied WHOLE, not additively: picking France turns the
+ * German and Spanish identifiers OFF rather than leaving them on beside
+ * nothing. That is the behaviour the mock-up's script has, and it is the only
+ * one that makes the control mean anything.
+ *
+ * An unknown code is REJECTED rather than stored, because the country drives
+ * which categories are on: silently accepting a code the table does not know
+ * would leave the selector showing one country and the switches set for
+ * another.
+ *
+ * @param {string} code a country code from countries.js
+ * @returns {string|null} the stored code, or null when rejected
+ */
+export function setDocumentCountry(code) {
+  const applies = countryIDCategories(code);
+  // countryIDCategories falls back to the default for an unknown code, so the
+  // membership check has to happen here rather than being inferred from it.
+  if (!COUNTRIES_BY_CODE.has(code)) return null;
+
+  const categories = { ...state.settings.categories };
+  for (const key of COUNTRY_ID_CATEGORIES) {
+    // Guard against a table that drifts ahead of ALL_CATEGORIES: a switch for a
+    // category the engine does not know does nothing, so do not invent one.
+    if (!ALL_CATEGORIES.includes(key)) continue;
+    categories[key] = applies[key];
+  }
+  setState({
+    documentCountry: code,
+    settings: { ...state.settings, categories },
+  });
+  return code;
 }
 
 /**
@@ -342,7 +552,15 @@ export function smartDetectOptions(s = state) {
 export function selectionPresetName(categories) {
   for (const level of ["soft", "medium", "advanced"]) {
     const preset = presetCategories(level);
-    if (ALL_CATEGORIES.every((c) => !!categories?.[c] === preset[c])) return level;
+    // The three country-specific identifiers are EXCLUDED from the comparison
+    // (BUILD-05 Phase 5). They are driven by the country selector, not by the
+    // preset, so a Luxembourg document (all three off) would otherwise read as
+    // "Custom" the instant the user picked Standard, which makes the preset
+    // chips look broken. The country is a separate axis and the chip reports
+    // the preset axis only.
+    const matches = ALL_CATEGORIES.every((c) =>
+      COUNTRY_ID_CATEGORIES.includes(c) || !!categories?.[c] === preset[c]);
+    if (matches) return level;
   }
   return "custom";
 }
@@ -395,18 +613,11 @@ export function goToScreen(name) {
   return true;
 }
 
-/**
- * setImportSplit(ratio) stores the import-screen divider position as a
- * fraction of the width given to the list pane. Non-numbers are rejected;
- * numbers are clamped to [0.2, 0.8] so neither pane can collapse.
- * Returns the stored value (or null when rejected).
- */
-export function setImportSplit(ratio) {
-  if (typeof ratio !== "number" || Number.isNaN(ratio)) return null;
-  const clamped = Math.min(0.8, Math.max(0.2, ratio));
-  setState({ importSplit: clamped });
-  return clamped;
-}
+// setImportSplit() is GONE (BUILD-05 decision 6). It stored the import screen's
+// draggable pane divider position. The mock-up uses a fixed two-column grid, and
+// a divider that only ever moved between 20% and 80% of the width was three
+// state transitions and a pointer-capture dance to save the user a decision they
+// did not actually have.
 
 // --- Navigation guards ------------------------------------------------------
 
@@ -432,26 +643,23 @@ export function goTo(step) {
   return true;
 }
 
-// LEGACY_STEP_TOKENS maps wizard step tokens written by OLDER versions of
-// the application onto their current names (BUILD-04 CR3). Session files
-// and any other persisted step reference pass through migrateStep() so a
-// rename in the UI can never strand a user on a step that no longer
-// exists. Grow this table on every future token rename; never remove an
-// entry, old files keep existing forever.
-export const LEGACY_STEP_TOKENS = {
-  entities: "values",
-};
-
 /**
- * migrateStep(step) returns the CURRENT token for a possibly legacy step
- * name. Unknown tokens (a corrupted or hand-edited file) fall back to
- * "import", the only step that is always reachable.
- * @param {string} step token read from a persisted session
+ * knownStep(step) returns a token guaranteed to be in WIZARD_STEPS, falling
+ * back to "import" for anything it does not recognise.
+ *
+ * This replaced BUILD-04's LEGACY_STEP_TOKENS + migrateStep() pair, which
+ * translated retired tokens onto current ones. BUILD-05 decision 1 removed
+ * that machinery rather than extending it: a session file whose schema version
+ * this build does not know is refused outright by the loader, so a step token
+ * from an older file never reaches here in the first place. What is left is
+ * the honest case, a corrupted or hand-edited value, and the answer to that is
+ * the step that is always reachable rather than a guess.
+ *
+ * @param {string} step a token from a persisted session or a URL
  * @returns {string} a token guaranteed to be in WIZARD_STEPS
  */
-export function migrateStep(step) {
-  const migrated = LEGACY_STEP_TOKENS[step] ?? step;
-  return WIZARD_STEPS.includes(migrated) ? migrated : "import";
+export function knownStep(step) {
+  return WIZARD_STEPS.includes(step) ? step : "import";
 }
 
 // --- Per-step reset (BUILD-04 CR16) -----------------------------------------
@@ -478,28 +686,43 @@ export function migrateStep(step) {
 export const STEP_RESETS = {
   // Import owns only the error strip of the last import action.
   import: () => ({ importErrors: [] }),
-  // Configure owns what to anonymise and how strictly.
-  configure: () => ({
+  // Identify owns BOTH halves of its screen (BUILD-05 Phase 2): the rail's
+  // choices, which used to belong to a Configure step of its own, and the
+  // workspace's values, suggestions and patterns. They are reset together
+  // because that is now one screen: resetting half of it would leave a
+  // category selection that no longer matches the values it produced.
+  identify: () => ({
+    documentCountry: DEFAULT_COUNTRY,
     settings: {
       ...state.settings,
-      categories: presetCategories(state.settings.level),
+      // The preset first, then the DEFAULT COUNTRY's identifier switches on top
+      // of it. Order matters: every preset switches all three country-specific
+      // identifiers on (they are hard PII to the engine), so applying the
+      // preset alone would leave the rail showing Luxembourg with the German
+      // and Spanish tax identifiers active, which is precisely the disagreement
+      // setDocumentCountry exists to prevent.
+      categories: {
+        ...presetCategories(state.settings.level),
+        ...countryIDCategories(DEFAULT_COUNTRY),
+      },
       minConfidence: 0,
       smartDetect: { ...SMART_DETECT_DEFAULTS },
     },
-  }),
-  // Values owns the values to replace and everything proposed for review.
-  values: () => ({
     entities: [],
     candidates: [],
     patterns: [],
     discovery: null,
   }),
-  // Run owns the run itself and everything it produced.
-  run: () => ({
+  // Anonymise owns the run itself, everything it produced, and the two
+  // editing surfaces that only exist once there is a result to edit: the
+  // ordered find-and-replace rules and the dismissed-warning list.
+  anonymise: () => ({
     running: false,
     progress: null,
     results: null,
     mapping: null,
+    simpleRules: [],
+    dismissedWarnings: [],
   }),
   // Export owns the per-document metadata review decisions.
   export: () => ({ metaReview: {} }),
@@ -534,15 +757,18 @@ export function isBackward(from, to) {
   return toIndex < fromIndex;
 }
 
-/** nextStep()/prevStep() move linearly through the wizard. */
+/**
+ * nextStep() moves one step forward. Forward moves never ask anything, so this
+ * is the whole of the operation.
+ *
+ * There is no prevStep() any more (BUILD-05 Phase 9). It moved one step BACK
+ * without the reset question, which made it a way around the rule nav.js exists
+ * to enforce: an accidental caller would silently skip the confirmation the user
+ * is owed. Backward movement goes through nav.js goBack().
+ */
 export function nextStep() {
   const idx = WIZARD_STEPS.indexOf(state.step);
   return idx < WIZARD_STEPS.length - 1 && goTo(WIZARD_STEPS[idx + 1]);
-}
-
-export function prevStep() {
-  const idx = WIZARD_STEPS.indexOf(state.step);
-  return idx > 0 && goTo(WIZARD_STEPS[idx - 1]);
 }
 
 // --- Document reducers -------------------------------------------------------
@@ -602,37 +828,20 @@ export function addEntities(items) {
   return added.length;
 }
 
-/** setEntityStatus(category, canonical, status), accept or deny a row. */
-export function setEntityStatus(category, canonical, status) {
-  setState({
-    entities: state.entities.map((e) =>
-      entityKey(e.category, e.canonical) === entityKey(category, canonical)
-        ? { ...e, status }
-        : e),
-  });
-}
-
-/**
- * editEntity(category, oldCanonical, newCanonical) renames a row (the
- * "edit" action of the review table). A rename that would collide with an
- * existing row is rejected (returns false).
- */
-export function editEntity(category, oldCanonical, newCanonical) {
-  const next = (newCanonical ?? "").trim();
-  if (!next) return false;
-  const collision = state.entities.some((e) =>
-    entityKey(e.category, e.canonical) === entityKey(category, next) &&
-    entityKey(e.category, e.canonical) !== entityKey(category, oldCanonical));
-  if (collision) return false;
-  setState({
-    entities: state.entities.map((e) =>
-      entityKey(e.category, e.canonical) === entityKey(category, oldCanonical)
-        // variants: null = pending; ONLY this row re-expands (Phase 7a).
-        ? { ...e, canonical: next, variants: null, variantError: null }
-        : e),
-  });
-  return true;
-}
+// setEntityStatus() and editEntity() are GONE (BUILD-05 Phase 9).
+//
+// setEntityStatus flipped a row between "accepted" and "denied". The redesign
+// has no denied state: a suggestion is accepted or rejected in the Suggestions
+// tab, and a value that reaches My values is a value that will be replaced. The
+// `status` field and the filter in acceptedEntities() below survive as the belt
+// to that brace, because a row that somehow arrived denied must still not reach
+// the pipeline.
+//
+// editEntity renamed a value in place, an action the review TABLE offered.
+// The value cards that replaced it do not: a value is keyed by (category,
+// canonical), so a rename is a remove and an add, which is what the card's two
+// controls already do and what the registry needs anyway to keep its
+// placeholder mapping honest.
 
 /** removeEntity(category, canonical) deletes a row outright. */
 export function removeEntity(category, canonical) {
@@ -749,71 +958,64 @@ export function rejectCandidate(text) {
   setState({ candidates: state.candidates.filter((c) => candidateKey(c.text) !== key) });
 }
 
-/**
- * updateCandidate(text, patch) edits a candidate in place (inline text
- * or category change before accepting). A text edit that collides with
- * another row is rejected (returns false).
- */
-export function updateCandidate(text, patch) {
-  const key = candidateKey(text);
-  const next = (patch.text ?? text).trim();
-  if (!next) return false;
-  if (candidateKey(next) !== key &&
-      state.candidates.some((c) => candidateKey(c.text) === candidateKey(next))) {
-    return false;
-  }
-  setState({
-    candidates: state.candidates.map((c) =>
-      candidateKey(c.text) === key ? { ...c, ...patch, text: next } : c),
-  });
-  return true;
-}
+// updateCandidate() is GONE (BUILD-05 Phase 9). It edited a suggestion's text or
+// category in place, before accepting it. The suggestions table is now a review
+// gate with exactly two answers per row, accept or reject: editing a suggestion
+// meant deciding what it should have been, which is what My values is for, and
+// having it in both places meant two ways to create the same value.
+
+// acceptAllInCategory() and denyAllInCategory() are GONE (BUILD-05 Phase 9),
+// along with the bulkSelection() picker they shared.
+//
+// They bulk-acted on ONE category at a time, because the BUILD-04 suggestions
+// table grouped its bulk buttons per category. The BUILD-05 table sorts and
+// filters across every category at once, so "the rows shown" is not a category,
+// and acceptAllShown() / rejectAllShown() below take the visible values directly.
+// Keeping the per-category pair as well would have meant two bulk paths with
+// different notions of what a bulk action covers.
 
 /**
- * bulkSelection(category, onlyTexts) is the shared row picker for the two
- * bulk actions (BUILD-04 CR15). Returns a predicate over candidates.
+ * acceptAllShown(texts) bulk-accepts the candidates whose values are listed,
+ * ACROSS categories (BUILD-05 Phase 6).
  *
- * onlyTexts, when given, restricts the action to those exact values. The
- * Values screen always passes the currently FILTERED set, so a bulk
- * button acts on exactly the rows the user can see and never on rows a
- * search box is hiding. Omitting it keeps the original whole-category
- * behaviour, which is what a caller with no filter wants.
+ * This is the mock-up's "Accept all shown". It differs from
+ * acceptAllInCategory in exactly one way that matters: the suggestions table
+ * sorts and filters across every category at once, so "shown" is not a
+ * category, it is whatever survived the search, the type filter and the source
+ * filter. A per-category button cannot express that, and asking the user to
+ * press it once per category would defeat the point of a bulk action.
+ *
+ * Each accepted candidate keeps its OWN category rather than being coerced into
+ * a shared one: the bulk action is about which rows, not about what they are.
+ *
+ * @param {string[]} texts the values currently visible, in any order
+ * @returns {number} how many entities were added
  */
-function bulkSelection(category, onlyTexts) {
-  const allowed = onlyTexts ? new Set(onlyTexts.map(candidateKey)) : null;
-  return (c) => c.category === category && (!allowed || allowed.has(candidateKey(c.text)));
-}
-
-/**
- * acceptAllInCategory(category, onlyTexts) bulk-accepts candidates of a
- * category, optionally restricted to onlyTexts; returns how many entities
- * were added.
- */
-export function acceptAllInCategory(category, onlyTexts) {
-  const inBatch = bulkSelection(category, onlyTexts);
-  const batch = state.candidates.filter(inBatch);
+export function acceptAllShown(texts) {
+  const shown = new Set((texts ?? []).map(candidateKey));
+  if (shown.size === 0) return 0;
+  const batch = state.candidates.filter((c) => shown.has(candidateKey(c.text)));
   if (!batch.length) return 0;
   const added = addEntities(batch.map((c) => ({ category: c.category, canonical: c.text })));
-  setState({ candidates: state.candidates.filter((c) => !inBatch(c)) });
+  setState({ candidates: state.candidates.filter((c) => !shown.has(candidateKey(c.text))) });
   return added;
 }
 
 /**
- * denyAllInCategory(category, onlyTexts) is the mirror of
- * acceptAllInCategory (BUILD-04 CR15): it DROPS the candidates instead of
- * promoting them, exactly as rejectCandidate does one at a time. Nothing
- * is added to the entity list and nothing is remembered, so a denied
- * suggestion simply stops taking up review space.
+ * rejectAllShown(texts) is the mirror of acceptAllShown: it DROPS those
+ * candidates instead of promoting them, exactly as rejectCandidate does one at
+ * a time. Nothing is added to the value list and nothing is remembered, so a
+ * rejected suggestion simply stops taking up review space.
  *
- * @param {string} category the engine category key
- * @param {string[]} [onlyTexts] restrict to these values (the filtered set)
+ * @param {string[]} texts the values currently visible
  * @returns {number} how many candidates were removed
  */
-export function denyAllInCategory(category, onlyTexts) {
-  const inBatch = bulkSelection(category, onlyTexts);
-  const removed = state.candidates.filter(inBatch).length;
+export function rejectAllShown(texts) {
+  const shown = new Set((texts ?? []).map(candidateKey));
+  if (shown.size === 0) return 0;
+  const removed = state.candidates.filter((c) => shown.has(candidateKey(c.text))).length;
   if (!removed) return 0;
-  setState({ candidates: state.candidates.filter((c) => !inBatch(c)) });
+  setState({ candidates: state.candidates.filter((c) => !shown.has(candidateKey(c.text))) });
   return removed;
 }
 
@@ -920,6 +1122,94 @@ export function reassignOriginal(original, toCategory, toCanonical) {
   return true;
 }
 
+// --- The Anonymise screen's editing surfaces (BUILD-05 Phase 7) ---------------
+
+/**
+ * addPendingValue(category, text) records a value the user added on the
+ * Anonymise screen and adds it to the value list in the same breath.
+ *
+ * The two go together on purpose. The entity is what makes a fast re-run replace
+ * the value; the pending chip is what tells the user it will not happen until
+ * they press it. Recording only one of the two would either lose the value or
+ * lie about when it takes effect.
+ *
+ * A value that is already pending, or already an accepted value, is rejected:
+ * the chip would be a duplicate and the entity would be too, so the honest
+ * answer is "nothing happened" rather than a second chip that does nothing.
+ *
+ * @param {string} category the engine category identifier
+ * @param {string} text the missed value
+ * @returns {boolean} whether a chip was added
+ */
+export function addPendingValue(category, text) {
+  const value = (text ?? "").trim();
+  if (!value) return false;
+  const lower = value.toLowerCase();
+  if (state.pendingValues.some((p) => p.text.toLowerCase() === lower)) return false;
+  if (state.entities.some((e) => e.canonical.toLowerCase() === lower)) return false;
+
+  addEntities([{ category, canonical: value }]);
+  setState({ pendingValues: [...state.pendingValues, { category, text: value }] });
+  return true;
+}
+
+/**
+ * removePendingValue(text) takes a value back off the pending list AND out of
+ * the value list, because the chip's ✕ has to undo the whole of what Add did.
+ * @param {string} text the value to drop
+ */
+export function removePendingValue(text) {
+  const lower = (text ?? "").trim().toLowerCase();
+  const pending = state.pendingValues.find((p) => p.text.toLowerCase() === lower);
+  if (!pending) return;
+  setState({ pendingValues: state.pendingValues.filter((p) => p !== pending) });
+  removeEntity(pending.category, pending.text);
+}
+
+/**
+ * clearPendingValues() empties the list, called by the re-run that applies them.
+ * The ENTITIES stay: they are what the re-run just used.
+ * @returns {number} how many chips were cleared
+ */
+export function clearPendingValues() {
+  const cleared = state.pendingValues.length;
+  if (cleared) setState({ pendingValues: [] });
+  return cleared;
+}
+
+/**
+ * dismissWarning(id) hides one run warning (BUILD-05 Phase 7).
+ *
+ * The id is the warning's own TEXT. Go sends warnings as plain strings with no
+ * identifier, and inventing an index would break the moment a run produced them
+ * in a different order: the same warning would come back undismissed, or a
+ * different one would be hidden. The text is stable for as long as the warning
+ * means the same thing, which is exactly the right lifetime.
+ *
+ * A new run re-raises everything, because resetStep("anonymise") empties this
+ * list: a warning about the run you are looking at now has to be visible.
+ *
+ * @param {string} id the warning text
+ * @returns {boolean} whether it was newly dismissed
+ */
+export function dismissWarning(id) {
+  const text = (id ?? "").trim();
+  if (!text || state.dismissedWarnings.includes(text)) return false;
+  setState({ dismissedWarnings: [...state.dismissedWarnings, text] });
+  return true;
+}
+
+/**
+ * visibleWarnings(s) is the run's warnings minus the dismissed ones. Pure, so
+ * the view renders it without deciding anything.
+ * @param {object} [s] state
+ * @returns {string[]}
+ */
+export function visibleWarnings(s = state) {
+  const dismissed = new Set(s.dismissedWarnings ?? []);
+  return (s.results?.report?.warnings ?? []).filter((w) => !dismissed.has(w));
+}
+
 // --- Same-format metadata review (BUILD-02 Phase 12c) --------------------------
 
 /** setMetaReview(docName, review) stores (or replaces) one document's
@@ -929,6 +1219,78 @@ export function setMetaReview(docName, review) {
   if (review === null) delete next[docName];
   else next[docName] = review;
   setState({ metaReview: next });
+}
+
+/**
+ * setExportDir(dir) remembers the folder the batch zip will be written to.
+ * @param {string} dir an absolute path, or "" to forget it
+ * @returns {string} the stored value
+ */
+export function setExportDir(dir) {
+  const value = (dir ?? "").trim();
+  setState({ exportDir: value });
+  return value;
+}
+
+/**
+ * startNewBatch() clears THIS batch and keeps the setup (BUILD-05 Phase 8).
+ *
+ * The split is the whole point, so it is spelled out rather than left to a
+ * reader of the object literal:
+ *
+ *   CLEARED   the documents, the run and everything it produced (results, the
+ *             mapping, the pending values, the dismissed warnings), the values
+ *             and suggestions, the custom patterns, the find-and-replace rules,
+ *             and the per-document metadata review decisions. All of it is about
+ *             the batch that just finished.
+ *   KEPT      the settings (categories, confidence, smart-detection tuning, the
+ *             Ollama connection), the document country, and the never-anonymise
+ *             list. All of it is about HOW this user works, and re-entering it
+ *             for every batch is exactly the tedium the button exists to avoid.
+ *
+ * The MAPPING is cleared, and that matters for more than tidiness: it is the
+ * re-identification key of the previous batch, and leaving it in memory across
+ * an explicit "start again" would keep sensitive data alive with nothing on
+ * screen referring to it.
+ *
+ * The Go-side registry is deliberately NOT reset here. A follow-up batch reusing
+ * the same placeholders for the same real-world values is the documented
+ * behaviour of a session (CLAUDE.md §5), and this button starts a new batch
+ * within a session rather than a new session.
+ *
+ * The wizard returns to Import, because that is the only step a cleared batch can
+ * stand on.
+ *
+ * @returns {object} what was cleared, for the confirming caller's notice
+ */
+export function startNewBatch() {
+  const cleared = {
+    documents: state.documents.length,
+    values: state.entities.length,
+    rules: state.simpleRules.length,
+  };
+  setState({
+    step: "import",
+    documents: [],
+    previewDoc: null,
+    importErrors: [],
+    entities: [],
+    candidates: [],
+    patterns: [],
+    simpleRules: [],
+    discovery: null,
+    running: false,
+    progress: null,
+    results: null,
+    mapping: null,
+    resultDoc: null,
+    pendingValues: [],
+    dismissedWarnings: [],
+    metaReview: {},
+    exportDir: state.exportDir,
+    notice: null,
+  });
+  return cleared;
 }
 
 // --- Allowlist / pattern reducers ---------------------------------------------
@@ -944,18 +1306,12 @@ export function removeAllowTerm(term) {
   setState({ allowlist: state.allowlist.filter((x) => x.toLowerCase() !== term.toLowerCase()) });
 }
 
-/**
- * clearAllowlist() empties the never-anonymise list in one step
- * (BUILD-04 CR11). The engine defaults are NOT re-seeded: they are
- * available again through the panel's import and the startup seeding, so
- * clearing stays a clear rather than a reset to something else.
- * @returns {number} how many terms were removed
- */
-export function clearAllowlist() {
-  const removed = state.allowlist.length;
-  if (removed) setState({ allowlist: [] });
-  return removed;
-}
+// clearAllowlist() is GONE (BUILD-05 Phase 9). It emptied the never-anonymise
+// list in one action, from a button in the panel header that the chip layout no
+// longer has, and it was the last thing on that screen behind a native confirm()
+// (decision 10). Removing terms one chip at a time is the ordinary case, and a
+// list of a dozen seeded terms is not one anyone needs to empty in a single
+// press. The engine defaults are still seeded at startup and still removable.
 
 /** addPattern(expr, error) stores a custom regex with its validation state. */
 export function addPattern(expr, error = null) {
