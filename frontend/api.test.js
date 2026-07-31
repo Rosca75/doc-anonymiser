@@ -12,7 +12,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { openDocumentation, documentationURL } from "./api.js";
+import {
+  openDocumentation, documentationURL, exportDocumentFormats, ping, runPipeline,
+} from "./api.js";
 
 /**
  * withStubBridge(app, openImpl, fn) installs a fake Wails bridge and
@@ -100,6 +102,38 @@ test("the bridge wrappers explain a missing Wails bridge", async () => {
   globalThis.window = {}; // a plain browser: no window.go
   try {
     await assert.rejects(async () => documentationURL(), /must run inside the/);
+  } finally {
+    if (previous === undefined) delete globalThis.window;
+    else globalThis.window = previous;
+  }
+});
+
+test("a missing bridge REJECTS, it never throws synchronously", () => {
+  // This is the contract the whole frontend is written against, and it was not
+  // true until the Linux rendering harness ran with no bridge at all
+  // (scripts/uitest/renderharness). bridge() throws, so a non-async wrapper threw
+  // synchronously: the caller got an exception instead of a promise, the
+  // `.catch()` at the call site never ran, and views/export.js ensureFormats()
+  // took the whole Export screen down on an uncaught error.
+  //
+  // Calling a wrapper WITHOUT awaiting must therefore hand back a promise, every
+  // time. The three below are a render-path call, a startup call and a
+  // long-running call, so all three shapes are covered.
+  const previous = globalThis.window;
+  globalThis.window = {}; // a plain browser: no window.go
+  try {
+    for (const [name, call] of [
+      ["exportDocumentFormats", () => exportDocumentFormats("a.docx")],
+      ["ping", () => ping()],
+      ["runPipeline", () => runPipeline({})],
+    ]) {
+      let returned;
+      assert.doesNotThrow(() => { returned = call(); },
+        `${name} must not throw synchronously when the bridge is absent`);
+      assert.ok(returned instanceof Promise, `${name} must return a promise`);
+      // The rejection still has to be handled, or node reports it as unhandled.
+      returned.catch((err) => assert.match(err.message, /Wails bridge not available/));
+    }
   } finally {
     if (previous === undefined) delete globalThis.window;
     else globalThis.window = previous;
