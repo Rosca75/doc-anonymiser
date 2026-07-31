@@ -185,10 +185,17 @@ process; this second window is one the WebView opens itself.
 
 ## Testing
 
-- `node --test frontend/*.test.js` — store, view-model and copy-guard tests,
-  zero npm dependencies (Node ships on the CI runner).
+- `node --test frontend/*.test.js` — store, view-model, render and copy-guard
+  tests, zero npm dependencies (Node ships on the CI runner).
 - Keep the pure view-models (`entitymodel.js`, `candidatemodel.js`) covered
   by table-style tests when you change their logic.
+- **Render tests over substring matches.** Export a screen's builder and assert
+  what a pane SHOWS with `testhtml.js` (`textOf`, `all`, `attr`). Four bugs
+  about what a pane displayed lived happily beside green tests that only
+  checked the output contained a substring somewhere.
+- What no test in this folder can prove (a tooltip clipped by its scrolling
+  pane, a screen that does not fit the window) belongs to the Windows harness
+  in `../scripts/uitest/`. See `../docs/UITESTING.md`.
 
 ## Where to look next
 
