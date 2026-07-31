@@ -11,6 +11,24 @@ import (
 	"time"
 )
 
+// ValueReport is ONE replaced value: what it was, what it became, and how
+// many times it was replaced in the scope this report covers.
+//
+// It exists because a per-CATEGORY total answers "how much was replaced" and
+// nothing else. The question a user actually has after a run is "what did you
+// replace?", and until BUILD-06 the only place that could answer it was a
+// drill-down in the UI that recomputed the counts from the anonymised text on
+// every repaint, and an exported report that did not contain them at all.
+//
+// SENSITIVITY: Original is the real value. A report carrying these IS a
+// re-identification key, which is why the export path warns before writing it.
+type ValueReport struct {
+	Original    string `json:"original"`
+	Placeholder string `json:"placeholder"`
+	Category    string `json:"category"`
+	Count       int    `json:"count"`
+}
+
 // DocumentReport carries the statistics of one processed document.
 type DocumentReport struct {
 	Name string `json:"name"`
@@ -25,6 +43,8 @@ type DocumentReport struct {
 	// LLMDurationMS is how long the deep-scan took for this document
 	// (0 when the LLM pass was skipped). Soft budget: 30 s per 50 KB.
 	LLMDurationMS int64 `json:"llmDurationMs,omitempty"`
+	// Values lists what was replaced IN THIS DOCUMENT, most frequent first.
+	Values []ValueReport `json:"values,omitempty"`
 }
 
 // Report aggregates a whole pipeline run.
@@ -34,11 +54,15 @@ type Report struct {
 	// LLMPass documents what happened to pass 3, e.g.
 	// "skipped (Ollama not available)" or "completed" or a degradation
 	// note when Ollama died mid-run (Phase 10).
-	LLMPass           string           `json:"llmPass"`
-	TotalReplacements int              `json:"totalReplacements"`
-	ByCategory        map[string]int   `json:"byCategory"`
-	Documents         []DocumentReport `json:"documents"`
-	DurationMS        int64            `json:"durationMs"`
+	LLMPass           string         `json:"llmPass"`
+	TotalReplacements int            `json:"totalReplacements"`
+	ByCategory        map[string]int `json:"byCategory"`
+	// Values lists every replaced value across the whole run, most frequent
+	// first. This is what the Anonymise screen's report shows and what the
+	// exported report was missing.
+	Values     []ValueReport    `json:"values,omitempty"`
+	Documents  []DocumentReport `json:"documents"`
+	DurationMS int64            `json:"durationMs"`
 	// Warnings are run-level notes (not tied to one document).
 	Warnings []string `json:"warnings,omitempty"`
 }
@@ -74,6 +98,18 @@ func (r *Report) ToMarkdown() string {
 		b.WriteString("\n")
 	}
 
+	if len(r.Values) > 0 {
+		b.WriteString("## Replaced values\n\n")
+		b.WriteString("This table maps each placeholder back to the real value, so it is a\n")
+		b.WriteString("re-identification key. Store it accordingly.\n\n")
+		b.WriteString("| Value | Placeholder | Category | Replacements |\n| --- | --- | --- | --- |\n")
+		for _, v := range r.Values {
+			fmt.Fprintf(&b, "| %s | %s | %s | %d |\n",
+				escapeCell(v.Original), v.Placeholder, v.Category, v.Count)
+		}
+		b.WriteString("\n")
+	}
+
 	// LLM per-file timing is surfaced here (soft budget: 30 s per 50 KB
 	// document, BUILD.md performance table); "—" when the pass was skipped.
 	b.WriteString("## Per document\n\n| Document | Replacements | Deep-scan | Warnings |\n| --- | --- | --- | --- |\n")
@@ -92,6 +128,12 @@ func (r *Report) ToMarkdown() string {
 		}
 	}
 	return b.String()
+}
+
+// escapeCell keeps a value containing a pipe from breaking the markdown
+// table it is printed in. Document text can contain anything.
+func escapeCell(s string) string {
+	return strings.ReplaceAll(s, "|", "\\|")
 }
 
 // sortedKeys returns map keys alphabetically — deterministic reports make

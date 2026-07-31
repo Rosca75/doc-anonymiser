@@ -482,15 +482,35 @@ export const ANONYMISE = {
 
   // The report card.
   reportTitle: "Report",
-  /** reportSummary(n) is the folded card's right-hand read-out. */
-  reportSummary(n) {
-    return `${n} replacement${n === 1 ? "" : "s"}`;
+  /** reportSummary(n, values) is the folded card's right-hand read-out. It
+   *  counts VALUES as well as replacements: "48 replacements" alone does not
+   *  tell a user whether there is a list of them to look at. */
+  reportSummary(n, values) {
+    const r = `${n} replacement${n === 1 ? "" : "s"}`;
+    if (values === undefined) return r;
+    return `${r}, ${values} value${values === 1 ? "" : "s"}`;
   },
   scopeLabel: "Which files the report covers",
   scopeAll: "All files",
   reportEmpty: "Nothing was replaced in the files in scope.",
   valuePlaceholder: "Value / placeholder",
   occurrences: "Occur.",
+  // The flat value list (BUILD-06). It is the answer to "what did you
+  // replace?", which the category totals never gave.
+  valuesTitle: "Replaced values",
+  valuesKeyWarning: "Shows real values: this is your re-identification key.",
+  valuesFilterPlaceholder: "Filter values",
+  valuesFilterEmpty: "No replaced value matches this filter.",
+  byCategoryTitle: "By category",
+  /** reportLevel(level) names the preset the run used. */
+  reportLevel(level) {
+    return `Ran at the ${level} preset`;
+  },
+  /** reportLLMPass(text) reports what happened to the AI pass, verbatim from
+   *  Go. A run that degraded halfway used to say so only in the JSON export. */
+  reportLLMPass(text) {
+    return `AI deep scan: ${text}`;
+  },
   noValuesInScope: "No values from this category appear in the files in scope.",
   dismissWarning: "Hide this warning",
 

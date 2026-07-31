@@ -50,6 +50,9 @@ const collapsed = new Set(["missed", "rules", "selected"]);
 const expandedCategories = new Set();
 // The report's scope: "__all" or one document name.
 let reportScope = "__all";
+// The value list's filter text. View state: it is a way of looking at the
+// result, not part of it.
+let valueFilter = "";
 // The clicked placeholder, or null: {placeholder, original, category}.
 let selectedMark = null;
 // The reassign autocomplete's draft text.
@@ -220,18 +223,24 @@ function selectedCard(s) {
 // --- Report card ----------------------------------------------------------
 
 /**
- * reportCard(s) is the per-category drill-down.
+ * reportCard(s) answers "what did you replace?".
  *
- * The per-value occurrence counts are computed HERE, in JS, from the anonymised
- * text of the documents in scope. The report Go sends carries per-category
- * totals, not per-value ones, and adding them would mean the registry counting
- * per document rather than per session. Counting a placeholder's occurrences in
- * text the frontend already has is exact and costs nothing.
+ * It used to answer "how much", and only that: a list of category totals, each
+ * of which had to be clicked open to see the values behind it. A user who had
+ * just watched dozens of values disappear from their document could not find a
+ * list of them anywhere, which is reported issue 7.
+ *
+ * So the VALUES come first now, as a flat, filterable list that is on screen
+ * without clicking anything, and the per-category breakdown follows it. Both
+ * read report.values from Go (BUILD-06), which is also what the exported report
+ * contains: the screen and the file can no longer disagree, and the counts are
+ * computed once per run instead of on every repaint.
  */
-function reportCard(s) {
+export function reportCard(s) {
   const scopeDocs = scopedDocuments(s);
   const byCategory = aggregateCategories(scopeDocs);
   const total = Object.values(byCategory).reduce((a, b) => a + b, 0);
+  const values = scopedValues(s);
 
   const options = [{ value: "__all", label: ANONYMISE.scopeAll }]
     .concat((s.results.documents ?? []).map((d) => ({ value: d.name, label: d.name })))
@@ -256,11 +265,86 @@ function reportCard(s) {
   const body =
     `<select id="report-scope" class="rail-select" aria-label="${escapeHTML(ANONYMISE.scopeLabel)}">` +
     `${options}</select>` +
+    runNote(s) +
+    valueList(values) +
+    sectionLabel(ANONYMISE.byCategoryTitle) +
     `<div class="report-rows">${rows}</div>` +
     warnings;
 
   return collapsibleCard("report", ANONYMISE.reportTitle,
-    ANONYMISE.reportSummary(total), body);
+    ANONYMISE.reportSummary(total, values.length), body);
+}
+
+/**
+ * runNote(s) surfaces what the run itself did, which the card used to ignore
+ * entirely: the preset it ran at, and what happened to the AI pass. A run that
+ * silently degraded ("degraded: connection refused") said so only in the JSON
+ * export, which is the one place nobody looks after a run.
+ */
+function runNote(s) {
+  const report = s.results?.report ?? {};
+  const parts = [];
+  if (report.level) parts.push(ANONYMISE.reportLevel(report.level));
+  if (report.llmPass) parts.push(ANONYMISE.reportLLMPass(report.llmPass));
+  if (!parts.length) return "";
+  return `<p class="hint" id="report-run-note">${escapeHTML(parts.join(". "))}.</p>`;
+}
+
+/**
+ * valueList(values) is the flat list of everything that was replaced, with a
+ * filter box. It carries the re-identification warning, because unlike the
+ * exported report on the Export screen, this list shows originals in clear.
+ */
+function valueList(values) {
+  const shown = filterValues(values, valueFilter);
+  const rows = shown.map((v) =>
+    `<div class="report-item" data-value-row="${escapeHTML(v.placeholder)}">` +
+    `<span class="report-item-value">` +
+    `<span class="report-original">${escapeHTML(v.original)}</span>` +
+    `<span class="report-placeholder mono">${escapeHTML(v.placeholder)}</span>` +
+    `</span>` +
+    `<span class="mono report-count">${escapeHTML(String(v.count))}</span>` +
+    `</div>`).join("");
+
+  return `<div class="report-values">` +
+    `<div class="report-values-head">` +
+    sectionLabel(ANONYMISE.valuesTitle) +
+    `<span class="hint">${escapeHTML(ANONYMISE.valuesKeyWarning)}</span>` +
+    `</div>` +
+    `<input id="report-value-filter" class="report-filter" value="${escapeHTML(valueFilter)}"` +
+    ` placeholder="${escapeHTML(ANONYMISE.valuesFilterPlaceholder)}"` +
+    ` aria-label="${escapeHTML(ANONYMISE.valuesFilterPlaceholder)}"/>` +
+    `<div class="report-detail-head">` +
+    sectionLabel(ANONYMISE.valuePlaceholder, { mini: true }) +
+    sectionLabel(ANONYMISE.occurrences, { mini: true }) +
+    `</div>` +
+    `<div class="report-value-rows" id="report-value-rows">` +
+    (rows || `<span class="hint">${escapeHTML(
+      values.length ? ANONYMISE.valuesFilterEmpty : ANONYMISE.reportEmpty)}</span>`) +
+    `</div></div>`;
+}
+
+/**
+ * scopedValues(s) is the values Go reported for the documents in scope.
+ *
+ * Go computes both the whole-run list and a per-document one, so the scope
+ * selector picks a list rather than recounting anything.
+ */
+export function scopedValues(s) {
+  const report = s.results?.report ?? {};
+  if (reportScope === "__all") return report.values ?? [];
+  const doc = (report.documents ?? []).find((d) => d.name === reportScope);
+  return doc?.values ?? [];
+}
+
+/** filterValues(values, needle) is the search box, over both the original and
+ *  the placeholder: a user looks for either. */
+export function filterValues(values, needle) {
+  const q = (needle ?? "").trim().toLowerCase();
+  if (!q) return values ?? [];
+  return (values ?? []).filter((v) =>
+    String(v.original ?? "").toLowerCase().includes(q) ||
+    String(v.placeholder ?? "").toLowerCase().includes(q));
 }
 
 /** scopedDocuments(s) is the documents the report covers. */
@@ -288,6 +372,7 @@ function categoryRow(s, docs, category, count) {
   let detail = "";
   if (open) {
     const items = valuesInCategory(s, docs, category);
+    // Same data as the flat list above, filtered to this category.
     detail = `<div class="report-detail">` +
       `<div class="report-detail-head">` +
       sectionLabel(ANONYMISE.valuePlaceholder, { mini: true }) +
@@ -299,7 +384,7 @@ function categoryRow(s, docs, category, count) {
         `<span class="report-original">${escapeHTML(it.original)}</span>` +
         `<span class="report-placeholder mono">${escapeHTML(it.placeholder)}</span>` +
         `</span>` +
-        `<span class="mono report-count">${escapeHTML(String(it.occurrences))}</span>` +
+        `<span class="mono report-count">${escapeHTML(String(it.count))}</span>` +
         `</div>`).join("") ||
         `<span class="hint">${escapeHTML(ANONYMISE.noValuesInScope)}</span>`) +
       `</div>`;
@@ -316,26 +401,20 @@ function categoryRow(s, docs, category, count) {
 }
 
 /**
- * valuesInCategory(s, docs, category) lists the values replaced in one category,
- * with how many times each placeholder occurs in the documents IN SCOPE.
+ * valuesInCategory(s, docs, category) is the values of ONE category, in scope.
  *
- * The count comes from the anonymised text rather than from the registry,
- * because the registry counts per SESSION and the report can be scoped to one
- * document. Counting occurrences of a placeholder in text we already hold is
- * exact, and it is what makes the scope selector mean anything.
+ * It now filters the list GO computed (report.values) instead of recounting
+ * placeholder occurrences in the anonymised text of every document on every
+ * repaint. Same numbers, computed once per run rather than once per render,
+ * and identical to what the exported report contains, which the recount could
+ * not promise.
+ *
+ * `docs` is no longer used and is kept in the signature only so the call sites
+ * read the same as the rest of the report code; the scope lives in the module's
+ * reportScope, which scopedValues() applies.
  */
 export function valuesInCategory(s, docs, category) {
-  const mapping = s.mapping ?? {};
-  const out = [];
-  for (const [placeholder, info] of Object.entries(mapping)) {
-    if (info?.category !== category) continue;
-    const occurrences = docs.reduce(
-      (total, d) => total + countOccurrences(d.anonymised ?? "", placeholder), 0);
-    if (occurrences === 0) continue; // not in this scope, so not in this list
-    out.push({ placeholder, original: info.original ?? "", occurrences });
-  }
-  return out.sort((a, b) => b.occurrences - a.occurrences ||
-    a.placeholder.localeCompare(b.placeholder));
+  return scopedValues(s).filter((v) => v.category === category);
 }
 
 /** countOccurrences(text, needle) counts non-overlapping occurrences. split() is
@@ -615,6 +694,26 @@ function wireReport(container) {
   container.querySelector("#report-scope")?.addEventListener("change", (ev) => {
     reportScope = ev.target.value;
     setState({});
+  });
+
+  // The filter repaints the list in place rather than through the store: it is
+  // a way of looking at the result, and routing every keystroke through a full
+  // re-render would move the caret and lose focus.
+  const filter = container.querySelector("#report-value-filter");
+  filter?.addEventListener("input", () => {
+    valueFilter = filter.value;
+    const rows = container.querySelector("#report-value-rows");
+    if (!rows) return;
+    const shown = filterValues(scopedValues(getState()), valueFilter);
+    rows.innerHTML = shown.map((v) =>
+      `<div class="report-item" data-value-row="${escapeHTML(v.placeholder)}">` +
+      `<span class="report-item-value">` +
+      `<span class="report-original">${escapeHTML(v.original)}</span>` +
+      `<span class="report-placeholder mono">${escapeHTML(v.placeholder)}</span>` +
+      `</span>` +
+      `<span class="mono report-count">${escapeHTML(String(v.count))}</span>` +
+      `</div>`).join("") ||
+      `<span class="hint">${escapeHTML(ANONYMISE.valuesFilterEmpty)}</span>`;
   });
   for (const row of container.querySelectorAll(".report-row")) {
     row.querySelector(".report-toggle")?.addEventListener("click", () => {

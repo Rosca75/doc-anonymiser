@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 
 import {
   countOccurrences, valuesInCategory, formatDuration, nextCustomNumber, continueHint,
-  compareCard,
+  compareCard, reportCard, filterValues,
 } from "./views/anonymise.js";
 import { textOf, all } from "./testhtml.js";
 
@@ -44,56 +44,98 @@ test("countOccurrences returns 0 for an empty needle rather than a huge number",
   assert.equal(countOccurrences("anything", undefined), 0);
 });
 
-// --- valuesInCategory ---------------------------------------------------
+// --- The report's value list (BUILD-06, reported issue 7) ---------------
+//
+// The per-value counts come from GO now (report.values, computed once per run)
+// rather than from recounting placeholders in the anonymised text on every
+// repaint. These tests pin the two things that matters to the user: the flat
+// list is there without clicking anything, and the scope selector picks the
+// list Go computed for that document.
 
-const MAPPING = {
-  "[PERSON_1]": { original: "Marie Duval", category: "person_names" },
-  "[PERSON_2]": { original: "Thomas Berger", category: "person_names" },
-  "[ENTITY_1]": { original: "Meridian Consulting", category: "entity_names" },
-};
-
-const DOCS = [
-  { name: "a.docx", anonymised: "[PERSON_1] met [PERSON_1] and [ENTITY_1]." },
-  { name: "b.pptx", anonymised: "[PERSON_2] chaired. [PERSON_1] apologised." },
+const RUN_VALUES = [
+  { original: "Marie Duval", placeholder: "[PERSON_1]", category: "person_names", count: 3 },
+  { original: "Meridian Consulting", placeholder: "[ENTITY_1]", category: "entity_names", count: 2 },
+  { original: "Thomas Berger", placeholder: "[PERSON_2]", category: "person_names", count: 1 },
 ];
 
-test("valuesInCategory counts occurrences across the documents in scope", () => {
-  const rows = valuesInCategory({ mapping: MAPPING }, DOCS, "person_names");
-  assert.deepEqual(rows.map((r) => [r.placeholder, r.occurrences]),
-    [["[PERSON_1]", 3], ["[PERSON_2]", 1]]);
-  assert.equal(rows[0].original, "Marie Duval");
-});
-
-test("valuesInCategory honours the scope: one document counts only its own", () => {
-  // This is why the counts are computed here rather than read off the registry,
-  // which counts per SESSION and cannot answer a per-document question.
-  const rows = valuesInCategory({ mapping: MAPPING }, [DOCS[1]], "person_names");
-  assert.deepEqual(rows.map((r) => [r.placeholder, r.occurrences]),
-    [["[PERSON_1]", 1], ["[PERSON_2]", 1]]);
-});
-
-test("valuesInCategory omits values that do not appear in scope at all", () => {
-  // A value replaced in another document must not appear with a count of 0: the
-  // drill-down is about what is in the files the user selected.
-  const rows = valuesInCategory({ mapping: MAPPING }, [DOCS[1]], "entity_names");
-  assert.deepEqual(rows, [], "[ENTITY_1] is only in a.docx");
-});
-
-test("valuesInCategory sorts by occurrences, then by placeholder for a tie", () => {
-  const mapping = {
-    "[PERSON_2]": { original: "B", category: "person_names" },
-    "[PERSON_1]": { original: "A", category: "person_names" },
+/** reportState(patch) is a state carrying one finished run. */
+function reportState(patch = {}) {
+  return {
+    documents: [{ name: "a.docx", markdown: "source", previewTruncated: false, isGrid: false }],
+    sourceCache: {},
+    results: {
+      documents: [
+        { name: "a.docx", anonymised: "[PERSON_1] met [ENTITY_1].", byCategory: { person_names: 3, entity_names: 2 } },
+        { name: "b.pptx", anonymised: "[PERSON_2] chaired.", byCategory: { person_names: 1 } },
+      ],
+      report: {
+        level: "medium", llmPass: "skipped (Ollama not available)",
+        totalReplacements: 6, byCategory: { person_names: 4, entity_names: 2 },
+        values: RUN_VALUES,
+        documents: [
+          { name: "a.docx", values: RUN_VALUES.slice(0, 2) },
+          { name: "b.pptx", values: RUN_VALUES.slice(2) },
+        ],
+      },
+    },
+    mapping: {},
+    pendingValues: [],
+    simpleRules: [],
+    dismissedWarnings: [],
+    ...patch,
   };
-  const docs = [{ anonymised: "[PERSON_1] [PERSON_2]" }];
-  const rows = valuesInCategory({ mapping }, docs, "person_names");
-  // Equal counts, so the tie-break decides, and it has to be stable or the rows
-  // would swap places between renders.
-  assert.deepEqual(rows.map((r) => r.placeholder), ["[PERSON_1]", "[PERSON_2]"]);
+}
+
+test("the report lists every replaced value without any clicking", () => {
+  // Reported issue 7: values WERE replaced and the report showed only category
+  // totals, each of which had to be opened one at a time.
+  const html = reportCard(reportState());
+  const rows = all(html, "div.report-item");
+  assert.equal(rows.length, 3);
+  assert.deepEqual(rows.map((r) => textOf(r.outer, "span.report-original")),
+    ["Marie Duval", "Meridian Consulting", "Thomas Berger"]);
+  assert.deepEqual(rows.map((r) => textOf(r.outer, "span.report-count")), ["3", "2", "1"]);
 });
 
-test("valuesInCategory copes with no mapping at all", () => {
-  assert.deepEqual(valuesInCategory({}, DOCS, "person_names"), []);
-  assert.deepEqual(valuesInCategory({ mapping: null }, DOCS, "person_names"), []);
+test("the value list warns that it shows the re-identification key", () => {
+  // Unlike the exported report on the Export screen, this list shows originals
+  // in clear, so it has to say so.
+  assert.match(reportCard(reportState()), /re-identification key/);
+});
+
+test("the report says what the run did, including a degraded AI pass", () => {
+  const s = reportState();
+  s.results.report.llmPass = "degraded: connection refused";
+  const note = textOf(reportCard(s), "#report-run-note");
+  assert.match(note, /medium/);
+  assert.match(note, /degraded: connection refused/,
+    "a run that silently degraded must say so where the user is looking");
+});
+
+test("filterValues searches the value and the placeholder, because users use both", () => {
+  assert.deepEqual(filterValues(RUN_VALUES, "meridian").map((v) => v.placeholder), ["[ENTITY_1]"]);
+  assert.deepEqual(filterValues(RUN_VALUES, "person_2").map((v) => v.placeholder), ["[PERSON_2]"]);
+  assert.equal(filterValues(RUN_VALUES, "").length, 3);
+  assert.equal(filterValues(RUN_VALUES, "nothing here").length, 0);
+  assert.deepEqual(filterValues(undefined, "x"), []);
+});
+
+test("an empty run says so rather than rendering an empty list", () => {
+  const s = reportState();
+  s.results.report.values = [];
+  s.results.documents = [];
+  assert.match(reportCard(s), /Nothing was replaced/);
+});
+
+test("valuesInCategory filters the list Go computed", () => {
+  const rows = valuesInCategory(reportState(), [], "person_names");
+  assert.deepEqual(rows.map((r) => [r.placeholder, r.count]),
+    [["[PERSON_1]", 3], ["[PERSON_2]", 1]]);
+});
+
+test("valuesInCategory copes with a state that has no run in it", () => {
+  assert.deepEqual(valuesInCategory({}, [], "person_names"), []);
+  assert.deepEqual(valuesInCategory({ results: null }, [], "person_names"), []);
 });
 
 // --- formatDuration -----------------------------------------------------

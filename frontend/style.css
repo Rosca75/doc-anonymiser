@@ -1104,7 +1104,23 @@ input, select {
 .reassign-list .btn:hover { border-color: var(--text); }
 .reassign-list .hint { font-size: 0.75rem; }
 
-/* --- The report drill-down ---------------------------------------------- */
+/* --- The report: the value list, then the category drill-down ------------ */
+
+/* The flat list of everything that was replaced (BUILD-06). It is the first
+   thing in the report card because it is the answer to "what did you
+   replace?", which the category totals never gave. */
+.report-values { display: flex; flex-direction: column; gap: 0.5rem; }
+.report-values-head { display: flex; flex-direction: column; gap: 0.2rem; }
+.report-values-head .hint { margin: 0; font-size: 0.72rem; }
+.report-filter { width: 100%; padding: 0.35rem 0.5rem; font-size: 0.8rem; }
+/* Its own scroll container: a batch can replace hundreds of values, and the
+   card body is not allowed to grow the page (the fixed-height contract). */
+.report-value-rows {
+  display: flex; flex-direction: column; gap: 0.35rem;
+  max-height: 16rem; overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
 
 .report-rows { display: flex; flex-direction: column; }
 .report-row {

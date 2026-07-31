@@ -116,7 +116,7 @@ Ollama probe. There is no cloud route and no `useCloudAI` on the Go side
 | `exportAllZipTo(dir)` | folder path | writes the batch zip into that folder with NO second dialog and resolves to the full path written. The only dialog-free write in the contract, allowed because the folder was chosen explicitly and the zip carries no re-identification key (decision 4). An existing archive is never overwritten, the new one is numbered |
 | `copyDocument(name)` | name | puts the anonymised text on the clipboard |
 | `exportMapping(format)` | `"csv"`/`"json"` | saves the re-identification key. Call ONLY after the user confirmed the sensitivity warning |
-| `exportReport(format)` | `"json"`/`"md"` | saves the run report |
+| `exportReport(format)` | `"json"`/`"md"` | saves the run report, INCLUDING the per-value table (BUILD-06). That table maps placeholders back to real values, so the exported report is a re-identification key: warn before writing it, as for `exportMapping`. |
 | `saveSession(request)` | request | persists the session (entities, allowlist, patterns, rules, settings, registry). Warn the user first: the file contains the re-identification key |
 | `loadSession()` | — | the `Session` object, or `null` when the user cancels |
 

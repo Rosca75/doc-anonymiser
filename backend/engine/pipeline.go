@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -295,6 +296,10 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	}
 
 	// --- Report assembly. -------------------------------------------------
+	// The per-VALUE tables are built from the registry and the finished text,
+	// once, here. They used to be recomputed in JavaScript on every repaint of
+	// the report card, and they were absent from the exported report entirely.
+	entries = reg.Entries()
 	for i, rd := range res.Documents {
 		docTotal := 0
 		byCat := map[string]int{}
@@ -313,10 +318,53 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		if i < len(llmDurations) {
 			dr.LLMDurationMS = llmDurations[i]
 		}
+		dr.Values = valueReports(entries, []ResultDocument{rd})
 		res.Report.Documents = append(res.Report.Documents, dr)
 	}
+	res.Report.Values = valueReports(entries, res.Documents)
 	finishReport(res, start)
 	return res, nil
+}
+
+// valueReports lists what each registry entry actually replaced in the given
+// documents, most frequent first.
+//
+// The count is taken from the FINISHED text rather than from the registry's
+// own counter, for two reasons: the registry counts per SESSION, so it cannot
+// answer a per-document question, and the post-pass and the simple-replace
+// rules both rewrite text after the counter was incremented. Counting
+// placeholders in the text that will be exported is the only figure that
+// matches what the user will see.
+//
+// A value with no occurrences in scope is omitted: it belongs to another
+// document, or to an earlier run whose placeholder the session registry kept.
+func valueReports(entries []MappingEntry, docs []ResultDocument) []ValueReport {
+	out := make([]ValueReport, 0, len(entries))
+	for _, e := range entries {
+		count := 0
+		for _, d := range docs {
+			// Count the placeholder in the text as exported. For a grid or a
+			// complex sheet, Anonymised is regenerated from the cells, so it
+			// stays the single thing to count.
+			count += strings.Count(d.Anonymised, e.Placeholder)
+		}
+		if count == 0 {
+			continue
+		}
+		out = append(out, ValueReport{
+			Original:    e.Original,
+			Placeholder: e.Placeholder,
+			Category:    e.Category,
+			Count:       count,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Placeholder < out[j].Placeholder
+	})
+	return out
 }
 
 // emit calls the progress callback when one is registered.
