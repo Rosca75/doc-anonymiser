@@ -1,5 +1,5 @@
 // ui.test.js, unit tests for the shared UI toolkit (BUILD-02 Phase 1).
-// Run with `node --test frontend/` (dev-time check, zero npm dependencies).
+// Run with `node --test "frontend/**/*.test.js"` (dev-time check, zero npm dependencies).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
