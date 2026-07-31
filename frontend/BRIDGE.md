@@ -60,8 +60,13 @@ count can only come from what the writing application cached in
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
-| `getSettings()` | — | `{level, ollamaPort, model}` (plus categories/contextSize/useAI, see app.go `Settings`) |
+| `getSettings()` | — | `{level, categories, ollamaPort, model, contextSize, useAI, useSmartDetect, minConfidence, smartDetect}` (see app.go `Settings`) |
 | `applySettings(settings)` | settings object | fresh `OllamaStatus`; rejects with an actionable message on bad input |
+
+`useAI` and `useSmartDetect` are the DETECTION ROUTE switches: Smart detection
+on by default, Local AI off by default and additionally gated on the live
+Ollama probe. There is no cloud route and no `useCloudAI` on the Go side
+(BUILD-05 decision 8).
 
 ## Allowlist (never-anonymise terms)
 

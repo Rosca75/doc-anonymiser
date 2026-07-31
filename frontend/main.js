@@ -28,7 +28,7 @@ import { ping, probeOllama, onEvent, defaultAllowlist } from "./api.js";
 import {
   getState, setState, subscribe,
   WIZARD_STEPS, canGoTo, goTo, goToScreen, knownStep,
-  applyImportResult, defaultUseAIFromProbe,
+  applyImportResult,
 } from "./state.js";
 import { escapeHTML } from "./html.js";
 import { topnavHTML, stepbarHTML, headerActionsHTML, appFooterHTML, showDocumentation } from "./shell.js";
@@ -79,11 +79,11 @@ export function boot(root) {
   // tooltip), never an error.
   probeOllama()
     .then((status) => {
+      // Detecting Ollama ENABLES the Local AI switch, it never flips it
+       // (BUILD-06): sending the document to a model, however local, is a
+       // decision the user makes, not one made for them by an installation
+       // they may have done for something else entirely.
       setState({ ollama: status });
-      // First probe fills the "Use local AI" default: on when detected,
-      // off otherwise. An explicit user choice is never overwritten
-      // (BUILD-02 Phase 6d).
-      defaultUseAIFromProbe(status?.available);
     })
     .catch((err) => setState({
       ollama: { available: false, models: [], detail: `Probe failed unexpectedly: ${err.message ?? err}` },

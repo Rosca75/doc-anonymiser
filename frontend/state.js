@@ -85,16 +85,27 @@ const initialState = {
   // the LAST CHOSEN PRESET; categories is the granular switch set the
   // pipeline obeys (BUILD-02 Phase 3). The categories map is filled below
   // after presetCategories is defined.
-  // useAI is the master "Use local AI" toggle (BUILD-02 Phase 6d):
-  // null = not yet decided (defaults to Ollama availability after the
-  // first probe), true/false = explicit user choice.
+  // The three DETECTION ROUTES (BUILD-06), each with its own switch, because
+  // they are three separate ways of finding values and the user turns them on
+  // and off independently:
+  //   useSmartDetect  the offline heuristic pass. ON by default, and
+  //                   deactivable. Its scope (the categories, the preset, the
+  //                   confidence floor) and its tuning are the settings it
+  //                   reads, which is why the rail nests them inside it.
+  //   useAI           the local model (Ollama). OFF by default. Detecting
+  //                   Ollama ENABLES the switch, it never flips it: turning on
+  //                   a route that sends the document to a model, however
+  //                   local, is the user's decision to make.
+  //   useCloudAI      not built (BUILD-05 decision 8). Always false, kept here
+  //                   so the rail has something honest to render.
   // contextSize is the Ollama num_ctx setting (Phase 5b), default 8192.
   // minConfidence is the detection-confidence floor (BUILD-04 CR9), 0 to
   // 1 on the engine's scale. 0 is the default and keeps every detection,
   // which is exactly the behaviour before the setting existed.
   settings: {
     level: "medium", categories: null, ollamaPort: 11434, model: "",
-    contextSize: 8192, useAI: null, minConfidence: 0,
+    contextSize: 8192, useAI: false, useSmartDetect: true, useCloudAI: false,
+    minConfidence: 0,
     // smartDetect is the BUILD-04 CR13 tuning for the offline Smart
     // detection pass, matching engine.SmartDetectOptions field for field.
     // The defaults are the STRICTER ones (engine
@@ -583,13 +594,25 @@ export function setUseAI(on) {
 }
 
 /**
- * defaultUseAIFromProbe(available) fills the toggle's DEFAULT after the
- * first Ollama probe: on when detected, off otherwise. A prior explicit
- * user choice (true/false) is never overwritten.
+ * setUseSmartDetect(on) turns the offline heuristic route on or off.
+ *
+ * It is ON by default: it needs nothing installed, it is the route that works
+ * on every machine, and a user who has just imported documents expects the
+ * app to look at them. It is switchable because its suggestions are guesses,
+ * and someone who only wants the deterministic PII pass plus their own listed
+ * values should be able to say so.
  */
-export function defaultUseAIFromProbe(available) {
-  if (state.settings.useAI !== null) return;
-  setState({ settings: { ...state.settings, useAI: !!available } });
+export function setUseSmartDetect(on) {
+  setState({ settings: { ...state.settings, useSmartDetect: !!on } });
+}
+
+/**
+ * detectionRoutesOn(s) is how many ways of FINDING values are enabled. Zero
+ * means the detect button has nothing to run, which the UI says rather than
+ * running an empty pass and reporting "0 suggestions" as if it had looked.
+ */
+export function detectionRoutesOn(s = state) {
+  return (s.settings.useSmartDetect ? 1 : 0) + (llmEnabled(s) ? 1 : 0);
 }
 
 /**

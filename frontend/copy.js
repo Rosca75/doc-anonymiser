@@ -169,7 +169,7 @@ export const CONFIGURE = {
   useAILabel: "Use local AI (Ollama)",
   useAIHint: "When enabled, a language model running on this machine can suggest names to replace and double-check the result. Nothing leaves your computer.",
   contextSizeHint: "Higher values let the AI read longer documents at once but use more memory.",
-  aiOffTooltip: "Local AI is turned off. Enable it under Configure, AI and advanced settings.",
+  aiOffTooltip: "Local AI is turned off. Turn it on with the switch on the Local AI section of Configure.",
   allowHint: "Terms in this list survive every pass, even when they also appear as names to replace.",
   // BUILD-04 CR9: the group that surfaces the BUILD-03 recognizers.
   groupTechnical: "Payment, tax and technical identifiers",
@@ -212,10 +212,20 @@ export function categoryLabels(examples = {}) {
 // below, which is where they were and where the parity guard looks.
 export const RAIL = {
   tabsLabel: "Configure sections",
-  tabScope: "Scope",
   tabSmart: "Smart detection",
   tabLocalAI: "Local AI",
   tabCloudAI: "Cloud AI",
+
+  // BUILD-06: the three routes are switchable sections, not tabs. Scope stopped
+  // being a section of its own because it is the scope OF smart detection.
+  smartIntro: "Finds names by how they are written, on this machine and without any AI. It runs on the categories you choose below.",
+  smartTuning: "Strictness",
+  routeOn: "On",
+  routeOff: "Off",
+  /** routeSwitchLabel(title) is the accessible name of a section's switch. */
+  routeSwitchLabel(title) {
+    return `Turn ${title} on or off`;
+  },
 
   country: "Document country",
   countryHint: "The phone, VAT and national identification examples follow this country's formats, and the matching national identifiers are switched on. It changes nothing else about how detection works.",
@@ -313,6 +323,7 @@ export const WORKSPACE = {
   runDetection: "Run detection",
   runOffline: "Reads every imported document and suggests values, without any AI.",
   runWithAI: "Reads every imported document twice: the offline pass, then the local AI. Nothing leaves your computer.",
+  runNeedsRoute: "No detection route is on. Turn on Smart detection or Local AI in Configure.",
   runNeedsDocuments: "Import at least one document first.",
   cancel: "Cancel",
   /** scanning(file, index, total) is the progress bar's caption. */

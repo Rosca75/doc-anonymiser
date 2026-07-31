@@ -31,7 +31,7 @@ import {
   expandVariants, validatePattern, setEntityPlaceholder, entityPlaceholder,
 } from "../api.js";
 import {
-  getState, setState, llmEnabled,
+  getState, setState, llmEnabled, detectionRoutesOn,
   addEntities, removeEntity, entityKey,
   setEntityVariants, setEntityVariantError, addManualVariant,
   addCandidates, acceptCandidate, rejectCandidate,
@@ -115,16 +115,21 @@ function head(s, busy) {
     ` placeholder="${escapeHTML(VALUES.searchPlaceholder)}"` +
     ` aria-label="${escapeHTML(VALUES.searchPlaceholder)}"/></label>`;
 
-  // The run button says what it will DO, which depends on whether the local AI
-  // is on: the offline pass always runs, the AI pass only when it can.
+  // The run button says what it will DO, which depends on which detection
+  // ROUTES are switched on in the rail (BUILD-06). With every route off there
+  // is nothing to run, and the button says so rather than running an empty
+  // pass and reporting "0 suggestions" as if it had looked.
   const aiOK = llmEnabled(s);
+  const routes = detectionRoutesOn(s);
+  const blocked = s.documents.length === 0 ? WORKSPACE.runNeedsDocuments
+    : (routes === 0 ? WORKSPACE.runNeedsRoute : "");
   const runTitle = aiOK ? WORKSPACE.runWithAI : WORKSPACE.runOffline;
   const run = busy
     ? button(WORKSPACE.cancel, { kind: "secondary", id: "btn-detect-cancel", icon: "cancel" })
     : button(WORKSPACE.runDetection, {
       kind: "secondary", id: "btn-detect", icon: "smart_toy",
-      disabled: s.documents.length === 0,
-      title: s.documents.length === 0 ? WORKSPACE.runNeedsDocuments : runTitle,
+      disabled: !!blocked,
+      title: blocked || runTitle,
     });
 
   return `<div class="card-head with-controls">` +

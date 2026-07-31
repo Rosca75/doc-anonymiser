@@ -51,8 +51,11 @@ without the runtime. Preserve that behaviour.
   wiring live in its module. Identify is the exception that proves the rule:
   it is one screen with two halves, each big enough to deserve its own file, so
   `identify.js` owns the layout and the footer, `identifyrail.js` the choices
-  (country, preset, categories, confidence, local AI) and
-  `identifyworkspace.js` the values, suggestions and patterns.
+  and `identifyworkspace.js` the values, suggestions and patterns. The rail is
+  three switchable DETECTION ROUTE sections (BUILD-06), not tabs: Smart
+  detection (on by default, and the owner of the scope controls, because the
+  country, preset, categories and confidence floor are the scope OF that
+  route), Local AI (off by default) and Cloud AI (off, disabled, not built).
 - **`nav.js` is the only module that moves the wizard.** Every screen has its
   own footer now, so the step bar and four footers all navigate; the
   backward-reset rule lives in `nav.js` once rather than in five places. It

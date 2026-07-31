@@ -464,14 +464,15 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 		Patterns:    req.Patterns,
 		SimpleRules: req.SimpleRules,
 		Settings: engine.SessionSettings{
-			Level:         settings.Level,
-			Categories:    settings.Categories,
-			OllamaPort:    settings.OllamaPort,
-			Model:         settings.Model,
-			ContextSize:   settings.ContextSize,
-			UseAI:         settings.UseAI,
-			MinConfidence: settings.MinConfidence,
-			SmartDetect:   &smartDetect,
+			Level:          settings.Level,
+			Categories:     settings.Categories,
+			OllamaPort:     settings.OllamaPort,
+			Model:          settings.Model,
+			ContextSize:    settings.ContextSize,
+			UseAI:          settings.UseAI,
+			UseSmartDetect: &settings.UseSmartDetect,
+			MinConfidence:  settings.MinConfidence,
+			SmartDetect:    &smartDetect,
 		},
 		Registry:             registry,
 		PlaceholderOverrides: overrides,
@@ -505,20 +506,57 @@ func (a *App) LoadSessionFromFile() (*engine.Session, error) {
 		return nil, err
 	}
 
+	// The registry and the settings restore together (extracted so the tests
+	// can exercise the restore without a file dialog).
+	overrideFailures := a.applyRestoredSettings(session)
+
+	for _, failure := range overrideFailures {
+		a.appendReportWarning(fmt.Sprintf(
+			"a saved placeholder override could not be restored: %v", failure))
+	}
+	// Apply the (possibly different) Ollama port/model through the same
+	// validated path the settings screen uses.
+	if _, err := a.ApplySettings(a.GetSettings()); err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
+// applyRestoredSettings puts a loaded session's registry and settings into the
+// App, and reports the placeholder overrides that could not be restored.
+//
+// EVERY persisted setting is restored here. The confidence floor and the smart
+// detection tuning used to be missing from this literal, so loading a session
+// silently reset the floor to 0 and the tuning to the shipped defaults: two
+// settings that decide what gets replaced, quietly changed by an action the
+// user reads as "restore what I saved".
+func (a *App) applyRestoredSettings(session engine.Session) []error {
 	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	// Restore the registry AND which placeholders the user had renamed
 	// (BUILD-05 Phase 3). An override that no longer applies is reported as a
 	// report warning rather than failing the load: one stale entry must not
 	// cost the user the other twenty.
 	registry, overrideFailures := engine.NewRegistryFromSession(session)
 	a.registry = registry
+
 	restored := Settings{
-		Level:       session.Settings.Level,
-		Categories:  session.Settings.Categories,
-		OllamaPort:  session.Settings.OllamaPort,
-		Model:       session.Settings.Model,
-		ContextSize: session.Settings.ContextSize,
-		UseAI:       session.Settings.UseAI,
+		Level:          session.Settings.Level,
+		Categories:     session.Settings.Categories,
+		OllamaPort:     session.Settings.OllamaPort,
+		Model:          session.Settings.Model,
+		ContextSize:    session.Settings.ContextSize,
+		UseAI:          session.Settings.UseAI,
+		UseSmartDetect: true, // the default; an absent field means "on"
+		MinConfidence:  session.Settings.MinConfidence,
+		SmartDetect:    a.settings.SmartDetect,
+	}
+	if session.Settings.UseSmartDetect != nil {
+		restored.UseSmartDetect = *session.Settings.UseSmartDetect
+	}
+	if session.Settings.SmartDetect != nil {
+		restored.SmartDetect = *session.Settings.SmartDetect
 	}
 	// An omitted optional block means "keep the current setting" rather than
 	// silently resetting it. This is NOT version compatibility (a file from
@@ -531,18 +569,7 @@ func (a *App) LoadSessionFromFile() (*engine.Session, error) {
 		restored.ContextSize = a.settings.ContextSize
 	}
 	a.settings = restored
-	a.mu.Unlock()
-
-	for _, failure := range overrideFailures {
-		a.appendReportWarning(fmt.Sprintf(
-			"a saved placeholder override could not be restored: %v", failure))
-	}
-	// Apply the (possibly different) Ollama port/model through the same
-	// validated path the settings screen uses.
-	if _, err := a.ApplySettings(a.GetSettings()); err != nil {
-		return nil, err
-	}
-	return &session, nil
+	return overrideFailures
 }
 
 // jsonMarshalIndent is a tiny wrapper so the import list stays tidy above.

@@ -44,10 +44,21 @@ type Settings struct {
 	// Default 8192; 0 keeps the model default. Higher values let the AI
 	// read longer documents at once but use more memory.
 	ContextSize int `json:"contextSize"`
-	// UseAI is the master "Use local AI (Ollama)" toggle (BUILD-02
-	// Phase 6d). Every AI-dependent control gates on UseAI AND the live
-	// Ollama availability; the choice persists in sessions.
-	UseAI bool `json:"useAI"`
+	// UseAI and UseSmartDetect are the DETECTION ROUTE switches (BUILD-06).
+	// They are settings rather than per-call arguments so they survive in the
+	// session file and so Go, not the frontend, is the one that decides
+	// whether a route runs.
+	//
+	// UseAI is "Use local AI (Ollama)": OFF by default, and gated on the live
+	// Ollama availability as well, so a stale true can never start a model
+	// that is not there. UseSmartDetect is the offline heuristic pass: ON by
+	// default, because it needs nothing installed.
+	//
+	// There is no UseCloudAI: the cloud route is not built (BUILD-05
+	// decision 8), and a persisted switch for a route with no implementation
+	// is scaffolding that would have to be trusted later.
+	UseAI          bool `json:"useAI"`
+	UseSmartDetect bool `json:"useSmartDetect"`
 	// MinConfidence is the detection-confidence floor (BUILD-04 CR9), on
 	// the BUILD-03 Phase C scale of 0.0 to 1.0. Spans scoring below it are
 	// not replaced. 0 (the default, and what an older session file without
@@ -147,6 +158,9 @@ func NewApp() *App {
 			// The stricter defaults, matching the frontend store: Smart
 			// detection over-detecting was the reported problem.
 			SmartDetect: engine.DefaultSmartDetectOptions(),
+			// Smart detection is on by default (it needs nothing installed);
+			// the AI route is not (BUILD-06).
+			UseSmartDetect: true,
 		},
 	}
 }

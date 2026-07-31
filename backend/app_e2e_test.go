@@ -230,3 +230,63 @@ func TestDiscoveryPromptsUseTheMergedCategory(t *testing.T) {
 		t.Error("the prompts must demand the entity_names key")
 	}
 }
+
+// --- Reported issue 3: the detection route switches ----------------------
+
+// TestDetectionRouteDefaults: Smart detection needs nothing installed, so it
+// is on; Local AI hands the document to a model, so the user turns it on.
+func TestDetectionRouteDefaults(t *testing.T) {
+	s := NewApp().GetSettings()
+	if !s.UseSmartDetect {
+		t.Error("Smart detection must be on by default")
+	}
+	if s.UseAI {
+		t.Error("the local AI route must be off by default")
+	}
+}
+
+// TestSessionSettingsRoundTrip guards a settings-loss bug found on the way:
+// LoadSessionFromFile rebuilt Settings from a literal that omitted
+// MinConfidence and SmartDetect, so loading a session silently reset the
+// confidence floor to 0 and the smart tuning to the defaults. Both decide what
+// gets replaced, and the user reads "load session" as "restore what I saved".
+func TestSessionSettingsRoundTrip(t *testing.T) {
+	saved := engine.Session{
+		Settings: engine.SessionSettings{
+			Level: "advanced", OllamaPort: 11500, Model: "m:1b", ContextSize: 4096,
+			MinConfidence: 0.85,
+			SmartDetect: &engine.SmartDetectOptions{
+				MinLength: 7, MinOccurrences: 3, ExcludeCommonWords: false, MinConfidence: 0.4,
+			},
+		},
+	}
+	data, err := engine.SaveSession(saved)
+	if err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	loaded, err := engine.LoadSession(data)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if loaded.Settings.MinConfidence != 0.85 {
+		t.Errorf("the confidence floor did not survive the file: %v", loaded.Settings.MinConfidence)
+	}
+	if loaded.Settings.SmartDetect == nil || loaded.Settings.SmartDetect.MinLength != 7 {
+		t.Errorf("the smart tuning did not survive the file: %+v", loaded.Settings.SmartDetect)
+	}
+
+	// And the same fields must survive the App-side restore, which is where
+	// they were being dropped.
+	app := NewApp()
+	app.applyRestoredSettings(loaded)
+	got := app.GetSettings()
+	if got.MinConfidence != 0.85 {
+		t.Errorf("the restored confidence floor is %v, want 0.85", got.MinConfidence)
+	}
+	if got.SmartDetect.MinLength != 7 || got.SmartDetect.ExcludeCommonWords {
+		t.Errorf("the restored smart tuning is %+v, want the saved one", got.SmartDetect)
+	}
+	if !got.UseSmartDetect {
+		t.Error("a file that says nothing about the smart route must restore it ON")
+	}
+}

@@ -18,7 +18,7 @@ import {
   WIZARD_STEPS, canGoTo, goTo, nextStep,
   goToScreen,
   applyPreset, toggleCategory, selectionPresetName, presetCategories,
-  setUseAI, defaultUseAIFromProbe, llmEnabled,
+  setUseAI, setUseSmartDetect, detectionRoutesOn, llmEnabled,
   addCandidates, acceptCandidate, rejectCandidate,
   moveVariant, entityAutocomplete, reassignOriginal,
   applyImportResult,
@@ -317,18 +317,28 @@ test("llmEnabled requires BOTH the toggle and a reachable Ollama", () => {
   assert.equal(llmEnabled(), false, "Ollama down blocks AI even with toggle on");
 });
 
-test("defaultUseAIFromProbe fills the default once, never overrides a choice", () => {
+test("the detection routes start with Smart detection on and both AI routes off", () => {
+  // BUILD-06: Smart detection needs nothing installed, so it runs by default.
+  // Local AI is a route that hands the document to a model, so the user turns
+  // it on themselves, even when Ollama is detected.
   resetState();
-  assert.equal(getState().settings.useAI, null);
-  defaultUseAIFromProbe(true);
-  assert.equal(getState().settings.useAI, true, "default follows availability");
-  // A later probe result must not flip an established value.
-  defaultUseAIFromProbe(false);
-  assert.equal(getState().settings.useAI, true);
-  // An explicit user choice survives everything.
-  setUseAI(false);
-  defaultUseAIFromProbe(true);
+  assert.equal(getState().settings.useSmartDetect, true);
   assert.equal(getState().settings.useAI, false);
+  assert.equal(getState().settings.useCloudAI, false);
+  setState({ ollama: { available: true, models: [], detail: "" } });
+  assert.equal(getState().settings.useAI, false, "detecting Ollama must not switch the route on");
+});
+
+test("detectionRoutesOn counts the ways of finding values that are enabled", () => {
+  resetState();
+  assert.equal(detectionRoutesOn(), 1, "Smart detection alone");
+  setState({ ollama: { available: true, models: [], detail: "" } });
+  setUseAI(true);
+  assert.equal(detectionRoutesOn(), 2);
+  setUseSmartDetect(false);
+  assert.equal(detectionRoutesOn(), 1, "local AI alone");
+  setUseAI(false);
+  assert.equal(detectionRoutesOn(), 0, "nothing to run, and the UI must say so");
 });
 
 // --- Candidate review gate (BUILD-02 Phase 9b) --------------------------------

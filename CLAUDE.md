@@ -218,9 +218,13 @@ doc-anonymiser/
   superseding BUILD-04 CR3):** the wizard has **four** steps, and both their
   tokens and their visible labels are: 1 **Import**, 2 **Identify**,
   3 **Anonymise**, 4 **Export**. Step 2 owns what used to be a screen of its
-  own: the configure choices (preset, the 22 detection categories, the
-  confidence floor, the local-AI settings) are the left rail of Identify, and
-  the values, suggestions, allowlist and custom patterns are its workspace.
+  own: the configure choices are the left rail of Identify, and the values,
+  suggestions, allowlist and custom patterns are its workspace. The rail lists
+  the DETECTION ROUTES as switchable sections (BUILD-06): Smart detection, on
+  by default and owning the scope controls (preset, the 22 detection
+  categories, the confidence floor) because they are that route's scope; Local
+  AI, off by default; Cloud AI, off and not built. Detecting Ollama ENABLES the
+  Local AI switch, it never flips it.
   The engine category identifiers listed above, and the PII category constants
   in `backend/engine/pii.go`, are NEVER renamed to follow a label change: a
   label is a display string, an identifier is a contract. Session files are

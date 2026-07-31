@@ -43,6 +43,11 @@ type SessionSettings struct {
 	Model       string            `json:"model"`
 	ContextSize int               `json:"contextSize,omitempty"`
 	UseAI       bool              `json:"useAI,omitempty"`
+	// UseSmartDetect is the offline detection route switch (BUILD-06). It is
+	// a POINTER because its default is TRUE: with a plain bool, "absent" and
+	// "the user switched it off" are the same value, and the wrong reading of
+	// the two silently changes what a restored session detects.
+	UseSmartDetect *bool `json:"useSmartDetect,omitempty"`
 	// MinConfidence is the BUILD-04 CR9 detection-confidence floor. Absent
 	// in every session file written before BUILD-04, where it loads as 0,
 	// which is exactly the "keep every detection" default: an older
