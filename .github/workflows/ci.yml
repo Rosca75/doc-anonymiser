@@ -87,10 +87,21 @@ jobs:
       - name: go test
         run: go test ./...
 
-      # Dev-time frontend store tests: plain `node --test`, zero npm
+      # Layer 2: the frontend unit tests. Plain `node --test`, zero npm
       # dependencies (node ships on the runner; see BUILD.md Phase 6).
-      - name: frontend store tests (node --test)
-        run: node --test frontend/*.test.js
+      #
+      # The pattern is RECURSIVE and it is QUOTED, and both matter. The flat
+      # `frontend/*.test.js` this used to be silently ignored anything under
+      # frontend/views/, so a test file added next to a view module would never
+      # run and CI would stay green: a false pass, which is worse than no test.
+      # The quotes hand the pattern to node rather than to bash, whose globstar
+      # is off by default and would expand `**` as a single `*`, reintroducing
+      # the same hole from the other direction.
+      #
+      # ../frontend_tests_test.go expands this exact pattern and fails if any
+      # test file on disk would be missed by it.
+      - name: frontend unit tests (node --test)
+        run: node --test "frontend/**/*.test.js"
 
       # Layer 3 of the test strategy (docs/UITESTING.md), and the first version
       # of it that actually runs anywhere. It serves frontend/ over loopback,
