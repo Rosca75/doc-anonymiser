@@ -51,6 +51,7 @@ doc-anonymiser/
 ├── wails.json                 # Wails config; assetdir: "frontend"
 ├── main.go                    # Wails bootstrap ONLY: //go:embed all:frontend; backend.NewApp()
 ├── embed_test.go              # asserts the frontend is embedded (package main)
+├── backend/app_e2e_test.go    # headless end-to-end through the bound app layer
 ├── category_parity_test.go    # JS↔Go category parity guard (package main)
 ├── copy_guard_test.go         # no em dashes in Go user-facing strings (package main)
 ├── frontend/                  # THE GUI — vanilla ES modules, embedded via go:embed
@@ -70,6 +71,7 @@ doc-anonymiser/
 │   │                          #   + identifyworkspace.js (values), allowlist.js
 │   ├── docs/                  # bundled offline user docs (SECOND window, embedded only)
 │   ├── assets/icons/          # vendored Material Symbols SVGs + LICENSE
+│   ├── testhtml.js            # dev-time HTML query helper for the render tests
 │   └── *.test.js              # node --test frontend/*.test.js (zero npm deps)
 ├── backend/                   # ALL Go business logic + the Wails bound-app layer (package backend)
 │   ├── CLAUDE.md              # backend charter (see above)
@@ -87,17 +89,23 @@ doc-anonymiser/
 │   │   ├── pipeline.go        # Pass orchestration per anonymisation level
 │   │   ├── allowlist.go       # Terms never anonymised
 │   │   ├── simplereplace.go   # Manual find-and-replace pass
-│   │   ├── report.go          # Per-file / per-category statistics
+│   │   ├── report.go          # Per-file / per-category / per-VALUE statistics
 │   │   ├── session.go         # Save/load session state (JSON, schema migrations)
 │   │   └── exportfmt/         # same-format export: rewrite of original bytes (docx/pptx/xlsx, pdf experimental)
 │   ├── ollama/
 │   │   └── client.go          # THE ONLY FILE that talks to Ollama (net/http)
 │   └── testdata/              # fixture documents for unit tests (lives with the engine that uses it)
-├── scripts/genicon.go         # standalone icon generator (//go:build ignore)
+├── scripts/
+│   ├── genicon.go             # standalone icon generator (//go:build ignore)
+│   └── uitest/                # Windows-only UI harness (PowerShell + .NET, no
+│                              #   packages): drives wails dev over the DevTools
+│                              #   Protocol, plus a UI Automation smoke test of
+│                              #   the packaged .exe (docs/UITESTING.md)
 ├── .github/workflows/
 │   ├── ci.yml                 # build + test on push/PR
 │   └── release.yml            # on tag: build, zip, attach to Release
 └── docs/                      # phased build plans (BUILD.md, BUILD-02..04, CHANGE-01)
+    ├── UITESTING.md           # the three test layers and how to run each
     └── brand/color-palette.json  # vendored brand palette (source for frontend/brand.css)
 ```
 
