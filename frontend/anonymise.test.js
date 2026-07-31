@@ -16,7 +16,9 @@ import assert from "node:assert/strict";
 
 import {
   countOccurrences, valuesInCategory, formatDuration, nextCustomNumber, continueHint,
+  compareCard,
 } from "./views/anonymise.js";
+import { textOf, all } from "./testhtml.js";
 
 // --- countOccurrences ---------------------------------------------------
 
@@ -148,4 +150,89 @@ test("continueHint counts what is ready once there is a result", () => {
   assert.equal(
     continueHint({ running: false, results: { report: {} } }),
     "0 replacements ready to export");
+});
+
+// --- compareCard: the ORIGINAL pane shows SOURCE text -------------------
+//
+// Reported issue 4: "the preview area ORIGINAL must show the original text,
+// not anonymised values such as [DATE_1], [PERSON_2]". The pane now reads the
+// IMPORT LIST (one producer of original text in the whole application), so
+// these tests pin both the content and where it comes from.
+
+const SOURCE = "Marie Duval met Meridian Consulting on 12 March 2024.";
+const ANONYMISED = "[PERSON_1] met [CLIENT_1] on [DATE_1].";
+
+/** compareState() is a state with one imported document and one result. */
+function compareState(overrides = {}) {
+  return {
+    documents: [{ name: "a.txt", markdown: SOURCE, previewTruncated: false, isGrid: false }],
+    sourceCache: {},
+    results: { documents: [{ name: "a.txt", anonymised: ANONYMISED, byCategory: { person_names: 1 } }] },
+    mapping: {
+      "[PERSON_1]": { original: "Marie Duval", category: "person_names" },
+      "[CLIENT_1]": { original: "Meridian Consulting", category: "client_names" },
+      "[DATE_1]": { original: "12 March 2024", category: "date" },
+    },
+    ...overrides,
+  };
+}
+
+test("compareCard renders the IMPORTED source in the ORIGINAL pane", () => {
+  const s = compareState();
+  const html = compareCard(s, s.results.documents[0]);
+  assert.equal(textOf(html, "#original-pane"), SOURCE);
+});
+
+test("compareCard never puts a placeholder in the ORIGINAL pane", () => {
+  const s = compareState();
+  const shown = textOf(compareCard(s, s.results.documents[0]), "#original-pane");
+  assert.ok(!/\[[A-Z][A-Z0-9_]*_\d+\]/.test(shown),
+    "ORIGINAL must show the source text; placeholders belong to the other pane");
+});
+
+test("compareCard puts the anonymised text, marked up, in the ANONYMISED pane", () => {
+  const s = compareState();
+  const html = compareCard(s, s.results.documents[0]);
+  assert.equal(textOf(html, "#anonymised-pane"), ANONYMISED);
+  // Every known placeholder is a mark carrying its original, which is what
+  // the hover tooltip reads.
+  const marks = all(html, "mark[data-ph]");
+  assert.deepEqual(marks.map((m) => m.attrs["data-original"]),
+    ["Marie Duval", "Meridian Consulting", "12 March 2024"]);
+});
+
+test("compareCard ignores any stale copy of the source on the result document", () => {
+  // The result no longer carries an `original` field. If one is ever added
+  // back, the ORIGINAL pane must still read the import list, because the
+  // import list is the only thing that cannot go stale.
+  const s = compareState();
+  const doc = { ...s.results.documents[0], original: "[PERSON_1] met [CLIENT_1]." };
+  assert.equal(textOf(compareCard(s, doc), "#original-pane"), SOURCE);
+});
+
+test("compareCard falls back to the fetched source cache when the document left the import list", () => {
+  const s = compareState({
+    documents: [],
+    sourceCache: { "a.txt": { markdown: SOURCE, truncated: false, isGrid: false, found: true } },
+  });
+  assert.equal(textOf(compareCard(s, s.results.documents[0]), "#original-pane"), SOURCE);
+});
+
+test("compareCard says so, rather than showing the anonymised text, when no source is known", () => {
+  const s = compareState({
+    documents: [],
+    sourceCache: { "a.txt": { markdown: "", truncated: false, isGrid: false, found: false } },
+  });
+  const shown = textOf(compareCard(s, s.results.documents[0]), "#original-pane");
+  assert.match(shown, /source text is not available/);
+  assert.ok(!shown.includes("[PERSON_1]"));
+});
+
+test("compareCard carries the truncation notice through to the ORIGINAL pane", () => {
+  const s = compareState({
+    documents: [{ name: "a.txt", markdown: SOURCE, previewTruncated: true, isGrid: false }],
+  });
+  const html = compareCard(s, s.results.documents[0]);
+  assert.match(textOf(html, "#original-pane"), /Preview truncated/);
+  assert.ok(textOf(html, "#original-pane").includes(SOURCE));
 });

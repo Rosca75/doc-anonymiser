@@ -506,6 +506,11 @@ export const ANONYMISE = {
   paneOriginal: "ORIGINAL",
   paneAnonymised: "ANONYMISED",
   compareEmpty: "Run the anonymisation to compare the result with the original.",
+  // Shown in the ORIGINAL pane when the source text is not available: the
+  // document was removed from the import list while its result stayed on
+  // screen. The pane says so rather than showing the anonymised text, which
+  // is the one thing the ORIGINAL pane must never contain.
+  originalUnavailable: "The source text is not available: this document was removed from the import list. Re-import it to compare.",
   /** replacementsInDocument(n) is the Compare card's read-out. */
   replacementsInDocument(n) {
     return `${n} replacement${n === 1 ? "" : "s"} in this document`;

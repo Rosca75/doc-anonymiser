@@ -21,10 +21,10 @@
 // its original, clicking one selects it, and selecting free text offers to
 // replace it with a [CUSTOM_n] rule.
 
-import { runPipeline, cancelPipeline, fastRerun, getMapping } from "../api.js";
+import { runPipeline, cancelPipeline, fastRerun, getMapping, getDocumentSource } from "../api.js";
 import {
   getState, setState, llmEnabled,
-  buildRunRequest,
+  buildRunRequest, documentSource, cacheDocumentSource,
   addSimpleRule, removeSimpleRule, moveSimpleRule,
   entityAutocomplete, reassignOriginal,
   addPendingValue, removePendingValue, clearPendingValues,
@@ -37,7 +37,7 @@ import { llmGateTooltip } from "./identifyrail.js";
 import { CATEGORIES } from "./identifyworkspace.js";
 import { stepFooterHTML, wireStepFooter } from "../nav.js";
 import { notify, wireNotice } from "../toast.js";
-import { CARDS, ANONYMISE, CATEGORY_LABELS } from "../copy.js";
+import { CARDS, ANONYMISE, CATEGORY_LABELS, IMPORT } from "../copy.js";
 import { toastHTML } from "../ui.js";
 
 // --- View-local state -----------------------------------------------------
@@ -446,7 +446,12 @@ function collapsibleCard(id, title, summary, bodyHTML) {
 
 // --- Compare card --------------------------------------------------------
 
-function compareCard(s, doc) {
+/**
+ * compareCard(s, doc) is the two-pane comparison. Exported for the render
+ * tests: the ORIGINAL pane's content is the thing reported issues 1 and 4 were
+ * about, so it is asserted rather than eyeballed (see anonymise.test.js).
+ */
+export function compareCard(s, doc) {
   const options = (s.results?.documents ?? []).map((d) =>
     `<option value="${escapeHTML(d.name)}"${d === doc ? " selected" : ""}>` +
     `${escapeHTML(d.name)}</option>`).join("");
@@ -455,11 +460,24 @@ function compareCard(s, doc) {
     ? `<select id="compare-doc" class="compare-select" aria-label="${escapeHTML(ANONYMISE.compareDoc)}">${options}</select>`
     : "";
 
+  // The ORIGINAL pane reads the IMPORTED source, never anything the pipeline
+  // produced or copied. That is the whole fix for the "ORIGINAL shows
+  // [PERSON_2]" report: there is now one producer of original text in the
+  // application (App.GetDocumentSource, mirrored in the import list) and this
+  // pane is a reader of it. `source` is null only while the fetch for a
+  // document that left the import list is in flight (see wireCompare).
+  const source = doc ? documentSource(s, doc.name) : null;
+  const originalBody = source?.found
+    ? (source.truncated
+      ? `<div class="banner warn">${escapeHTML(IMPORT.previewTruncated)}</div>` : "") +
+      escapeHTML(source.markdown)
+    : `<span class="hint">${escapeHTML(ANONYMISE.originalUnavailable)}</span>`;
+
   const panes = doc
     ? `<div class="compare-panes">` +
       `<div class="compare-pane">` +
       `<div class="pane-caption">${escapeHTML(ANONYMISE.paneOriginal)}</div>` +
-      `<pre class="pane-body" id="original-pane">${escapeHTML(doc.original ?? "")}</pre>` +
+      `<pre class="pane-body" id="original-pane">${originalBody}</pre>` +
       `</div>` +
       `<div class="compare-pane">` +
       `<div class="pane-caption">${escapeHTML(ANONYMISE.paneAnonymised)}</div>` +
@@ -675,6 +693,17 @@ function wireRules(container) {
 }
 
 function wireCompare(container, doc) {
+  // If the ORIGINAL pane has no source to show, ask Go for it ONCE. This is
+  // the fallback path for a document that left the import list; the common
+  // case is served straight from the store with no bridge call at all.
+  if (doc && documentSource(getState(), doc.name) === null) {
+    getDocumentSource(doc.name)
+      .then((source) => cacheDocumentSource(doc.name, source))
+      // A missing bridge (plain browser) leaves the pane on its hint, which is
+      // the honest answer: no backend, no source text.
+      .catch(() => cacheDocumentSource(doc.name, { found: false }));
+  }
+
   container.querySelector("#compare-doc")?.addEventListener("change", (ev) => {
     // Changing document clears the selected mark: it belonged to the old one.
     selectedMark = null;

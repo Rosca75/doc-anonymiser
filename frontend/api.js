@@ -97,6 +97,20 @@ export function listDocuments() {
   return bridge().ListDocuments();
 }
 
+/**
+ * getDocumentSource(name) resolves to the SOURCE text of one imported
+ * document, `{found, markdown, truncated, isGrid}`.
+ *
+ * This is the one place original text comes from. The Anonymise screen's
+ * ORIGINAL pane uses it whenever the import list in the store does not hold
+ * the document (a result left on screen after the file was removed, a view
+ * restored by navigation). An unknown name resolves with `found: false`; it
+ * does not reject.
+ */
+export function getDocumentSource(name) {
+  return bridge().GetDocumentSource(name);
+}
+
 // --- Settings ----------------------------------------------------------
 
 /** getSettings() resolves to {level, ollamaPort, model}. */

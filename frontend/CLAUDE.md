@@ -144,6 +144,11 @@ Windows it steals focus from the window it belongs to.
 - `assets/icons/` — vendored Material Symbols SVGs + their LICENSE.
 - `*.test.js` — dev-time tests, run with `node --test frontend/*.test.js`
   (zero npm deps). They are self-relative and never shipped in the binary.
+- `testhtml.js` — dev-time only: a tiny dependency-free HTML query helper
+  (`one`, `all`, `textOf`, `attr`) so a test can assert what a pane SHOWS
+  rather than that the output contains a substring. Views build HTML strings,
+  so exporting a builder (`previewBody`, `compareCard`, …) is all it takes to
+  test a whole screen without a browser.
 
 ## Typography and brand (BUILD-04 CR2)
 

@@ -65,6 +65,11 @@ const initialState = {
   // Import errors from the last import action (shown as dismissible list).
   importErrors: [],
 
+  // Source text fetched from Go for documents the import list no longer holds
+  // (see documentSource() below): {name: {markdown, truncated, isGrid}}. It is
+  // a cache, never a second source of truth: `documents` always wins.
+  sourceCache: {},
+
   // Name of the document selected in the preview pane (or null).
   previewDoc: null,
 
@@ -784,6 +789,59 @@ export function applyImportResult(result) {
     documents,
     importErrors: result.errors ?? [],
     previewDoc: previewStillValid ? state.previewDoc : (documents[0]?.name ?? null),
+    // A fresh import list makes every cached source stale (a re-imported file
+    // with the same name is a DIFFERENT file). Dropping the cache is cheaper
+    // and safer than deciding which entries survived.
+    sourceCache: {},
+  });
+}
+
+/**
+ * documentSource(s, name) is THE way any view asks for a document's source
+ * text, and the reason items 1 and 4 cannot come back: nothing else in the
+ * frontend is allowed to call something "the original".
+ *
+ * It reads the import list first (already in the store, already truncated by
+ * Go), then the cache filled by cacheDocumentSource() for documents the list
+ * no longer holds.
+ *
+ * @param {object} s state
+ * @param {string} name document name
+ * @returns {{markdown: string, truncated: boolean, isGrid: boolean, found: boolean}|null}
+ *          null means "not known yet", which is a caller's cue to fetch;
+ *          `found: false` means "asked, and the document is gone".
+ */
+export function documentSource(s, name) {
+  if (!name) return null;
+  const imported = (s.documents ?? []).find((d) => d.name === name);
+  if (imported) {
+    return {
+      markdown: imported.markdown ?? "",
+      truncated: !!imported.previewTruncated,
+      isGrid: !!imported.isGrid,
+      found: true,
+    };
+  }
+  return s.sourceCache?.[name] ?? null;
+}
+
+/**
+ * cacheDocumentSource(name, source) stores a source fetched from Go.
+ * A `found: false` answer is cached as an empty source, so a missing document
+ * is asked about once rather than on every repaint.
+ */
+export function cacheDocumentSource(name, source) {
+  if (!name) return;
+  setState({
+    sourceCache: {
+      ...state.sourceCache,
+      [name]: {
+        markdown: source?.markdown ?? "",
+        truncated: !!source?.truncated,
+        isGrid: !!source?.isGrid,
+        found: !!source?.found,
+      },
+    },
   });
 }
 
@@ -1274,6 +1332,7 @@ export function startNewBatch() {
     documents: [],
     previewDoc: null,
     importErrors: [],
+    sourceCache: {},
     entities: [],
     candidates: [],
     patterns: [],

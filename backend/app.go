@@ -288,6 +288,50 @@ func (a *App) RemoveDocument(name string) ImportResult {
 	return ImportResult{Documents: a.documentInfosLocked()}
 }
 
+// DocumentSource is the source text of ONE imported document, for the
+// panes that must show what the user imported rather than what the pipeline
+// produced (the Import preview and the Anonymise screen's ORIGINAL pane).
+//
+// It exists so those panes have a single producer to read from. Before
+// BUILD-06 the ORIGINAL pane read a copy of the source that travelled inside
+// the pipeline result, which meant two paths to "the original text" and no
+// test that they agreed.
+type DocumentSource struct {
+	// Found is false when the name is not (or no longer) imported. That is a
+	// normal state, not a failure: the user can remove a document while a
+	// result for it is still on screen.
+	Found bool `json:"found"`
+	// Markdown is the working form, cut to engine.MaxPreviewLines exactly
+	// like the import preview, so both panes hold the same bytes.
+	Markdown string `json:"markdown"`
+	// Truncated tells the UI to show the truncation notice.
+	Truncated bool `json:"truncated"`
+	// IsGrid mirrors DocumentInfo.IsGrid so the pane can render a table.
+	IsGrid bool `json:"isGrid"`
+}
+
+// GetDocumentSource returns one imported document's source text. An unknown
+// name resolves with Found=false rather than an error: asking about a
+// document that has just been removed is an ordinary race in the UI, not a
+// fault the user has to act on.
+func (a *App) GetDocumentSource(name string) DocumentSource {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, d := range a.docs {
+		if d.Name != name {
+			continue
+		}
+		preview, truncated := engine.PreviewMarkdown(d.Markdown)
+		return DocumentSource{
+			Found:     true,
+			Markdown:  preview,
+			Truncated: truncated,
+			IsGrid:    d.Grid != nil,
+		}
+	}
+	return DocumentSource{}
+}
+
 // ListDocuments returns the current import list (used on view refresh).
 func (a *App) ListDocuments() []DocumentInfo {
 	a.mu.Lock()

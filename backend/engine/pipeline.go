@@ -103,12 +103,16 @@ type SpanTrace struct {
 }
 
 // ResultDocument is one anonymised document plus its statistics.
+//
+// It deliberately carries NO copy of the source text. There is exactly one
+// producer of original text in this application, the imported Document held
+// by the App, and the UI reads the ORIGINAL pane from that same producer
+// (App.GetDocumentSource). A second copy travelling with the result is what
+// would let a preview drift from the file the user imported, and it doubled
+// the size of every "pipeline:done" payload for text nobody edited.
 type ResultDocument struct {
 	Name   string `json:"name"`
 	Format Format `json:"format"`
-	// Original is the pre-anonymisation markdown working form (the UI
-	// shows it side by side with Anonymised).
-	Original string `json:"original"`
 	// Anonymised is the rewritten markdown working form.
 	Anonymised string `json:"anonymised"`
 	// Grid is the anonymised cell grid for CSV-origin documents (nil
@@ -372,7 +376,6 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 	rd := ResultDocument{
 		Name:       doc.Name,
 		Format:     doc.Format,
-		Original:   doc.Markdown,
 		ByCategory: map[string]int{},
 		Warnings:   doc.Warnings,
 	}

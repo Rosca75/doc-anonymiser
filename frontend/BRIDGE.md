@@ -38,6 +38,15 @@ what shape it comes back in, **without opening any Go**.
 | `importFiles()` | — | `ImportResult {documents, errors}` (native multi-file dialog) |
 | `removeDocument(name)` | `name` | `ImportResult` |
 | `listDocuments()` | — | current `DocumentInfo[]` |
+| `getDocumentSource(name)` | `name` | `{found, markdown, truncated, isGrid}`, the SOURCE text of one imported document. An unknown name resolves with `found: false`; it never rejects. |
+
+**Original text has exactly one producer.** `DocumentInfo.markdown` and
+`getDocumentSource()` are the same bytes from the same document, cut by the
+same `engine.PreviewMarkdown`. The pipeline result carries NO copy of the
+source (`ResultDocument` has no `original` field): the Anonymise screen's
+ORIGINAL pane reads the import list, and falls back to `getDocumentSource()`
+only for a document that has left it. Anything that reintroduces a second
+"original" reintroduces the bug where a preview drifts from the imported file.
 
 `DocumentInfo` carries `unitCount` and `unit` (BUILD-05 Phase 3): the document's
 size in its OWN terms, so the import list can say "6 pages" or "12 slides"
