@@ -150,6 +150,32 @@ export function saveAllowlistTemplate() {
 
 // --- Entities screen (Phase 7) ------------------------------------------
 
+/**
+ * runDetection(fileNames, allowTerms) runs EVERY enabled detection route in
+ * one call and resolves to a DetectionResult
+ * {candidates, proposals, phases, skipped, errors, cancelled, status}.
+ *
+ * This is the UI's detection entry point (BUILD-06). It replaced two separate
+ * calls whose lifecycles could not be reconciled: one cancellation slot, one
+ * monotonic progress stream ("detection:progress") and exactly one terminal
+ * event ("detection:done" or "detection:error") now cover the whole run.
+ * Which routes run is decided in Go from the stored switches.
+ *
+ * A cancelled run RESOLVES with the partial findings and cancelled: true;
+ * only a failure to start (no matching documents, a run already in flight)
+ * rejects.
+ */
+export function runDetection(fileNames, allowTerms) {
+  return bridge().RunDetection(fileNames, allowTerms);
+}
+
+/** cancelDetection() aborts the in-flight detection run (no-op if idle).
+ *  It shares Go's single cancellation slot, so it reaches whichever route is
+ *  running, including mid-file. */
+export function cancelDetection() {
+  return bridge().CancelDiscovery();
+}
+
 /** runDiscovery(fileNames, allowTerms) resolves to a DiscoveryResult
  *  {proposals: [{category, text}], status, cancelled}. A cancelled run
  *  resolves with partial proposals; only real failures reject. */

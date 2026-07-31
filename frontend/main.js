@@ -33,6 +33,7 @@ import {
 import { escapeHTML } from "./html.js";
 import { topnavHTML, stepbarHTML, headerActionsHTML, appFooterHTML, showDocumentation } from "./shell.js";
 import { modalLayerHTML, wireModal } from "./modal.js";
+import { notify } from "./toast.js";
 import { navigateTo } from "./nav.js";
 import { renderHome } from "./views/home.js";
 import { renderImport } from "./views/import.js";
@@ -113,16 +114,36 @@ export function boot(root) {
     mapping: payload?.mapping ?? null,
   }));
 
-  // Discovery progress (BUILD-02 Phase 7c): the Go side emits one event
-  // per scanned file; the Identify view renders a determinate bar.
-  onEvent("discovery:progress", (ev) => setState({
-    discovery: {
-      running: true,
-      current: ev?.docIndex ?? 0,
-      total: ev?.docCount ?? 0,
-      file: ev?.docName ?? "",
-    },
-  }));
+  // Detection progress and its TERMINAL events (BUILD-06). The bar used to
+  // be cleared only by a `finally` in the caller, so any escape in between
+  // left it spinning with no way back. Now Go always sends exactly one of
+  // detection:done / detection:error, and both clear it here, whatever the
+  // caller does.
+  onEvent("detection:progress", (ev) => {
+    const previous = getState().discovery;
+    setState({
+      discovery: {
+        running: true,
+        phase: ev?.phase ?? "",
+        phaseIndex: ev?.phaseIndex ?? 0,
+        phaseCount: ev?.phaseCount ?? 1,
+        current: ev?.docIndex ?? 0,
+        total: ev?.docCount ?? 0,
+        file: ev?.docName ?? "",
+        chunk: ev?.chunkIndex ?? 0,
+        chunkCount: ev?.chunkCount ?? 0,
+        fraction: ev?.fraction ?? 0,
+        // Kept across events so the strip can show elapsed time: a slow run
+        // that says how long it has been going does not read as a hung one.
+        startedAt: previous?.startedAt ?? Date.now(),
+      },
+    });
+  });
+  onEvent("detection:done", () => setState({ discovery: null }));
+  onEvent("detection:error", (ev) => {
+    setState({ discovery: null });
+    notify(ev?.message ?? "The detection run stopped unexpectedly.", "warn");
+  });
 
   // Keyboard shortcuts (Phase 10): Ctrl+O jumps to Import, Ctrl+E to
   // Export (guards still apply, Export needs results). The browser's own

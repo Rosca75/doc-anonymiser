@@ -326,20 +326,45 @@ export const WORKSPACE = {
   runNeedsRoute: "No detection route is on. Turn on Smart detection or Local AI in Configure.",
   runNeedsDocuments: "Import at least one document first.",
   cancel: "Cancel",
-  /** scanning(file, index, total) is the progress bar's caption. */
-  scanning(file, index, total) {
-    return `Scanning ${file} (${index}/${total})`;
+  // The progress caption (BUILD-06). It is assembled from these parts rather
+  // than written as one sentence, because a run that feels stuck raises three
+  // separate questions: which route is this, where in the batch is it, and
+  // where inside this file.
+  /** phaseName(phase) turns an engine route token into words. */
+  phaseName(phase) {
+    if (phase === "ai") return "Local AI";
+    if (phase === "smart") return "Smart detection";
+    return "Starting";
+  },
+  /** fileOf(file, index, total) is the position in the batch. */
+  fileOf(file, index, total) {
+    return `${file} (${index} of ${total})`;
+  },
+  /** chunkOf(index, total) is the position inside one chunked AI scan. A long
+   *  document used to sit on an unchanging caption for minutes. */
+  chunkOf(index, total) {
+    return `part ${index} of ${total}`;
+  },
+  /** elapsed(seconds) is how long the run has been going. */
+  elapsed(seconds) {
+    if (seconds < 60) return `${seconds}s`;
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
   },
   /** detectionDone(n) reports the run's result. */
   detectionDone(n) {
     if (n === 0) return "Detection finished. Nothing new to review.";
     return `Detection finished. ${n} new suggestion${n === 1 ? "" : "s"} to review.`;
   },
-  /** tooLargeNotice(names) explains which files the AI pass skipped and why. */
-  tooLargeNotice(names) {
-    const list = names.join(", ");
-    return `The local AI cannot read ${list} in one pass, so ${names.length === 1 ? "it was" : "they were"} ` +
-      `left out of the AI pass. The offline pass still covered ${names.length === 1 ? "it" : "them"} in full.`;
+  /** detectionCancelled(n) reports a run the user stopped. Partial findings
+   *  are kept, so the sentence says what was kept rather than just "stopped". */
+  detectionCancelled(n) {
+    if (n === 0) return "Detection cancelled. Nothing was added.";
+    return `Detection cancelled. ${n} suggestion${n === 1 ? "" : "s"} found before it stopped ${n === 1 ? "was" : "were"} kept.`;
+  },
+  /** skippedNotice(name, reason) names a file a route could not read, and why.
+   *  Go writes the reason, because Go is what knows the limit. */
+  skippedNotice(name, reason) {
+    return `${name}: ${reason}`;
   },
 
   // The suggestions table.

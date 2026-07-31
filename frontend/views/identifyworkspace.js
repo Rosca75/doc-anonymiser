@@ -15,10 +15,13 @@
 //
 // One structural change beyond the layout (BUILD-05 Phase 6): "Run detection" is
 // ONE button in the card header. It used to be a panel with a per-file checkbox
-// list and a separate button per method. Now it runs the offline smart pass
-// always, and the AI pass as well when Local AI is on, over every imported
-// document. The estimateDiscovery pre-check survives; an oversized file becomes
-// a notice rather than a picker the user has to operate before anything happens.
+// list and a separate button per method.
+//
+// BUILD-06 made it ONE bridge call as well (api.js runDetection): Go runs every
+// switched-on route under one cancellation context, reports one monotonic
+// progress fraction across the whole run, and always ends with a terminal
+// event. This module no longer sequences the passes, no longer computes a
+// percentage, and no longer decides which routes run.
 //
 // Naming note (BUILD-04 CR3, restated by BUILD-05 Phase 0): the visible labels
 // have changed twice now, from "Entities" to "Values" to this half of
@@ -27,7 +30,7 @@
 // once, on purpose: a label is a display string, an identifier is a contract.
 
 import {
-  runDiscovery, cancelDiscovery, estimateDiscovery, runSmartDetection,
+  runDetection, cancelDetection,
   expandVariants, validatePattern, setEntityPlaceholder, entityPlaceholder,
 } from "../api.js";
 import {
@@ -37,7 +40,6 @@ import {
   addCandidates, acceptCandidate, rejectCandidate,
   acceptAllShown, rejectAllShown, moveVariant,
   addPattern, removePattern,
-  smartDetectOptions,
 } from "../state.js";
 import { pendingExpansions } from "../entitymodel.js";
 import {
@@ -147,18 +149,47 @@ function subtitle(s) {
   return WORKSPACE.subtitle(waiting, accepted);
 }
 
-/** progressStrip(s) is the determinate per-file bar shown while a detection run
- *  is in flight (BUILD-02 Phase 7c/7d). */
-function progressStrip(s) {
+/**
+ * progressStrip(s) is the bar shown while a detection run is in flight.
+ *
+ * The percentage comes from GO (BUILD-06): it covers the whole run across
+ * every route, so it cannot rewind when the second route starts over with a
+ * smaller file count. Recomputing it here from (current+1)/total per route is
+ * exactly the bug that made the bar jump backwards mid-run.
+ */
+export function progressStrip(s) {
   const d = s.discovery;
   // The gate is deliberately `=== true` and nothing else (BUILD-04 CR17): the
   // bar must depend on a run being in flight, never on a leftover object.
   if (d?.running !== true) return "";
-  const pct = d.total ? Math.round(((d.current + 1) / d.total) * 100) : 0;
+  const pct = Math.max(0, Math.min(100, Math.round((d.fraction ?? 0) * 100)));
   return `<div class="detect-progress">` +
     `<div class="progress-bar"><div style="width:${pct}%"></div></div>` +
-    `<span class="hint mono">${escapeHTML(WORKSPACE.scanning(d.file ?? "", d.current + 1, d.total))}</span>` +
+    `<span class="hint mono" id="detect-caption">${escapeHTML(detectionCaption(d))}</span>` +
     `</div>`;
+}
+
+/**
+ * detectionCaption(d) says which route is running, on which file, how far
+ * into it, and for how long.
+ *
+ * Every part of that answers a question the old one-line caption left open
+ * when a run felt stuck: WHICH pass is this (two routes read the same files
+ * twice), where inside a long file has it got to (a chunked AI scan sat on
+ * one caption for minutes), and has anything happened at all recently.
+ */
+export function detectionCaption(d) {
+  const route = d.phaseCount > 1
+    ? `${WORKSPACE.phaseName(d.phase)} (${(d.phaseIndex ?? 0) + 1}/${d.phaseCount})`
+    : WORKSPACE.phaseName(d.phase);
+  const parts = [route];
+  if (d.total) parts.push(WORKSPACE.fileOf(d.file ?? "", (d.current ?? 0) + 1, d.total));
+  if (d.chunkCount > 1) parts.push(WORKSPACE.chunkOf((d.chunk ?? 0) + 1, d.chunkCount));
+  if (d.startedAt) {
+    const seconds = Math.max(0, Math.round((Date.now() - d.startedAt) / 1000));
+    parts.push(WORKSPACE.elapsed(seconds));
+  }
+  return parts.join(", ");
 }
 
 function tabs(s) {
@@ -437,7 +468,7 @@ function wire(container, s, shown) {
     }
   });
 
-  wireDetection(container, s);
+  wireDetection(container);
   wireNotice(container);
 
   if (activeTab === "suggestions") wireSuggestions(container, shown);
@@ -449,22 +480,17 @@ function wire(container, s, shown) {
 // --- Run detection --------------------------------------------------------
 
 /**
- * wireDetection(container, s) wires the ONE Run detection button.
+ * wireDetection(container) wires the ONE Run detection button to the ONE
+ * detection call.
  *
- * It folds what used to be two panels and a per-file picker into a single
- * action over every imported document (BUILD-05 Phase 6):
- *
- *   the offline smart pass  always, so the button works with Ollama absent
- *   the local AI pass       as well, when Local AI is on AND reachable
- *
- * The estimateDiscovery pre-check survives, because an oversized file failing
- * mid-run is a much worse experience than being told up front. What changed is
- * the shape of the answer: an oversized file becomes a NOTICE naming it, and
- * the run continues over the rest, instead of a picker the user has to operate
- * before anything happens at all.
+ * Everything this function used to decide now belongs to Go: which routes run,
+ * which files the local AI can read, what happens when one file fails, and
+ * when the run is over. What is left here is what a view should do: start it,
+ * fold the findings into the store, and report what came back, INCLUDING the
+ * cancelled flag and the per-file problems the old code discarded.
  */
-function wireDetection(container, s) {
-  container.querySelector("#btn-detect-cancel")?.addEventListener("click", () => cancelDiscovery());
+function wireDetection(container) {
+  container.querySelector("#btn-detect-cancel")?.addEventListener("click", () => cancelDetection());
 
   const btn = container.querySelector("#btn-detect");
   if (!btn || btn.disabled) return;
@@ -473,50 +499,47 @@ function wireDetection(container, s) {
     const all = getState().documents.map((d) => d.name);
     if (all.length === 0) return;
 
-    let files = all;
-    const aiOK = llmEnabled(getState());
+    // ONE call for the whole run (BUILD-06). Go decides which routes are on,
+    // skips what the local AI cannot read and says so, keeps going past a
+    // file that failed, and always ends the run with a terminal event that
+    // clears the progress bar. The old two-call sequence could not do any of
+    // that: it had two cancellation slots with a dead zone between them, and
+    // it dropped the cancelled flag and the status both passes returned.
+    setState({
+      discovery: {
+        running: true, phase: "", phaseIndex: 0, phaseCount: 1,
+        current: 0, total: all.length, file: all[0],
+        chunk: 0, chunkCount: 0, fraction: 0, startedAt: Date.now(),
+      },
+    });
 
-    // The size pre-check only matters for the AI pass: the offline pass streams
-    // and has no context window to overflow.
-    if (aiOK) {
-      try {
-        const estimates = await estimateDiscovery(files);
-        const tooLarge = (estimates ?? []).filter((e) => e.tooLarge);
-        if (tooLarge.length) {
-          const excluded = new Set(tooLarge.map((e) => e.name));
-          files = files.filter((f) => !excluded.has(f));
-          notify(WORKSPACE.tooLargeNotice(tooLarge.map((e) => e.name)), "warn");
-        }
-      } catch { /* estimation is advisory; the run still guards itself */ }
-    }
-
-    setState({ discovery: { running: true, current: 0, total: all.length, file: all[0] } });
-    let added = 0;
     try {
-      // The offline pass first, and unconditionally. Its tuning travels with the
-      // call (BUILD-04 CR13), read from the store so the options in force are
-      // exactly the ones the rail shows.
-      const smart = await runSmartDetection(
-        all, getState().allowlist, false, smartDetectOptions(getState()));
-      added += addCandidates(smart?.candidates ?? [], "smart");
+      const result = await runDetection(all, getState().allowlist);
+      const added =
+        addCandidates(result?.candidates ?? [], "smart") +
+        addCandidates(
+          (result?.proposals ?? []).map((p) => ({ text: p.text, category: p.category })), "local-ai");
 
-      // Then the AI pass, if it can run at all and there is anything left to
-      // read after the size check.
-      if (aiOK && files.length) {
-        const ai = await runDiscovery(files, getState().allowlist);
-        added += addCandidates(
-          (ai?.proposals ?? []).map((p) => ({ text: p.text, category: p.category })), "local-ai");
+      // A file the AI could not read is reported, not silently dropped.
+      for (const skip of result?.skipped ?? []) {
+        notify(WORKSPACE.skippedNotice(skip.name, skip.reason), "warn");
       }
-      notify(WORKSPACE.detectionDone(added), added ? "ok" : "info");
+      // So is a route that failed on one file while the others succeeded.
+      for (const message of result?.errors ?? []) {
+        notify(message, "warn");
+      }
+      if (result?.cancelled) {
+        notify(WORKSPACE.detectionCancelled(added), "info");
+      } else {
+        notify(WORKSPACE.detectionDone(added), added ? "ok" : "info");
+      }
     } catch (err) {
       notify(String(err?.message ?? err), "warn");
     } finally {
-      // ALWAYS clear the running flag (BUILD-04 CR17). Clearing it only on the
-      // happy paths meant any escape in between left the button disabled forever
-      // with no way back except leaving and re-entering the step.
+      // Belt and braces: the terminal event already clears this (main.js), so
+      // a lost event cannot strand the bar, and a lost promise cannot either.
       setState({ discovery: null });
-      // Newly accepted nothing yet, but a fresh candidate list is worth looking
-      // at, so land the user on it.
+      // Land the user on the fresh candidate list, which is what they ran for.
       activeTab = "suggestions";
       setState({});
     }

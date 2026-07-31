@@ -3,8 +3,10 @@
 package engine
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 // findCandidate returns the candidate with the given text, or nil.
@@ -371,6 +373,83 @@ func TestAllowlistStillWinsOverTuning(t *testing.T) {
 	for _, c := range got {
 		if c.Text == "Alpine Trust S.A." {
 			t.Errorf("an allowlisted term must never be proposed, got %+v", got)
+		}
+	}
+}
+
+// --- BUILD-06: the offline pass must scale, and must be interruptible ------
+
+// TestExtractRunsScalesLinearly guards a quadratic hot spot that made
+// detection look like it had hung on a real document.
+//
+// suffixBoundaryOK used to read its first character with []rune(rest)[0],
+// where `rest` is the whole remainder of the document: one allocation and one
+// scan of megabytes, per run. 800 KB took 15 seconds and 2.4 MB took about two
+// minutes, which from the outside is exactly "detection sometimes does not
+// complete". Decoding one rune in place made the same work linear.
+//
+// The assertion is a RATIO with a generous bound rather than a stopwatch
+// threshold, so it fails on a return to quadratic behaviour and not on a busy
+// CI runner.
+func TestExtractRunsScalesLinearly(t *testing.T) {
+	measure := func(repeats int) time.Duration {
+		text := strings.Repeat("Alpine Trust S.A. met Marie Duval in Luxembourg. ", repeats)
+		start := time.Now()
+		extractRuns(text)
+		return time.Since(start)
+	}
+	// Warm the code paths so the first measurement is not the one that pays
+	// for lazily-initialised tables.
+	measure(500)
+
+	small := measure(4000)
+	large := measure(16000)
+	// Four times the input. Linear would be about 4x; quadratic is about 16x.
+	// 8x leaves generous room for allocator noise while still failing loudly
+	// on a reintroduced O(n^2).
+	if large > 8*small {
+		t.Errorf("extractRuns looks quadratic again: 4x the input took %v after %v (%.1fx)",
+			large, small, float64(large)/float64(small))
+	}
+}
+
+// TestSmartDetectContextIsInterruptible: before BUILD-06 the offline pass took
+// no context, so Cancel could only land BETWEEN documents and one large file
+// ran to completion whatever the user pressed.
+func TestSmartDetectContextIsInterruptible(t *testing.T) {
+	text := strings.Repeat("Alpine Trust S.A. met Marie Duval in Luxembourg. ", 50000)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	got, err := SmartDetectContext(ctx, text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if err == nil {
+		t.Fatal("a cancelled context must be reported, not ignored")
+	}
+	if got != nil {
+		t.Errorf("a cancelled scan returns no candidates, got %d", len(got))
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("cancellation took %v, which is not a cancellation", elapsed)
+	}
+}
+
+// TestSmartDetectContextMatchesTheLegacyCall: the ctx-aware entry point must
+// find exactly what the old one did when nothing cancels it.
+func TestSmartDetectContextMatchesTheLegacyCall(t *testing.T) {
+	text := "Alpine Trust S.A. met Marie Duval. Alpine Trust signed with Borealis Fund GmbH."
+	opts := DefaultSmartDetectOptions()
+	want := SmartDetectWithOptions(text, NewEmptyAllowlist(), opts)
+	got, err := SmartDetectContext(context.Background(), text, NewEmptyAllowlist(), opts)
+	if err != nil {
+		t.Fatalf("an uncancelled scan must not fail: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d candidates, want %d", len(got), len(want))
+	}
+	for i := range got {
+		if got[i].Text != want[i].Text || got[i].Category != want[i].Category {
+			t.Errorf("candidate %d differs: %+v vs %+v", i, got[i], want[i])
 		}
 	}
 }

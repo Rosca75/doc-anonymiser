@@ -152,8 +152,14 @@ const initialState = {
   // step empties this list.
   dismissedWarnings: [],
 
-  // Discovery run state (BUILD-02 Phase 7c):
-  // {running, current, total, file} or null when idle.
+  // Detection run state (BUILD-06), or null when idle:
+  // {running, phase, phaseIndex, phaseCount, current, total, file,
+  //  chunk, chunkCount, fraction, startedAt}.
+  //
+  // `fraction` comes from GO and is guaranteed non-decreasing across the whole
+  // run. The frontend used to compute a percentage per pass, which is why the
+  // bar rewound when the second pass started over with a smaller denominator.
+  // It is never recomputed here.
   discovery: null,
 
   // Unified candidate review list (BUILD-02 Phase 9b): candidates from

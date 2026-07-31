@@ -80,6 +80,8 @@ Ollama probe. There is no cloud route and no `useCloudAI` on the Go side
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
+| `runDetection(fileNames, allowTerms)` | names, allowlist | `DetectionResult {candidates, proposals, phases, skipped, errors, cancelled, status}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). |
+| `cancelDetection()` | — | aborts the in-flight run, reaching whichever route is running, including mid-file |
 | `runDiscovery(fileNames, allowTerms)` | names, allowlist | `DiscoveryResult {proposals:[{category,text}], status, cancelled}`; a cancelled run resolves with partial proposals, only real failures reject |
 | `cancelDiscovery()` | — | aborts the in-flight discovery run (no-op if idle) |
 | `estimateDiscovery(fileNames)` | names | `[{name, chunks, tooLarge, message}]` so oversized files can be excluded BEFORE the run |
@@ -128,6 +130,16 @@ missing runtime is a safe no-op).
 | `documents:changed` | after a drag-drop import (drops are push, not request/reply) | `ImportResult` |
 | `pipeline:progress` | during a `runPipeline` run | progress info |
 | `pipeline:done` | when a `runPipeline` run finishes | `Results` |
+| `detection:progress` | during a `runDetection` run | `{phase, phaseIndex, phaseCount, docIndex, docCount, docName, chunkIndex, chunkCount, fraction}` |
+| `detection:done` | when a `runDetection` run finishes, is cancelled, or has nothing to run | `DetectionResult` |
+| `detection:error` | when a run stops unexpectedly | `{message}` |
+
+**`detection:done` / `detection:error` are a guarantee, not a courtesy.** Exactly
+one of them fires for every started run, so the progress bar can be cleared by
+the event rather than by the caller's `finally`. `fraction` is the whole run's
+progress, computed in Go and non-decreasing across routes: never recompute a
+percentage per route in the frontend, that is what made the bar rewind when the
+second route started with a smaller file count.
 
 ## Rules for changing the contract
 

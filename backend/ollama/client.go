@@ -342,7 +342,15 @@ Rules:
 // FULL document text (an entity split across a boundary is covered by the
 // chunk overlap). The caller (app.go) merges multi-file results.
 func (c *Client) Discover(ctx context.Context, text string) ([]engine.ProposedEntity, error) {
-	return c.scanChunks(ctx, text, func(chunk string) (string, error) {
+	return c.DiscoverWithProgress(ctx, text, nil)
+}
+
+// DiscoverWithProgress is Discover with a per-chunk callback, so a long
+// document reports progress instead of sitting frozen on one caption for
+// minutes (BUILD-06). onChunk is called BEFORE each chunk is sent, with the
+// 0-based index and the total; nil disables it.
+func (c *Client) DiscoverWithProgress(ctx context.Context, text string, onChunk func(index, total int)) ([]engine.ProposedEntity, error) {
+	return c.scanChunks(ctx, text, onChunk, func(chunk string) (string, error) {
 		return c.Chat(ctx, c.Model, discoverSystemPrompt, chunk)
 	})
 }
@@ -352,13 +360,16 @@ func (c *Client) Discover(ctx context.Context, text string) ([]engine.ProposedEn
 // against the whole document. On mid-loop cancellation the proposals
 // gathered so far are returned WITH the context error, so callers can
 // keep partial results (BUILD-02 Phase 7d).
-func (c *Client) scanChunks(ctx context.Context, text string, chat func(chunk string) (string, error)) ([]engine.ProposedEntity, error) {
+func (c *Client) scanChunks(ctx context.Context, text string, onChunk func(index, total int), chat func(chunk string) (string, error)) ([]engine.ProposedEntity, error) {
 	chunks, err := c.Chunks(text)
 	if err != nil {
 		return nil, err
 	}
 	var batches [][]engine.ProposedEntity
-	for _, chunk := range chunks {
+	for i, chunk := range chunks {
+		if onChunk != nil {
+			onChunk(i, len(chunks))
+		}
 		if err := ctx.Err(); err != nil {
 			return c.filterProposals(ollamaMerge(batches), text), err
 		}
@@ -408,7 +419,7 @@ func (c *Client) DeepScan(ctx context.Context, text string, known []engine.Entit
 		system += "\nKnown (do not report): " + strings.Join(names, "; ")
 	}
 
-	return c.scanChunks(ctx, text, func(chunk string) (string, error) {
+	return c.scanChunks(ctx, text, nil, func(chunk string) (string, error) {
 		return c.Chat(ctx, c.Model, system, chunk)
 	})
 }
