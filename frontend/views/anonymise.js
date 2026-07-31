@@ -571,6 +571,7 @@ export function compareCard(s, doc) {
     `<div class="card-head-right">${head}</div>` +
     `</div>` +
     selectionPanel() +
+    `<div class="mark-tooltip" id="mark-tooltip" role="tooltip" hidden></div>` +
     panes +
     toastHTML(getState().notice) +
     `</section>`;
@@ -810,6 +811,18 @@ function wireCompare(container, doc) {
     setState({ resultDoc: ev.target.value });
   });
 
+  // A results view restored by navigation can have results but no mapping (the
+  // fast re-run path fetches it separately). Without it every mark falls back
+  // to its label and the hover shows nothing, which is indistinguishable from
+  // a broken tooltip. Fetch it once, quietly.
+  if (doc && !getState().mapping) {
+    getMapping()
+      .then((mapping) => { if (mapping) setState({ mapping }); })
+      .catch(() => { /* no bridge: the marks keep their label-only titles */ });
+  }
+
+  wireMarkTooltip(container, doc);
+
   // Clicking a mark fills the Selected placeholder card. highlight.js already
   // emits data-ph and data-original, so this needs no parsing.
   container.querySelector("#anonymised-pane")?.addEventListener("click", (ev) => {
@@ -826,6 +839,82 @@ function wireCompare(container, doc) {
 
   wireTextSelection(container);
   wireSelectionPanel(container);
+}
+
+/**
+ * wireMarkTooltip(container, doc) shows the original value under the mark the
+ * pointer (or the keyboard focus) is on.
+ *
+ * The markup for this has been right for a long time; the PLACEMENT was not.
+ * The tooltip was a CSS ::after on the mark itself, and the mark lives inside
+ * `.pane-body { overflow: auto }`, so the pane clipped it: near the right-hand
+ * edge or the last line of the pane it was simply not visible, which is why it
+ * was reported as missing. `white-space: nowrap` made a long value run off the
+ * side even when it did appear.
+ *
+ * The fix is the one the reassign popover already had to make (style.css, the
+ * note where that popover used to be): position it against the COMPARE CARD,
+ * not inside the scrolling pane. Scrolling then moves the text out from under
+ * it, so the tooltip hides on scroll rather than drifting away from its mark.
+ */
+function wireMarkTooltip(container, doc) {
+  const host = container.querySelector("#compare-card");
+  const tip = container.querySelector("#mark-tooltip");
+  const pane = container.querySelector("#anonymised-pane");
+  if (!host || !tip || !pane) return;
+
+  const hide = () => { tip.hidden = true; };
+
+  const show = (mark) => {
+    const original = mark.dataset.original;
+    if (!original) return; // a mapping miss has nothing to show
+    const category = mark.dataset.category;
+    const count = doc ? countOccurrences(doc.anonymised ?? "", mark.dataset.ph ?? "") : 0;
+
+    tip.innerHTML =
+      `<span class="tooltip-original">${escapeHTML(original)}</span>` +
+      `<span class="tooltip-meta">${escapeHTML(tooltipMeta(category, count))}</span>`;
+    tip.hidden = false;
+
+    // Positioned against the card, and flipped above the mark when there is no
+    // room below it: a tooltip that opens off the bottom of the window is the
+    // same as no tooltip.
+    const markBox = mark.getBoundingClientRect();
+    const hostBox = host.getBoundingClientRect();
+    const tipBox = tip.getBoundingClientRect();
+    const below = markBox.bottom - hostBox.top + 6;
+    const above = markBox.top - hostBox.top - tipBox.height - 6;
+    const fitsBelow = markBox.bottom + tipBox.height + 12 <= hostBox.bottom;
+    let left = markBox.left - hostBox.left;
+    left = Math.max(6, Math.min(left, hostBox.width - tipBox.width - 6));
+    tip.style.left = `${left}px`;
+    tip.style.top = `${fitsBelow || above < 0 ? below : above}px`;
+  };
+
+  for (const mark of pane.querySelectorAll("mark[data-original]")) {
+    mark.addEventListener("mouseenter", () => show(mark));
+    mark.addEventListener("mouseleave", hide);
+    // Keyboard parity: the marks are focusable now (highlight.js), so the same
+    // information is reachable without a pointer.
+    mark.addEventListener("focus", () => show(mark));
+    mark.addEventListener("blur", hide);
+    mark.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      ev.preventDefault();
+      mark.click();
+    });
+  }
+  // Scrolling moves the text, not the tooltip: hide it rather than let it
+  // point at whatever has scrolled under it.
+  pane.addEventListener("scroll", hide);
+}
+
+/** tooltipMeta(category, count) is the second line: what kind of value it is
+ *  and how often it was replaced in this document. */
+export function tooltipMeta(category, count) {
+  const label = CATEGORY_LABELS[category]?.[0] ?? category ?? "";
+  const times = count > 0 ? ANONYMISE.tooltipTimes(count) : "";
+  return [label, times].filter(Boolean).join(", ");
 }
 
 /**

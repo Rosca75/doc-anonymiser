@@ -32,10 +32,17 @@ export function markClass(label) {
  * wrapped in <mark> and all other content escaped.
  *
  * When the mapping knows a placeholder ("[ENTITY_1]" → {original,
- * category}), the mark carries data-ph, data-original and a
- * title="Original: <value>" (native tooltip as accessibility fallback;
- * the styled tooltip reads data-original in CSS). A mapping miss falls
- * back to the label-only title exactly like v1.
+ * category}), the mark carries data-ph, data-original, data-category and a
+ * title="Original: <value>". The title is the accessibility fallback; the
+ * styled tooltip is positioned in JS against the Compare card (BUILD-06,
+ * views/anonymise.js), because a CSS ::after inside the pane was CLIPPED by
+ * the pane's own overflow and never appeared near the right-hand edge.
+ *
+ * A known mark is also focusable (tabindex="0"): the tooltip and the
+ * click-to-select were mouse-only, which made the one place the anonymisation
+ * is actually checked unreachable from the keyboard. A mapping miss falls back
+ * to the label-only title exactly like v1, and stays unfocusable: there is
+ * nothing to show.
  *
  * @param {string} text anonymised document text
  * @param {object} [mapping] placeholder → {original, category} lookup
@@ -51,6 +58,8 @@ export function renderHighlighted(text, mapping) {
     if (info?.original) {
       out += `<mark class="${markClass(label)}" data-ph="${escapeHTML(m[0])}"` +
         ` data-original="${escapeHTML(info.original)}"` +
+        (info.category ? ` data-category="${escapeHTML(info.category)}"` : "") +
+        ` tabindex="0"` +
         ` title="Original: ${escapeHTML(info.original)}">${escapeHTML(m[0])}</mark>`;
     } else {
       out += `<mark class="${markClass(label)}" title="${escapeHTML(label.toLowerCase())}">${escapeHTML(m[0])}</mark>`;

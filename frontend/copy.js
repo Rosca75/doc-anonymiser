@@ -562,6 +562,10 @@ export const ANONYMISE = {
   paneOriginal: "ORIGINAL",
   paneAnonymised: "ANONYMISED",
   compareEmpty: "Run the anonymisation to compare the result with the original.",
+  /** tooltipTimes(n) is the second line of a mark's hover tooltip. */
+  tooltipTimes(n) {
+    return `replaced ${n} time${n === 1 ? "" : "s"} in this document`;
+  },
   // Shown in the ORIGINAL pane when the source text is not available: the
   // document was removed from the import list while its result stayed on
   // screen. The pane says so rather than showing the anonymised text, which
