@@ -1,12 +1,19 @@
 # UI testing
 
-Three layers, cheapest first. The first two run in CI on every push; the third
-is Windows-only and opt-in.
+Three layers, cheapest first. **All three run in CI on every push**, plus an
+additional platform check on Windows that is opt-in.
 
 The reason there are three: every one of the seven issues reported against the
 built application passed the existing tests. Unit tests proved each function;
 nothing proved the assembled screen, and nothing at all proved what the user
 could actually SEE.
+
+| Layer | What it proves | Command | Gates |
+|---|---|---|---|
+| 1 | behaviour over a whole session, through the bound app | `go test ./...` | yes |
+| 2 | the HTML each view builds, no browser | `node --test frontend/*.test.js` | yes |
+| 3 | what a renderer shows: fit, visibility, clipping | `go run ./scripts/uitest/renderharness` | yes |
+| + | the real WebView2 engine and the packaged `.exe` | `pwsh scripts/uitest/Invoke-UITest.ps1` | no, unverified |
 
 ## Layer 1: Go, end to end through the bound app
 
@@ -30,6 +37,11 @@ This layer owns the assertions about behaviour over a whole session:
 - the report's value table sums to its category totals (issue 7);
 - a session file round-trips every setting it claims to persist.
 
+It also owns `../uitest_parity_test.go`, the guard that keeps the two layer-3
+harnesses sharing one set of probes (see "One set of probes" below). That is a
+source-inspection test, so it needs no browser and runs here rather than in
+layer 3.
+
 ## Layer 2: frontend render tests, no browser
 
 ```
@@ -49,11 +61,11 @@ To bring a new screen under test, export its builder (`previewBody`,
 `compareCard`, `reportCard`, `railBody`, `progressStrip` are already exported)
 and assert against it.
 
-## Layer 3: real rendering, Windows only
+## Layer 3: real rendering, Linux, in CI
 
-```powershell
-pwsh scripts/uitest/Invoke-UITest.ps1            # dev mode
-pwsh scripts/uitest/Invoke-UITest.ps1 -Packaged  # the built .exe
+```
+go run ./scripts/uitest/renderharness
+go run ./scripts/uitest/renderharness -keep-artifacts
 ```
 
 Layer 2 proves the HTML. It cannot prove that a tooltip is **visible** rather
@@ -63,27 +75,115 @@ turned out to be: the markup had been correct for months and
 fits the window, which is the fixed-height layout contract in
 `frontend/CLAUDE.md`.
 
-**Dev mode** uses the fact that `wails dev` serves the frontend on
-`http://localhost:34115` with the Go bridge attached. The script starts it,
-launches Edge headless with `--remote-debugging-port`, and drives the DevTools
-Protocol over `System.Net.WebSockets.ClientWebSocket`. Nothing is installed and
-no test hook ships in the binary. It asserts:
+### How it works
 
-- no wizard screen scrolls the page body, in either direction;
-- the Import preview's rendered `innerText` contains no placeholder;
-- the Configure rail is three route sections with the documented default
-  switch positions, and every category checkbox is reachable without clicking;
-- a real `mouseenter` on a mark produces a tooltip whose `getBoundingClientRect`
-  is inside the Compare card and inside the viewport.
+1. `frontend/` is served over loopback HTTP on an ephemeral port, in-process.
+   `index.html` uses only relative paths and the modules import with absolute
+   paths (`/state.js`), so a server rooted at `frontend/` serves the application
+   exactly as the embedded asset server does.
+2. A headless Chromium is started with `--remote-debugging-port=0`; the port it
+   picks is read from `DevToolsActivePort` in a throwaway profile, so two
+   parallel runs never collide.
+3. The harness speaks the DevTools Protocol over a WebSocket and evaluates the
+   shared probes in the page.
 
-**`-Packaged`** builds the .exe, starts it and uses UI Automation
-(`System.Windows.Automation`) to assert the window appears with a non-empty
-accessibility tree, which is what catches a white-screen boot that every other
-layer would miss. `System.Drawing` captures the window.
+Nothing is installed and no test hook ships in the binary. It adds **no
+dependency**: `scripts/uitest/renderharness/ws.go` is a deliberately minimal
+RFC 6455 client (masked client text frames, reassembled server frames, ping and
+close), because Go has no WebSocket in its standard library and a test harness is
+a poor reason to put one in `go.mod` forever. It is not a general-purpose library
+and must not grow into one; if it ever needs binary frames or compression, that is
+the signal to add a real dependency to the pinned table in the root `CLAUDE.md`.
 
-Screenshots and the log land in `scripts/uitest/artifacts/`. The script exits
-non-zero on the first failing assertion set, and every failure prints what was
-expected, what was found, and what to fix.
+The viewport is pinned to 1440x900 with `Emulation.setDeviceMetricsOverride`.
+`--window-size` is only a request (the headless window subtracts its own chrome,
+and asking for 900 produced 708), and a layout contract measured against an
+unknown height is not a contract.
+
+### What it asserts
+
+- **the fixed-height layout contract**, on all four wizard steps, in three parts,
+  because the contract has three failure modes:
+  - the page body does not scroll, in either direction;
+  - `#view` does not **clip** what it holds. `main#view { overflow: hidden }` is
+    load-bearing, and its cost is that a card which does not fit is silently cut
+    off instead of scrolling the page, which the first check would never see;
+  - every element that actually scrolls is a card body, a group body, the rail, a
+    card column or a `.table-scroll`. That allow-list is the contract's real
+    enumeration and lives in `probes.js`; add to it only with the `style.css` rule
+    that justifies the entry.
+- **the Import preview's rendered `innerText` contains no placeholder** matching
+  `\[[A-Z][A-Z0-9_]*_\d+\]` (issues 1 and 4). The seeded state HAS a finished run
+  in it, so there is real anonymised text for a view to reach for by mistake; a
+  state with no placeholders anywhere would pass for the wrong reason. The pane is
+  also asserted to be non-empty, for the same reason.
+- **the Configure rail is three route sections**, no `[data-railtab]` chips, Smart
+  detection on, Local AI off, Cloud AI present but disabled, and all 22 category
+  checkboxes present **and laid out with a non-zero height** (issue 3). Present in
+  the DOM is not the same as reachable.
+- **a real `mouseenter` on a `mark[data-original]` produces a visible
+  `#mark-tooltip`** (issue 6). Three marks are hovered: the first, and the two
+  nearest the pane's right and bottom edges, because the middle of the pane was
+  never where it failed. Each is checked for a rect inside `#compare-card` and
+  inside the viewport, for a non-zero size, for **not being a descendant of
+  `#anonymised-pane`** (that subtree is what `overflow: auto` clips, and moving the
+  tooltip out of it is the whole fix), and for `elementFromPoint` at its centre
+  returning the tooltip. That last one is the check with real teeth: the rect of a
+  clipped element is still a full-size rect.
+- **no console error** during the run, collected from
+  `Runtime.consoleAPICalled` and `Runtime.exceptionThrown` as they happen.
+
+### What it does NOT cover: the bridge
+
+The page is served as static files, so **`window.go` does not exist**. Every
+`api.js` call rejects with the readable "Wails bridge not available" error
+`api.js` is designed to throw, and application state is seeded straight into
+`state.js` instead. This layer covers **rendering, not the bridge**.
+
+That is a real boundary, not a caveat to wave away: the bridge belongs to layer 1
+(`backend/app_e2e_test.go`, which drives the bound methods directly) and to the
+Windows `wails dev` harness, where the bridge really is attached. The harness
+filters exactly one message out of the console assertion, api.js's own bridge
+wording, and nothing else, so a genuine error is never waved through.
+
+Running with no bridge at all was worth doing for its own sake: it is what found
+that the `api.js` wrappers threw **synchronously** when the bridge was missing, so
+the `.catch()` every call site writes was dead code and `views/export.js`
+`ensureFormats()` took the whole Export screen down on an uncaught error. The
+wrappers are `async` now and `frontend/api.test.js` pins it.
+
+## Additional platform check: Windows, WebView2 and the packaged .exe
+
+```powershell
+pwsh scripts/uitest/Invoke-UITest.ps1            # dev mode
+pwsh scripts/uitest/Invoke-UITest.ps1 -Packaged  # the built .exe
+```
+
+Layer 3 already gates in CI, in Chromium. This script exists for the two things
+Linux cannot do:
+
+- **the real browser engine.** The application ships in WebView2 on Windows.
+  Chromium is close, but it is not the engine the user gets.
+- **the packaged binary.** `-Packaged` runs `wails build`, starts the `.exe` and
+  uses UI Automation (`System.Windows.Automation`) to assert the window appears
+  with a non-empty accessibility tree, which is what catches a white-screen boot
+  that every other layer would miss. `System.Drawing` captures the window.
+
+**Dev mode** additionally has something the Linux harness cannot offer: `wails dev`
+serves the frontend on `http://localhost:34115` **with the Go bridge attached**.
+It runs the same rendering assertions as layer 3, against a page where `api.js`
+actually works.
+
+Nothing here is installed either: WebSockets come from `System.Net.WebSockets`,
+JSON from `System.Text.Json`, screenshots from `System.Drawing`, and the
+accessibility tree from `UIAutomationClient`.
+
+**This script has still never been executed.** That is why its CI job is
+`continue-on-error`, and why it is documented as an additional check rather than a
+layer. Two things are outstanding and neither is fixed by the Linux harness:
+
+- the `ui-windows` job is `continue-on-error` and unverified;
+- no manual pass has been done on real documents on Windows.
 
 ### Requirements
 
@@ -93,10 +193,60 @@ expected, what was found, and what to fix.
 - The pinned Wails CLI on `PATH` (see the version table in the root
   `CLAUDE.md`).
 
-### In CI
+## One set of probes
 
-`.github/workflows/ci.yml` runs Layers 1 and 2 on `ubuntu-latest` as the
-blocking job. Layer 3 runs on `windows-latest` on `workflow_dispatch` and on
-tags, uploading `scripts/uitest/artifacts/` and marked `continue-on-error`
-until it has enough runs to show it is not flaky. Promote it to a gate by
-deleting that line.
+`scripts/uitest/probes.js` is the **single** definition of what the rendering
+checks look at and how application state is seeded. Both harnesses read that file,
+evaluate it in the page, and call the same `__uiProbes.*` functions; they own only
+the plumbing (Go plus a small WebSocket client on Linux, PowerShell plus
+`ClientWebSocket` on Windows) and the reporting.
+
+The split is deliberate: `probes.js` **measures** (it is the half that needs a
+DOM) and the harness **judges** (it is the half that has to explain itself, with
+what was expected, what was found and what to change).
+
+Two copies of "which selector holds the Configure rail" is one copy nobody
+updates, and since the Windows script has never run, its copy is the one that
+would rot unnoticed. So the arrangement is enforced rather than requested, by
+`../uitest_parity_test.go` in layer 1:
+
+- neither harness may contain `document.querySelector`, `getBoundingClientRect`,
+  `dispatchEvent`, `getComputedStyle`, an `import("/state.js")` or a `setState(`;
+- every `__uiProbes.<name>` either harness calls must be defined in `probes.js`;
+- every probe the Linux harness asserts on must also be called by the PowerShell
+  script (not the reverse: `-Packaged` has checks Linux cannot make at all);
+- `probes.js` is one immediately-invoked expression returning `"installed"`, and
+  it lives under `scripts/` so `//go:embed all:frontend` can never ship it.
+
+To add a check: write the measuring half as a new `__uiProbes` function, then add
+the judging half to `scripts/uitest/renderharness/checks.go` **and** a `Test-*`
+assertion to the PowerShell script. The parity test will tell you if you forget
+the second one.
+
+## Artefacts
+
+Screenshots and the browser log land in `scripts/uitest/artifacts/` (gitignored).
+Both harnesses delete them on a fully green run unless `-keep-artifacts` /
+`-KeepArtifacts` is passed, because a stale screenshot from a green run is worse
+than none: it is the one somebody reads next time. CI passes the flag and uploads
+the folder either way.
+
+Exit codes from the Linux harness are distinguishable on purpose: **1** means a UI
+check failed, **2** means the harness itself could not run (no browser, no
+checkout, a crashed page). Every failure prints what was expected, what was found,
+and what to fix.
+
+## In CI
+
+`.github/workflows/ci.yml`, job `build-and-test` on `ubuntu-latest`, is the
+blocking job and now runs all three layers: `go test`, the node tests, then the
+rendering harness. The browser is the Google Chrome already on the runner image,
+so nothing is downloaded and no npm is involved.
+
+Layer 3 blocks deliberately. Every one of the seven reported issues passed the
+steps above it, and a check that catches them without gating is a comment.
+
+The `ui-windows` job runs the PowerShell script on `windows-latest`, on
+`workflow_dispatch` and on tags, uploading `scripts/uitest/artifacts/` and marked
+`continue-on-error` until it has passed a few times. Promote it by deleting that
+line.

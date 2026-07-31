@@ -194,8 +194,18 @@ process; this second window is one the WebView opens itself.
   about what a pane displayed lived happily beside green tests that only
   checked the output contained a substring somewhere.
 - What no test in this folder can prove (a tooltip clipped by its scrolling
-  pane, a screen that does not fit the window) belongs to the Windows harness
-  in `../scripts/uitest/`. See `../docs/UITESTING.md`.
+  pane, a screen that does not fit the window) belongs to the RENDERING layer in
+  `../scripts/uitest/`. It runs in CI on Linux
+  (`go run ./scripts/uitest/renderharness`, a real Chromium over the DevTools
+  Protocol) and BLOCKS; the Windows PowerShell script beside it is the
+  additional platform check for the real WebView2 and the packaged .exe. Both
+  read the same probes, `../scripts/uitest/probes.js`. See
+  `../docs/UITESTING.md`.
+- That layer serves this folder as static files, so **there is no Go bridge**
+  in it. `api.js` must therefore keep degrading gracefully as a REJECTION, not a
+  synchronous throw: every wrapper is `async` for that reason, and
+  `api.test.js` pins it. A view that calls `api.js` while rendering must
+  tolerate the rejection.
 
 ## Where to look next
 

@@ -54,6 +54,7 @@ doc-anonymiser/
 ├── backend/app_e2e_test.go    # headless end-to-end through the bound app layer
 ├── category_parity_test.go    # JS↔Go category parity guard (package main)
 ├── copy_guard_test.go         # no em dashes in Go user-facing strings (package main)
+├── uitest_parity_test.go      # keeps the two UI harnesses on ONE probes.js (package main)
 ├── frontend/                  # THE GUI — vanilla ES modules, embedded via go:embed
 │   ├── CLAUDE.md              # frontend charter (see above)
 │   ├── BRIDGE.md              # Go↔JS contract (see above)
@@ -97,10 +98,16 @@ doc-anonymiser/
 │   └── testdata/              # fixture documents for unit tests (lives with the engine that uses it)
 ├── scripts/
 │   ├── genicon.go             # standalone icon generator (//go:build ignore)
-│   └── uitest/                # Windows-only UI harness (PowerShell + .NET, no
-│                              #   packages): drives wails dev over the DevTools
-│                              #   Protocol, plus a UI Automation smoke test of
-│                              #   the packaged .exe (docs/UITESTING.md)
+│   └── uitest/                # the real-rendering test layer (docs/UITESTING.md)
+│       ├── probes.js          # THE ONE definition of the browser-side probes and
+│       │                      #   the state they seed; BOTH harnesses read it
+│       ├── renderharness/     # Linux, Chromium, Go + stdlib only (no new
+│       │                      #   dependency: ws.go is a minimal RFC 6455
+│       │                      #   client). Runs in CI as a BLOCKING step
+│       └── Invoke-UITest.ps1  # Windows additional platform check (PowerShell +
+│                              #   .NET, no packages): the real WebView2 engine
+│                              #   plus a UI Automation smoke test of the
+│                              #   packaged .exe. Never yet executed
 ├── .github/workflows/
 │   ├── ci.yml                 # build + test on push/PR
 │   └── release.yml            # on tag: build, zip, attach to Release
