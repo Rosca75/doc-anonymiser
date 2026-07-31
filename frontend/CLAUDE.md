@@ -145,7 +145,7 @@ Windows it steals focus from the window it belongs to.
 - `docs/` — the bundled offline user documentation, opened in a SECOND window
   (embedded assets only; see the documentation-window rule below).
 - `assets/icons/` — vendored Material Symbols SVGs + their LICENSE.
-- `*.test.js` — dev-time tests, run with `node --test frontend/*.test.js`
+- `*.test.js` — dev-time tests, run with `node --test "frontend/**/*.test.js"`
   (zero npm deps). They are self-relative and never shipped in the binary.
 - `testhtml.js` — dev-time only: a tiny dependency-free HTML query helper
   (`one`, `all`, `textOf`, `attr`) so a test can assert what a pane SHOWS
@@ -185,8 +185,39 @@ process; this second window is one the WebView opens itself.
 
 ## Testing
 
-- `node --test frontend/*.test.js` — store, view-model, render and copy-guard
-  tests, zero npm dependencies (Node ships on the CI runner).
+**The tests in this folder are part of every change made to this folder.** Not a
+follow-up, not a separate task: the same change. A frontend suite that passes
+while asserting what a view USED to render is the exact failure this repository
+already paid for, and it is worse than no suite, because it is read as evidence.
+
+When you change anything under `frontend/`, in the same change:
+
+1. **Run the suite first**, so you know which tests your change broke rather
+   than which ones were already red.
+2. **Update every test that asserted the old behaviour.** A renamed category, a
+   restructured rail, a moved element: the test that pinned the old shape is now
+   wrong, and it must be rewritten to pin the new one.
+3. **Add a test for what is new.** A new exported builder, a new branch in a
+   view-model, a new guard: assert it, or nothing is holding it.
+4. **Delete the tests for behaviour that is gone**, and say so in the commit. A
+   test kept alive around a deleted feature drifts into asserting nothing.
+5. **Never weaken an assertion to make it pass.** If a test fails and the new
+   behaviour is right, rewrite the expectation to the new behaviour and say why
+   in the test. If the expectation is loosened until it cannot fail, the test is
+   now decoration.
+
+`../frontend_tests_test.go` enforces what can be enforced mechanically, and it
+runs inside `go test ./...`: every test file is reached by the command CI runs
+(the flat `frontend/*.test.js` pattern silently skipped everything under
+`views/`, so a test there never ran and CI stayed green), no test is `.skip`,
+`.todo` or `.only`, every module with logic is imported by some test or listed as
+an exemption with a reason, and the command in this charter matches the one in
+`ci.yml`. What it cannot check is whether a test asserts the RIGHT thing. That is
+rule 2 above, and it is on you.
+
+- `node --test "frontend/**/*.test.js"` — store, view-model, render and copy-guard
+  tests, zero npm dependencies (Node ships on the CI runner). The pattern is
+  recursive and quoted for the reason above; keep it that way.
 - Keep the pure view-models (`entitymodel.js`, `candidatemodel.js`) covered
   by table-style tests when you change their logic.
 - **Render tests over substring matches.** Export a screen's builder and assert

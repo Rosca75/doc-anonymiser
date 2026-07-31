@@ -73,7 +73,7 @@ doc-anonymiser/
 │   ├── docs/                  # bundled offline user docs (SECOND window, embedded only)
 │   ├── assets/icons/          # vendored Material Symbols SVGs + LICENSE
 │   ├── testhtml.js            # dev-time HTML query helper for the render tests
-│   └── *.test.js              # node --test frontend/*.test.js (zero npm deps)
+│   └── *.test.js              # node --test "frontend/**/*.test.js" (zero npm deps)
 ├── backend/                   # ALL Go business logic + the Wails bound-app layer (package backend)
 │   ├── CLAUDE.md              # backend charter (see above)
 │   ├── app.go                 # Wails bound struct: thin adapters to engine/* and ollama/*
@@ -256,9 +256,29 @@ doc-anonymiser/
 - Heavy comments everywhere; each file starts with a purpose header.
 - Go standard library first. No new dependency without adding it to the
   BUILD.md dependency table AND the pinned-versions table below.
+- **A change is not finished until its tests move with it.** This is a hard
+  rule, not an aspiration, because the alternative is not "fewer tests", it is
+  a suite that reports safety it no longer provides. Every one of the seven
+  issues reported against the built application passed a green suite. In the
+  SAME change that alters behaviour: update the tests that asserted the old
+  behaviour, add a test for the new behaviour, and delete the tests for
+  behaviour that no longer exists. A test left asserting a retired contract is
+  worse than no test, and a test deleted without a replacement is a silent loss
+  of coverage. Never make a test pass by weakening what it asserts.
+- **Both suites are the deliverable, and both gate.** `go test ./...` for the
+  engine and the bound app; `node --test "frontend/**/*.test.js"` for the
+  frontend. The frontend suite is not optional or secondary: `frontend/` holds
+  the whole user interface, so a change there is exactly as testable, and
+  exactly as capable of regressing, as one in `backend/`. Layer detail and how
+  to bring a new screen under test: `docs/UITESTING.md`.
 - Table-driven unit tests for all engine logic; `backend/testdata/` fixtures
   in the supported formats, in English and French. Keep `testdata/` under
   `backend/` so the engine tests' relative fixture paths stay valid.
+- **The parity guards are load-bearing.** `category_parity_test.go`,
+  `step_parity_test.go`, `copy_guard_test.go`, `uitest_parity_test.go` and
+  `frontend_tests_test.go` exist because each one is a mistake that already
+  happened once and passed every other test. When one fails it is naming a real
+  inconsistency; fix the inconsistency, not the guard.
 - Frontend coding and typography rules live in `frontend/CLAUDE.md` (ES
   modules, no framework/build/CDN; Helvetica with Arial fallback, no Georgia,
   headings at regular weight; `--font-heading` in `brand.css` is the single

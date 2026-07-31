@@ -11,7 +11,7 @@ could actually SEE.
 | Layer | What it proves | Command | Gates |
 |---|---|---|---|
 | 1 | behaviour over a whole session, through the bound app | `go test ./...` | yes |
-| 2 | the HTML each view builds, no browser | `node --test frontend/*.test.js` | yes |
+| 2 | the HTML each view builds, no browser | `node --test "frontend/**/*.test.js"` | yes |
 | 3 | what a renderer shows: fit, visibility, clipping | `go run ./scripts/uitest/renderharness` | yes |
 | + | the real WebView2 engine and the packaged `.exe` | `pwsh scripts/uitest/Invoke-UITest.ps1` | no, unverified |
 
@@ -45,7 +45,7 @@ layer 3.
 ## Layer 2: frontend render tests, no browser
 
 ```
-node --test frontend/*.test.js
+node --test "frontend/**/*.test.js"
 ```
 
 The view modules build HTML strings, so a whole screen is testable without a
@@ -60,6 +60,38 @@ assert.equal(textOf(compareCard(state, doc), "#original-pane"), SOURCE);
 To bring a new screen under test, export its builder (`previewBody`,
 `compareCard`, `reportCard`, `railBody`, `progressStrip` are already exported)
 and assert against it.
+
+### These tests move with the code, in the same change
+
+A frontend test that passes while asserting what a view USED to render is worse
+than no test: it is read as evidence. So when anything under `frontend/` changes,
+the same change updates the tests that pinned the old behaviour, adds a test for
+the new behaviour, and deletes the tests for behaviour that is gone. Never
+weaken an assertion to make it pass. The full rule is in `frontend/CLAUDE.md`
+under Testing, and the cross-cutting version is root `CLAUDE.md` section 6.
+
+`../frontend_tests_test.go` enforces the parts a machine can see, inside
+`go test ./...`:
+
+- **every test file is actually run** by the command in `ci.yml`. It expands that
+  exact pattern and compares it against the files on disk. This is not
+  hypothetical: the flat `frontend/*.test.js` pattern silently skipped everything
+  under `frontend/views/`, so a deliberately failing `views/probe.test.js` was
+  never picked up and the suite still reported 350 passing. The pattern is now
+  recursive AND quoted, the quotes because bash's globstar is off by default and
+  would collapse `**` back to `*`;
+- **no test is `.skip`, `.todo` or `.only`.** A skipped test still exits 0, so
+  the suite reports success for a check nobody is making;
+- **every module with logic is imported by some test**, or listed in an exemption
+  table with a reason. When this check first ran it named `nav.js`, `modal.js` and
+  `toast.js`; all three got tests (`nav.test.js`, `notices.test.js`) rather than
+  exemptions, because an exemption is for a module where a test would assert
+  nothing, not for one nobody has got round to;
+- **the command in the charters matches the one in `ci.yml`**, since a charter is
+  what an agent follows and a stale command there outlives a correct workflow.
+
+What no guard can check is whether a test asserts the RIGHT thing. That stays a
+judgement, which is why the rule is written down where it will be read.
 
 ## Layer 3: real rendering, Linux, in CI
 
