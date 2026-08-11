@@ -155,6 +155,7 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 		Level:         level,
 		Categories:    categories,
 		MinConfidence: minConfidence,
+		Country:       a.settings.Country,
 		Allowlist:     allow,
 		Registry:      reg,
 		SimpleRules:   req.SimpleRules,

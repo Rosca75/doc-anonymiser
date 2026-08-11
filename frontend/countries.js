@@ -1,28 +1,25 @@
 // countries.js, the document-country table (BUILD-05 Phase 5, decision 2).
 //
-// The Identify rail's country selector does exactly TWO things, and it is worth
-// being precise about how little that is:
+// The Identify rail's country selector now mirrors the engine's country model.
+// It still swaps the example strings, but it also reflects which regex
+// categories apply to which countries so the frontend and Go cannot drift.
 //
 //   1. It swaps the EXAMPLE STRINGS beside three category labels (phone, VAT,
 //      national identification), so a user working on a French document sees
 //      "+33 6 12 34 56 78" rather than a Luxembourg number.
-//   2. It switches the three country-specific ID categories on or off
-//      (de_steuer_id, es_nif, uk_nhs), because a German tax number is worth
-//      looking for in a German document and is noise in a French one.
+//   2. It switches the country-scoped regex categories on or off, because a
+//      German tax number is worth looking for in a German document and is noise
+//      in a French one.
 //
-// That is all. There is deliberately no locale-aware engine behind it: no new
-// regexes, no per-country detection, and engine/pii.go is untouched. The
-// recognizers are already international; the country only decides which of the
-// national ones are worth switching on and how the examples read.
+// The engine owns the same table in backend/engine/country.go. This file is its
+// JS mirror for rendering and local reducers.
 //
 // This module is PURE (no DOM, no state, no bridge), so countries.test.js
 // exercises it directly.
 
 // COUNTRIES is the table. Five entries, matching the mock-up.
 //
-// `ids` lists the country-specific ID categories that country turns ON. An
-// empty list is meaningful rather than missing: Luxembourg and France have no
-// dedicated recognizer among the three, so picking them turns all three OFF.
+// `ids` lists the country-scoped categories that country turns ON.
 //
 // The example strings are FORMAT illustrations, not real identifiers. They are
 // chosen to show the shape a user should recognise (country prefix, digit
@@ -34,13 +31,13 @@ export const COUNTRIES = [
     phone: "+352 621 123 456",
     vat: "LU12345678",
     matricule: "the 13 digit national number",
-    ids: [],
+    ids: ["matricule"],
   },
   {
     code: "FR", name: "France",
     phone: "+33 6 12 34 56 78",
-    vat: "FR90887654",
-    matricule: "the 15 digit NIR",
+    vat: "FR40303265045",
+    matricule: "no dedicated French national ID detector in this version",
     ids: [],
   },
   {
@@ -71,15 +68,29 @@ export const COUNTRIES = [
 // than an arbitrary first entry.
 export const DEFAULT_COUNTRY = "LU";
 
-// COUNTRY_ID_CATEGORIES are the three engine categories the selector switches.
-//
-// They are listed here as WELL as inside the table entries because the reducer
-// needs to know the full set to switch OFF: picking France has to clear
-// Germany's and Spain's, and it can only do that if it knows what "all of them"
-// is. Every key must exist in state.js ALL_CATEGORIES, which countries.test.js
-// checks, because a switch for a category the engine does not know does nothing
-// at all.
-export const COUNTRY_ID_CATEGORIES = ["de_steuer_id", "es_nif", "uk_nhs"];
+// CATEGORY_COUNTRIES mirrors backend/engine/country.go CategoryCountries. A nil
+// Go slice becomes "all five countries listed explicitly" here so the rail can
+// name the allowed set in tooltips without special-casing.
+export const CATEGORY_COUNTRIES = {
+  email: ["LU", "FR", "DE", "ES", "UK"],
+  url: ["LU", "FR", "DE", "ES", "UK"],
+  iban: ["LU", "FR", "DE", "ES", "UK"],
+  vat: ["LU", "FR", "DE", "ES", "UK"],
+  matricule: ["LU"],
+  phone: ["LU", "FR", "DE", "ES", "UK"],
+  amount: ["LU", "FR", "DE", "ES", "UK"],
+  date: ["LU", "FR", "DE", "ES", "UK"],
+  credit_card: ["LU", "FR", "DE", "ES", "UK"],
+  uk_nhs: ["UK"],
+  ip_address: ["LU", "FR", "DE", "ES", "UK"],
+  mac_address: ["LU", "FR", "DE", "ES", "UK"],
+  crypto: ["LU", "FR", "DE", "ES", "UK"],
+  database_uri: ["LU", "FR", "DE", "ES", "UK"],
+  de_steuer_id: ["DE"],
+  es_nif: ["ES"],
+};
+
+export const COUNTRY_ID_CATEGORIES = ["matricule", "de_steuer_id", "es_nif", "uk_nhs"];
 
 /**
  * countryFor(code) returns the table entry, falling back to the default rather
@@ -129,12 +140,17 @@ export function examplesFor(code) {
  * @returns {Record<string,boolean>} category key to whether it applies
  */
 export function countryIDCategories(code) {
-  const country = countryFor(code);
   const out = {};
   for (const key of COUNTRY_ID_CATEGORIES) {
-    out[key] = country.ids.includes(key);
+    out[key] = (CATEGORY_COUNTRIES[key] ?? []).includes(countryFor(code).code);
   }
   return out;
+}
+
+export function categoryAppliesTo(category, code) {
+  const countries = CATEGORY_COUNTRIES[category];
+  if (!countries) return true;
+  return countries.includes(countryFor(code).code);
 }
 
 /**

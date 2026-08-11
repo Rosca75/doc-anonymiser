@@ -44,6 +44,9 @@ type Settings struct {
 	// Default 8192; 0 keeps the model default. Higher values let the AI
 	// read longer documents at once but use more memory.
 	ContextSize int `json:"contextSize"`
+	// Country scopes the country-specific regex categories in the deterministic
+	// pass. It is an engine-owned concept from BUILD-06, mirrored in the rail.
+	Country string `json:"country"`
 	// UseAI and UseSmartDetect are the DETECTION ROUTE switches (BUILD-06).
 	// They are settings rather than per-call arguments so they survive in the
 	// session file and so Go, not the frontend, is the one that decides
@@ -137,8 +140,9 @@ type App struct {
 	// running / cancelRun manage the in-flight pipeline goroutine.
 	running   bool
 	cancelRun context.CancelFunc
-	// cancelDiscovery manages the in-flight discovery run (BUILD-02
-	// Phase 7d); nil when idle.
+	// cancelDiscovery manages the in-flight detection slot. BUILD-06 folded the
+	// old discovery and smart-detection runs into one shared cancellation slot;
+	// the name stays for compatibility with older helpers and tests.
 	cancelDiscovery context.CancelFunc
 	// lastReq remembers the latest pipeline inputs so the same-format
 	// export reproduces identical replacements (BUILD-02 Phase 11).
@@ -155,6 +159,7 @@ func NewApp() *App {
 			OllamaPort:  11434,
 			Model:       ollama.DefaultModel,
 			ContextSize: ollama.DefaultContextSize,
+			Country:     engine.CountryLU,
 			// The stricter defaults, matching the frontend store: Smart
 			// detection over-detecting was the reported problem.
 			SmartDetect: engine.DefaultSmartDetectOptions(),
@@ -404,6 +409,10 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 	if s.ContextSize < 0 || s.ContextSize > 1<<20 {
 		return ollama.OllamaStatus{}, fmt.Errorf(
 			"invalid context size %d, expected 0 (model default) or a positive number of tokens such as 8192", s.ContextSize)
+	}
+	if !engine.KnownCountry(s.Country) {
+		return ollama.OllamaStatus{}, fmt.Errorf(
+			"unknown country %q, expected one of %v", s.Country, engine.SupportedCountries)
 	}
 	if s.MinConfidence < 0 || s.MinConfidence > 1 {
 		return ollama.OllamaStatus{}, fmt.Errorf(

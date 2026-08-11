@@ -34,6 +34,7 @@ type Config struct {
 	Patterns   []engine.CustomPattern
 	Categories engine.CategorySelection
 	Level      engine.Level
+	Country    string
 	Allowlist  *engine.Allowlist
 	// Registry is the SESSION registry: passing the same instance the
 	// pipeline used guarantees identical placeholders here.
@@ -77,7 +78,11 @@ func (c Config) Replacements(text string) []Replacement {
 		}
 	}
 
-	spans := engine.FilterAllowed(engine.DetectPIISelected(text, sel), c.Allowlist)
+	country := c.Country
+	if country == "" {
+		country = engine.CountryLU
+	}
+	spans := engine.FilterAllowed(engine.DetectPIISelected(text, sel, country), c.Allowlist)
 	spans = append(spans, engine.DetectEntities(text, entities, c.Allowlist)...)
 	if sel["custom_patterns"] {
 		spans = append(spans, engine.DetectCustomPatterns(text, c.Patterns, c.Allowlist)...)

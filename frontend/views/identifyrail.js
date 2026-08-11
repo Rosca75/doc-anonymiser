@@ -44,6 +44,7 @@ import { escapeHTML } from "../html.js";
 import { button, chipRow, sectionLabel, collapsibleGroup, wireGroups } from "../ui.js";
 import { CARDS, CONFIGURE, RAIL, VALUES, categoryLabels } from "../copy.js";
 import { examplesFor, countryOptions } from "../countries.js";
+import { categoryAppliesTo, CATEGORY_COUNTRIES } from "../countries.js";
 import { keepScrollPosition } from "../scroll.js";
 
 /**
@@ -286,11 +287,15 @@ function categoryGroups(s) {
     const on = keys.filter((k) => s.settings.categories?.[k]).length;
     const rows = keys.map((key) => {
       const [label, example] = labels[key] ?? [key, ""];
-      return `<label class="cat-row">` +
+      const applies = categoryAppliesTo(key, s.documentCountry);
+      const countries = CATEGORY_COUNTRIES[key] ?? [];
+      const disabledHint = `Only applies to ${countries.join(", ")}`;
+      const hint = applies ? example : `${example}. ${disabledHint}`;
+      return `<label class="cat-row"${applies ? "" : ` title="${escapeHTML(disabledHint)}"`}>` +
         `<input type="checkbox" class="cat-toggle" data-category="${escapeHTML(key)}"` +
-        `${s.settings.categories?.[key] ? " checked" : ""}/>` +
+        `${s.settings.categories?.[key] ? " checked" : ""}${applies ? "" : " disabled"}/>` +
         `<span class="cat-label">${escapeHTML(label)}</span>` +
-        `<span class="cat-example" title="${escapeHTML(example)}">${escapeHTML(example)}</span>` +
+        `<span class="cat-example" title="${escapeHTML(hint)}">${escapeHTML(example)}</span>` +
         `</label>`;
     }).join("");
 
@@ -557,6 +562,7 @@ async function pushSettings(container) {
   const settings = {
     level: s.settings.level,
     categories: s.settings.categories,
+    country: s.settings.country ?? s.documentCountry,
     // A tab that is not on screen contributes nothing: read the store instead of
     // a missing element, so switching tabs never resets a setting.
     ollamaPort: port ? (parseInt(port.value, 10) || 0) : s.settings.ollamaPort,
@@ -564,7 +570,6 @@ async function pushSettings(container) {
     contextSize: ctxSize ? (parseInt(ctxSize.value, 10) || 0) : (s.settings.contextSize ?? 8192),
     useAI: !!s.settings.useAI,
     useSmartDetect: s.settings.useSmartDetect !== false,
-    useCloudAI: false, // not built (decision 8); sent so Go never has to guess
     // Read from the store, not the input: setMinConfidence already validated and
     // stored it, and the Scope tab may not be rendered at all.
     minConfidence: s.settings.minConfidence ?? 0,

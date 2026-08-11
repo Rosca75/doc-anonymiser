@@ -42,6 +42,7 @@ type SessionSettings struct {
 	OllamaPort  int               `json:"ollamaPort"`
 	Model       string            `json:"model"`
 	ContextSize int               `json:"contextSize,omitempty"`
+	Country     string            `json:"country,omitempty"`
 	UseAI       bool              `json:"useAI,omitempty"`
 	// UseSmartDetect is the offline detection route switch (BUILD-06). It is
 	// a POINTER because its default is TRUE: with a plain bool, "absent" and

@@ -238,6 +238,7 @@ func (a *App) sameFormatConfig(name string) (exportfmt.Config, *engine.Document,
 		Patterns:   req.Patterns,
 		Categories: categories,
 		Level:      engine.Level(settings.Level),
+		Country:    settings.Country,
 		Allowlist:  allow,
 		Registry:   reg,
 	}, src, nil
@@ -469,6 +470,7 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 			OllamaPort:     settings.OllamaPort,
 			Model:          settings.Model,
 			ContextSize:    settings.ContextSize,
+			Country:        settings.Country,
 			UseAI:          settings.UseAI,
 			UseSmartDetect: &settings.UseSmartDetect,
 			MinConfidence:  settings.MinConfidence,
@@ -509,15 +511,13 @@ func (a *App) LoadSessionFromFile() (*engine.Session, error) {
 	// The registry and the settings restore together (extracted so the tests
 	// can exercise the restore without a file dialog).
 	overrideFailures := a.applyRestoredSettings(session)
+	if _, err := a.ApplySettings(a.GetSettings()); err != nil {
+		return nil, err
+	}
 
 	for _, failure := range overrideFailures {
 		a.appendReportWarning(fmt.Sprintf(
 			"a saved placeholder override could not be restored: %v", failure))
-	}
-	// Apply the (possibly different) Ollama port/model through the same
-	// validated path the settings screen uses.
-	if _, err := a.ApplySettings(a.GetSettings()); err != nil {
-		return nil, err
 	}
 	return &session, nil
 }
@@ -547,6 +547,7 @@ func (a *App) applyRestoredSettings(session engine.Session) []error {
 		OllamaPort:     session.Settings.OllamaPort,
 		Model:          session.Settings.Model,
 		ContextSize:    session.Settings.ContextSize,
+		Country:        session.Settings.Country,
 		UseAI:          session.Settings.UseAI,
 		UseSmartDetect: true, // the default; an absent field means "on"
 		MinConfidence:  session.Settings.MinConfidence,
@@ -567,6 +568,9 @@ func (a *App) applyRestoredSettings(session engine.Session) []error {
 	}
 	if restored.ContextSize == 0 {
 		restored.ContextSize = a.settings.ContextSize
+	}
+	if restored.Country == "" {
+		restored.Country = a.settings.Country
 	}
 	a.settings = restored
 	return overrideFailures

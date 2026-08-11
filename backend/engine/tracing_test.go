@@ -172,7 +172,7 @@ func TestOverlapResolutionLegacyZeroConfidence(t *testing.T) {
 // then wins). Guards against a Phase-F regression in v1 semantics.
 func TestOverlapResolutionURLBeatsEmail(t *testing.T) {
 	text := "profile at https://example.com/u/marie.duval@example.com end"
-	spans := ResolveOverlaps(DetectPII(text, LevelMedium))
+	spans := ResolveOverlaps(DetectPIISelected(text, PresetSelection(LevelMedium), CountryLU))
 	if len(spans) != 1 || spans[0].Category != CatURL {
 		t.Errorf("URL must still beat embedded email, got %+v", spans)
 	}

@@ -20,12 +20,12 @@ Office in Metropolis for Acme Corp. Code PRJ-42 applies.`
 
 // selectionEntities declares one entity per entity category.
 var selectionEntities = []Entity{
-	{Category: "entity_names", Canonical: "Alpine Trust S.A."},
-	{Category: "project_names", Canonical: "Project Borealis"},
-	{Category: "entity_names", Canonical: "Paul Stone"},
-	{Category: "person_names", Canonical: "Marie Curie"},
-	{Category: "organisation_names", Canonical: "Acme Corp"},
-	{Category: "location_names", Canonical: "Metropolis"},
+	{Category: CatEntityNames, Canonical: "Alpine Trust S.A."},
+	{Category: CatProjectNames, Canonical: "Project Borealis"},
+	{Category: CatEntityNames, Canonical: "Paul Stone"},
+	{Category: CatPersonNames, Canonical: "Marie Curie"},
+	{Category: CatOrganisationNames, Canonical: "Acme Corp"},
+	{Category: CatLocationNames, Canonical: "Metropolis"},
 }
 
 var selectionPatterns = []CustomPattern{{Expr: `PRJ-[0-9]+`}}
@@ -64,13 +64,13 @@ func TestSingleCategorySelection(t *testing.T) {
 		{CatPhone, "+352 621 000 111"},
 		{CatAmount, "EUR 12,500"},
 		{CatDate, "2026-01-15"},
-		{"entity_names", "Alpine Trust S.A."},
-		{"project_names", "Project Borealis"},
-		{"entity_names", "Paul Stone"},
-		{"person_names", "Marie Curie"},
-		{"organisation_names", "Acme Corp"},
-		{"location_names", "Metropolis"},
-		{"custom_patterns", "PRJ-42"},
+		{CatEntityNames, "Alpine Trust S.A."},
+		{CatProjectNames, "Project Borealis"},
+		{CatEntityNames, "Paul Stone"},
+		{CatPersonNames, "Marie Curie"},
+		{CatOrganisationNames, "Acme Corp"},
+		{CatLocationNames, "Metropolis"},
+		{CatCustomPatterns, "PRJ-42"},
 	}
 	// Known single-category cross-matches, documented, not bugs: a
 	// fragment of one category can ALSO match another category's pattern,
@@ -144,7 +144,7 @@ func TestPresetEquivalence(t *testing.T) {
 func TestMixedSelection(t *testing.T) {
 	sel := PresetSelection(LevelMedium)
 	sel[CatEmail] = false
-	sel["location_names"] = true // a custom mix: medium plus locations
+	sel[CatLocationNames] = true // a custom mix: medium plus locations
 
 	allow := NewEmptyAllowlist()
 	allow.Add("Metropolis") // allowlisted although location_names is on

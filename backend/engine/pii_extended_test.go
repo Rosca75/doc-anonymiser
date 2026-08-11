@@ -1,7 +1,6 @@
 // engine/pii_extended_test.go — BUILD-03 Phase B tests: new recognizers,
-// their checksum validators, and the confidence + context-boosting layer
-// (Phase C). One table per checksum so the mutation cases live next to
-// their positive fixtures.
+// their checksum validators, and the confidence layer. One table per checksum
+// so the mutation cases live next to their positive fixtures.
 package engine
 
 import (
@@ -16,43 +15,49 @@ func TestExtendedRecognizerCategories(t *testing.T) {
 	tests := []struct {
 		name     string
 		text     string
+		country  string
 		category string
 		want     string // "" = must NOT match this category
 	}{
 		// --- credit card (Luhn) ---
-		{"cc valid visa spaced", "card 4532 0151 1283 0366 charged", CatCreditCard, "4532 0151 1283 0366"},
-		{"cc valid amex", "amex 3782 822463 10005 charged", CatCreditCard, "3782 822463 10005"},
-		{"cc invalid luhn", "ref 4532 0151 1283 0367 rejected", CatCreditCard, ""},
+		{"cc valid visa spaced", "card 4532 0151 1283 0366 charged", CountryLU, CatCreditCard, "4532 0151 1283 0366"},
+		{"cc valid amex", "amex 3782 822463 10005 charged", CountryLU, CatCreditCard, "3782 822463 10005"},
+		{"cc invalid luhn", "ref 4532 0151 1283 0367 rejected", CountryLU, CatCreditCard, ""},
 		// --- UK NHS --- 943 476 5919 is a public example that satisfies the mod-11 rule.
-		{"nhs valid", "patient NHS 943 476 5919 in file", CatNHS, "943 476 5919"},
-		{"nhs invalid checksum", "patient NHS 943 476 5918 in file", CatNHS, ""},
+		{"nhs valid", "patient NHS 943 476 5919 in file", CountryUK, CatNHS, "943 476 5919"},
+		{"nhs invalid checksum", "patient NHS 943 476 5918 in file", CountryUK, CatNHS, ""},
 		// --- IPv4 ---
-		{"ipv4 positive", "connect from 192.168.0.1 today", CatIPAddress, "192.168.0.1"},
-		{"ipv4 negative octet range", "not an ip 999.1.2.3 ever", CatIPAddress, ""},
+		{"ipv4 positive", "connect from 192.168.0.1 today", CountryLU, CatIPAddress, "192.168.0.1"},
+		{"ipv4 negative octet range", "not an ip 999.1.2.3 ever", CountryLU, CatIPAddress, ""},
 		// --- IPv6 ---
-		{"ipv6 positive full", "gateway 2001:db8:0:0:0:0:0:1 replies", CatIPAddress, "2001:db8:0:0:0:0:0:1"},
-		{"ipv6 positive compressed", "gateway 2001:db8::1 replies", CatIPAddress, "2001:db8::1"},
+		{"ipv6 positive full", "gateway 2001:db8:0:0:0:0:0:1 replies", CountryLU, CatIPAddress, "2001:db8:0:0:0:0:0:1"},
+		{"ipv6 positive compressed", "gateway 2001:db8::1 replies", CountryLU, CatIPAddress, "2001:db8::1"},
 		// --- MAC ---
-		{"mac positive colon", "hw 00:1A:2B:3C:4D:5E in log", CatMACAddress, "00:1A:2B:3C:4D:5E"},
-		{"mac positive hyphen", "hw 00-1a-2b-3c-4d-5e in log", CatMACAddress, "00-1a-2b-3c-4d-5e"},
-		{"mac negative five groups", "hw 00:1A:2B:3C:4D in log", CatMACAddress, ""},
+		{"mac positive colon", "hw 00:1A:2B:3C:4D:5E in log", CountryLU, CatMACAddress, "00:1A:2B:3C:4D:5E"},
+		{"mac positive hyphen", "hw 00-1a-2b-3c-4d-5e in log", CountryLU, CatMACAddress, "00-1a-2b-3c-4d-5e"},
+		{"mac negative five groups", "hw 00:1A:2B:3C:4D in log", CountryLU, CatMACAddress, ""},
 		// --- crypto (Bitcoin) ---
-		{"btc positive p2pkh", "wallet 1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2 ok", CatCrypto, "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"},
-		{"btc positive bech32", "wallet bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4 ok", CatCrypto, "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"},
+		{"btc positive p2pkh", "wallet 1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2 ok", CountryLU, CatCrypto, "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"},
+		{"btc positive bech32", "wallet bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4 ok", CountryLU, CatCrypto, "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"},
 		// --- database URIs ---
-		{"db postgres with creds", "dsn postgres://user:pw@host:5432/db active", CatDatabaseURI, "postgres://user:pw@host:5432/db"},
-		{"db mongodb srv", "dsn mongodb+srv://u:p@cluster.example.com/db active", CatDatabaseURI, "mongodb+srv://u:p@cluster.example.com/db"},
+		{"db postgres with creds", "dsn postgres://alice:secret@host:5432/db active", CountryLU, CatDatabaseURI, "postgres://alice:secret@host:5432/db"},
+		{"db mongodb srv", "dsn mongodb+srv://u:p@cluster.example.com/db active", CountryLU, CatDatabaseURI, "mongodb+srv://u:p@cluster.example.com/db"},
 		// --- Germany Steuer-ID ---
-		{"de tax id positive", "Steuer-ID 12345678901 registriert", CatDESteuerID, "12345678901"},
-		{"de tax id negative leading zero", "Steuer-ID 01234567890 registriert", CatDESteuerID, ""},
+		{"de tax id positive", "Steuer-ID 12345678901 registriert", CountryDE, CatDESteuerID, "12345678901"},
+		{"de tax id negative leading zero", "Steuer-ID 01234567890 registriert", CountryDE, CatDESteuerID, ""},
 		// --- Spain NIF ---
-		{"es nif positive", "NIF 00000000T aportado", CatESNIF, "00000000T"},
-		{"es nif negative wrong letter", "NIF 00000000A aportado", CatESNIF, ""},
+		{"es nif positive", "NIF 00000000T aportado", CountryES, CatESNIF, "00000000T"},
+		{"es nif negative wrong letter", "NIF 00000000A aportado", CountryES, CatESNIF, ""},
+		// --- country scoping (BUILD-06 Phase 1) --- a national category is
+		// off entirely when another country is selected, so neither the
+		// German tax ID nor the Spanish NIF fires under a Luxembourg run.
+		{"de tax id negative under LU selection", "Steuer-ID 12345678901 registriert", CountryLU, CatDESteuerID, ""},
+		{"es nif negative under LU selection", "NIF 00000000T aportado", CountryLU, CatESNIF, ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spans := DetectPII(tt.text, LevelSoft)
+			spans := DetectPIISelected(tt.text, PresetSelection(LevelSoft), tt.country)
 			var got []string
 			for _, s := range spans {
 				if s.Category == tt.category {
@@ -177,7 +182,7 @@ func TestIPv4Range(t *testing.T) {
 func TestExtendedRecognizersAtEveryLevel(t *testing.T) {
 	text := "card 4532 0151 1283 0366; ip 192.168.0.1; dsn postgres://u:p@h/d"
 	for _, level := range []Level{LevelSoft, LevelMedium, LevelAdvanced} {
-		spans := DetectPII(text, level)
+		spans := DetectPIISelected(text, PresetSelection(level), CountryLU)
 		if !hasCategory(spans, CatCreditCard) {
 			t.Errorf("credit card must fire at level %s, spans: %+v", level, spans)
 		}
@@ -194,59 +199,17 @@ func TestExtendedRecognizersAtEveryLevel(t *testing.T) {
 // (or 1.0 after a context-word boost cap).
 func TestConfidenceDefaults(t *testing.T) {
 	text := "contact marie.duval@example.com or +352 621 000 111 today"
-	for _, s := range DetectPII(text, LevelSoft) {
+	for _, s := range DetectPIISelected(text, PresetSelection(LevelSoft), CountryLU) {
 		if s.Confidence < ConfidenceDeterministic || s.Confidence > 1.0 {
 			t.Errorf("span %+v has out-of-range confidence %v", s, s.Confidence)
 		}
 	}
 	// Entities and custom patterns also carry confidence.
 	spans := DetectEntities("Alpine Trust S.A. filed a report", []Entity{
-		{Category: "entity_names", Canonical: "Alpine Trust S.A."},
+		{Category: CatEntityNames, Canonical: "Alpine Trust S.A."},
 	}, nil)
 	if len(spans) == 0 || spans[0].Confidence != ConfidenceManualDefault {
 		t.Errorf("entity span confidence = %v, want %v", spans, ConfidenceManualDefault)
-	}
-}
-
-// TestFilterByConfidence: threshold filter honours per-category thresholds
-// and treats a zero-valued Confidence as 1.0 (v1 back-compat).
-func TestFilterByConfidence(t *testing.T) {
-	spans := []Span{
-		{Category: CatEmail, Confidence: 1.0, Original: "a@b.co"},
-		{Category: CatEmail, Confidence: 0.6, Original: "c@d.co"},
-		{Category: CatPhone, Confidence: 0.8, Original: "+352 621 000 111"},
-		{Category: CatPhone, Confidence: 0.0, Original: "+352 621 000 222"}, // v1 span → treated as 1.0
-	}
-	kept := FilterByConfidence(spans, map[string]float32{
-		CatEmail: 0.9,
-		CatPhone: 0.85,
-	})
-	if len(kept) != 2 {
-		t.Fatalf("kept %d spans, want 2: %+v", len(kept), kept)
-	}
-	if kept[0].Original != "a@b.co" || kept[1].Original != "+352 621 000 222" {
-		t.Errorf("unexpected kept spans: %+v", kept)
-	}
-	// Empty thresholds is a no-op.
-	if len(FilterByConfidence(spans, nil)) != len(spans) {
-		t.Error("nil thresholds must be a no-op")
-	}
-}
-
-// TestContextBoost: an email with the word "contact" nearby carries the
-// same 1.0 confidence (base already 1.0, boost clamped). The public
-// contract is that context never lowers the score.
-func TestContextBoost(t *testing.T) {
-	withContext := "Please contact marie.duval@example.com about the report"
-	spans := DetectPII(withContext, LevelSoft)
-	if len(spans) == 0 {
-		t.Fatal("expected an email span")
-	}
-	if spans[0].Confidence < ConfidenceDeterministic {
-		t.Errorf("confidence must never fall below the deterministic baseline, got %v", spans[0].Confidence)
-	}
-	if spans[0].Confidence > 1.0 {
-		t.Errorf("confidence must be clamped to 1.0, got %v", spans[0].Confidence)
 	}
 }
 

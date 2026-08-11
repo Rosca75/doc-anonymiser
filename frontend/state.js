@@ -103,7 +103,7 @@ const initialState = {
   // 1 on the engine's scale. 0 is the default and keeps every detection,
   // which is exactly the behaviour before the setting existed.
   settings: {
-    level: "medium", categories: null, ollamaPort: 11434, model: "",
+    level: "medium", categories: null, ollamaPort: 11434, model: "", country: DEFAULT_COUNTRY,
     contextSize: 8192, useAI: false, useSmartDetect: true, useCloudAI: false,
     minConfidence: 0,
     // smartDetect is the BUILD-04 CR13 tuning for the offline Smart
@@ -410,6 +410,7 @@ export function applyPreset(level) {
       categories: {
         ...presetCategories(level),
         ...countryIDCategories(state.documentCountry),
+        matricule: state.documentCountry === "LU",
       },
     },
   });
@@ -499,7 +500,7 @@ export function setDocumentCountry(code) {
   }
   setState({
     documentCountry: code,
-    settings: { ...state.settings, categories },
+    settings: { ...state.settings, country: code, categories: { ...categories, matricule: code === "LU" } },
   });
   return code;
 }
@@ -575,16 +576,15 @@ export function smartDetectOptions(s = state) {
  * when the selection exactly matches that preset, else "custom".
  */
 export function selectionPresetName(categories) {
+  const countrySpecific = countryIDCategories(state.documentCountry);
   for (const level of ["soft", "medium", "advanced"]) {
     const preset = presetCategories(level);
-    // The three country-specific identifiers are EXCLUDED from the comparison
-    // (BUILD-05 Phase 5). They are driven by the country selector, not by the
-    // preset, so a Luxembourg document (all three off) would otherwise read as
-    // "Custom" the instant the user picked Standard, which makes the preset
-    // chips look broken. The country is a separate axis and the chip reports
-    // the preset axis only.
-    const matches = ALL_CATEGORIES.every((c) =>
-      COUNTRY_ID_CATEGORIES.includes(c) || !!categories?.[c] === preset[c]);
+    const matches = ALL_CATEGORIES.every((c) => {
+      const expected = COUNTRY_ID_CATEGORIES.includes(c)
+      	? (preset[c] && !!countrySpecific[c])
+      	: preset[c];
+      return !!categories?.[c] === expected;
+    });
     if (matches) return level;
   }
   return "custom";
@@ -741,7 +741,9 @@ export const STEP_RESETS = {
       categories: {
         ...presetCategories(state.settings.level),
         ...countryIDCategories(DEFAULT_COUNTRY),
+        matricule: true,
       },
+      country: DEFAULT_COUNTRY,
       minConfidence: 0,
       smartDetect: { ...SMART_DETECT_DEFAULTS },
     },

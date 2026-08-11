@@ -61,7 +61,7 @@ type Entity struct {
 // noun everywhere it appears. A member of staff belongs in person_names, and
 // the discovery prompts say so.
 var personCategories = map[string]bool{
-	"person_names": true,
+	CatPersonNames: true,
 }
 
 // nameParticles are the lower-case surname particles that glue multi-word
