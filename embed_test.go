@@ -1,7 +1,7 @@
 // embed_test.go — the local-only guarantee, checked against the bytes
-// that actually ship (BUILD-04 Phase 7).
+// that actually ship.
 //
-// The documentation window (CR6) is a SECOND window loading the
+// The documentation window is a SECOND window loading the
 // application's own asset server. That is only safe because everything it
 // asks for is embedded: an asset that failed to make it into the binary
 // would leave a broken window at best, and at worst a page reaching for
@@ -30,7 +30,7 @@ var requiredAssets = []string{
 	"frontend/brand.css",
 	"frontend/style.css",
 	"frontend/main.js",
-	// BUILD-04 CR6: the documentation window's page and its stylesheet.
+	// the documentation window's page and its stylesheet.
 	"frontend/docs/index.html",
 	"frontend/docs/docs.css",
 }

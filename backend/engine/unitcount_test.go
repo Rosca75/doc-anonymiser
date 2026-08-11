@@ -1,5 +1,5 @@
-// engine/unitcount_test.go — the import list's unit counts (BUILD-05 Phase 3,
-// decision 5).
+// engine/unitcount_test.go — the import list's unit counts (,
+// the unit shown in the import list.
 //
 // The point of these tests is the FALLBACK, not the happy path. A page count
 // can only come from what the writing application cached in

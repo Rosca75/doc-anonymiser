@@ -36,18 +36,18 @@ import (
 type Settings struct {
 	Level string `json:"level"` // soft | medium | advanced (last chosen preset)
 	// Categories is the granular switch set the pipeline obeys
-	// (BUILD-02 Phase 3). nil/empty means "use the Level preset".
+	// nil/empty means "use the Level preset".
 	Categories engine.CategorySelection `json:"categories"`
 	OllamaPort int                      `json:"ollamaPort"` // loopback port only
 	Model      string                   `json:"model"`      // Ollama model name
-	// ContextSize is the Ollama num_ctx option (BUILD-02 Phase 5b).
+	// ContextSize is the Ollama num_ctx option.
 	// Default 8192; 0 keeps the model default. Higher values let the AI
 	// read longer documents at once but use more memory.
 	ContextSize int `json:"contextSize"`
 	// Country scopes the country-specific regex categories in the deterministic
-	// pass. It is an engine-owned concept from BUILD-06, mirrored in the rail.
+	// pass. It is an engine-owned concept from, mirrored in the rail.
 	Country string `json:"country"`
-	// UseAI and UseSmartDetect are the DETECTION ROUTE switches (BUILD-06).
+	// UseAI and UseSmartDetect are the DETECTION ROUTE switches.
 	// They are settings rather than per-call arguments so they survive in the
 	// session file and so Go, not the frontend, is the one that decides
 	// whether a route runs.
@@ -57,19 +57,19 @@ type Settings struct {
 	// that is not there. UseSmartDetect is the offline heuristic pass: ON by
 	// default, because it needs nothing installed.
 	//
-	// There is no UseCloudAI: the cloud route is not built (BUILD-05
-	// decision 8), and a persisted switch for a route with no implementation
+	// There is no UseCloudAI: the cloud route is not built
+	// ), and a persisted switch for a route with no implementation
 	// is scaffolding that would have to be trusted later.
 	UseAI          bool `json:"useAI"`
 	UseSmartDetect bool `json:"useSmartDetect"`
-	// MinConfidence is the detection-confidence floor (BUILD-04 CR9), on
-	// the BUILD-03 Phase C scale of 0.0 to 1.0. Spans scoring below it are
+	// MinConfidence is the detection-confidence floor, on
+	// the scale of 0.0 to 1.0. Spans scoring below it are
 	// not replaced. 0 (the default, and what an older session file without
 	// the field loads as) keeps every detection, so the setting can never
 	// silently remove replacements a user did not ask it to remove. See
 	// engine.FilterByMinConfidence for what each level currently excludes.
 	MinConfidence float32 `json:"minConfidence"`
-	// SmartDetect is the smart-detection tuning (BUILD-04 CR13). It is a
+	// SmartDetect is the smart-detection tuning. It is a
 	// SETTING rather than a per-run argument so it survives in the session
 	// file; RunSmartDetection still receives it explicitly, so a call
 	// always says what it is filtering by.
@@ -96,7 +96,7 @@ type DocumentInfo struct {
 	// content is still processed; only this preview copy is cut.
 	PreviewTruncated bool `json:"previewTruncated"`
 	// UnitCount and Unit are the document's size in its OWN terms, for the
-	// import list (BUILD-05 Phase 3): "6 pages", "12 slides", "48 rows",
+	// import list: "6 pages", "12 slides", "48 rows",
 	// "412 lines". Unit is singular ("page"); the frontend pluralises,
 	// because only the side printing the number knows which form it needs.
 	//
@@ -135,7 +135,7 @@ type App struct {
 	// (CLAUDE.md §5); created lazily on the first run.
 	registry *engine.Registry
 	// results of the latest pipeline run (feeds the results view and the
-	// Phase 9 exports).
+	// exports).
 	results *engine.Results
 	// running / cancelRun manage the in-flight pipeline goroutine.
 	running   bool
@@ -144,15 +144,15 @@ type App struct {
 	// so a single Cancel reaches whichever one is running.
 	cancelDetection context.CancelFunc
 	// lastReq remembers the latest pipeline inputs so the same-format
-	// export reproduces identical replacements (BUILD-02 Phase 11).
+	// export reproduces identical replacements.
 	lastReq *RunRequest
-	// removed holds the values the user deleted from the session (BUILD-06
-	// Phase 4). It lives on the App rather than travelling in RunRequest for
+	// removed holds the values the user deleted from the session
+	// It lives on the App rather than travelling in RunRequest for
 	// two reasons: the prune and the exclusion are two halves of one action
 	// that must not be able to happen separately, and the same-format export
 	// builds its own allowlist from a.lastReq, so a removal carried only in the
 	// request would be honoured by the pipeline and forgotten by the export.
-	// Settings.UseAI is the precedent: BUILD-06 moved that decision into Go for
+	// Settings.UseAI is the precedent:  moved that decision into Go for
 	// exactly this reason.
 	//
 	// It is deliberately NOT the allowlist, in state or in the session file: a
@@ -213,7 +213,7 @@ func NewApp() *App {
 			// detection over-detecting was the reported problem.
 			SmartDetect: engine.DefaultSmartDetectOptions(),
 			// Smart detection is on by default (it needs nothing installed);
-			// the AI route is not (BUILD-06).
+			// the AI route is not.
 			UseSmartDetect: true,
 		},
 	}
@@ -250,7 +250,7 @@ func (a *App) ProbeOllama() ollama.OllamaStatus {
 	return a.llm.Probe()
 }
 
-// --- Documentation window (BUILD-04 CR6) -------------------------------------
+// --- Documentation window -------------------------------------
 
 // DocumentationAsset is the path, relative to the asset server root, of
 // the bundled documentation page. It lives under frontend/ and is therefore
@@ -361,7 +361,9 @@ func (a *App) RemoveDocument(name string) ImportResult {
 // produced (the Import preview and the Anonymise screen's ORIGINAL pane).
 //
 // It exists so those panes have a single producer to read from. Before
-// BUILD-06 the ORIGINAL pane read a copy of the source that travelled inside
+//
+//	the ORIGINAL pane read a copy of the source that travelled inside
+//
 // the pipeline result, which meant two paths to "the original text" and no
 // test that they agreed.
 type DocumentSource struct {
@@ -415,7 +417,7 @@ func (a *App) documentInfosLocked() []DocumentInfo {
 	for _, d := range a.docs {
 		// Very large documents are previewed truncated (first 5 000
 		// lines) so the WebView never chokes; the pipeline still sees
-		// the full a.docs content (BUILD.md Phase 10).
+		// the full a.docs content.
 		preview, truncated := engine.PreviewMarkdown(d.Markdown)
 		infos = append(infos, DocumentInfo{
 			Name:             d.Name,
@@ -496,7 +498,7 @@ func (a *App) ListOllamaModels() ([]string, error) {
 	return a.llm.ListModels()
 }
 
-// --- Allowlist (BUILD-02 Phase 4) -------------------------------------------
+// --- Allowlist -------------------------------------------
 
 // DefaultAllowlist returns the seeded never-anonymise terms so the
 // frontend can show them in state.allowlist at startup. The user can

@@ -1,7 +1,7 @@
 // engine/pii.go — Pass 1 of the pipeline: deterministic regex detection of
 // hard PII (CLAUDE.md §5), mirroring the notebook's deterministic pre-pass.
 //
-// Design (BUILD.md Phase 2):
+// Design:
 //   - Detection returns SPANS (start, end, category, original), it never
 //     mutates text. Replacement is a separate step (ApplySpans) applying
 //     spans longest-first, non-overlapping — this span model is reused by
@@ -42,7 +42,7 @@ type Span struct {
 	// variant shares one placeholder. Empty for PII spans (the matched
 	// text IS the canonical value).
 	Canonical string `json:"canonical,omitempty"`
-	// Confidence in [0.0, 1.0] (BUILD-03 Phase C). Deterministic regex hits
+	// Confidence in [0.0, 1.0]. Deterministic regex hits
 	// default to 1.0; LLM proposals default to ConfidenceLLMDefault; manual
 	// entities to ConfidenceManualDefault. Context-word boosting may nudge a
 	// value up (capped at 1.0). Zero means "not scored" and is treated as
@@ -69,7 +69,7 @@ const (
 	CatURL       = "url"
 	CatAmount    = "amount"
 	CatDate      = "date"
-	// BUILD-03 Phase B — extended recognizers inspired by Presidio's
+	// extended recognizers inspired by Presidio's
 	// deterministic layer. All are hard PII (fire at every level).
 	CatCreditCard  = "credit_card"  // Visa/Mastercard/Amex, Luhn-validated
 	CatNHS         = "uk_nhs"       // UK National Health Service number, mod-11 validated
@@ -97,7 +97,7 @@ type piiPattern struct {
 }
 
 // Which categories fire at which preset level lives in ONE place since
-// BUILD-02 Phase 3: PresetSelection (pipeline.go). The patterns below are
+// PresetSelection (pipeline.go). The patterns below are
 // unconditional; DetectPIISelected gates them by the selection.
 
 // The deterministic PII patterns, compiled once at package init
@@ -225,7 +225,7 @@ var piiPatterns = []piiPattern{
 			`|\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s[0-9]{1,2},?\s[0-9]{4}\b`),
 	},
 
-	// --- BUILD-03 Phase B: extended recognizers -------------------------
+	// --- extended recognizers -------------------------
 
 	{
 		// Credit card numbers (Visa, Mastercard, Amex, Discover). 13–19
@@ -315,8 +315,8 @@ var piiPatterns = []piiPattern{
 }
 
 // DetectPIISelected runs exactly the PII patterns whose category is
-// enabled in the selection (BUILD-02 Phase 3 granular switches) AND whose
-// country scope covers the requested country (BUILD-06 Phase 1).
+// enabled in the selection AND whose
+// country scope covers the requested country.
 // Every returned span carries Confidence = ConfidenceDeterministic (1.0).
 //
 // Two country gates apply, and they are deliberately different things:
@@ -447,7 +447,7 @@ func validUKPhone(s string) bool {
 	return len(digits) >= 10 && len(digits) <= 11 && digits[0] == '0'
 }
 
-// Confidence constants (BUILD-03 Phase C).
+// Confidence constants.
 const (
 	// ConfidenceDeterministic is the baseline for regex matches that
 	// survived any checksum/validate step. Callers may boost above via
@@ -488,7 +488,7 @@ func FilterByMinConfidence(spans []Span, min float32) []Span {
 }
 
 // effectiveConfidence is the score used by comparators: the span's stored
-// Confidence, with 0 (never set) promoted to 1.0 so pre-BUILD-03 spans
+// Confidence, with 0 (never set) promoted to 1.0 so pre- spans
 // order and filter the same way they did before the field existed.
 func effectiveConfidence(s Span) float32 {
 	if s.Confidence == 0 {

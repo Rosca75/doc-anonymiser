@@ -1,4 +1,4 @@
-// engine/allowlist_regex_test.go — BUILD-03 Phase D tests: regex allowlist
+// engine/allowlist_regex_test.go —  tests: regex allowlist
 // entries. Literals still win at ANY confidence; regexes are compiled once
 // at Add time; broken patterns are recorded in RegexErrors and never abort
 // import.

@@ -2,7 +2,7 @@
 //
 // A .pptx file is a zip archive with one XML file per slide
 // (ppt/slides/slide1.xml, slide2.xml, …, DrawingML). Mapping implemented
-// (CLAUDE.md §5, BUILD.md Phase 1B):
+// (CLAUDE.md §5):
 //   - one "## Slide N: <title>" section per slide, in slide order
 //     ("## Slide N" when the slide has no title placeholder)
 //   - body text frames with bullet indentation (a:pPr lvl)

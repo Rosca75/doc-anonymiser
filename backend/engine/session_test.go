@@ -1,4 +1,4 @@
-// engine/session_test.go — Phase 9 tests: zip contents, CSV round-trip
+// engine/session_test.go — tests zip contents, CSV round-trip
 // export equals the anonymised grid, session save→load equality, and the
 // mapping export golden file.
 package engine
@@ -149,7 +149,7 @@ func TestSessionSaveLoadEquality(t *testing.T) {
 	if _, err := LoadSession([]byte("not json")); err == nil || !strings.Contains(err.Error(), "session file") {
 		t.Errorf("corrupt session error not actionable: %v", err)
 	}
-	// A wrong-version file is REFUSED, not migrated (BUILD-05 decision 1), and
+	// A wrong-version file is REFUSED, not migrated, and
 	// the message has to say which direction the mismatch goes, because the fix
 	// differs: an older file needs re-creating, a newer one needs a newer app.
 	bad, _ := SaveSession(original)
@@ -214,16 +214,15 @@ func TestExportFileName(t *testing.T) {
 // reproduces the behaviour of a session that never had it. minConfidence in
 // particular must land on 0, the "keep every detection" default: anything else
 // would mean opening a session quietly changed what gets replaced
-// (BUILD-04 CR9, ground rule 5).
 //
-// The version is the CURRENT one on purpose. BUILD-05 decision 1 refuses a file
+// The version is the CURRENT one on purpose.  refuses a file
 // written by another version outright (see TestSessionSaveLoadEquality), so
 // "field absent" and "file too old" are now two different situations and only
 // the first one is a compatibility question.
 func TestLoadSessionWithoutOptionalFields(t *testing.T) {
 	// The version number is DERIVED, not typed. This fixture is about absent
 	// optional fields, so a version bump elsewhere must not fail it: it failed
-	// exactly that way on the BUILD-06 Phase 8 bump, reporting a refusal that
+	// exactly that way on the bump, reporting a refusal that
 	// was correct and irrelevant.
 	legacy := fmt.Appendf(nil, `{
 	  "version": %d,
@@ -283,7 +282,7 @@ func TestSessionRoundTripsMinConfidence(t *testing.T) {
 
 // TestSessionSmartDetectAbsentVersusExplicitZero: the pointer field must
 // tell "an older file said nothing" apart from "the user deliberately
-// turned every filter off" (BUILD-04 CR13). Collapsing the two would
+// turned every filter off". Collapsing the two would
 // silently re-enable filtering for someone who switched it off.
 func TestSessionSmartDetectAbsentVersusExplicitZero(t *testing.T) {
 	absent, err := LoadSession(fmt.Appendf(nil,

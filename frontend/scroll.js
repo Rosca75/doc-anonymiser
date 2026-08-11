@@ -1,5 +1,4 @@
 // scroll.js, scroll-position preservation across re-renders
-// (BUILD-04 CR12).
 //
 // The problem it solves: every reducer call runs setState, every setState
 // repaints the whole shell, and the repaint rewrites innerHTML. A rewritten

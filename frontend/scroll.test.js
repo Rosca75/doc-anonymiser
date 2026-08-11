@@ -1,5 +1,4 @@
 // scroll.test.js, tests for the scroll-preservation helper
-// (BUILD-04 CR12).
 //
 // The reported bug: ticking a checkbox or adding an allowlist term threw
 // the page back to the top, because the state change re-renders the view

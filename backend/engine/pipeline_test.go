@@ -1,8 +1,8 @@
-// engine/pipeline_test.go — Phase 4 tests: two-document consistency via
+// engine/pipeline_test.go — tests two-document consistency via
 // the post-pass, the level matrix goldens, simple-replace ordering, grid
 // consistency, and the 50-document performance budget.
 //
-// Budget measurement (BUILD.md performance table): deterministic pipeline
+// Budget measurement: deterministic pipeline
 // (passes 1+2+4) over 50 documents × 50 KB, budget ≤ 5 s. Measured
 // 2026-07-23 on the CI-class Linux container in TestPipelineBudget:
 // ~1.9 s on an extremely PII-dense synthetic corpus (105 300 replacements —
@@ -134,7 +134,7 @@ func TestHallucinationFilterInPipeline(t *testing.T) {
 }
 
 // TestLevelMatrix: the same fixture at soft/medium/advanced produces the
-// expected differing outputs (BUILD.md Phase 4 golden requirement).
+// expected differing outputs.
 func TestLevelMatrix(t *testing.T) {
 	text := "Marie Duval (marie.duval@example.com) met Alpine Trust about Helios on 2026-07-23 for €5,000."
 	entities := []Entity{
@@ -276,7 +276,7 @@ func TestReportContents(t *testing.T) {
 }
 
 // TestPipelineCancellation: a cancelled context stops the run between
-// documents and reports the partial progress (Phase 8 relies on this).
+// documents and reports the partial progress.
 func TestPipelineCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancelled before the run even starts
@@ -297,7 +297,7 @@ func TestPipelineCancellation(t *testing.T) {
 	}
 }
 
-// TestPipelineBudget measures the BUILD.md deterministic budget: passes
+// TestPipelineBudget measures the deterministic budget: passes
 // 1+2+4 over 50 documents × 50 KB in ≤ 5 s.
 func TestPipelineBudget(t *testing.T) {
 	// ~50 KB of realistic prose per document, seeded with PII and entity

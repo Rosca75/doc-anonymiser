@@ -1,4 +1,4 @@
-// engine/selection_test.go — BUILD-02 Phase 3 tests: the granular
+// engine/selection_test.go —  tests: the granular
 // CategorySelection drives the pipeline (one row per category), presets
 // reproduce the v1 level behaviour byte for byte, and mixed selections
 // behave.

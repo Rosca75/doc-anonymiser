@@ -1,6 +1,6 @@
 // highlight.js, pure rendering helper for the results view: wraps the
 // placeholders in anonymised text with category-coloured <mark> elements,
-// and (BUILD-02 Phase 10b) carries the original term for hover tooltips
+// and carries the original term for hover tooltips
 // and click-to-reassign.
 //
 // Pure JavaScript, no DOM required, unit-tested with `node --test`
@@ -42,7 +42,7 @@ export function markClass(label) {
  * When the mapping knows a placeholder ("[ENTITY_1]" → {original,
  * category}), the mark carries data-ph, data-original, data-category and a
  * title="Original: <value>". The title is the accessibility fallback; the
- * styled tooltip is positioned in JS against the Compare card (BUILD-06,
+ * styled tooltip is positioned in JS against the Compare card (,
  * views/anonymise.js), because a CSS ::after inside the pane was CLIPPED by
  * the pane's own overflow and never appeared near the right-hand edge.
  *

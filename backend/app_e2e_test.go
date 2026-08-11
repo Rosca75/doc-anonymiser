@@ -172,10 +172,10 @@ func TestResultsCarryNoSourceCopy(t *testing.T) {
 // would simply never be replaced, and a placeholder label left in the registry
 // would mint a shape nothing else knows about.
 //
-//	client_names, internal_names   merged into entity_names
-//	organisation_names             merged into entity_names; it had no
+//	client_names, internal_names merged into entity_names
+//	organisation_names merged into entity_names; it had no
 //	                               detector and no prompt, so it was dead
-//	location_names                 retired outright, for the same reason
+//	location_names retired outright, for the same reason
 func TestRetiredCategoriesAreFullyGone(t *testing.T) {
 	retiredCategories := []string{
 		"client_names", "internal_names", "organisation_names", "location_names",

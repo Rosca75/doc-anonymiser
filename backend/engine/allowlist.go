@@ -19,7 +19,7 @@ import (
 	"sync"
 )
 
-// defaultAllowlist is the documented seed (BUILD.md Phase 3 activity 2).
+// defaultAllowlist is the documented seed.
 var defaultAllowlist = []string{
 	// Regulators and public institutions (public bodies, not clients).
 	"CSSF", "ECB", "BCE", "EBA", "ESMA", "EIOPA", "BCL", "CNPD", "FATF", "OECD", "IMF",
@@ -35,7 +35,7 @@ var defaultAllowlist = []string{
 }
 
 // DefaultAllowlistTerms returns a copy of the seeded default terms so the
-// UI can show them at startup (BUILD-02 Phase 4b). The user sees every
+// UI can show them at startup. The user sees every
 // seeded term, can remove any, and the UI-driven list stays the single
 // runtime source; nothing is applied silently.
 func DefaultAllowlistTerms() []string {
@@ -46,7 +46,7 @@ func DefaultAllowlistTerms() []string {
 }
 
 // ParseAllowlistCSV parses a user-supplied CSV of never-anonymise terms
-// (BUILD-02 Phase 4a). Tolerant by design:
+// Tolerant by design:
 //   - a UTF-8 BOM is stripped, CRLF line endings are fine,
 //   - if a header row is present, the column named "term" is used
 //     (case-insensitive); otherwise column 1,
@@ -115,7 +115,7 @@ func ParseAllowlistCSV(data []byte) ([]string, error) {
 	return out, nil
 }
 
-// AllowlistTemplateCSV returns the downloadable template (BUILD-02
+// AllowlistTemplateCSV returns the downloadable template
 // Phase 4a): a commented explanation, the "term" header and three example
 // rows. The template parses through ParseAllowlistCSV (round-trip test).
 func AllowlistTemplateCSV() []byte {
@@ -131,7 +131,7 @@ Luxembourg
 `)
 }
 
-// AllowlistRegexPrefix marks a regex allowlist entry (BUILD-03 Phase D):
+// AllowlistRegexPrefix marks a regex allowlist entry:
 // a term starting with "regex:" is compiled and matched with (?i) prepended
 // so authors do not have to remember to add it. Compiling is done once at
 // Add time; broken patterns are dropped with a note kept in RegexErrors.
@@ -145,7 +145,7 @@ type Allowlist struct {
 	// terms maps the lower-cased term to its display spelling, so the UI
 	// lists "CSSF" (as seeded/typed) rather than "cssf".
 	terms map[string]string
-	// regexes carries compiled regex entries (BUILD-03 Phase D). Keyed by
+	// regexes carries compiled regex entries. Keyed by
 	// the original "regex:..." display spelling so Terms() can re-emit it.
 	regexes map[string]*regexp.Regexp
 	// RegexErrors reports the display spelling of every regex entry that

@@ -1,4 +1,4 @@
-// toast.js, the notice strip (BUILD-05 Phase 1).
+// toast.js, the notice strip.
 //
 // A notice is how the application makes a STATEMENT the user only has to
 // notice: "Saved report.md to the destination folder", "3 documents
@@ -6,7 +6,7 @@
 // nothing is waiting on an answer, so nothing should block.
 //
 // A QUESTION goes through modal.js instead. The split matters, and it is the
-// whole point of decision 10: the application used to reach for the native
+// whole point of: the application used to reach for the native
 // confirm() for both, which stole window focus for things that were only ever
 // informational.
 //

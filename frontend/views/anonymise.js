@@ -1,25 +1,23 @@
 // views/anonymise.js, wizard step 3: run the pipeline and check the result
-// (Phase 8 as views/run.js; renamed by BUILD-05 Phase 2 and relaid out to match
-// Anonymise.dc.html by BUILD-05 Phase 7).
 //
 // A column of cards on the left, one big Compare card on the right:
 //
-//   Run                  the deep-scan checkbox (LLM-gated), RUN / RUN AGAIN,
+//   Run the deep-scan checkbox (LLM-gated), RUN / RUN AGAIN,
 //                        Cancel, the progress bar and the four stat tiles.
 //   Selected placeholder appears when a mark in the anonymised pane is clicked.
 //                        It REPLACES the floating reassign popover: a popover
 //                        anchored inside a scrolling pane drifted away from the
 //                        mark it belonged to, and it could not be reached by
 //                        keyboard at all.
-//   Replaced values      one row per value the run replaced, with an editable
+//   Replaced values one row per value the run replaced, with an editable
 //                        placeholder and a remove action, plus the collapsed
 //                        list of removed values with restore. This is THE
 //                        surface for both rules: a value can be renamed and a
 //                        value can be removed, whatever trigger found it.
-//   Report               the per-category drill-down, scoped to all files or
+//   Report the per-category drill-down, scoped to all files or
 //                        one, plus the run's dismissible warnings.
 //   Something missed?    add a value, then re-run the fast passes.
-//   Find and replace     the ordered rules that run last.
+//   Find and replace the ordered rules that run last.
 //
 // The Compare card's two panes are the one place the anonymisation is actually
 // checked, which is why they get two thirds of the screen: hovering a mark shows
@@ -248,7 +246,7 @@ function selectedCard(s) {
  *
  * So the VALUES come first now, as a flat, filterable list that is on screen
  * without clicking anything, and the per-category breakdown follows it. Both
- * read report.values from Go (BUILD-06), which is also what the exported report
+ * read report.values from Go, which is also what the exported report
  * contains: the screen and the file can no longer disagree, and the counts are
  * computed once per run instead of on every repaint.
  */

@@ -1,4 +1,4 @@
-// app_entities.go — bound methods for the Entities screen (Phase 7):
+// app_entities.go — bound methods for the Entities screen:
 // LLM discovery over selected files, variant expansion for the review
 // table, and custom-pattern validation/testing. Thin adapters only
 // (CLAUDE.md §3): all logic lives in engine/* and ollama/*.
@@ -59,7 +59,7 @@ func (a *App) SetValuePlaceholder(placeholder, newPlaceholder string) error {
 // the map of placeholder → {original value, category} for display in step 3.
 //
 // ValuePlaceholders returns one row per value the session has replaced: the
-// source for the step 3 Replaced values table (BUILD-06 Phase 5).
+// source for the step 3 Replaced values table.
 //
 // It reads the REGISTRY rather than deriving rows from report text, because the
 // registry is what the placeholder editing and the removals both act on: a table
@@ -94,14 +94,14 @@ type RemovedValueInfo struct {
 	Variants []string `json:"variants,omitempty"`
 }
 
-// ValidationError is a single validation issue (BUILD-06 Phase 3/4).
+// ValidationError is a single validation issue.
 type ValidationError struct {
 	Kind     string `json:"kind"`     // "duplicate", "collision", "conflict"
 	Severity string `json:"severity"` // "block", "warn"
 	Message  string `json:"message"`
 }
 
-// RemoveValue deletes one value from the session (BUILD-06 Phases 4 and 5).
+// RemoveValue deletes one value from the session.
 //
 // Removal is ONE action with three effects, and they cannot be allowed to
 // happen separately:
@@ -173,7 +173,7 @@ func (a *App) RemoveValue(placeholder string) (*RemovedValueInfo, error) {
 	}, nil
 }
 
-// RestoreValue undoes a removal (BUILD-06 Phases 4 and 5).
+// RestoreValue undoes a removal.
 //
 // It drops the exclusion and nothing else, deliberately. The value comes back
 // with a NEW number on the next run, because its old one was retired and stays
@@ -202,7 +202,7 @@ func (a *App) RestoreValue(placeholder string) error {
 }
 
 // ListRemovedValues returns the values removed in this session, for the
-// collapsed "removed" list on step 3 (BUILD-06 Phases 4 and 5).
+// collapsed "removed" list on step 3.
 //
 // The list is the App's own exclusion record, NOT the registry's retired
 // placeholders. The two are not the same set and reading the wrong one is
@@ -228,7 +228,7 @@ func (a *App) ListRemovedValues() []RemovedValueInfo {
 }
 
 // NextRulePlaceholder mints and RESERVES the next free [CUSTOM_N] for a
-// simple-replace rule (BUILD-06 Phase 5).
+// simple-replace rule.
 //
 // It replaces the frontend's nextCustomNumber, which counted only the existing
 // rules. CUSTOM is also the automatic label for the custom_patterns category, so
@@ -276,7 +276,7 @@ func (a *App) NextRulePlaceholder() (string, error) {
 // else, and an unbounded loop would hang the UI thread rather than say so.
 const maxRulePlaceholder = 10000
 
-// ValidateValuesRequest is the input for ValidateValues (BUILD-06 Phase 5).
+// ValidateValuesRequest is the input for ValidateValues.
 type ValidateValuesRequest struct {
 	Entities   []engine.Entity        `json:"entities"`
 	Patterns   []engine.CustomPattern `json:"patterns"`
@@ -291,7 +291,7 @@ type ValidateValuesResult struct {
 }
 
 // ValidateValues checks the current entities, patterns and rules for conflicts
-// before running the pipeline (BUILD-06 Phase 3/5). Returns blocking errors
+// before running the pipeline. Returns blocking errors
 // (which prevent the run) and warnings (informational only).
 //
 // @param req the validation request with entities, patterns, rules and allowlist
@@ -341,7 +341,7 @@ func (a *App) ValidateValues(req ValidateValuesRequest) (*ValidateValuesResult, 
 	}, nil
 }
 
-// TermMatchInfo is the live manual-entry preview payload (BUILD-02
+// TermMatchInfo is the live manual-entry preview payload
 // Phase 9c): how often a term occurs, and in how many documents.
 type TermMatchInfo struct {
 	Count     int `json:"count"`

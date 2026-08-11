@@ -1,5 +1,5 @@
 // engine/exportfmt/docx.go — same-format export for Word documents
-// (BUILD-02 Phase 11c): a NEW .docx whose body, headers, footers,
+// a NEW .docx whose body, headers, footers,
 // footnotes and endnotes went through the pipeline's replacements while
 // every other archive entry survives bit-for-bit.
 //

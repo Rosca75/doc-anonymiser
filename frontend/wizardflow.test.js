@@ -1,6 +1,6 @@
 // wizardflow.test.js, the wizard state-transition matrix
-// (BUILD-04 Phase 7, the "robust test procedures for the states between
-// steps" CR16 asks for).
+// (, the "robust test procedures for the states between
+// steps".
 //
 // The other suites test reducers one at a time. This one tests the state
 // MACHINE: for every reachable session shape, which steps are open, what a
@@ -11,15 +11,15 @@
 // The shapes come from the wizard's own preconditions, so the list is
 // exhaustive rather than a sample:
 //
-//   empty        nothing imported
-//   documents    imported, nothing chosen
-//   configured   categories chosen, no suggestions
-//   candidates   suggestions waiting for review
-//   values       values accepted, no run yet
-//   results      a run has produced output
+//   empty nothing imported
+//   documents imported, nothing chosen
+//   configured categories chosen, no suggestions
+//   candidates suggestions waiting for review
+//   values values accepted, no run yet
+//   results a run has produced output
 //
 // The last four all sit on the Identify step, which owns both the choices and
-// the values since BUILD-05 Phase 2. They stay separate shapes because the
+// the values since. They stay separate shapes because the
 // guards and the resets treat them differently even though one screen produces
 // them all.
 //
@@ -38,7 +38,7 @@ import {
 } from "./state.js";
 import { DEFAULT_COUNTRY, countryIDCategories } from "./countries.js";
 
-// --- The session shapes ----------------------------------------------------
+// --- The session shapes --------------------------------------------------
 
 const SHAPES = {
   empty: () => {
@@ -65,7 +65,7 @@ const SHAPES = {
   // session reaches it: every suggestion has been answered, one accepted and
   // one rejected, so nothing is left waiting. It used to add the entity beside
   // the still-unreviewed suggestions, which is a state the UI cannot produce
-  // and, since BUILD-06 Phase 7, one the gate refuses to walk out of.
+  // and, since, one the gate refuses to walk out of.
   values: () => {
     SHAPES.candidates();
     acceptCandidate("Marie Duval");
@@ -87,7 +87,7 @@ function reachableSteps() {
   return WIZARD_STEPS.filter((step) => canGoTo(step));
 }
 
-// --- Guards, per shape -----------------------------------------------------
+// --- Guards, per shape ---------------------------------------------------
 
 test("matrix: which steps each session shape unlocks", () => {
   const expected = {
@@ -96,7 +96,7 @@ test("matrix: which steps each session shape unlocks", () => {
     // Documents unlock everything except Export, which needs results.
     documents: ["import", "identify", "anonymise"],
     configured: ["import", "identify", "anonymise"],
-    // Suggestions waiting for review SHUT Anonymise (BUILD-06 Phase 7). This
+    // Suggestions waiting for review SHUT Anonymise. This
     // test pinned the opposite until then: "candidates unlocks anonymise" was
     // asserted as a feature, which is how walking past an unreviewed detection
     // stayed invisible.
@@ -126,7 +126,7 @@ test("matrix: Export is reachable exactly when results exist", () => {
   }
 });
 
-// --- The review gate (BUILD-06 Phase 7) ------------------------------------
+// --- The review gate -----------------------------------------------------
 
 test("matrix: Anonymise is reachable exactly when no suggestion is waiting", () => {
   // The rule stated directly, across every shape, beside the table above: the
@@ -178,7 +178,7 @@ test("matrix: the gate cannot be walked past by stepping forward repeatedly", ()
     "unreviewed suggestions mean Identify is as far as it goes");
 });
 
-// --- Forward moves ---------------------------------------------------------
+// --- Forward moves -------------------------------------------------------
 
 test("matrix: every adjacent forward move, per shape", () => {
   for (const name of SHAPE_NAMES) {
@@ -225,10 +225,10 @@ test("matrix: the guards cannot be bypassed by walking forward repeatedly", () =
     "without results, Anonymise is as far as it goes");
 });
 
-// --- Backward moves and their resets --------------------------------------
+// --- Backward moves and their resets -------------------------------------
 
 test("matrix: there is no reducer that moves BACK without asking", async () => {
-  // prevStep() is gone (BUILD-05 Phase 9). Backward movement resets the step
+  // prevStep() is gone. Backward movement resets the step
   // being left, and the user is asked first (nav.js goBack), so a reducer that
   // stepped back silently was a way around a rule the whole screen depends on.
   //
@@ -255,7 +255,7 @@ test("matrix: isBackward agrees with the step order for every pair", () => {
 });
 
 test("matrix: every backward reset preserves documents and the allowlist", () => {
-  // The two invariants of BUILD-04 section 4.2, checked across every
+  // The two invariants of, checked across every
   // shape and every step rather than once.
   for (const name of SHAPE_NAMES) {
     for (const step of WIZARD_STEPS) {
@@ -327,7 +327,7 @@ test("matrix: the reset table covers every step and invents none", () => {
   assert.deepEqual(Object.keys(STEP_RESETS).sort(), [...WIZARD_STEPS].sort());
 });
 
-// --- Leaving and re-entering the wizard -----------------------------------
+// --- Leaving and re-entering the wizard ----------------------------------
 
 test("matrix: navigating to Home and back preserves every shape", () => {
   for (const name of SHAPE_NAMES) {

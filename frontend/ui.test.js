@@ -1,4 +1,4 @@
-// ui.test.js, unit tests for the shared UI toolkit (BUILD-02 Phase 1).
+// ui.test.js, unit tests for the shared UI toolkit.
 // Run with `node --test "frontend/**/*.test.js"` (dev-time check, zero npm dependencies).
 
 import { test } from "node:test";
@@ -9,7 +9,7 @@ import {
   collapsibleGroup, stepFooter, toastHTML, modalHTML,
 } from "./ui.js";
 
-// --- button -----------------------------------------------------------
+// --- button --------------------------------------------------------------
 
 test("button renders each kind with the right classes", () => {
   const cases = [
@@ -52,14 +52,14 @@ test("button renders data attributes escaped", () => {
   assert.ok(html.includes('data-name="a&quot;b"'));
 });
 
-// --- icon --------------------------------------------------------------
+// --- icon ----------------------------------------------------------------
 
 test("icon returns svg for known names and empty string for unknown", () => {
   assert.ok(icon("home").includes("<svg"));
   assert.equal(icon("no_such_icon"), "");
 });
 
-// --- Icon alignment contract (BUILD-04 CR5) --------------------------------
+// --- Icon alignment contract ---------------------------------------------
 //
 // Alignment itself is visual and cannot be asserted without a browser, so
 // these lock the CONTRACT the fix relies on: the helper emits a .icon span,
@@ -97,7 +97,7 @@ test("the icon rule centres rather than nudging below the baseline", () => {
 test("the step bar has its own styling, separate from the header", () => {
   assert.match(styleCSS, /\.stepbar \{/);
   assert.match(styleCSS, /\.steps \{/);
-  // The bar is fixed-height chrome: it must not wrap or grow (BUILD-05).
+  // The bar is fixed-height chrome: it must not wrap or grow.
   const bar = styleCSS.match(/\.stepbar \{[^}]*\}/);
   assert.match(bar[0], /height:\s*var\(--chrome-stepbar\)/);
   assert.match(bar[0], /flex:\s*none/);
@@ -123,7 +123,7 @@ test("the active step is marked with an outline, never an orange flood fill", ()
 });
 
 test("the workflow banner is gone, replaced by the step bar", () => {
-  // Phase 2 renamed it. A leftover rule would style markup nothing emits.
+  // A leftover rule would style markup nothing emits.
   assert.ok(!styleCSS.includes(".workflow-banner"));
   assert.ok(!styleCSS.includes(".workflow-steps"));
   // The global navigation footer is gone too: each screen owns its own.
@@ -137,13 +137,11 @@ test("button renders aria-current only when asked", () => {
   assert.ok(!button("Home").includes("aria-current"));
 });
 
-// --- Import screen layout (BUILD-05 Phase 4) -----------------------------
+// --- Import screen layout ------------------------------------------------
 //
-// BUILD-04 CR8 fixed a pane divider that collapsed to its content height. The
-// divider is GONE (BUILD-05 decision 6): the mock-up uses a fixed two-column
-// grid, so the height chain that used to need pinning is now the shared card
-// contract, asserted above. What is left to pin here is that the divider and
-// its state did not survive as dead CSS.
+// The import screen is a fixed two-column grid, so its height chain is the
+// shared card contract asserted above. What is pinned here is that the
+// draggable divider it once had left no dead CSS behind.
 
 test("the import pane divider is gone, not merely unused", () => {
   assert.ok(!styleCSS.includes(".import-divider"),
@@ -192,7 +190,7 @@ test("the documentation page styles itself from the brand tokens only", () => {
   assert.match(docsHTML, /href="\.\.\/brand\.css"/);
 });
 
-// --- Variant chip contract (BUILD-04 CR17) --------------------------------
+// --- Variant chip contract -----------------------------------------------
 //
 // Reported symptom: the variant chips looked disabled and could not be dragged.
 // Both were CSS, not markup: the chips inherited the muted colour of the variant
@@ -203,8 +201,8 @@ test("the documentation page styles itself from the brand tokens only", () => {
 const workspaceJS = fs.readFileSync(path.join(staticDir, "views", "identifyworkspace.js"), "utf8");
 
 test("variant chips are rendered draggable", () => {
-  // BUILD-04 CR17: the chips looked disabled and could not be dragged. BUILD-05
-  // Phase 6 relaid them out as .chip-tag, and the drag survived the relayout:
+  // the chips looked disabled and could not be dragged.
+  // They are .chip-tag now, and the drag survived the relayout:
   // regrouping a mis-attached spelling has no other home.
   assert.match(workspaceJS, /class="chip-tag variant-chip" draggable="true"/);
 });
@@ -227,7 +225,7 @@ test("variant chips are not styled as disabled", () => {
   const chip = styleCSS.match(/\n\.variant-chip \{[^}]*\}/);
   assert.ok(chip, "the chip rule must exist");
   // The chip must carry the ordinary text colour, not the muted one its
-  // surroundings use: a greyed-out chip reads as disabled (BUILD-04 CR17).
+  // surroundings use: a greyed-out chip reads as disabled.
   assert.match(chip[0], /color:\s*var\(--text\)/);
   assert.ok(!/opacity/.test(chip[0]), "a chip must never be dimmed, it is a live control");
   // And it must say it can be dragged before the user tries.
@@ -238,15 +236,15 @@ test("variant chips are not styled as disabled", () => {
 
 test("a drop target is visibly marked", () => {
   // The target is a value CARD now, not a table row: the variant chips moved
-  // from a table into cards with the BUILD-05 Phase 6 relayout.
+  // from a table into cards.
   assert.match(styleCSS, /\.value-card\.drop-target \{/);
 });
 
 // =====================================================================
-// The BUILD-05 card kit.
+// The card kit.
 // =====================================================================
 
-// --- card -------------------------------------------------------------
+// --- card ----------------------------------------------------------------
 
 test("card renders head, body and foot in order", () => {
   const html = card({
@@ -298,7 +296,7 @@ test("card marks a key-bearing card and places non-scrolling slots correctly", (
   assert.ok(html.indexOf("card-body") < html.indexOf("<div>NOTICE</div>"));
 });
 
-// --- countBadge -------------------------------------------------------
+// --- countBadge ----------------------------------------------------------
 
 test("countBadge renders zero but renders nothing for a missing count", () => {
   assert.ok(countBadge(0).includes(">0<"));
@@ -312,7 +310,7 @@ test("countBadge marks the active variant", () => {
   assert.ok(!countBadge(4).includes("active"));
 });
 
-// --- tabbar -----------------------------------------------------------
+// --- tabbar --------------------------------------------------------------
 
 test("tabbar marks the active tab and carries the data attribute", () => {
   const html = tabbar([
@@ -345,7 +343,7 @@ test("tabbar renders an empty row for no tabs rather than throwing", () => {
   assert.equal(tabbar(undefined), '<nav class="tabbar"></nav>');
 });
 
-// --- chipRow ----------------------------------------------------------
+// --- chipRow -------------------------------------------------------------
 
 test("chipRow marks the active chip and reports it to assistive technology", () => {
   const html = chipRow([
@@ -364,7 +362,7 @@ test("chipRow square variant and disabled chips", () => {
   assert.ok(html.includes("disabled"));
 });
 
-// --- sectionLabel / statTile -------------------------------------------
+// --- sectionLabel / statTile ---------------------------------------------
 
 test("sectionLabel escapes and supports the mini variant", () => {
   assert.ok(sectionLabel("Document country").includes('class="section-label">Document country<'));
@@ -379,7 +377,7 @@ test("statTile puts the value before its label and escapes both", () => {
   assert.ok(statTile("<b>", "<i>").includes("&lt;b&gt;"));
 });
 
-// --- collapsibleGroup --------------------------------------------------
+// --- collapsibleGroup ----------------------------------------------------
 
 test("collapsibleGroup defaults to open and reports its state twice", () => {
   const html = collapsibleGroup("names", "Names", "<p>rows</p>");
@@ -411,7 +409,7 @@ test("collapsibleGroup renders the count and header actions, and escapes the tit
   assert.ok(html.includes('data-group-toggle="g"'));
 });
 
-// --- stepFooter -------------------------------------------------------
+// --- stepFooter ----------------------------------------------------------
 
 test("stepFooter renders the back link, the hint and the primary action", () => {
   const html = stepFooter({
@@ -450,7 +448,7 @@ test("stepFooter standalone renders as its own card", () => {
     .includes("step-footer standalone"));
 });
 
-// --- toastHTML --------------------------------------------------------
+// --- toastHTML -----------------------------------------------------------
 
 test("toastHTML renders nothing without a notice", () => {
   assert.equal(toastHTML(null), "");
@@ -477,7 +475,7 @@ test("toastHTML escapes the text and wires a dismiss button", () => {
   assert.ok(html.includes('role="status"'));
 });
 
-// --- modalHTML --------------------------------------------------------
+// --- modalHTML -----------------------------------------------------------
 
 test("modalHTML renders nothing when nothing is being asked", () => {
   assert.equal(modalHTML(null), "");
@@ -508,7 +506,7 @@ test("modalHTML tints a key-bearing question and escapes its copy", () => {
   assert.ok(key.includes("a&quot;b"));
 });
 
-// --- The fixed-height layout contract (BUILD-05 Phase 1) ----------------
+// --- The fixed-height layout contract ------------------------------------
 //
 // These read style.css because the contract IS the CSS: markup alone cannot
 // express "the body is the only scroll owner". Each assertion pins one link of
@@ -552,7 +550,7 @@ test("brand.css declares the functional tint pairs the kit consumes", () => {
   ]) {
     assert.ok(brandCSS.includes(token + ":"), `brand.css must declare ${token}`);
   }
-  // The two greys BUILD-05 adds come straight out of the brand palette, so
+  // The two greys come straight out of the brand palette, so
   // pin the exact values: a "close enough" grey is off-brand.
   assert.match(brandCSS, /--ink-2:\s*#54616C/);
   assert.match(brandCSS, /--ink-3:\s*#717C8D/);

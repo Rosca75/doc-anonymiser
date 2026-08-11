@@ -1,4 +1,4 @@
-// engine/exportfmt/pdf_test.go — BUILD-02 Phase 13 tests: PDF metadata
+// engine/exportfmt/pdf_test.go —  tests: PDF metadata
 // extraction, the regenerated-PDF fallback with reviewed metadata, the
 // scanned-PDF rejection, and the runtime leak self-check failure path.
 package exportfmt

@@ -1,4 +1,4 @@
-// engine/discover_test.go — BUILD-02 Phase 8 tests for the Smart
+// engine/discover_test.go —  tests for the Smart
 // detection tier, English AND French fixtures (CLAUDE.md §6).
 package engine
 
@@ -175,7 +175,7 @@ func TestSmartDetectFrenchFixture(t *testing.T) {
 	}
 }
 
-// --- BUILD-04 CR13: SmartDetectOptions ------------------------------------
+// --- SmartDetectOptions --------------------------------------------------
 
 // TestSmartDetectCandidatesCarryAScore: every candidate must carry the
 // heuristic score, whether or not filtering is on, because the review UI
@@ -358,7 +358,7 @@ func TestAllowlistStillWinsOverTuning(t *testing.T) {
 	}
 }
 
-// --- BUILD-06: the offline pass must scale, and must be interruptible ------
+// --- the offline pass must scale, and must be interruptible --------------
 
 // TestExtractRunsScalesLinearly guards a quadratic hot spot that made
 // detection look like it had hung on a real document.
@@ -394,7 +394,7 @@ func TestExtractRunsContextScalesLinearly(t *testing.T) {
 	}
 }
 
-// TestSmartDetectContextIsInterruptible: before BUILD-06 the offline pass took
+// TestSmartDetectContextIsInterruptible: before the offline pass took
 // no context, so Cancel could only land BETWEEN documents and one large file
 // ran to completion whatever the user pressed.
 func TestSmartDetectContextIsInterruptible(t *testing.T) {
@@ -435,7 +435,7 @@ func TestSmartDetectContextMatchesTheLegacyCall(t *testing.T) {
 	}
 }
 
-// --- Product signals (BUILD-06 Phase 2) ------------------------------------
+// --- Product signals -----------------------------------------------------
 
 func TestProductDetection(t *testing.T) {
 	cases := []struct {

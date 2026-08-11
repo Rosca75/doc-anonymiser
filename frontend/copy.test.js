@@ -1,6 +1,6 @@
-// copy.test.js, the automated copy-style guard (BUILD-02 Phase 1f).
+// copy.test.js, the automated copy-style guard.
 //
-// UI copy rules (BUILD-02 ground rule 4): no em dashes (U+2014) and no en
+// UI copy rules: no em dashes (U+2014) and no en
 // dashes used as dashes (U+2013) anywhere in the frontend source. This test
 // walks every .js and .html file under frontend/ (excluding *.test.js and
 // assets/) and fails listing file:line for each offending character, so a
@@ -46,7 +46,7 @@ test("no em or en dashes in frontend source", () => {
     hits.join("\n"));
 });
 
-// --- Home page copy (BUILD-04 CR1) ---------------------------------------
+// --- Home page copy ------------------------------------------------------
 
 // The home headline and body wording are an editorial decision the owner
 // makes by hand, not a behavioural contract. We deliberately do NOT assert on
@@ -64,7 +64,7 @@ test("home body is a non-empty list of non-empty paragraphs", () => {
   }
 });
 
-// --- The four-step vocabulary (BUILD-05 Phase 2) -------------------------
+// --- The four-step vocabulary --------------------------------------------
 
 test("the home sidebar teaches the wizard's own step names", () => {
   // The sidebar used to say "Configure / Identify" for steps the wizard called
@@ -80,7 +80,7 @@ test("the home sidebar teaches the wizard's own step names", () => {
 });
 
 test("no user-visible copy still calls a step Configure, Values or Run", () => {
-  // Those three labels were retired by BUILD-05 Phase 2. Configure survives as
+  // Those three labels were retired by. Configure survives as
   // the name of the Identify RAIL, which is a card heading rather than a step,
   // so CARDS.configure is expected and only the step vocabulary is checked.
   for (const [token, name] of Object.entries(NAV.stepNames)) {
@@ -128,7 +128,7 @@ test("the per-step explainer banner is gone and its copy moved into subtitles", 
   }
 });
 
-// --- Brand guards (BUILD-04 CR2) ------------------------------------------
+// --- Brand guards --------------------------------------------------------
 
 /** walkAll(dir) yields every shipped source file under dir, skipping assets,
  *  node_modules and Markdown documentation. The .md skip exists because the
@@ -149,7 +149,7 @@ function* walkAll(dir) {
 }
 
 test("no Georgia reference remains anywhere under frontend/", () => {
-  // CR2: Georgia is a PowerPoint-only brand guideline. This walks EVERY
+  // Georgia is a PowerPoint-only brand guideline. This walks EVERY
   // shipped source file (css and js and html, tests included) so neither a
   // font stack nor a stale comment can quietly bring the name back.
   const hits = [];
@@ -173,7 +173,7 @@ test("brand.css declares Helvetica first for headings and body", () => {
   assert.match(css, /--font-body:\s*Helvetica,\s*Arial,\s*sans-serif;/);
 });
 
-// --- BUILD-06: the merged entity category -------------------------------
+// --- the merged entity category ------------------------------------------
 
 test("the retired category labels are gone from the copy", () => {
   // client_names and internal_names merged into entity_names. A label left

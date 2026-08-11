@@ -27,10 +27,10 @@ func TestRegistryEntriesKeepStableOrderForEqualLengths(t *testing.T) {
 	}
 }
 
-// --- Rename (BUILD-06 Phases 5 and 8) --------------------------------------
+// --- Rename --------------------------------------------------------------
 
 func TestRenameIsAddressedByPlaceholder(t *testing.T) {
-	// Nothing called Rename until Phase 8, and it was written with both a
+	// Nothing called Rename until, and it was written with both a
 	// deferred Unlock and an explicit one, so the deferred one released a mutex
 	// SetPlaceholder had already released. Go answers that with a fatal error,
 	// not a recoverable panic: the whole application died on a button the UI
@@ -69,11 +69,11 @@ func TestRenameRefusesAPlaceholderAnotherValueOwns(t *testing.T) {
 	}
 }
 
-// --- Restoring spent numbers (BUILD-06 Phase 8) ----------------------------
+// --- Restoring spent numbers ---------------------------------------------
 
 func TestReloadDoesNotFreeTheNumbersARemovalRefusedToFree(t *testing.T) {
 	// Forget deliberately does not free the number: an export may already carry
-	// it. Before Phase 8 the retired set was in memory only, so saving and
+	// it. Before the retired set was in memory only, so saving and
 	// reloading the session handed the number straight back out, which is the
 	// same ambiguity arriving one round trip later. Reserved placeholders (a
 	// find-and-replace rule's replacement) have the identical problem.

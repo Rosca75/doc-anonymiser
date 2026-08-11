@@ -8,7 +8,7 @@
 //
 // Placeholder format: [CATEGORY_N] — e.g. [CLIENT_1], [PERSON_3], [EMAIL_2].
 // The registry is exportable as the re-identification key (CSV/JSON export
-// in Phase 9), which is why it also tracks occurrence counts.
+// which is why it also tracks occurrence counts.
 package engine
 
 import (
@@ -42,7 +42,7 @@ var placeholderLabels = map[string]string{
 	CatURL:       "URL",
 	CatAmount:    "AMOUNT",
 	CatDate:      "DATE",
-	// BUILD-03 Phase B — extended recognizers.
+	// extended recognizers.
 	CatCreditCard:  "CREDIT_CARD",
 	CatNHS:         "NHS",
 	CatIPAddress:   "IP",
@@ -76,7 +76,7 @@ type MappingEntry struct {
 }
 
 // Registry assigns and remembers placeholders. Safe for concurrent use —
-// the pipeline runs in a goroutine (Phase 8) while the UI may export the
+// the pipeline runs in a goroutine while the UI may export the
 // mapping.
 type Registry struct {
 	mu sync.Mutex
@@ -86,27 +86,27 @@ type Registry struct {
 	// entries is keyed by category + lower-cased original, giving the
 	// case-insensitive stable lookup.
 	entries map[string]*MappingEntry
-	// overrides records which entries the USER renamed (BUILD-05 Phase 3),
+	// overrides records which entries the USER renamed,
 	// keyed exactly like entries. It is recorded rather than inferred because
 	// no inference is reliable: renaming [CLIENT_1] to [CLIENT_9] is a
 	// deliberate override that looks exactly like an automatic assignment.
 	// This is what the session file persists so a reloaded session keeps the
 	// user's names.
 	overrides map[string]string
-	// byOriginal (Phase 3) maps lower(original) to the SINGLE entry key that
+	// byOriginal maps lower(original) to the SINGLE entry key that
 	// owns it, so one real-world string can only ever have ONE placeholder,
-	// whatever category a later pass thinks it belongs to. Phase 3 ensures
-	// Assign checks this before minting a second.
+	// whatever category a later pass thinks it belongs to. Assign checks it
+	// before minting a second.
 	byOriginal map[string]string
-	// byPlaceholder (Phase 3) maps placeholder to entry key (replaces the O(n)
+	// byPlaceholder maps placeholder to entry key (replaces the O(n)
 	// scan in placeholderTakenLocked).
 	byPlaceholder map[string]string
-	// retired (Phase 3) tracks placeholders whose ENTRY a Forget freed but whose
+	// retired tracks placeholders whose ENTRY a Forget freed but whose
 	// NUMBER it did not: the user may already have exported a document with
 	// [PERSON_4] meaning one person, and handing 4 to somebody else would make
 	// two artefacts of one session disagree with nothing able to detect it.
 	retired map[string]bool
-	// reserved (Phase 3) tracks placeholders produced outside the registry
+	// reserved tracks placeholders produced outside the registry
 	// (rule replacements), so automatic assignment does not collide.
 	reserved map[string]bool
 }
@@ -128,7 +128,7 @@ func NewRegistry() *Registry {
 // a new one on first sight and bumping the occurrence count every time.
 // This is the function handed to ApplySpans by the pipeline.
 //
-// Phase 3 invariant: if byOriginal already owns the string under another
+// The invariant: if byOriginal already owns the string under another
 // category, return the existing placeholder and bump its count rather than
 // minting a second. Precedence is the fixed pass order: pass 1 (PII) before
 // pass 2 (entities) before pass 3 (LLM), so a string that is both an email
@@ -138,7 +138,7 @@ func (r *Registry) Assign(category, original string) string {
 	defer r.mu.Unlock()
 
 	lowerOriginal := strings.ToLower(original)
-	// Phase 3: Check if this string already has a placeholder under another category
+	// Check if this string already has a placeholder under another category
 	if existingKey, ok := r.byOriginal[lowerOriginal]; ok {
 		e := r.entries[existingKey]
 		e.Count++
@@ -156,7 +156,7 @@ func (r *Registry) Assign(category, original string) string {
 		panic("engine placeholder label missing for category " + category)
 	}
 	// Hand out the next number for this label, SKIPPING any that a user
-	// override has already taken (BUILD-05 Phase 3), or that a reserved or
+	// override has already taken, or that a reserved or
 	// retired placeholder has used. Renaming [CLIENT_1] to [CLIENT_5] means
 	// the fifth automatic client must not also become [CLIENT_5]: two
 	// originals sharing one placeholder makes the re-identification key
@@ -184,7 +184,7 @@ func (r *Registry) Assign(category, original string) string {
 }
 
 // placeholderTakenLocked reports whether a placeholder is taken by an entry,
-// or reserved (Phase 3), or retired (Phase 3). Caller holds r.mu.
+// or reserved, or retired. Caller holds r.mu.
 func (r *Registry) placeholderTakenLocked(placeholder string) bool {
 	_, inEntries := r.byPlaceholder[placeholder]
 	_, inReserved := r.reserved[placeholder]
@@ -194,9 +194,9 @@ func (r *Registry) placeholderTakenLocked(placeholder string) bool {
 
 // Lookup returns the placeholder already assigned to (category, original)
 // without creating one; ok is false when it was never seen. Used by the
-// post-pass (Phase 4) to re-apply known mappings across all documents.
+// post-pass to re-apply known mappings across all documents.
 //
-// Phase 3: resolves through byOriginal when the exact category key misses,
+// resolves through byOriginal when the exact category key misses,
 // because one string can only own one placeholder across all categories.
 func (r *Registry) Lookup(category, original string) (string, bool) {
 	r.mu.Lock()
@@ -208,7 +208,7 @@ func (r *Registry) Lookup(category, original string) (string, bool) {
 	if e, ok := r.entries[key]; ok {
 		return e.Placeholder, true
 	}
-	// Phase 3: if not found under this category, check if byOriginal owns it
+	// if not found under this category, check if byOriginal owns it
 	// under another category
 	if existingKey, ok := r.byOriginal[lowerOriginal]; ok {
 		e := r.entries[existingKey]
@@ -247,12 +247,12 @@ func (r *Registry) Export() []MappingEntry {
 // It matches:  [CLIENT_1]  [PERSON_12]  [DE_TAX_ID_3]  [ACME_CORP_1]
 // It does NOT match:
 //
-//	CLIENT_1      no brackets, so it would not stand out in the text
+//	CLIENT_1 no brackets, so it would not stand out in the text
 //	[client_1]    lower case, so it would read as ordinary prose
 //	[CLIENT]      no number, so two clients could not be told apart
 //	[CLIENT_0]    zero, which no automatic assignment ever hands out
 //	[CLIENT 1]    a space, which would let a line break split it in a docx
-//	[CLIENT_1] x  trailing text, because the whole value is the placeholder
+//	[CLIENT_1] x trailing text, because the whole value is the placeholder
 //
 // The shape is enforced rather than merely encouraged because the placeholder
 // has to survive a round trip through the export formats AND be findable again
@@ -261,17 +261,17 @@ func (r *Registry) Export() []MappingEntry {
 var placeholderShapeRe = regexp.MustCompile(`^\[[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_[1-9][0-9]*\]$`)
 
 // SetPlaceholder overrides the placeholder for one (category, original) pair
-// (BUILD-05 Phase 3): the user edits the replacement value on an entity card,
+// the user edits the replacement value on an entity card,
 // because "[CLIENT_1]" is sometimes less useful downstream than "[BANK_A_1]".
 //
 // Three things are refused, each with a message that says what to do instead:
 //
-//	a malformed placeholder   the shape has to survive export and re-import
-//	a collision               two originals sharing one placeholder would make
+//	a malformed placeholder the shape has to survive export and re-import
+//	a collision two originals sharing one placeholder would make
 //	                          the re-identification key ambiguous, which
 //	                          silently destroys the ability to undo the
 //	                          anonymisation
-//	an unknown pair           nothing to override yet
+//	an unknown pair nothing to override yet
 //
 // The last one is the reason this does not create an entry: an override is an
 // edit to something the registry already assigned, and inventing an entry here
@@ -321,7 +321,7 @@ func (r *Registry) SetPlaceholder(category, original, placeholder string) error 
 	}
 
 	// A collision check across the WHOLE registry, not just this category.
-	// Phase 3: also check reserved and retired placeholders.
+	// also check reserved and retired placeholders.
 	for otherKey, other := range r.entries {
 		if otherKey == key {
 			continue
@@ -372,9 +372,9 @@ func (r *Registry) recordOverrideLocked(key, placeholder string) {
 // Overrides returns the placeholders the USER renamed, keyed by
 // "category|original" exactly as the registry keys its entries.
 //
-// This is what the session file stores (BUILD-05 Phase 3): the whole registry
+// This is what the session file stores: the whole registry
 // is already saved, so the overrides ride along as an additive field and no
-// migration is written for them (decision 1).
+// migration is written for them.
 //
 // The set is RECORDED as SetPlaceholder runs rather than inferred afterwards.
 // Inferring it would mean asking "does this placeholder look like something
@@ -436,7 +436,7 @@ func (r *Registry) Entries() []MappingEntry {
 }
 
 // Forget drops the mapping so the key stops describing a replacement that no
-// longer happens (Phase 4). THE NUMBER IS NOT FREED: the user may already
+// longer happens. THE NUMBER IS NOT FREED: the user may already
 // have exported a document, a mapping CSV or a session in which [PERSON_4]
 // means one person, and handing 4 to somebody else would make two artefacts
 // of one session disagree with nothing able to detect it. Same ambiguity
@@ -471,7 +471,7 @@ func (r *Registry) Forget(category, original string) (MappingEntry, bool) {
 
 // Rename updates a placeholder by its current value, addressed by placeholder
 // because on step 3 the user is looking at report rows and at marks in the
-// Compare pane, and both carry the placeholder (Phase 5). This is a
+// Compare pane, and both carry the placeholder. This is a
 // SetPlaceholder wrapper that looks up the entry by placeholder instead of by
 // category and original, so the whole collision refusal lives in one place.
 //
@@ -480,7 +480,7 @@ func (r *Registry) Forget(category, original string) (MappingEntry, bool) {
 // deferred one on purpose: a `defer r.mu.Unlock()` here unlocks a mutex
 // SetPlaceholder has already released, and Go answers an unlock of an unlocked
 // mutex with an unrecoverable fatal error, not a panic a caller could contain.
-// Every rename crashed the application until BUILD-06 Phase 8, with no test
+// Every rename crashed the application until, with no test
 // calling this function to notice.
 //
 // @param current the placeholder as it stands today, in [NAME_N] form
@@ -502,7 +502,7 @@ func (r *Registry) Rename(current, next string) error {
 	return r.SetPlaceholder(category, original, next)
 }
 
-// Reserve marks a placeholder as reserved (Phase 3), so automatic assignment
+// Reserve marks a placeholder as reserved, so automatic assignment
 // does not collide with rule replacements. Returns an error if the placeholder
 // is already taken.
 func (r *Registry) Reserve(placeholder string) error {
@@ -525,7 +525,7 @@ func (r *Registry) Reserve(placeholder string) error {
 	return nil
 }
 
-// Reserved returns all reserved placeholders (Phase 3).
+// Reserved returns all reserved placeholders.
 func (r *Registry) Reserved() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -538,7 +538,7 @@ func (r *Registry) Reserved() []string {
 	return out
 }
 
-// Retired returns all retired placeholders (Phase 4).
+// Retired returns all retired placeholders.
 func (r *Registry) Retired() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -552,7 +552,7 @@ func (r *Registry) Retired() []string {
 }
 
 // PlaceholderOwner returns the MappingEntry that owns a placeholder
-// (Phase 4), or an empty entry and false if not found.
+// or an empty entry and false if not found.
 func (r *Registry) PlaceholderOwner(placeholder string) (MappingEntry, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -565,7 +565,7 @@ func (r *Registry) PlaceholderOwner(placeholder string) (MappingEntry, bool) {
 }
 
 // OwnerCategory returns the category that owns an original string
-// (Phase 4), or empty string and false if not found.
+// or empty string and false if not found.
 func (r *Registry) OwnerCategory(original string) (string, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

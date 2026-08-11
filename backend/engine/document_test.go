@@ -97,7 +97,7 @@ func TestLoad(t *testing.T) {
 }
 
 // TestLoadUTF8Validation pins the actionable rejection of non-UTF-8 input
-// (BUILD.md Phase 1: "invalid UTF-8 fails with the expected error message
+// (: "invalid UTF-8 fails with the expected error message
 // fragment"). The byte 0xE9 alone is 'é' in Latin-1 but invalid UTF-8.
 func TestLoadUTF8Validation(t *testing.T) {
 	_, err := Load("legacy.txt", []byte{'c', 'a', 'f', 0xE9})
@@ -146,7 +146,7 @@ func TestLoadWarnings(t *testing.T) {
 }
 
 // TestFixtureCodeFences pins today's v1 behaviour for markdown code fences:
-// fence content is ordinary text (no special casing — BUILD.md Phase 1
+// fence content is ordinary text (no special casing —
 // activity 4). If a future change starts skipping fences, this test forces
 // that to be a conscious decision.
 func TestFixtureCodeFences(t *testing.T) {

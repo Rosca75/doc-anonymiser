@@ -1,4 +1,4 @@
-// modal.js, the in-app confirm (BUILD-05 decision 10).
+// modal.js, the in-app confirm.
 //
 // This module exists to delete every native confirm() from the application.
 // A native dialog in a WebView is unstyled and unbranded, it cannot say
@@ -24,7 +24,7 @@ import { modalHTML } from "./ui.js";
 
 /**
  * askConfirm(question) asks the user a yes/no question and resolves to their
- * answer. This is THE replacement for confirm().
+ * answer. This is THE replacement for confirm.
  *
  * @param {object} question
  * @param {string} question.title the short heading, e.g. "Export the value

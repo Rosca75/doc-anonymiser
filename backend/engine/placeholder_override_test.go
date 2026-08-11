@@ -1,5 +1,4 @@
 // engine/placeholder_override_test.go — the editable placeholder
-// (BUILD-05 Phase 3).
 //
 // The registry is the re-identification key, so the risk in letting a user
 // rename a placeholder is not a bad-looking name: it is AMBIGUITY. Two

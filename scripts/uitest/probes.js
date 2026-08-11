@@ -1,8 +1,8 @@
 // probes.js, the browser-side half of the real-rendering test layer
 // (docs/UITESTING.md layer 3). ONE copy, read by BOTH harnesses:
 //
-//   scripts/uitest/renderharness   Linux, Chromium, Go. Runs in CI.
-//   scripts/uitest/Invoke-UITest.ps1  Windows, Edge, PowerShell. Additional
+//   scripts/uitest/renderharness Linux, Chromium, Go. Runs in CI.
+//   scripts/uitest/Invoke-UITest.ps1 Windows, Edge, PowerShell. Additional
 //                                     platform check, run by hand or on tags.
 //
 // Why the probes live here rather than inside each harness: the assertions are
@@ -228,17 +228,17 @@
       // so it is spelled out rather than inferred, and each entry earns its place
       // from style.css:
       //
-      //   .card-body / .pane-body   the card's scrolling surface, the head and
+      //   .card-body / .pane-body the card's scrolling surface, the head and
       //                             foot staying put above and below it.
-      //   .cgroup-body              a collapsible group's body inside the rail.
-      //   .rail                     the Identify rail, itself a card.
+      //   .cgroup-body a collapsible group's body inside the rail.
+      //   .rail the Identify rail, itself a card.
       //   .card-column              "a column of stacked cards that scrolls as a
       //                             whole, used for the left side of Anonymise
       //                             and Export. The cards inside it do NOT scroll
       //                             individually." That is a deliberate design
       //                             decision with its reasoning in style.css, not
       //                             an exception to the contract.
-      //   .table-scroll             the horizontal escape hatch a wide markdown
+      //   .table-scroll the horizontal escape hatch a wide markdown
       //                             table gets so it never widens the page.
       //
       // Anything else that scrolls is a finding. Add to this list only with the

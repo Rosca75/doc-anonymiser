@@ -1,5 +1,5 @@
 // candidatemodel.js, the PURE view-model for the "Suggestions to review"
-// table (BUILD-04 CR14/CR15).
+// table.
 //
 // The table gained a text search on the value, a category selector, and a
 // sort on the occurrence count. Putting that logic in the view would make
@@ -15,8 +15,8 @@
  * DEFAULT_CANDIDATE_FILTER is the neutral filter: everything visible,
  * most frequent first. A view starts from a copy of this.
  *
- *   search    free text matched against the candidate value
- *   category  one engine category key, or "" for all of them
+ *   search free text matched against the candidate value
+ *   category one engine category key, or "" for all of them
  *   sort      "count-desc" | "count-asc" | "value-asc" | "value-desc"
  */
 export const DEFAULT_CANDIDATE_FILTER = {

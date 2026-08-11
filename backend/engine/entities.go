@@ -6,7 +6,7 @@
 // name VARIANTS ("Marie Duval" → "M. Duval", "Duval", "Marie", …) so the
 // pass catches informal references, then all variants are matched
 // longest-first with word-boundary anchoring — "Alten" must never fire
-// inside "Altenberg" (BUILD.md Phase 3).
+// inside "Altenberg".
 //
 // Matching is case-insensitive (headers shout "ALPINE TRUST"), and every
 // span is checked against the allowlist BEFORE being kept — an allowlisted
@@ -32,12 +32,12 @@ type Entity struct {
 	ManualVariants []string `json:"manualVariants,omitempty"`
 	// ExcludedVariants are spellings this entity must NOT match, even
 	// when the automatic expansion would produce them. Written by the
-	// variant drag-and-drop regrouping (BUILD-02 Phase 9d): moving a
+	// variant drag-and-drop regrouping: moving a
 	// variant to another entity excludes it here so exactly one entity
 	// matches it afterwards.
 	ExcludedVariants []string `json:"excludedVariants,omitempty"`
 	// Confidence is how much this entity is trusted, in [0.0, 1.0]
-	// (BUILD-04 CR9, using the BUILD-03 Phase C scale). Zero means "not
+	// Zero means "not
 	// stated", which DetectEntities reads as ConfidenceManualDefault:
 	// every entity the USER listed is a high-trust entity.
 	//
@@ -52,9 +52,9 @@ type Entity struct {
 
 // Variant expansion has three classes, and a category belongs to exactly one.
 //
-//	person       initials, surname-only, first-name-only, hyphen/space swaps
+//	person initials, surname-only, first-name-only, hyphen/space swaps
 //	organisation the name with a legal suffix stripped
-//	literal      no expansion at all
+//	literal no expansion at all
 //
 // personCategories holds the first. Only person_names is a human being;
 // entity_names in particular is dominated by organisations, and expanding
@@ -264,7 +264,7 @@ func DetectEntities(text string, entities []Entity, allow *Allowlist) []Span {
 					Canonical: e.Canonical,
 					// An entity that states its own confidence keeps it
 					// (AI proposals do); anything else is a value the user
-					// listed, which is high trust (BUILD-04 CR9).
+					// listed, which is high trust.
 					Confidence: entityConfidence(e),
 				})
 			}
@@ -315,7 +315,7 @@ func firstRuneAt(s string, i int) rune {
 }
 
 // CountTermMatches counts case-insensitive, word-boundary-anchored
-// occurrences of term in text (BUILD-02 Phase 9c: the live "Found N
+// occurrences of term in text (: the live "Found N
 // times" preview for manual entries). Same boundary rule as the entity
 // pass, so the preview never promises a match the pipeline would reject
 // ("Lux" does not match inside "Luxembourg").
@@ -344,7 +344,7 @@ type CustomPattern struct {
 }
 
 // ValidateCustomPattern compile-checks a user regex and returns an
-// actionable error for the UI (BUILD.md Phase 3 activity 3).
+// actionable error for the UI.
 func ValidateCustomPattern(expr string) error {
 	if strings.TrimSpace(expr) == "" {
 		return fmt.Errorf("the pattern is empty, enter a regular expression, e.g. PRJ-[0-9]+ to match project codes")

@@ -10,8 +10,8 @@
 //
 // It emits two categories, decided by the CUE WORD next to the match:
 //
-//	project_names      a project cue is adjacent ("projet ATLAS-2024")
-//	identifier_names   everything else ("Ref. INV-88213")
+//	project_names a project cue is adjacent ("projet ATLAS-2024")
+//	identifier_names everything else ("Ref. INV-88213")
 //
 // The two share a shape because they ARE the same shape: what separates a
 // project code from an invoice reference is the word beside it, not the code.
@@ -30,16 +30,16 @@ import (
 // Matches:      PRJ-4471, INV 88213, REF/2024001, ATLAS-2024-A, DOSSIER_12345
 // Deliberately not:
 //
-//	LU12345678   letters and digits with nothing between them is the shape of
+//	LU12345678 letters and digits with nothing between them is the shape of
 //	             a tax or VAT number, which pass 1 owns. The separator is what
 //	             keeps this detector out of pass 1's territory, and the cost is
 //	             an unseparated in-house code, which is rare and which the user
 //	             can declare by hand. TestCodeDetectorDoesNotOverlapPassOne
 //	             holds the boundary.
-//	A-123        one leading letter is too weak; "A" is a list bullet
-//	PRJ-44       two digits is a page number or a quantity
-//	CSSF         letters alone are an acronym, which the run detector proposes
-//	2024-01-15   digits first is a date, which pass 1 owns
+//	A-123 one leading letter is too weak; "A" is a list bullet
+//	PRJ-44 two digits is a page number or a quantity
+//	CSSF letters alone are an acronym, which the run detector proposes
+//	2024-01-15 digits first is a date, which pass 1 owns
 //
 // The match boundary is verified on the OFFSETS by isWordBoundary rather than
 // consumed by the pattern: RE2 has no lookaround, and a consuming guard eats

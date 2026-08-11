@@ -1,4 +1,4 @@
-// report_test.go — the per-value report (BUILD-06, reported issue 7).
+// report_test.go — the per-value report.
 //
 // "Many values were replaced within the document loaded, but I couldn't find
 // any summary of the values replaced within the Report area." The report

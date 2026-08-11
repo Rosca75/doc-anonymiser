@@ -1,9 +1,9 @@
-// api.test.js, tests for the Go bridge wrappers (BUILD-04 Phase 3).
+// api.test.js, tests for the Go bridge wrappers.
 //
 // api.js touches `window` only INSIDE its functions, so the module can be
 // imported here and driven against a stub bridge. That is enough to lock
 // the one wrapper that carries real logic rather than a bare delegation:
-// openDocumentation (CR6), which has to ask Go where the documentation
+// openDocumentation, which has to ask Go where the documentation
 // lives, open a SEPARATE window on that path, and fail with an actionable
 // message when the WebView refuses.
 //
@@ -142,7 +142,7 @@ test("a missing bridge REJECTS, it never throws synchronously", () => {
   }
 });
 
-// --- The step 3 value surface (BUILD-06 Phases 4 and 5) --------------------
+// --- The step 3 value surface --------------------------------------------
 
 test("the value wrappers name the Go methods BRIDGE.md documents", async () => {
   // A bare delegation still has one thing that can be wrong, and it is the one

@@ -1,4 +1,4 @@
-// countries.test.js, the document-country table (BUILD-05 Phase 5, decision 2).
+// countries.test.js, the document-country table.
 //
 // The table is small and the temptation is to leave it untested. The reason not
 // to: it decides which of three engine categories are ACTIVE, and a key that
@@ -14,7 +14,7 @@ import {
 } from "./countries.js";
 import { ALL_CATEGORIES } from "./state.js";
 
-// --- The table's own shape ----------------------------------------------
+// --- The table's own shape -----------------------------------------------
 
 test("every country has a code, a name and all three examples", () => {
   assert.ok(COUNTRIES.length >= 5, "the mock-up shows five countries");
@@ -37,11 +37,11 @@ test("the default country is in the table", () => {
     `${DEFAULT_COUNTRY} must be one of the entries, it is what every fallback lands on`);
 });
 
-// --- Parity with the engine's categories -------------------------------
+// --- Parity with the engine's categories ---------------------------------
 
 test("every country-specific ID category is one the engine knows", () => {
   // A switch for a category no pass reads does nothing at all: the same bug
-  // BUILD-04 CR9 fixed for the extended recognizers.
+  //  fixed for the extended recognizers.
   for (const key of COUNTRY_ID_CATEGORIES) {
     assert.ok(ALL_CATEGORIES.includes(key),
       `${key} is not in state.js ALL_CATEGORIES, so switching it would do nothing`);
@@ -78,7 +78,7 @@ test("each country-specific identifier belongs to exactly one country", () => {
   }
 });
 
-// --- countryFor ---------------------------------------------------------
+// --- countryFor ----------------------------------------------------------
 
 test("countryFor finds a country by code", () => {
   assert.equal(countryFor("DE").name, "Germany");
@@ -93,7 +93,7 @@ test("countryFor falls back to the default rather than returning undefined", () 
   }
 });
 
-// --- examplesFor --------------------------------------------------------
+// --- examplesFor ---------------------------------------------------------
 
 test("examplesFor returns exactly the three country-dependent categories", () => {
   const examples = examplesFor("FR");
@@ -117,7 +117,7 @@ test("examplesFor falls back with the country rather than throwing", () => {
   assert.deepEqual(examplesFor("ZZ"), examplesFor(DEFAULT_COUNTRY));
 });
 
-// --- countryIDCategories ------------------------------------------------
+// --- countryIDCategories -------------------------------------------------
 
 test("countryIDCategories answers for ALL three, not only the ones that apply", () => {
   // Returning the whole set is what makes switching from Germany to France turn
@@ -169,7 +169,7 @@ test("Spain and the United Kingdom each switch on their own identifier", () => {
   assert.equal(countryIDCategories("UK").es_nif, false);
 });
 
-// --- countryOptions -----------------------------------------------------
+// --- countryOptions ------------------------------------------------------
 
 test("countryOptions exposes only what a selector needs", () => {
   const options = countryOptions();

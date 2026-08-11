@@ -1,5 +1,4 @@
 // anonymise.test.js, tests for the Anonymise screen's pure helpers
-// (BUILD-05 Phase 7).
 //
 // views/anonymise.js imports api.js, which only touches `window` inside its
 // functions, so the module imports cleanly here. Only the PURE exports are
@@ -20,7 +19,7 @@ import {
 } from "./views/anonymise.js";
 import { textOf, all } from "./testhtml.js";
 
-// --- countOccurrences ---------------------------------------------------
+// --- countOccurrences ----------------------------------------------------
 
 test("countOccurrences counts non-overlapping occurrences", () => {
   assert.equal(countOccurrences("[A_1] and [A_1] again", "[A_1]"), 2);
@@ -44,7 +43,7 @@ test("countOccurrences returns 0 for an empty needle rather than a huge number",
   assert.equal(countOccurrences("anything", undefined), 0);
 });
 
-// --- The report's value list (BUILD-06, reported issue 7) ---------------
+// --- The report's value list ---------------------------------------------
 //
 // The per-value counts come from GO now (report.values, computed once per run)
 // rather than from recounting placeholders in the anonymised text on every
@@ -173,7 +172,7 @@ test("valuesInCategory copes with a state that has no run in it", () => {
   assert.deepEqual(valuesInCategory({ results: null }, [], "person_names"), []);
 });
 
-// --- formatDuration -----------------------------------------------------
+// --- formatDuration ------------------------------------------------------
 
 test("formatDuration reads as a duration, not as a raw count", () => {
   assert.equal(formatDuration(0), "0 ms");
@@ -190,7 +189,7 @@ test("formatDuration handles a missing or negative figure", () => {
   }
 });
 
-// --- continueHint -------------------------------------------------------
+// --- continueHint --------------------------------------------------------
 
 test("continueHint says what has to happen before the step can be left", () => {
   assert.match(continueHint({ running: false, results: null }), /Run the anonymisation/);
@@ -211,7 +210,7 @@ test("continueHint counts what is ready once there is a result", () => {
     "0 replacements ready to export");
 });
 
-// --- compareCard: the ORIGINAL pane shows SOURCE text -------------------
+// --- compareCard: the ORIGINAL pane shows SOURCE text --------------------
 //
 // Reported issue 4: "the preview area ORIGINAL must show the original text,
 // not anonymised values such as [DATE_1], [PERSON_2]". The pane now reads the

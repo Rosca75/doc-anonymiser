@@ -1,4 +1,4 @@
-// engine/pii_extended_test.go — BUILD-03 Phase B tests: new recognizers,
+// engine/pii_extended_test.go —  tests: new recognizers,
 // their checksum validators, and the confidence layer. One table per checksum
 // so the mutation cases live next to their positive fixtures.
 package engine
@@ -19,36 +19,36 @@ func TestExtendedRecognizerCategories(t *testing.T) {
 		category string
 		want     string // "" = must NOT match this category
 	}{
-		// --- credit card (Luhn) ---
+		// --- credit card (Luhn) ------------------------------------------------
 		{"cc valid visa spaced", "card 4532 0151 1283 0366 charged", CountryLU, CatCreditCard, "4532 0151 1283 0366"},
 		{"cc valid amex", "amex 3782 822463 10005 charged", CountryLU, CatCreditCard, "3782 822463 10005"},
 		{"cc invalid luhn", "ref 4532 0151 1283 0367 rejected", CountryLU, CatCreditCard, ""},
-		// --- UK NHS --- 943 476 5919 is a public example that satisfies the mod-11 rule.
+		// --- UK NHS --- 943 476 5919 is a public example that satisfies the mod-11 rule. ---
 		{"nhs valid", "patient NHS 943 476 5919 in file", CountryUK, CatNHS, "943 476 5919"},
 		{"nhs invalid checksum", "patient NHS 943 476 5918 in file", CountryUK, CatNHS, ""},
-		// --- IPv4 ---
+		// --- IPv4 --------------------------------------------------------------
 		{"ipv4 positive", "connect from 192.168.0.1 today", CountryLU, CatIPAddress, "192.168.0.1"},
 		{"ipv4 negative octet range", "not an ip 999.1.2.3 ever", CountryLU, CatIPAddress, ""},
-		// --- IPv6 ---
+		// --- IPv6 --------------------------------------------------------------
 		{"ipv6 positive full", "gateway 2001:db8:0:0:0:0:0:1 replies", CountryLU, CatIPAddress, "2001:db8:0:0:0:0:0:1"},
 		{"ipv6 positive compressed", "gateway 2001:db8::1 replies", CountryLU, CatIPAddress, "2001:db8::1"},
-		// --- MAC ---
+		// --- MAC ---------------------------------------------------------------
 		{"mac positive colon", "hw 00:1A:2B:3C:4D:5E in log", CountryLU, CatMACAddress, "00:1A:2B:3C:4D:5E"},
 		{"mac positive hyphen", "hw 00-1a-2b-3c-4d-5e in log", CountryLU, CatMACAddress, "00-1a-2b-3c-4d-5e"},
 		{"mac negative five groups", "hw 00:1A:2B:3C:4D in log", CountryLU, CatMACAddress, ""},
-		// --- crypto (Bitcoin) ---
+		// --- crypto (Bitcoin) --------------------------------------------------
 		{"btc positive p2pkh", "wallet 1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2 ok", CountryLU, CatCrypto, "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"},
 		{"btc positive bech32", "wallet bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4 ok", CountryLU, CatCrypto, "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"},
-		// --- database URIs ---
+		// --- database URIs -----------------------------------------------------
 		{"db postgres with creds", "dsn postgres://alice:secret@host:5432/db active", CountryLU, CatDatabaseURI, "postgres://alice:secret@host:5432/db"},
 		{"db mongodb srv", "dsn mongodb+srv://u:p@cluster.example.com/db active", CountryLU, CatDatabaseURI, "mongodb+srv://u:p@cluster.example.com/db"},
-		// --- Germany Steuer-ID ---
+		// --- Germany Steuer-ID -------------------------------------------------
 		{"de tax id positive", "Steuer-ID 12345678901 registriert", CountryDE, CatDESteuerID, "12345678901"},
 		{"de tax id negative leading zero", "Steuer-ID 01234567890 registriert", CountryDE, CatDESteuerID, ""},
-		// --- Spain NIF ---
+		// --- Spain NIF ---------------------------------------------------------
 		{"es nif positive", "NIF 00000000T aportado", CountryES, CatESNIF, "00000000T"},
 		{"es nif negative wrong letter", "NIF 00000000A aportado", CountryES, CatESNIF, ""},
-		// --- country scoping (BUILD-06 Phase 1) --- a national category is
+		// --- country scoping --- a national category is ------------------------
 		// off entirely when another country is selected, so neither the
 		// German tax ID nor the Spanish NIF fires under a Luxembourg run.
 		{"de tax id negative under LU selection", "Steuer-ID 12345678901 registriert", CountryLU, CatDESteuerID, ""},

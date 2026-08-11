@@ -1,5 +1,4 @@
 // import.test.js, tests for the Import screen's pure helpers
-// (BUILD-05 Phase 4).
 //
 // views/import.js imports api.js, which only touches `window` inside its
 // functions, so the module imports cleanly here. Only the PURE exports are
@@ -12,7 +11,7 @@ import assert from "node:assert/strict";
 import { markdownTableToHTML, unitLabel, readyHint, previewBody } from "./views/import.js";
 import { textOf, all, unescape } from "./testhtml.js";
 
-// --- markdownTableToHTML ------------------------------------------------
+// --- markdownTableToHTML -------------------------------------------------
 
 test("markdownTableToHTML renders our own table shape", () => {
   const md = "| Client | Email |\n| --- | --- |\n| Aurora Group | lena@aurora.eu |";
@@ -44,7 +43,7 @@ test("markdownTableToHTML restores escaped pipes inside a cell", () => {
   assert.ok(markdownTableToHTML(md).includes("a | b"));
 });
 
-// --- unitLabel ----------------------------------------------------------
+// --- unitLabel -----------------------------------------------------------
 
 test("unitLabel pluralises the unit Go sends singular", () => {
   assert.equal(unitLabel(6, "page"), "6 pages");
@@ -63,7 +62,7 @@ test("unitLabel handles an unknown unit rather than printing nothing", () => {
   assert.equal(unitLabel(3, "sheet"), "3 sheets");
 });
 
-// --- readyHint ----------------------------------------------------------
+// --- readyHint -----------------------------------------------------------
 
 test("readyHint tells an empty screen what to do, not that it is empty", () => {
   const hint = readyHint({ documents: [] });
@@ -104,7 +103,7 @@ test("readyHint copes with a document that has no unit count", () => {
   assert.equal(hint, "1 document ready");
 });
 
-// --- previewBody: the Import preview shows SOURCE text ------------------
+// --- previewBody: the Import preview shows SOURCE text -------------------
 //
 // Reported issue 1: "the preview area of the Import step must only show a
 // preview of the text, without any anonymisation yet". These tests assert the

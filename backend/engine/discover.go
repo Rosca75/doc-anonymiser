@@ -1,8 +1,8 @@
-// engine/discover.go — the Smart detection tier (BUILD-02 Phase 8a): a
+// engine/discover.go — the Smart detection tier: a
 // fully OFFLINE heuristic discovery pass that always works without
 // Ollama. It proposes candidate entities from how names are written, for
 // the review screen; nothing it finds is ever replaced without explicit
-// user acceptance (the Phase 9 review gate).
+// user acceptance.
 //
 // Detectors, in order:
 //  1. Capitalised-run extraction: unicode-aware sequences of capitalised
@@ -36,7 +36,7 @@ import (
 )
 
 // Candidate is one Smart-detection proposal for the review UI (and for
-// LLM span classification, BUILD-02 Phase 8b).
+// LLM span classification).
 type Candidate struct {
 	Text     string `json:"text"`
 	Category string `json:"category"`
@@ -46,7 +46,7 @@ type Candidate struct {
 	// for the review UI and for LLM classification prompts.
 	Contexts []string `json:"contexts,omitempty"`
 	// Confidence is the HEURISTIC score of this proposal, 0.0 to 1.0
-	// (BUILD-04 CR13). It is not the same kind of number as Span
+	// It is not the same kind of number as Span
 	// .Confidence: nothing is replaced on the strength of it, it only
 	// ranks and filters what the review list shows. See candidateScore
 	// for the exact ladder.
@@ -54,7 +54,7 @@ type Candidate struct {
 }
 
 // SmartDetectOptions tunes how eagerly SmartDetect proposes candidates
-// (BUILD-04 CR13). The owner's report was that Smart detection surfaces
+// The owner's report was that Smart detection surfaces
 // far too many values to review, so every knob here removes noise:
 //
 //   - MinLength drops very short candidates ("Ltd", "Rue").
@@ -84,7 +84,7 @@ type SmartDetectOptions struct {
 }
 
 // DefaultSmartDetectOptions are the options the APPLICATION starts with
-// (BUILD-04 CR13). They are deliberately stricter than the legacy
+// They are deliberately stricter than the legacy
 // no-filter behaviour, because over-detection was the reported problem:
 // a review list nobody can get through is worse than one that misses a
 // value the user can still type in by hand.
@@ -204,7 +204,7 @@ type smartRun struct {
 	words         int  // significant (non-particle) word count
 }
 
-// SmartDetectWithOptions is SmartDetect with the BUILD-04 CR13 tuning
+// SmartDetectWithOptions is SmartDetect with the tuning
 // applied. The detectors themselves are unchanged; the options decide
 // which of their proposals reach the review list, and every candidate
 // carries the heuristic score the filtering used (candidateScore), so the
@@ -215,7 +215,7 @@ func SmartDetectWithOptions(text string, allow *Allowlist, opts SmartDetectOptio
 }
 
 // SmartDetectContext is SmartDetectWithOptions that can be INTERRUPTED
-// (BUILD-06). Until now the offline pass took no context at all, so Cancel
+// Until now the offline pass took no context at all, so Cancel
 // could only take effect between documents: one very large file ran to
 // completion whatever the user pressed, which is a large part of why
 // detection "sometimes does not complete" from the outside.
@@ -304,7 +304,7 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		// Default category for unclassified runs: multi-word runs read as
 		// person names, single words as organisation-ish entity names.
 		// This is only the INITIAL guess; the review UI and the optional
-		// LLM classification (Phase 8b) refine it.
+		// LLM classification refine it.
 		if g.category == "" {
 			if r.words >= 2 {
 				g.category = CatPersonNames
@@ -318,7 +318,7 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 			continue
 		}
 
-		// BUILD-04 CR13 tuning. The score is computed either way, so the
+		//  tuning. The score is computed either way, so the
 		// review UI always has it to filter and sort on, even when the
 		// engine-side floor is off.
 		score := candidateScore(r, g.count)
@@ -681,24 +681,24 @@ func contextSnippet(text string, start, end int) string {
 	return strings.Join(strings.Fields(text[from:to]), " ")
 }
 
-// --- BUILD-04 CR13: candidate scoring and filtering -------------------------
+// --- candidate scoring and filtering -------------------------
 
 // candidateScore turns what the detectors observed about a run into one
 // heuristic number in [0.0, 1.0]. It is a LADDER, not a formula, so every
 // step can be read and argued with:
 //
-//	0.95  a legal form follows the name ("Alpine Trust S.A."): as close to
+//	0.95 a legal form follows the name ("Alpine Trust S.A."): as close to
 //	      certain as a heuristic gets, companies are named this way on purpose
-//	0.90  a trademark mark follows it, or a person title introduced it
+//	0.90 a trademark mark follows it, or a person title introduced it
 //	      ("Meridian Suite™", "Mme Weber", "Dr Keller")
-//	0.60  a product head noun is in or beside the run ("Helios Platform"):
+//	0.60 a product head noun is in or beside the run ("Helios Platform"):
 //	      it reads like a product, which is weaker than being marked as one
-//	0.80  several words, seen more than once: a repeated full name
-//	0.65  several words, seen once: "Marie Duval" mid-sentence is still a
+//	0.80 several words, seen more than once: a repeated full name
+//	0.65 several words, seen once: "Marie Duval" mid-sentence is still a
 //	      strong signal, but a single sighting leaves room for a fluke
-//	0.45  one word, seen more than once: the weakest thing worth showing,
+//	0.45 one word, seen more than once: the weakest thing worth showing,
 //	      and where most of the over-detection lives
-//	0.25  anything else that survived the detectors
+//	0.25 anything else that survived the detectors
 //
 // The default floor (0.5) therefore keeps the first four rungs and drops
 // the last two.

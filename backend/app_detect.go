@@ -1,4 +1,4 @@
-// app_detect.go — ONE bound method for the whole detection run (BUILD-06).
+// app_detect.go — ONE bound method for the whole detection run.
 //
 // The reported problem was "detection sometimes does not complete, and the
 // progress is difficult to follow". It was not one bug, it was the shape of
@@ -118,7 +118,7 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string) (*DetectionR
 		a.mu.Unlock()
 	}()
 
-	// The shared builder (BUILD-06 Phase 4): the detection routes must not
+	// The shared builder: the detection routes must not
 	// re-propose a value the user removed, or a removal reads as undone the
 	// moment detection runs again.
 	allow := a.allowlistFor(allowTerms)
@@ -256,7 +256,7 @@ func (a *App) runSmartPhase(ctx context.Context, docs []engine.Document, allow *
 			m.Count += cand.Count
 			// The strongest sighting across documents wins: a name seen once
 			// in one file and next to a legal form in another is as good as
-			// the legal-form sighting (BUILD-04 CR13).
+			// the legal-form sighting.
 			if cand.Confidence > m.Confidence {
 				m.Confidence = cand.Confidence
 			}

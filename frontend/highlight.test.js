@@ -1,4 +1,4 @@
-// highlight.test.js — Phase 8 JS test: the highlight-rendering function
+// highlight.test.js — tests the highlight-rendering function
 // (placeholder → <mark> HTML, with escaping).
 
 import test from "node:test";
@@ -47,7 +47,7 @@ test("every entity placeholder label gets the entity tint", () => {
   }
 });
 
-// --- BUILD-02 Phase 10b: mapping-aware marks ---------------------------------
+// --- mapping-aware marks -------------------------------------------------
 
 test("mapping adds data attributes and the original in the title", () => {
   const html = renderHighlighted("see [ENTITY_1] here",
@@ -70,7 +70,7 @@ test("hostile originals are inert in the output", () => {
   assert.ok(html.includes("&quot;&gt;&lt;script&gt;"));
 });
 
-// --- BUILD-06: the hover tooltip has to be reachable --------------------
+// --- the hover tooltip has to be reachable -------------------------------
 
 test("a known mark is focusable, so the tooltip is not mouse-only", () => {
   const html = renderHighlighted("see [ENTITY_1] here",

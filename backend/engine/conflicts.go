@@ -1,4 +1,4 @@
-// engine/conflicts.go — conflict detection for values (Phase 3).
+// engine/conflicts.go — conflict detection for values.
 //
 // Conflict detection runs before the pipeline touches any text. It checks
 // for blocking conflicts that would produce an ambiguous re-identification

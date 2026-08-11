@@ -1,4 +1,4 @@
-// engine/removals.go — removal of values from the session (Phase 4).
+// engine/removals.go — removal of values from the session.
 //
 // When a user removes a value, it is recorded as an exclusion separate from
 // the allowlist (but enforced by the same machinery), so it sticks across
@@ -22,7 +22,7 @@ type RemovedValue struct {
 // the allowlist, so they will not be replaced. It returns the count of
 // strings added.
 //
-// Phase 4: A removed value must not show up as a term on the Allow tab
+// A removed value must not show up as a term on the Allow tab
 // and "undo removal" must not be the same gesture as "delete an allowlist
 // term", so removals stay separate from the allowlist in state and in the
 // session file, but are enforced by the same machinery (Allowlist.Contains).
@@ -45,7 +45,7 @@ func ApplyRemovals(allow *Allowlist, removed []RemovedValue) int {
 }
 
 // FilterRemoved removes entities that match any removed value.
-// Used in filterEntities so the on-screen value count is honest (Phase 4).
+// Used in filterEntities so the on-screen value count is honest.
 func FilterRemoved(entities []Entity, removed []RemovedValue) []Entity {
 	if len(removed) == 0 {
 		return entities

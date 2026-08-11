@@ -61,7 +61,7 @@ export async function probeOllama() {
   return bridge().ProbeOllama();
 }
 
-// --- Documentation window (BUILD-04 CR6) --------------------------------
+// --- Documentation window --------------------------------
 
 /** documentationURL() resolves to the asset path of the bundled
  *  documentation page, as declared by Go (app.go DocumentationURL). */
@@ -139,7 +139,7 @@ export async function listOllamaModels() {
   return bridge().ListOllamaModels();
 }
 
-// --- Allowlist (BUILD-02 Phase 4) -----------------------------------------
+// --- Allowlist -----------------------------------------
 
 /** defaultAllowlist() resolves to the seeded never-anonymise terms shown
  *  in the UI at startup (removable like any other term). */
@@ -158,14 +158,14 @@ export async function saveAllowlistTemplate() {
   return bridge().SaveAllowlistTemplate();
 }
 
-// --- Entities screen (Phase 7) ------------------------------------------
+// --- Entities screen ------------------------------------------
 
 /**
  * runDetection(fileNames, allowTerms) runs EVERY enabled detection route in
  * one call and resolves to a DetectionResult
  * {candidates, proposals, phases, skipped, errors, cancelled, status}.
  *
- * This is the UI's detection entry point (BUILD-06). It replaced two separate
+ * This is the UI's detection entry point. It replaced two separate
  * calls whose lifecycles could not be reconciled: one cancellation slot, one
  * monotonic progress stream ("detection:progress") and exactly one terminal
  * event ("detection:done" or "detection:error") now cover the whole run.
@@ -209,7 +209,7 @@ export async function patternMatches(expr) {
   return bridge().PatternMatches(expr);
 }
 
-// --- Values, placeholders and removals (step 3, BUILD-06 Phases 4 and 5) ---
+// --- Values, placeholders and removals (step 3,  Phases 4 and 5) ---
 //
 // These supersede setEntityPlaceholder / entityPlaceholder above, which are
 // addressed by (category, canonical) and live on step 2, where the registry does
@@ -268,7 +268,7 @@ export async function validateValues(request) {
   return bridge().ValidateValues(request);
 }
 
-// --- Run screen (Phase 8) -------------------------------------------------
+// --- Run screen -------------------------------------------------
 
 /** runPipeline(request) starts the pipeline; resolves immediately (results
  *  arrive on the "pipeline:done" event, progress on "pipeline:progress"). */
@@ -293,7 +293,7 @@ export async function getMapping() {
   return bridge().GetMapping();
 }
 
-// --- Export screen (Phase 9) -----------------------------------------------
+// --- Export screen -----------------------------------------------
 
 /** exportDocumentFormats(name) resolves to the offered extensions
  *  (default first) for one result document. */
@@ -308,7 +308,7 @@ export async function saveDocument(name, ext) {
 
 /** getSameFormatMetadata(name, ext) resolves to {fields, filename}: the
  *  document properties with proposed replacements plus the proposed
- *  anonymised filename, for the review panel (BUILD-02 Phase 12). */
+ *  anonymised filename, for the review panel. */
 export async function getSameFormatMetadata(name, ext) {
   return bridge().GetSameFormatMetadata(name, ext);
 }
@@ -321,7 +321,7 @@ export async function saveSameFormat(name, ext, fields, filename) {
 
 /**
  * chooseExportFolder() opens the native folder picker and resolves to the
- * chosen path, or "" when the user cancelled (BUILD-05 Phase 3).
+ * chosen path, or "" when the user cancelled.
  * Nothing is written; it only picks.
  */
 export async function chooseExportFolder() {
@@ -334,7 +334,7 @@ export async function chooseExportFolder() {
  *
  * This is the only write with no dialog in front of it, and it is allowed
  * because the folder was chosen explicitly and the zip carries no
- * re-identification key (BUILD-05 decision 4). An existing archive is never
+ * re-identification key. An existing archive is never
  * overwritten: the new one is numbered.
  */
 export async function exportAllZipTo(dir) {

@@ -1,5 +1,5 @@
-// engine/tracing_test.go — BUILD-03 Phase E (decision tracing hook) and
-// Phase F (confidence-aware overlap resolution) tests.
+// engine/tracing_test.go —  (decision tracing hook) and
+// Confidence-aware overlap resolution tests.
 package engine
 
 import (
@@ -56,7 +56,7 @@ func TestOnTraceReceivesResolvedSpans(t *testing.T) {
 }
 
 // TestOnTraceJSONShape: the SpanTrace / Span types serialise to a stable
-// JSON shape suitable for a debug export (BUILD-03 Phase E acceptance).
+// JSON shape suitable for a debug export.
 func TestOnTraceJSONShape(t *testing.T) {
 	trace := SpanTrace{
 		Region: "row 0 col 1",
@@ -133,10 +133,10 @@ func TestOnTraceNilIsFree(t *testing.T) {
 	}
 }
 
-// --- Phase F: confidence-aware overlap resolution ----------------------
+// --- Confidence-aware overlap resolution --------------------------------
 
 // TestOverlapResolutionByConfidence: when two spans overlap identically,
-// the higher-confidence one wins (BUILD-03 Phase F). The tie-break chain
+// the higher-confidence one wins. The tie-break chain
 // below length is start, then category — same as v1.
 func TestOverlapResolutionByConfidence(t *testing.T) {
 	// Two identical-length spans covering the same range; different
@@ -154,7 +154,7 @@ func TestOverlapResolutionByConfidence(t *testing.T) {
 	}
 }
 
-// TestOverlapResolutionLegacyZeroConfidence: pre-BUILD-03 spans (Confidence
+// TestOverlapResolutionLegacyZeroConfidence: pre- spans (Confidence
 // = 0) must behave exactly like v1 — length wins.
 func TestOverlapResolutionLegacyZeroConfidence(t *testing.T) {
 	spans := []Span{

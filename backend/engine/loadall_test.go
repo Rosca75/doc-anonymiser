@@ -1,5 +1,5 @@
 // engine/loadall_test.go — tests for the multi-format ingestion dispatch
-// (BUILD.md Phase 1B activity 5): one imported file may yield multiple
+// one imported file may yield multiple
 // Documents (xlsx sheets), conversion warnings surface on the Document, and
 // unsupported extensions stay rejected.
 package engine

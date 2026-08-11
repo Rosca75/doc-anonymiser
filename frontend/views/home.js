@@ -1,5 +1,5 @@
-// views/home.js, the Welcome/Home landing page (BUILD-02 Phase 2b,
-// rewritten for BUILD-04 CR1, two-column layout added in BUILD-05 CR1).
+// views/home.js, the Welcome/Home landing page (,
+// rewritten for, two-column layout added in).
 //
 // Helvetica headline, the three-paragraph body from copy.js, and exactly
 // ONE orange hero element (the primary "Anonymise documents" button, per
@@ -15,7 +15,7 @@ import { button, icon } from "../ui.js";
 import { HOME } from "../copy.js";
 
 export function renderHome(container) {
-  // HOME.body is an array of paragraphs (CR1). Mapping over it, rather
+  // HOME.body is an array of paragraphs. Mapping over it, rather
   // than rendering one fixed lede, means copy.js alone decides how many
   // paragraphs the landing page has.
   const body = HOME.body
@@ -57,6 +57,6 @@ export function renderHome(container) {
 
   container.querySelector("#home-start").addEventListener("click", () => goToScreen("wizard"));
   // Same behaviour as the menu entry: the documentation opens in its own
-  // window (BUILD-04 CR6), and a refusal shows in the shell banner.
+  // window, and a refusal shows in the shell banner.
   container.querySelector("#home-docs").addEventListener("click", showDocumentation);
 }

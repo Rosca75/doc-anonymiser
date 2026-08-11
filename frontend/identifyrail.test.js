@@ -1,12 +1,11 @@
 // identifyrail.test.js, tests for the Identify rail's category grouping and
-// confidence read-out (BUILD-04 Phase 4 as configure.test.js; renamed with the
-// module by BUILD-05 Phase 2).
+// confidence read-out.
 //
 // views/identifyrail.js imports api.js, which only touches `window` inside
 // its functions, so the module imports cleanly here. Only the PURE exports are
-// exercised: the group table (CR9/CR10), the tab set and preset table
-// (BUILD-05 Phase 5), and the sentence that explains the confidence slider
-// (CR9, rewritten by decision 3). Everything else in the view is wiring and
+// exercised: the group table, the tab set and preset table
+// and the sentence that explains the confidence slider
+// Everything else in the view is wiring and
 // belongs to the manual pass.
 
 import { test } from "node:test";
@@ -22,7 +21,7 @@ import {
 } from "./state.js";
 import { textOf, all, one, exists } from "./testhtml.js";
 
-// --- CR9: every category is reachable from some group ---------------------
+// --- every category is reachable from some group -------------------------
 
 test("every category the store knows belongs to exactly one group", () => {
   const seen = new Map();
@@ -65,7 +64,7 @@ test("every group has a title and at least one category (CR10)", () => {
   }
 });
 
-// --- The rail's route sections (BUILD-06) --------------------------------
+// --- The rail's route sections -------------------------------------------
 //
 // The four peer tabs are gone. They said Scope was a thing of its own rather
 // than the scope OF smart detection, and they made Cloud AI, which is not
@@ -98,7 +97,7 @@ test("the presets are the three engine levels, and Custom is not among them", ()
   assert.deepEqual(PRESETS.map(([, label]) => label), ["Soft", "Standard", "Thorough"]);
 });
 
-// --- The AI gate tooltip --------------------------------------------------
+// --- The AI gate tooltip -------------------------------------------------
 
 test("the gate tooltip tells the two reasons apart", () => {
   // Ollama missing and the toggle being off are different problems with
@@ -117,7 +116,7 @@ test("the gate tooltip tells the two reasons apart", () => {
   assert.notEqual(off, missing);
 });
 
-// --- CR9: the confidence read-out, rewritten by decision 3 ---------------
+// --- the confidence read-out, rewritten by -------------------------------
 //
 // The mock-up's copy described a SOURCE-TIERED rule ("values that only the local
 // AI suggested are skipped"), which the engine does not implement. What the
@@ -160,7 +159,7 @@ test("the confidence read-out is a full sentence at every slider stop", () => {
   }
 });
 
-// --- What the rail actually renders (BUILD-06) ---------------------------
+// --- What the rail actually renders --------------------------------------
 
 /** railHTML() renders the rail from a fresh store, optionally patched. */
 function railHTML(patch = {}) {
@@ -237,7 +236,7 @@ test("the Local AI fields are disabled while the route is off", () => {
   assert.ok(!("disabled" in one(off, "#ollama-port").attrs));
 });
 
-// --- The trigger grouping (BUILD-06 Phase 6) -------------------------------
+// --- The trigger grouping ------------------------------------------------
 
 test("the detected group holds exactly what a detector can emit", () => {
   // The group is named "Auto detected values", so its membership is a claim.

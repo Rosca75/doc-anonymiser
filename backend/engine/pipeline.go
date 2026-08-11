@@ -48,7 +48,7 @@ type LLM interface {
 }
 
 // ProgressEvent is emitted before each per-document stage so the UI can
-// render live progress (Phase 8). Stage is one of "deterministic",
+// render live progress. Stage is one of "deterministic",
 // "deep-scan", "post-pass".
 type ProgressEvent struct {
 	Stage    string `json:"stage"`
@@ -66,12 +66,12 @@ type PipelineInput struct {
 	// when Categories is nil.
 	Level Level
 	// Categories is the granular switch set the pipeline obeys
-	// (BUILD-02 Phase 3). nil means "use PresetSelection(Level)", which
+	// nil means "use PresetSelection(Level)", which
 	// reproduces the v1 behaviour byte for byte.
 	Categories CategorySelection
 	// MinConfidence drops every detected span scoring below it, on the
-	// BUILD-03 Phase C scale (BUILD-04 CR9). 0 (the default) keeps
-	// everything, which reproduces the pre-BUILD-04 behaviour exactly.
+	//  scale. 0 (the default) keeps
+	// everything, which reproduces the pre- behaviour exactly.
 	// See FilterByMinConfidence for what each level currently excludes.
 	MinConfidence float32
 	// Country scopes the country-specific regex categories. Empty falls back to
@@ -86,10 +86,10 @@ type PipelineInput struct {
 	LLM LLM
 	// SimpleRules run last, in order (simplereplace.go).
 	SimpleRules []SimpleRule
-	// Removed (Phase 4) tracks values the user deleted from the session.
+	// Removed tracks values the user deleted from the session.
 	// They must not appear in any run without explicit restoration.
 	Removed []RemovedValue
-	// SkipValidation (Phase 3) is for tests that deliberately create conflicts.
+	// SkipValidation is for tests that deliberately create conflicts.
 	SkipValidation bool
 	// Progress, when set, receives per-document stage events.
 	Progress func(ProgressEvent)
@@ -98,14 +98,14 @@ type PipelineInput struct {
 	// document. One SpanTrace per anonymisation call — for grid or JSON
 	// documents that means one trace per cell / json region, tagged via
 	// SpanTrace.Region. nil disables tracing entirely (zero cost: no
-	// collection, no callback dispatch). BUILD-03 Phase E.
+	// collection, no callback dispatch). .
 	OnTrace func(docName string, traces []SpanTrace)
 }
 
 // SpanTrace is one snapshot of the spans a single anonymiseText call was
 // about to replace, keyed by the region of the document they came from
 // (empty for the document body, "row R col C" for grid cells, "json" for
-// complex xlsx sheets). BUILD-03 Phase E.
+// complex xlsx sheets). .
 type SpanTrace struct {
 	Region string `json:"region,omitempty"`
 	Spans  []Span `json:"spans"`
@@ -140,7 +140,7 @@ type ResultDocument struct {
 type Results struct {
 	Documents []ResultDocument `json:"documents"`
 	Report    Report           `json:"report"`
-	// Validation (Phase 3) contains any conflicts detected before the run.
+	// Validation contains any conflicts detected before the run.
 	// Blocking conflicts mean the pipeline did not run (Documents and Report
 	// are empty). Warnings are generated during the run.
 	Validation ValidationResult `json:"validation,omitempty"`
@@ -178,20 +178,20 @@ const (
 )
 
 // CategorySelection is the granular per-category switch set the pipeline
-// obeys (BUILD-02 Phase 3): every PII category (email, url, iban, vat,
+// obeys: every PII category (email, url, iban, vat,
 // matricule, phone, amount, date) and every entity category maps to on/off.
 // Levels are PRESETS that fill this map (PresetSelection); the UI may then
 // flip individual switches ("custom" mode).
 type CategorySelection map[string]bool
 
 // AllPIICategories lists the pass-1 categories in a stable order (used by
-// presets, tests and the configure UI documentation). BUILD-03 Phase B
+// presets, tests and the configure UI documentation).
 // added the extended recognizers after the v1 group so v1 UI ordering is
 // preserved and any UI that iterates this list sees new categories at the
 // tail.
 var AllPIICategories = []string{
 	CatEmail, CatURL, CatIBAN, CatVAT, CatMatricule, CatPhone, CatAmount, CatDate,
-	// Extended (BUILD-03 Phase B) — hard PII, enabled at every preset.
+	// Extended — hard PII, enabled at every preset.
 	CatCreditCard, CatNHS, CatIPAddress, CatMACAddress, CatCrypto,
 	CatDatabaseURI, CatDESteuerID, CatESNIF,
 }
@@ -311,10 +311,10 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 
 	// --- Passes 1–3, per document. --------------------------------------
 	// llmDurations records per-document deep-scan timing for the report
-	// (soft budget 30 s / 50 KB, surfaced per BUILD.md Phase 9).
+	// (soft budget 30 s / 50 KB, surfaced per).
 	llmDurations := make([]int64, len(in.Documents))
 	for i, doc := range in.Documents {
-		// Cancellation is honoured between documents (Phase 8 test);
+		// Cancellation is honoured between documents;
 		// mid-LLM cancellation is the LLM implementation's job via ctx.
 		if err := ctx.Err(); err != nil {
 			res.Report.Warnings = append(res.Report.Warnings,
@@ -505,7 +505,7 @@ func acceptProposals(proposals []ProposedEntity, sourceText string, allow *Allow
 			continue // e.g. organisation_names proposed at medium level
 		}
 		// An AI proposal is trusted LESS than a value the user listed
-		// (BUILD-04 CR9): stamping ConfidenceLLMDefault here is what lets
+		// stamping ConfidenceLLMDefault here is what lets
 		// PipelineInput.MinConfidence separate the two tiers.
 		out = append(out, Entity{
 			Category:   p.Category,
@@ -705,7 +705,7 @@ func replaceKnownOriginal(text string, e MappingEntry, onHit func()) string {
 // known registry original in text, word-boundary anchored and never
 // inside an existing placeholder. The span's Canonical is the registry
 // original, so Registry.Assign maps it back to the SAME placeholder.
-// Callers (the same-format export, BUILD-02 Phase 11) combine these with
+// Callers (the same-format export) combine these with
 // the pass-1/2 spans and run ResolveOverlaps; pass entries longest-first
 // (Registry.Entries) so longer originals win ties.
 func DetectKnownOriginals(text string, entries []MappingEntry) []Span {

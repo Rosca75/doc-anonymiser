@@ -1,6 +1,6 @@
 // Table-driven tests for engine/csvmd.go: CSV parsing (incl. quoted fields,
 // embedded newlines, ragged-row repair), markdown-table rendering, and the
-// CSV round-trip guarantee (CLAUDE.md §5, BUILD.md Phase 1).
+// CSV round-trip guarantee (CLAUDE.md §5).
 package engine
 
 import (

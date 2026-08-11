@@ -1,6 +1,6 @@
 // state.test.js — dev-time unit tests for the store, runnable with
 // `node --test "frontend/**/*.test.js"` (node is present on CI runners; this is NOT an npm
-// dependency — see BUILD.md Phase 6).
+// dependency.
 //
 // Only pure logic is tested here: state transitions, navigation guards and
 // reducers. Views stay logic-free precisely so this file covers what
@@ -65,7 +65,7 @@ test("guards: unknown step is rejected", () => {
 });
 
 test("nextStep walks the wizard forward and respects the guards", () => {
-  // There is no prevStep() any more (BUILD-05 Phase 9): moving BACK goes through
+  // There is no prevStep() any more: moving BACK goes through
   // nav.js goBack(), which asks the reset question first. A reducer that moved
   // back without asking was a way around that rule.
   resetState();
@@ -99,7 +99,7 @@ test("applyImportResult updates documents, errors and preview selection", () => 
   assert.equal(getState().previewDoc, "c.md");
 });
 
-// --- Phase 7: entity review reducers -----------------------------------------
+// --- entity review reducers ----------------------------------------------
 
 import {
   addEntities, removeEntity,
@@ -122,7 +122,7 @@ test("addEntities dedupes case-insensitively and defaults to accepted", () => {
 });
 
 test("acceptedEntities filters on status, as the belt to a removed brace", () => {
-  // setEntityStatus() is gone (BUILD-05 Phase 9): the redesign has no denied
+  // setEntityStatus() is gone: the redesign has no denied
   // state, so nothing can produce one. The filter stays, because a row that
   // somehow arrived denied must still not reach the pipeline, and asserting it
   // directly is the only way to keep that guard honest now that no reducer
@@ -174,7 +174,7 @@ test("patterns: only compile-clean ones feed the pipeline", () => {
   assert.equal(getState().patterns.length, 1);
 });
 
-// --- Phase 8: simple-replace rules + run request -----------------------------
+// --- simple-replace rules + run request ----------------------------------
 
 import { addSimpleRule, removeSimpleRule, moveSimpleRule, buildRunRequest } from "./state.js";
 
@@ -200,7 +200,7 @@ test("buildRunRequest assembles only pipeline-ready inputs", () => {
     { category: "entity_names", canonical: "Alpine" },
     { category: "person_names", canonical: "Denied Person" },
   ]);
-  // No reducer can deny a value any more (BUILD-05 Phase 9), so the state is set
+  // No reducer can deny a value any more, so the state is set
   // directly: the point of the test is that buildRunRequest FILTERS on status.
   setState({
     entities: getState().entities.map((e) =>
@@ -219,7 +219,7 @@ test("buildRunRequest assembles only pipeline-ready inputs", () => {
   assert.equal(req.simpleRules.length, 1);
 });
 
-// --- Screen navigation (BUILD-02 Phase 2) -----------------------------------
+// --- Screen navigation ---------------------------------------------------
 
 test("goToScreen switches screens and rejects unknown names", () => {
   resetState();
@@ -319,7 +319,7 @@ test("buildRunRequest carries the category selection", () => {
   assert.equal(buildRunRequest(false).categories.iban, false);
 });
 
-// --- Local-AI gating (BUILD-02 Phase 6) ---------------------------------------
+// --- Local-AI gating -----------------------------------------------------
 
 test("llmEnabled requires BOTH the toggle and a reachable Ollama", () => {
   resetState();
@@ -333,7 +333,7 @@ test("llmEnabled requires BOTH the toggle and a reachable Ollama", () => {
 });
 
 test("the detection routes start with Smart detection on and both AI routes off", () => {
-  // BUILD-06: Smart detection needs nothing installed, so it runs by default.
+  // Smart detection needs nothing installed, so it runs by default.
   // Local AI is a route that hands the document to a model, so the user turns
   // it on themselves, even when Ollama is detected.
   resetState();
@@ -359,7 +359,7 @@ test("detectionRoutesOn counts the ways of finding values that are enabled", () 
   assert.equal(detectionRoutesOn(), 0, "nothing to run, and the UI must say so");
 });
 
-// --- Candidate review gate (BUILD-02 Phase 9b) --------------------------------
+// --- Candidate review gate -----------------------------------------------
 
 test("candidates wait for explicit accept; accept moves them to entities", () => {
   resetState();
@@ -390,7 +390,7 @@ test("reject removes, duplicates and existing entities are skipped", () => {
   assert.equal(getState().entities.length, 1, "reject never touches entities");
 });
 
-// --- Variant regrouping (BUILD-02 Phase 9d) ------------------------------------
+// --- Variant regrouping --------------------------------------------------
 
 test("moveVariant happy path: source excludes, target gains, both re-pend", () => {
   resetState();
@@ -444,7 +444,7 @@ test("moveVariant across categories re-pends only the two touched rows", () => {
   assert.deepEqual(pendingNames, ["Alpine", "Jean Muller"]);
 });
 
-// --- Reassignment helpers (BUILD-02 Phase 10d) --------------------------------
+// --- Reassignment helpers ------------------------------------------------
 
 test("entityAutocomplete ranks prefix matches before substring matches", () => {
   resetState();
@@ -475,7 +475,7 @@ test("reassignOriginal removes a standalone entity and adds the variant", () => 
   assert.equal(reassignOriginal("X", "person_names", "Ghost"), false);
 });
 
-// --- The four-step wizard (BUILD-05 Phase 2) ------------------------------
+// --- The four-step wizard ------------------------------------------------
 
 import { knownStep } from "./state.js";
 
@@ -490,7 +490,7 @@ test("knownStep passes current tokens through untouched", () => {
 });
 
 test("an unknown persisted step token lands on import", () => {
-  // BUILD-05 decision 1: there is no migration table any more. A session file
+  // there is no migration table any more. A session file
   // this build does not understand is refused by the loader, so the only
   // tokens that reach here are corrupted or hand-edited ones, and the answer
   // is the one step that is always reachable.
@@ -499,7 +499,7 @@ test("an unknown persisted step token lands on import", () => {
   }
 });
 
-// --- Documentation is no longer a screen (BUILD-04 CR6) --------------------
+// --- Documentation is no longer a screen ---------------------------------
 
 import { SCREENS } from "./state.js";
 
@@ -525,7 +525,7 @@ test("a failed documentation open is recorded as a dismissible shell error", () 
   assert.equal(getState().shellError, null);
 });
 
-// --- BUILD-04 Phase 4: surfaced recognizers, groups, confidence ------------
+// --- surfaced recognizers, groups, confidence ----------------------------
 
 import {
   EXTENDED_PII_CATEGORIES, ALL_CATEGORIES,
@@ -633,7 +633,7 @@ test("minConfidence rejects values outside 0 to 1 (CR9)", () => {
   assert.equal(getState().settings.minConfidence, 0, "a rejected value changes nothing");
 });
 
-// --- BUILD-04 Phase 5: smart-detection tuning and bulk deny ----------------
+// --- smart-detection tuning and bulk deny --------------------------------
 
 import {
   setSmartDetectOptions, smartDetectOptions,
@@ -693,8 +693,8 @@ test("setSmartDetectOptions ignores invalid values rather than storing them (CR1
   assert.equal(getState().settings.smartDetect.nonsense, undefined);
 });
 
-test("smartDetectOptions fills defaults for a session without the block (CR13)", () => {
-  // A session file written before BUILD-04 has no smartDetect at all.
+test("smartDetectOptions fills defaults for a session without the block", () => {
+  // A session file that says nothing about the tuning has no smartDetect block.
   resetState();
   setState({ settings: { ...getState().settings, smartDetect: undefined } });
   assert.deepEqual(smartDetectOptions(), SMART_DETECT_DEFAULTS);
@@ -703,7 +703,7 @@ test("smartDetectOptions fills defaults for a session without the block (CR13)",
   assert.deepEqual(smartDetectOptions(), { ...SMART_DETECT_DEFAULTS, minLength: 9 });
 });
 
-// --- BUILD-04 Phase 6: per-step reset (CR16) -------------------------------
+// --- per-step reset ------------------------------------------------------
 
 import { resetStep, isBackward, STEP_RESETS } from "./state.js";
 
@@ -754,7 +754,7 @@ test("every wizard step has a reset entry (CR16)", () => {
 });
 
 test("NO reset ever clears the imported documents (CR16)", () => {
-  // The one non-negotiable rule of BUILD-04 section 4.2.
+  // The one non-negotiable rule of.
   for (const step of WIZARD_STEPS) {
     fullSession();
     resetStep(step);
@@ -774,7 +774,7 @@ test("NO reset ever clears the allowlist (CR16)", () => {
 });
 
 test("resetStep(identify) restores the preset and the detection defaults", () => {
-  // Identify owns BOTH halves of its screen now (BUILD-05 Phase 2): the rail's
+  // Identify owns BOTH halves of its screen now: the rail's
   // choices, which used to be a Configure step, and the workspace's values.
   fullSession();
   assert.equal(getState().settings.categories.email, false);
@@ -868,7 +868,7 @@ test("resetStep(import) clears the error strip but nothing else", () => {
   assert.equal(s.documents.length, 2);
 });
 
-// --- Notices (BUILD-05 Phase 1) ---------------------------------------
+// --- Notices -------------------------------------------------------------
 
 test("setNotice stores the sentence and its tone", () => {
   resetState();
@@ -921,7 +921,7 @@ test("NOTICE_TONES is exactly the three tones brand.css defines", () => {
   assert.deepEqual([...NOTICE_TONES].sort(), ["info", "ok", "warn"]);
 });
 
-// --- The in-app confirm (BUILD-05 decision 10) ------------------------
+// --- The in-app confirm --------------------------------------------------
 
 test("askConfirm stores the question with its defaults filled in", () => {
   resetState();
@@ -988,7 +988,7 @@ test("the notice and the question are cleared by resetState", () => {
   assert.equal(getState().confirm, null);
 });
 
-// --- The document country (BUILD-05 Phase 5, decision 2) ----------------
+// --- The document country ------------------------------------------------
 
 test("setDocumentCountry records the country and switches its identifiers", () => {
   resetState();
@@ -1093,7 +1093,7 @@ test("a real category change still reads as Custom", () => {
   assert.equal(selectionPresetName(getState().settings.categories), "custom");
 });
 
-// --- The Anonymise screen's editing surfaces (BUILD-05 Phase 7) ----------
+// --- The Anonymise screen's editing surfaces -----------------------------
 
 test("dismissWarning hides one warning and visibleWarnings drops it", () => {
   resetState();
@@ -1146,7 +1146,7 @@ test("visibleWarnings copes with no run and no report", () => {
   assert.deepEqual(visibleWarnings(), []);
 });
 
-// --- startNewBatch (BUILD-05 Phase 8) ------------------------------------
+// --- startNewBatch -------------------------------------------------------
 //
 // The SPLIT is the whole point of this button, so both halves are pinned: what
 // it clears, and just as importantly what it keeps. Getting the second half
@@ -1270,7 +1270,7 @@ test("setExportDir stores and trims, and can forget the folder", () => {
   assert.equal(setExportDir(undefined), "");
 });
 
-// --- The step 3 value tables (BUILD-06 Phase 5) ----------------------------
+// --- The step 3 value tables ---------------------------------------------
 
 test("setValueTables mirrors both halves of the registry at once", () => {
   // Both lists land together because they are one picture: a value moves from

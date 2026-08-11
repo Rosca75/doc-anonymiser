@@ -1,5 +1,4 @@
 // candidatemodel.test.js, tests for the suggestions-table view-model
-// (BUILD-04 CR14/CR15).
 //
 // The table gained a search box, a type selector and a sort toggle. All
 // three run through visibleCandidates, and the bulk Accept all / Deny all
@@ -28,7 +27,7 @@ function fixture() {
 
 const texts = (rows) => rows.map((r) => r.text);
 
-// --- The neutral filter ---------------------------------------------------
+// --- The neutral filter --------------------------------------------------
 
 test("the default filter shows everything, most frequent first", () => {
   const rows = visibleCandidates(fixture(), DEFAULT_CANDIDATE_FILTER);
@@ -54,7 +53,7 @@ test("an empty or missing list is handled", () => {
   assert.deepEqual(visibleCandidates(undefined, DEFAULT_CANDIDATE_FILTER), []);
 });
 
-// --- CR14: the value search ----------------------------------------------
+// --- the value search ----------------------------------------------------
 
 test("the search matches anywhere in the value, case-insensitively", () => {
   const search = (q) => texts(visibleCandidates(fixture(), { ...DEFAULT_CANDIDATE_FILTER, search: q }));
@@ -78,7 +77,7 @@ test("a search matching nothing returns an empty list, not everything", () => {
   assert.deepEqual(rows, []);
 });
 
-// --- CR14: the type selector ---------------------------------------------
+// --- the type selector ---------------------------------------------------
 
 test("the category filter keeps only that type", () => {
   const rows = visibleCandidates(fixture(), { ...DEFAULT_CANDIDATE_FILTER, category: "person_names" });
@@ -96,7 +95,7 @@ test("search and category compose", () => {
   assert.deepEqual(texts(rows), ["Anouk Berger"]);
 });
 
-// --- CR14: the sorts ------------------------------------------------------
+// --- the sorts -----------------------------------------------------------
 
 test("occurrences sort both ways", () => {
   const desc = visibleCandidates(fixture(), { ...DEFAULT_CANDIDATE_FILTER, sort: "count-desc" });
@@ -138,12 +137,12 @@ test("the sort toggles flip and adopt", () => {
   assert.equal(toggleValueSort("count-desc"), "value-asc");
 });
 
-// --- CR15: the bulk-action counts ----------------------------------------
+// --- the bulk-action counts ----------------------------------------------
 
 
 
 
-// --- The across-category bulk actions (BUILD-05 Phase 6) ------------------
+// --- The across-category bulk actions ------------------------------------
 //
 // The suggestions table sorts and filters across EVERY category at once, so
 // "shown" is not a category: it is whatever survived the search, the type filter

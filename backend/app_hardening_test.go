@@ -1,4 +1,4 @@
-// app_hardening_test.go — Phase 10 tests: error-message format, the
+// app_hardening_test.go — tests error-message format, the
 // large-file truncated preview, and mid-run Ollama failure degrading the
 // LLM pass instead of failing the batch.
 package backend
@@ -20,7 +20,7 @@ import (
 
 // TestErrorMessageFormat samples representative user-facing errors and
 // asserts each states BOTH what failed and how to fix it (CLAUDE.md §2:
-// error messages must be actionable). Since BUILD-02 Phase 1 the failure
+// error messages must be actionable). Since the failure
 // and the remedy are separated by ordinary punctuation (comma, semicolon
 // or period), never an em dash (see copy_guard_test.go), and the remedy
 // half must contain an imperative cue so the message stays actionable.
@@ -124,7 +124,7 @@ func TestMidRunOllamaCrashDegrades(t *testing.T) {
 
 	app := NewApp()
 	app.llm = ollama.New(srv.URL)
-	// The deep scan is gated on the Local AI switch in Go (BUILD-06), so a
+	// The deep scan is gated on the Local AI switch in Go, so a
 	// test that exercises it has to turn the route on, exactly like a user.
 	app.settings.UseAI = true
 	app.docs = []engine.Document{
@@ -158,7 +158,7 @@ func TestMidRunOllamaCrashDegrades(t *testing.T) {
 }
 
 // TestExportAllZipToRefusesABadDestination covers the ONE dialog-free write in
-// the whole application (BUILD-05 Phase 3, decision 4). It is allowed to skip
+// the whole application. It is allowed to skip
 // the dialog because the user chose the folder explicitly and the zip carries
 // no re-identification key, which makes its input validation the only thing
 // standing between a typo and a confusing failure.

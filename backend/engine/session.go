@@ -19,30 +19,31 @@ import (
 // SessionVersion is bumped on breaking format changes so a file this build does
 // not understand is REFUSED rather than half-read.
 //
-// BUILD-05 decision 1 made that the whole policy: session files are read only
+//	made that the whole policy: session files are read only
+//
 // by the version that wrote them. Version 2 adds PlaceholderOverrides, and
 // rather than write a migration that guesses what a version 1 file meant, the
 // loader refuses it and says so. Half-migrating a file that carries the
 // re-identification key is the one failure mode worth being strict about: a
 // partially-restored registry silently reassigns placeholders, and the user
 // finds out when their two batches no longer agree.
-// Version 3 (BUILD-06) merges the client_names and internal_names categories
+// Version 3 merges the client_names and internal_names categories
 // into entity_names. A version 2 file names categories this build no longer
 // has, so it is refused rather than loaded with entities the pipeline would
 // silently drop.
-// Version 4 (BUILD-06 Phases 1 to 8) is one bump for the whole value-rules
+// Version 4 is one bump for the whole value-rules
 // change, made once at the end rather than three times along the way. What a
 // version 3 file cannot express:
 //
-//	Settings.Country       the regex categories are now scoped per country
-//	                       (Phase 1). A version 3 file has no country, and
+//	Settings.Country the regex categories are now scoped per country
+//	                       A version 3 file has no country, and
 //	                       guessing one decides which national identifiers a
 //	                       reloaded session hunts for.
-//	the category set        four detected categories were added and two dead
-//	                       ones retired (Phase 2), so a version 3 file names
+//	the category set four detected categories were added and two dead
+//	                       ones retired, so a version 3 file names
 //	                       categories this build does not have, exactly as
 //	                       version 2 did.
-//	RemovedValues          the values the user deleted (Phase 4). Absent, they
+//	RemovedValues the values the user deleted. Absent, they
 //	                       all come back on the next run, which is the one thing
 //	                       a removal is for.
 //	RetiredPlaceholders /  numbers this session has spent but no entry holds
@@ -55,7 +56,7 @@ import (
 const SessionVersion = 4
 
 // SessionSettings mirrors the app settings worth persisting. The engine
-// does not interpret them — they round-trip for app.go. The BUILD-02
+// does not interpret them — they round-trip for app.go. The
 // fields (categories, contextSize, useAI) are absent in v1 files; app.go
 // treats zero values as "keep the current defaults".
 type SessionSettings struct {
@@ -66,17 +67,17 @@ type SessionSettings struct {
 	ContextSize int               `json:"contextSize,omitempty"`
 	Country     string            `json:"country,omitempty"`
 	UseAI       bool              `json:"useAI,omitempty"`
-	// UseSmartDetect is the offline detection route switch (BUILD-06). It is
+	// UseSmartDetect is the offline detection route switch. It is
 	// a POINTER because its default is TRUE: with a plain bool, "absent" and
 	// "the user switched it off" are the same value, and the wrong reading of
 	// the two silently changes what a restored session detects.
 	UseSmartDetect *bool `json:"useSmartDetect,omitempty"`
-	// MinConfidence is the BUILD-04 CR9 detection-confidence floor. Absent
-	// in every session file written before BUILD-04, where it loads as 0,
+	// MinConfidence is the detection-confidence floor. Absent
+	// in every session file written before, where it loads as 0,
 	// which is exactly the "keep every detection" default: an older
 	// session therefore reproduces its original behaviour.
 	MinConfidence float32 `json:"minConfidence,omitempty"`
-	// SmartDetect is the BUILD-04 CR13 smart-detection tuning. A pointer
+	// SmartDetect is the smart-detection tuning. A pointer
 	// so "absent" (an older file) is distinguishable from "present and
 	// all zeroes" (a user who deliberately turned every filter off): the
 	// first fills the defaults, the second must be obeyed.
@@ -94,22 +95,22 @@ type Session struct {
 	// Registry is the exported mapping — the re-identification key.
 	Registry []MappingEntry `json:"registry"`
 	// PlaceholderOverrides holds the placeholders the USER renamed
-	// (BUILD-05 Phase 3), keyed "category|lower-cased original" exactly as
+	// keyed "category|lower-cased original" exactly as
 	// Registry.Overrides produces them.
 	//
-	// It is additive and has NO migration path (decision 1): a file without it
+	// It is additive and has NO migration path: a file without it
 	// would be a version 1 file, and the loader refuses those. The renamed
 	// placeholders themselves are already in Registry above; this field is what
 	// tells a reloaded session which of them were deliberate, so saving again
 	// does not quietly demote them to automatic assignments.
 	PlaceholderOverrides map[string]string `json:"placeholderOverrides,omitempty"`
-	// RemovedValues (Phase 4) tracks values the user deleted from the session.
+	// RemovedValues tracks values the user deleted from the session.
 	// They must not appear in any run without explicit restoration.
 	RemovedValues []RemovedValue `json:"removedValues,omitempty"`
-	// RetiredPlaceholders (Phase 4) tracks placeholders whose entries were
+	// RetiredPlaceholders tracks placeholders whose entries were
 	// forgotten but whose numbers were never freed.
 	RetiredPlaceholders []string `json:"retiredPlaceholders,omitempty"`
-	// ReservedPlaceholders (Phase 3) tracks placeholders produced outside the
+	// ReservedPlaceholders tracks placeholders produced outside the
 	// registry (rule replacements).
 	ReservedPlaceholders []string `json:"reservedPlaceholders,omitempty"`
 }
@@ -133,7 +134,7 @@ func LoadSession(raw []byte) (Session, error) {
 			"the file is not a valid session file (%v), pick a .anonsession.json file saved by this application", err)
 	}
 	if s.Version != SessionVersion {
-		// Refused, not migrated (BUILD-05 decision 1). The message says which
+		// Refused, not migrated. The message says which
 		// direction the mismatch goes, because the fix differs: an older file
 		// needs re-creating, a newer one needs a newer application.
 		direction := "an older version of this application"
@@ -160,10 +161,10 @@ var placeholderParseRe = regexp.MustCompile(`^\[([A-Z][A-Z0-9_]*)_([0-9]+)\]$`)
 // entries (session load). Counters resume from the highest N per label so
 // new assignments continue the numbering instead of colliding.
 //
-// Phase 3: builds byOriginal and byPlaceholder indexes, and treats a duplicated
+// builds byOriginal and byPlaceholder indexes, and treats a duplicated
 // original as a corrupt-file error.
 //
-// It RETURNS that error rather than panicking (BUILD-06 Phase 8). This runs
+// It RETURNS that error rather than panicking. This runs
 // inside a bound method on a file the user picked, so a panic here takes the
 // whole application down on a bad file, which is the opposite of the
 // refuse-and-say-why policy every other load failure follows.
@@ -207,7 +208,7 @@ func NewRegistryFromEntries(entries []MappingEntry) (*Registry, error) {
 }
 
 // NewRegistryFromSession rebuilds a live registry from a loaded session,
-// including which placeholders the user renamed (BUILD-05 Phase 3).
+// including which placeholders the user renamed.
 //
 // The renamed placeholders are already in s.Registry, so this is not restoring
 // them: it is restoring the KNOWLEDGE that they were deliberate, so a later
@@ -232,17 +233,17 @@ func NewRegistryFromSession(s Session) (*Registry, []error, error) {
 		return nil, nil, err
 	}
 
-	// Retired and reserved placeholders restore with the entries (BUILD-06
-	// Phase 8). Both are numbers this session has already spent, and neither is
+	// Retired and reserved placeholders restore with the entries
+	// Both are numbers this session has already spent, and neither is
 	// recoverable from s.Registry, because neither has an entry there any more:
 	//
-	//   retired   a Forget freed the entry and deliberately did NOT free the
+	//   retired a Forget freed the entry and deliberately did NOT free the
 	//             number, because the user may already hold an export in which
 	//             [PERSON_4] means one person. Dropping the set on load would
 	//             hand 4 straight back out and make two artefacts of one session
 	//             disagree, which is the exact ambiguity the refusal exists to
 	//             prevent, arriving one save-and-reload later.
-	//   reserved  a simple-replace rule's replacement, minted outside the
+	//   reserved a simple-replace rule's replacement, minted outside the
 	//             registry. Forgetting it on load lets an automatic assignment
 	//             collide with a rule the user wrote.
 	//

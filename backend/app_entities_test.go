@@ -1,4 +1,4 @@
-// app_entities_test.go — Phase 7 Go-side tests: the ExpandEntityVariants
+// app_entities_test.go —  Go-side tests: the ExpandEntityVariants
 // bound-method adapter and multi-file discovery merge/dedupe against a
 // mocked Ollama server (zero real network).
 package backend
@@ -245,7 +245,7 @@ func TestDetectionReportsProgressPerFile(t *testing.T) {
 	}
 }
 
-// --- BUILD-02 Phase 9 tests ------------------------------------------------
+// ---  tests --------------------------------------------------------------
 
 // TestCountTermMatches: word-boundary counting for the live preview
 // ("Lux" must not match inside "Luxembourg").

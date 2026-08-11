@@ -1,6 +1,6 @@
 // engine/report.go — per-file and aggregate anonymisation statistics
 // (CLAUDE.md §3). The Report is what the user sees on the results screen
-// and can export (Phase 9): JSON for machines, markdown for humans.
+// and can export: JSON for machines, markdown for humans.
 package engine
 
 import (
@@ -16,7 +16,7 @@ import (
 //
 // It exists because a per-CATEGORY total answers "how much was replaced" and
 // nothing else. The question a user actually has after a run is "what did you
-// replace?", and until BUILD-06 the only place that could answer it was a
+// replace?", and until the only place that could answer it was a
 // drill-down in the UI that recomputed the counts from the anonymised text on
 // every repaint, and an exported report that did not contain them at all.
 //
@@ -58,7 +58,7 @@ type Report struct {
 	Level       Level     `json:"level"`
 	// LLMPass documents what happened to pass 3, e.g.
 	// "skipped (Ollama not available)" or "completed" or a degradation
-	// note when Ollama died mid-run (Phase 10).
+	// note when Ollama died mid-run.
 	LLMPass           string         `json:"llmPass"`
 	TotalReplacements int            `json:"totalReplacements"`
 	ByCategory        map[string]int `json:"byCategory"`
@@ -87,7 +87,6 @@ func (r *Report) ToJSON() ([]byte, error) {
 }
 
 // ToMarkdown renders the human-readable summary used by the report export
-// (BUILD.md Phase 9 activity 5).
 func (r *Report) ToMarkdown() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Anonymisation report\n\n")
@@ -119,7 +118,7 @@ func (r *Report) ToMarkdown() string {
 	}
 
 	// LLM per-file timing is surfaced here (soft budget: 30 s per 50 KB
-	// document, BUILD.md performance table); "—" when the pass was skipped.
+	// document); "—" when the pass was skipped.
 	b.WriteString("## Per document\n\n| Document | Replacements | Deep-scan | Warnings |\n| --- | --- | --- | --- |\n")
 	for _, d := range r.Documents {
 		llm := "-"

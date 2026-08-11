@@ -1,4 +1,4 @@
-// engine/entities_test.go — Phase 3 tests: variant-expansion goldens
+// engine/entities_test.go — tests variant-expansion goldens
 // (including French particles), allowlist precedence, word-boundary
 // behaviour and custom-pattern validation.
 package engine
@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestExpandVariantsGolden pins the exact variant sets (BUILD.md Phase 3:
+// TestExpandVariantsGolden pins the exact variant sets (:
 // "variant expansion golden tests, including French particles").
 func TestExpandVariantsGolden(t *testing.T) {
 	tests := []struct {
@@ -200,7 +200,7 @@ func TestEntityReplacementEndToEnd(t *testing.T) {
 	}
 }
 
-// --- Variant expansion classes (BUILD-06 Phase 2) --------------------------
+// --- Variant expansion classes -------------------------------------------
 
 func TestVariantExpansionClassPerCategory(t *testing.T) {
 	// Three classes, one per row: a category gets person-style expansion,

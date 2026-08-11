@@ -1,15 +1,15 @@
 // app_values_test.go — the value-management surface the step 3 Replaced values
 // table drives: removing a value, restoring it, renaming its placeholder, and
-// minting a placeholder for a find-and-replace rule (BUILD-06 Phases 4, 5, 8).
+// minting a placeholder for a find-and-replace rule.
 //
 // This file exists because none of those methods had a test at all, and three
 // of them did not work:
 //
-//	Registry.Rename        unlocked an already-unlocked mutex, which Go answers
+//	Registry.Rename unlocked an already-unlocked mutex, which Go answers
 //	                       with an unrecoverable fatal error, so EVERY rename
 //	                       took the whole application down;
-//	RestoreValue           returned "will be implemented in Phase 8";
-//	NextRulePlaceholder    parsed with a scanf verb Go's fmt does not support,
+//	RestoreValue returned "will be implemented in ";
+//	NextRulePlaceholder parsed with a scanf verb Go's fmt does not support,
 //	                       so it always answered 1 and every rule collided.
 //
 // All three passed `go test ./...` by never being called. The tests below call
@@ -268,7 +268,7 @@ func TestNextRulePlaceholderNeverCollides(t *testing.T) {
 func TestNextRulePlaceholderWorksBeforeTheFirstRun(t *testing.T) {
 	// The select-and-replace flow can mint a placeholder before anything has run.
 	// The step 2 placeholder editor failed in exactly this state (a nil registry)
-	// for the whole of BUILD-05, which is why the editor moved rather than being
+	// for the whole of, which is why the editor moved rather than being
 	// patched.
 	got, err := NewApp().NextRulePlaceholder()
 	if err != nil {
@@ -279,7 +279,7 @@ func TestNextRulePlaceholderWorksBeforeTheFirstRun(t *testing.T) {
 	}
 }
 
-// --- Session persistence (BUILD-06 Phase 8) --------------------------------
+// --- Session persistence -------------------------------------------------
 
 func TestRemovalsAndSpentNumbersSurviveTheSessionFile(t *testing.T) {
 	app, req := valuesApp(t)

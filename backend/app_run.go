@@ -1,4 +1,4 @@
-// app_run.go — bound methods for the Run screen (Phase 8): pipeline
+// app_run.go — bound methods for the Run screen: pipeline
 // execution in a goroutine with progress events, cancellation, and the
 // fast "something missed?" re-run path. Thin adapters (CLAUDE.md §3) —
 // the engine does all the work.
@@ -19,7 +19,7 @@ type RunRequest struct {
 	AllowTerms []string               `json:"allowTerms"`
 	Patterns   []engine.CustomPattern `json:"patterns"`
 	// Categories is the granular per-category switch set from the
-	// Configure screen (BUILD-02 Phase 3). nil falls back to the stored
+	// Configure screen. nil falls back to the stored
 	// settings, then to the level preset.
 	Categories  engine.CategorySelection `json:"categories"`
 	SimpleRules []engine.SimpleRule      `json:"simpleRules"`
@@ -29,7 +29,7 @@ type RunRequest struct {
 }
 
 // MappingInfo is the per-placeholder lookup the results view uses for
-// hover tooltips and click-to-reassign (BUILD-02 Phase 10a). MEMORY NOTE:
+// hover tooltips and click-to-reassign. MEMORY NOTE:
 // this is the re-identification key; it lives in the app process exactly
 // like the Go-side registry and is never written anywhere by this path.
 type MappingInfo struct {
@@ -65,7 +65,7 @@ func (a *App) GetMapping() map[string]MappingInfo {
 // RunPipeline starts the pipeline in a goroutine and returns immediately.
 // Progress arrives on the "pipeline:progress" event (one per document per
 // stage) and the full results on "pipeline:done" — the window must never
-// freeze during a long run (BUILD.md performance table).
+// freeze during a long run.
 func (a *App) RunPipeline(req RunRequest) error {
 	a.mu.Lock()
 	if a.running {
@@ -101,7 +101,7 @@ func (a *App) RunPipeline(req RunRequest) error {
 			return
 		}
 		// The mapping rides along so the results view can show originals
-		// on hover without a second round-trip (BUILD-02 Phase 10a).
+		// on hover without a second round-trip.
 		a.emit("pipeline:done", pipelineDonePayload{Results: results, Mapping: a.GetMapping()})
 	}()
 	return nil
@@ -123,7 +123,6 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 	}
 	// The confidence floor is a SETTING, not a per-run input: it lives in
 	// the Configure screen and applies to every run and fast re-run alike
-	// (BUILD-04 CR9).
 	minConfidence := a.settings.MinConfidence
 	useAI := a.settings.UseAI
 	llm := a.llm
@@ -137,7 +136,6 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 
 	// The allowlist and the removals come from one place, so a value the user
 	// removed cannot be honoured here and forgotten by the same-format export
-	// (BUILD-06 Phase 4).
 	allow := a.allowlistFor(req.AllowTerms)
 	removed := a.removedValues()
 
@@ -161,7 +159,7 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 			a.emit("pipeline:progress", ev)
 		},
 	}
-	// GO decides whether the AI pass runs, not the caller (BUILD-06). The
+	// GO decides whether the AI pass runs, not the caller. The
 	// request asking for it is necessary but not sufficient: the user's Local
 	// AI switch has to be on and Ollama has to actually answer. Settings.UseAI
 	// was stored, serialised into every session file, and read by no decision
@@ -190,10 +188,10 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 	if results != nil {
 		a.mu.Lock()
 		a.results = results
-		// Remember the run inputs so the same-format export (BUILD-02 Phase 11)
+		// Remember the run inputs so the same-format export
 		// re-runs the identical span machinery over the original bytes.
 		//
-		// Stored AFTER the run, not before (BUILD-06 Phase 8). A run that
+		// Stored AFTER the run, not before. A run that
 		// validation refused, or that failed outright, used to leave the export
 		// faithfully reproducing a request the application had just declared
 		// invalid: the user saw an error on screen and a same-format file that
@@ -223,7 +221,7 @@ func (a *App) CancelPipeline() {
 	}
 }
 
-// FastRerun is the "something missed?" loop (BUILD.md Phase 8): re-run the
+// FastRerun is the "something missed?" loop: re-run the
 // deterministic passes only — never the LLM — with the (updated) entities
 // and rules, reusing the session registry so existing placeholders keep
 // their numbers. Fast enough to run synchronously.

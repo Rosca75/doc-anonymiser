@@ -1,5 +1,4 @@
 // identify.test.js, tests for the Identify screen's footer sentence
-// (BUILD-06 Phase 7).
 //
 // views/identify.js used to be an exempt module in ../frontend_tests_test.go:
 // "layout and footer only". That stopped being true when the footer sentence
@@ -46,7 +45,7 @@ const waiting = (n) =>
     text: `Value ${i}`, category: "entity_names", count: 1,
   }));
 
-// --- The review done -------------------------------------------------------
+// --- The review done -----------------------------------------------------
 
 test("with the review done the hint counts what the next step will act on", () => {
   assert.equal(readyHint(screen({ entities: accepted(3) })),
@@ -78,7 +77,7 @@ test("a value that is not accepted is not counted as ready", () => {
   assert.equal(readyHint(s), WORKSPACE.readyToReplace(1));
 });
 
-// --- The gate shut ---------------------------------------------------------
+// --- The gate shut -------------------------------------------------------
 
 test("a waiting suggestion turns the hint into the refusal, and the guard agrees", () => {
   const s = screen({ entities: accepted(3), candidates: waiting(2) });

@@ -1,5 +1,5 @@
-// ollama/client_test.go — Phase 5 tests, all against httptest.Server mocks:
-// ZERO real network calls (BUILD.md Phase 5 definition of done). The mock
+// ollama/client_test.go — tests all against httptest.Server mocks:
+// ZERO real network calls. The mock
 // listens on 127.0.0.1, which is loopback, so even the local-only guarantee
 // holds during tests.
 package ollama
@@ -238,7 +238,7 @@ func TestPipelineWithOllamaClient(t *testing.T) {
 	}
 }
 
-// --- BUILD-02 Phase 5: error mapping, num_ctx, chunking ---------------------
+// --- error mapping, num_ctx, chunking ------------------------------------
 
 // TestChat400ContextOverflow: an HTTP 400 with a context-window error body
 // must surface the context problem and must NOT claim the model is not
@@ -470,7 +470,7 @@ func TestDiscoverCancelBetweenChunks(t *testing.T) {
 	}
 }
 
-// --- BUILD-02 Phase 8b: candidate span classification ------------------------
+// --- candidate span classification ---------------------------------------
 
 // TestClassifyCandidates: categories come back per candidate; a name the
 // server "invents" (not among the inputs) is dropped by the verbatim

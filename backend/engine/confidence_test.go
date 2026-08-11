@@ -1,10 +1,9 @@
 // engine/confidence_test.go — the detection-confidence floor
-// (BUILD-04 CR9).
 //
 // Two things are locked here, and the first matters more than the second:
 //
 //  1. The DEFAULT changes nothing. A zero MinConfidence must reproduce the
-//     pre-BUILD-04 output byte for byte, because a setting that quietly
+//     pre- output byte for byte, because a setting that quietly
 //     removes replacements would be a data-leak bug, not a preference.
 //  2. Above the AI tier, values only the local AI proposed stop being
 //     replaced while everything the user listed keeps being replaced.
@@ -101,7 +100,7 @@ func TestFilterByMinConfidence(t *testing.T) {
 		{Category: CatEmail, Original: "a@b.c", Confidence: 1.0},
 		{Category: "person_names", Original: "Marie", Confidence: ConfidenceManualDefault},
 		{Category: "person_names", Original: "Anouk", Confidence: ConfidenceLLMDefault},
-		// A pre-BUILD-03 span with no confidence set counts as 1.0.
+		// A pre- span with no confidence set counts as 1.0.
 		{Category: CatPhone, Original: "+352 621 000 000"},
 	}
 	cases := []struct {

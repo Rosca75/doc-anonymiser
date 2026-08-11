@@ -1,7 +1,7 @@
 // engine/convert/convert_test.go — golden-file tests for the four binary
-// converters plus the RepairPDFText table (BUILD.md Phase 1B).
+// converters plus the RepairPDFText table.
 //
-// Conversion budget (BUILD.md performance table: ≤ 5 s per typical office
+// Conversion budget (≤ 5 s per typical office
 // file): measured on the largest fixture (workbook.xlsx, ~7 KB) in
 // TestConversionBudget — see the measurement comment there.
 package convert

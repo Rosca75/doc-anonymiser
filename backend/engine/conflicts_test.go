@@ -183,7 +183,7 @@ func allowlistWith(terms ...string) *Allowlist {
 	return allow
 }
 
-// --- Overlap warnings (BUILD-06 Phase 3) -----------------------------------
+// --- Overlap warnings ----------------------------------------------------
 
 func TestOverlapWarningsComeFromTheResolverItself(t *testing.T) {
 	// A declared value that is also an email. Pass 1 carries 1.0 against a

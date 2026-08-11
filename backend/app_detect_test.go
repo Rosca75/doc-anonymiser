@@ -1,4 +1,4 @@
-// app_detect_test.go — tests for the unified detection run (BUILD-06).
+// app_detect_test.go — tests for the unified detection run.
 //
 // These guard the reported issue "detection sometimes does not complete, the
 // progress is difficult to follow". Each test names the specific way the old
@@ -209,7 +209,7 @@ func TestOverallFractionIsMonotonicAcrossUnevenPhases(t *testing.T) {
 		}
 		previous = got
 	}
-	// Phase 0 reads ten files, phase 1 reads two (eight were too large).
+	// reads ten files, phase 1 reads two (eight were too large).
 	for i := 0; i < 10; i++ {
 		check(0, 2, i, 10, 0, 0)
 	}

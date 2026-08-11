@@ -1,7 +1,6 @@
 // engine/exportfmt/pdf.go — EXPERIMENTAL same-format PDF export
-// (BUILD-02 Phase 13).
 //
-// Evaluation outcome (Phase 13b, recorded in BUILD-02.md): in-place body
+// Evaluation outcome: in-place body
 // text replacement inside PDF content streams was NOT adopted. Subset
 // fonts frequently lack the glyphs a placeholder needs, and pixel
 // stability cannot be guaranteed. The recorded fallback (13c) is
@@ -31,7 +30,7 @@ import (
 )
 
 // pdfInfoFields are the Info-dictionary keys offered for review
-// (BUILD-02 Phase 13a), in stable order.
+// in stable order.
 var pdfInfoFields = []string{"Title", "Author", "Subject", "Keywords", "Creator", "Producer"}
 
 // pdfMetaPart is the MetaField.Part marker for PDF Info fields (the

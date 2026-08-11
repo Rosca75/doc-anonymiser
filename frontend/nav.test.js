@@ -1,5 +1,4 @@
 // nav.test.js, tests for nav.js, THE one module that moves the wizard
-// (BUILD-05 Phase 2).
 //
 // Why this file exists: nav.js had no unit test at all, and
 // ../frontend_tests_test.go said so out loud. It is not a module that deserved
@@ -37,8 +36,8 @@ import { one, textOf, exists } from "./testhtml.js";
  *
  * Only the fields the navigation guard reads are filled in (state.js canGoTo:
  * documents, candidates and results), because a fuller fixture would suggest the
- * guard looks at more than it does. `candidates` joined the list in BUILD-06
- * Phase 7, when the review gate became the guard's third rule.
+ * guard looks at more than it does. `candidates` joined the list in
+ * when the review gate became the guard's third rule.
  */
 function stateOn(step, patch = {}) {
   return {
@@ -55,7 +54,7 @@ const FINISHED_RUN = {
   report: { values: [], byCategory: {}, totalReplacements: 1, documents: [] },
 };
 
-// --- previousStep / followingStep ------------------------------------------
+// --- previousStep / followingStep ----------------------------------------
 //
 // These are derived from WIZARD_STEPS rather than hardcoded, so the tests are
 // derived from it too: a step inserted in the middle must not need this file
@@ -82,7 +81,7 @@ test("the first step has nothing behind it and the last nothing ahead", () => {
 
 test("an unknown step token yields no neighbours rather than throwing", () => {
   // A corrupted persisted token reaches the footer before knownStep() has a say
-  // (state.js, BUILD-05 decision 1). Returning null on both sides renders a
+  // (state.js). Returning null on both sides renders a
   // footer with no navigation, which is recoverable; throwing would leave a blank
   // screen with an exception behind it.
   const s = stateOn("teleport");
@@ -90,7 +89,7 @@ test("an unknown step token yields no neighbours rather than throwing", () => {
   assert.equal(followingStep(s), null);
 });
 
-// --- stepFooterHTML --------------------------------------------------------
+// --- stepFooterHTML ------------------------------------------------------
 
 test("a middle step's footer labels both directions from copy.js", () => {
   // The point of stepFooterHTML: no screen spells "Back to Import" itself, so a
@@ -163,7 +162,7 @@ test("the footer's two buttons carry the ids wireStepFooter looks for", () => {
 });
 
 test("the review gate reaches the footer through the guard, not through the screen", () => {
-  // BUILD-06 Phase 7: an unreviewed suggestion shuts the move to Anonymise. The
+  // an unreviewed suggestion shuts the move to Anonymise. The
   // footer must inherit that from canGoTo rather than growing a condition of its
   // own, which is the whole reason the guard lives in one place.
   const waiting = stepFooterHTML({}, stateOn("identify", {
@@ -177,7 +176,7 @@ test("the review gate reaches the footer through the guard, not through the scre
     "with the review done the move is open again");
 });
 
-// --- Keyboard shortcuts ----------------------------------------------------
+// --- Keyboard shortcuts --------------------------------------------------
 
 test("shortcutStep maps only Ctrl+O and Ctrl+E, in either case", () => {
   const cases = [

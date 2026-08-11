@@ -7,7 +7,7 @@
 // CSS colours them like text.
 //
 // Source files live in frontend/assets/icons/<name>.svg; this map is what
-// ui.js icon() reads. Regenerate per BUILD-02 Phase 1d if icons are added.
+// ui.js icon() reads. Regenerate per if icons are added.
 
 export const ICONS = {
   "add": `<svg fill="currentColor" xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path d="M440-440H200v-80h240v-240h80v240h240v80H520v240h-80v-240Z"/></svg>`,

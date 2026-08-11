@@ -1,19 +1,17 @@
-// nav.js, the ONE place the wizard moves (BUILD-05 Phase 2).
+// nav.js, the ONE place the wizard moves.
 //
-// This module exists because BUILD-05 gave every screen its own footer. Before
-// that, the shell owned the only Back/Next buttons, so the movement rule could
-// live in main.js next to them. Now the step bar (main.js) and four screen
-// footers (views/*.js) all move the wizard, and if each did it its own way the
-// backward-reset rule would hold in some of them and not others.
+// The step bar (main.js), four screen footers (views/*.js) and two keyboard
+// shortcuts all move the wizard. If each did it its own way the backward-reset
+// rule would hold in some of them and not others, so they all come here.
 //
 // It is a separate file rather than an export of main.js purely to keep the
 // module graph acyclic: main.js imports the views, so a view importing main.js
 // would close a cycle. A cycle would probably work, and it would be a trap.
 //
-// The rule, unchanged from BUILD-04 CR16:
+// The rule, unchanged from:
 //
-//   forward   the guard decides, nothing is cleared, nothing is asked
-//   backward  ask first; on yes, reset the step being LEFT and move; on no,
+//   forward the guard decides, nothing is cleared, nothing is asked
+//   backward ask first; on yes, reset the step being LEFT and move; on no,
 //             do nothing at all, not even the move
 //
 // Cancelling deliberately does NOT navigate. "Go back but keep everything"
@@ -34,7 +32,7 @@ import { NAV } from "./copy.js";
  * going back.
  *
  * The question is the in-app modal, not the native confirm() this used to call
- * (BUILD-05 decision 10), which is why this is async: the answer arrives on a
+ * which is why this is async: the answer arrives on a
  * promise instead of blocking the thread. A caller that ignores the returned
  * promise behaves exactly as it did before.
  *

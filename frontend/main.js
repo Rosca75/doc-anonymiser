@@ -5,16 +5,16 @@
 // The shell owns NO business state, it renders from state.js and defers
 // every screen to its view module (one per step, CLAUDE.md §3). The header
 // and step-bar MARKUP lives in shell.js so it can be unit-tested; this file
-// only wires the handlers onto it (BUILD-04 Phase 2).
+// only wires the handlers onto it.
 //
-// Two things the shell used to render are gone (BUILD-05 Phase 2):
+// Two things the shell deliberately does NOT render:
 //
-//   the global Back/Next footer   Each screen owns its own footer now
+//   the global Back/Next footer Each screen owns its own footer now
 //                                 (ui.js stepFooter). A shell-level bar
 //                                 cannot say what the CURRENT screen still
 //                                 needs before the user moves on, and that
 //                                 sentence is the whole point of the footer.
-//   the per-step explainer strip  Its copy became each card's subtitle, next
+//   the per-step explainer strip Its copy became each card's subtitle, next
 //                                 to the heading it explains, instead of a
 //                                 band of prose above every screen eating the
 //                                 vertical space the fixed-height workspace
@@ -81,7 +81,7 @@ export function boot(root) {
   probeOllama()
     .then((status) => {
       // Detecting Ollama ENABLES the Local AI switch, it never flips it
-       // (BUILD-06): sending the document to a model, however local, is a
+       // sending the document to a model, however local, is a
        // decision the user makes, not one made for them by an installation
        // they may have done for something else entirely.
       setState({ ollama: status });
@@ -91,7 +91,7 @@ export function boot(root) {
     }));
 
   // Seed the allowlist with the engine defaults so the user SEES them and
-  // can remove any (BUILD-02 Phase 4b: nothing silent). Only on a fresh
+  // can remove any. Only on a fresh
   // state; a loaded session's list is never overwritten.
   defaultAllowlist()
     .then((terms) => {
@@ -110,11 +110,10 @@ export function boot(root) {
     running: false, progress: null,
     results: payload,
     // The placeholder → original mapping rides in the same payload
-    // (BUILD-02 Phase 10a).
     mapping: payload?.mapping ?? null,
   }));
 
-  // Detection progress and its TERMINAL events (BUILD-06). The bar used to
+  // Detection progress and its TERMINAL events. The bar used to
   // be cleared only by a `finally` in the caller, so any escape in between
   // left it spinning with no way back. Now Go always sends exactly one of
   // detection:done / detection:error, and both clear it here, whatever the
@@ -145,8 +144,8 @@ export function boot(root) {
     notify(ev?.message ?? "The detection run stopped unexpectedly.", "warn");
   });
 
-  // Keyboard shortcuts (Phase 10): Ctrl+O jumps to Import, Ctrl+E to Export.
-  // The whole decision lives in nav.js handleShortcut (BUILD-06 Phase 7), which
+  // Keyboard shortcuts: Ctrl+O jumps to Import, Ctrl+E to Export.
+  // The whole decision lives in nav.js handleShortcut, which
   // is why this is a bare listener: the shortcuts move the wizard, and a
   // shortcut that moved it its own way skipped the confirm and the backward
   // reset that every other route through nav.js guarantees.
@@ -157,12 +156,12 @@ export function boot(root) {
 function paint(root) {
   const s = getState();
 
-  // The top menu is IDENTICAL on every screen (CR4): same three buttons,
+  // The top menu is IDENTICAL on every screen: same three buttons,
   // in the same order, with only a quiet highlight moving. Its markup
   // comes from shell.js, which is what shell.test.js asserts.
   const topnav = topnavHTML(s.screen);
 
-  // The step bar lives in its own strip UNDER the menu (CR7), and only while
+  // The step bar lives in its own strip UNDER the menu, and only while
   // the wizard is on screen, so the header itself never changes shape.
   const isWizard = s.screen === "wizard";
   const stepbar = isWizard
@@ -184,13 +183,13 @@ function paint(root) {
 
   root.querySelector("#nav-home").addEventListener("click", () => goToScreen("home"));
   root.querySelector("#nav-wizard").addEventListener("click", () => goToScreen("wizard"));
-  // Documentation is NOT a screen any more (BUILD-04 CR6): it opens in a
+  // Documentation is NOT a screen any more: it opens in a
   // separate window served by the embedded asset server. A failure to
   // open it is a chrome-level problem, so it surfaces in the shell
   // banner rather than inside whichever view happens to be visible.
   root.querySelector("#nav-docs").addEventListener("click", showDocumentation);
   // The header's Help icon is a second entry point to the same action
-  // (BUILD-05 CR2, from the Claude Design mockup). Settings has no
+  // Settings has no
   // click handler yet: there is no settings surface to open, so the
   // button renders for layout only until that screen exists.
   root.querySelector("#header-help").addEventListener("click", showDocumentation);
@@ -219,8 +218,8 @@ function paint(root) {
   // The active view fills the workspace. Each screen renders its own footer, so
   // there is nothing between the step bar and the screen itself.
   //
-  // knownStep() is THE one call site of the unknown-token fallback (BUILD-05
-  // decision 1). VIEWS is looked up unconditionally, so a token the store should
+  // knownStep() is THE one call site of the unknown-token fallback
+  // VIEWS is looked up unconditionally, so a token the store should
   // never hold (a corrupted persisted value, a typo in a caller) would otherwise
   // throw here and leave a blank screen with an exception behind it. Falling back
   // to Import costs nothing and is always a usable answer.

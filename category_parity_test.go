@@ -1,7 +1,6 @@
 // category_parity_test.go — the JavaScript to Go category parity guard
-// (BUILD-04 Phase 4, CR9).
 //
-// The bug this exists to prevent already happened once: BUILD-03 added
+// The bug this exists to prevent already happened once:  added
 // eight recognizers to engine/pii.go and engine/pipeline.go, and nobody
 // added them to frontend/state.js. They detected nothing in practice,
 // because the Configure screen never sent a switch for them and never
@@ -117,7 +116,7 @@ func TestFrontendInventsNoCategory(t *testing.T) {
 }
 
 func TestExtendedRecognizersAreOnAtEveryPreset(t *testing.T) {
-	// BUILD-03 made the extended recognizers hard PII, active at every
+	//  made the extended recognizers hard PII, active at every
 	// level. The frontend preset function mirrors this by hand, so pin the
 	// Go side here and the JS side in state.test.js.
 	extended := []string{
