@@ -256,7 +256,7 @@ func FilterAllowed(spans []Span, allow *Allowlist) []Span {
 	if allow == nil {
 		return spans
 	}
-	out := spans[:0]
+	out := make([]Span, 0, len(spans))
 	for _, s := range spans {
 		if !allow.Contains(s.Original) {
 			out = append(out, s)

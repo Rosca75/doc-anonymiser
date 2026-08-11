@@ -9,8 +9,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  COUNTRIES, DEFAULT_COUNTRY, COUNTRY_ID_CATEGORIES,
-  countryFor, examplesFor, countryIDCategories, countryOptions,
+  COUNTRIES, DEFAULT_COUNTRY, COUNTRY_ID_CATEGORIES, CATEGORY_COUNTRIES,
+  countryFor, examplesFor, countryIDCategories, countryOptions, categoryAppliesTo,
 } from "./countries.js";
 import { ALL_CATEGORIES } from "./state.js";
 
@@ -45,6 +45,15 @@ test("every country-specific ID category is one the engine knows", () => {
   for (const key of COUNTRY_ID_CATEGORIES) {
     assert.ok(ALL_CATEGORIES.includes(key),
       `${key} is not in state.js ALL_CATEGORIES, so switching it would do nothing`);
+  }
+});
+
+test("every category-country row is one the engine knows", () => {
+  for (const [category, countries] of Object.entries(CATEGORY_COUNTRIES)) {
+    assert.ok(ALL_CATEGORIES.includes(category), `${category} is not in state.js ALL_CATEGORIES`);
+    for (const code of countries) {
+      assert.ok(COUNTRIES.some((c) => c.code === code), `${category} names unknown country ${code}`);
+    }
   }
 });
 
@@ -120,10 +129,34 @@ test("countryIDCategories answers for ALL three, not only the ones that apply", 
   assert.equal(german.uk_nhs, false);
 });
 
-test("a country with no dedicated identifier turns all three off", () => {
-  for (const code of ["LU", "FR"]) {
-    const applies = countryIDCategories(code);
+test("France keeps only the categories that apply there", () => {
+  const applies = countryIDCategories("FR");
+  assert.equal(applies.matricule, false);
+  assert.equal(applies.de_steuer_id, false);
+  assert.equal(applies.es_nif, false);
+  assert.equal(applies.uk_nhs, false);
+});
+
+test("Luxembourg keeps only its own national identifier", () => {
+  const applies = countryIDCategories("LU");
+  assert.equal(applies.matricule, true);
+  assert.equal(applies.de_steuer_id, false);
+  assert.equal(applies.es_nif, false);
+  assert.equal(applies.uk_nhs, false);
+});
+
+test("categoryAppliesTo mirrors the country table", () => {
+  for (const code of COUNTRIES.map((c) => c.code)) {
     for (const key of COUNTRY_ID_CATEGORIES) {
+      assert.equal(categoryAppliesTo(key, code), countryIDCategories(code)[key], `${key}/${code}`);
+    }
+  }
+});
+
+test("a country with no dedicated foreign identifiers turns those off", () => {
+  for (const code of ["FR"]) {
+    const applies = countryIDCategories(code);
+    for (const key of ["de_steuer_id", "es_nif", "uk_nhs"]) {
       assert.equal(applies[key], false, `${code} must not switch ${key} on`);
     }
   }

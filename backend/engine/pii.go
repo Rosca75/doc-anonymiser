@@ -87,9 +87,10 @@ const (
 // matricule guard their boundaries with context characters that must not
 // become part of the span.
 type piiPattern struct {
-	category string
-	re       *regexp.Regexp
-	group    int
+	category  string
+	re        *regexp.Regexp
+	group     int
+	countries []string
 	// validate, when set, gets the matched text and may veto the span
 	// (used for the IBAN checksum).
 	validate func(string) bool
@@ -134,8 +135,29 @@ var piiPatterns = []piiPattern{
 		// Matches:      LU12345678, FR40303265045, DE123456789, BE0123456789
 		// Does not match: "LUXEMBOURG" (letters after the country code),
 		// "LU1234" (too few digits).
-		category: CatVAT,
-		re:       regexp.MustCompile(`\b(?:LU[0-9]{8}|FR[0-9A-Z]{2}[0-9]{9}|DE[0-9]{9}|BE0?[0-9]{9,10}|NL[0-9]{9}B[0-9]{2}|ATU[0-9]{8})\b`),
+		category:  CatVAT,
+		re:        regexp.MustCompile(`\bLU[0-9]{8}\b`),
+		countries: []string{CountryLU},
+	},
+	{
+		category:  CatVAT,
+		re:        regexp.MustCompile(`\bFR[0-9A-Z]{2}[0-9]{9}\b`),
+		countries: []string{CountryFR},
+	},
+	{
+		category:  CatVAT,
+		re:        regexp.MustCompile(`\bDE[0-9]{9}\b`),
+		countries: []string{CountryDE},
+	},
+	{
+		category:  CatVAT,
+		re:        regexp.MustCompile(`\bES[A-Z0-9][0-9]{7}[A-Z0-9]\b`),
+		countries: []string{CountryES},
+	},
+	{
+		category:  CatVAT,
+		re:        regexp.MustCompile(`\bGB(?:[0-9]{9}|[0-9]{12})\b`),
+		countries: []string{CountryUK},
 	},
 	{
 		// Luxembourg 13-digit matricule (national ID). RE2 has no
@@ -143,9 +165,10 @@ var piiPatterns = []piiPattern{
 		// Matches:      1893120105732 (as a standalone 13-digit run)
 		// Does not match: 189312010573 (12 digits), 18931201057321
 		// (14 digits — the context guard rejects a digit neighbour).
-		category: CatMatricule,
-		re:       regexp.MustCompile(`(?:^|[^0-9])([0-9]{13})(?:[^0-9]|$)`),
-		group:    1,
+		category:  CatMatricule,
+		re:        regexp.MustCompile(`(?:^|[^0-9])([0-9]{13})`),
+		group:     1,
+		countries: []string{CountryLU},
 	},
 	{
 		// Phone numbers: international (+352 621 000 111, 0033 6 12 34 56 78)
@@ -153,8 +176,34 @@ var piiPatterns = []piiPattern{
 		// Matches:      +352 621 000 111, +33 6 12 34 56 78, 06 12 34 56 78
 		// Does not match: 1893120105732 (no leading +/0 prefix shape),
 		// plain years like 2026 (too short).
-		category: CatPhone,
-		re:       regexp.MustCompile(`(?:\+|00)[1-9][0-9]{0,2}(?:[ .\-/]?[0-9]{1,4}){2,5}|\b0[0-9](?:[ .\-/]?[0-9]{2,4}){3,5}\b`),
+		category:  CatPhone,
+		re:        regexp.MustCompile(`(?:\+352|00352)(?:[ .\-/]?[0-9]{2,4}){2,4}|\b(?:2[0-9]|4[0-9]|5[0-9]|6[0-9]|7[0-9]|8[0-9]|9[0-9])(?:[ .\-/]?[0-9]{2}){3}\b`),
+		countries: []string{CountryLU},
+		validate:  validLUPhone,
+	},
+	{
+		category:  CatPhone,
+		re:        regexp.MustCompile(`(?:\+33|0033)(?:[ .\-/]?[0-9])(?:[ .\-/]?[0-9]{2}){4}|\b0[1-9](?:[ .\-/]?[0-9]{2}){4}\b`),
+		countries: []string{CountryFR},
+		validate:  validFRPhone,
+	},
+	{
+		category:  CatPhone,
+		re:        regexp.MustCompile(`(?:\+49|0049)(?:[ .\-/]?[0-9]{1,4}){3,5}|\b0[1-9][0-9]{1,4}(?:[ .\-/]?[0-9]{2,4}){2,3}\b`),
+		countries: []string{CountryDE},
+		validate:  validDEPhone,
+	},
+	{
+		category:  CatPhone,
+		re:        regexp.MustCompile(`(?:\+34|0034)(?:[ .\-/]?[0-9]{3}){3}\b|\b[6789][0-9]{2}(?:[ .\-/]?[0-9]{3}){2}\b`),
+		countries: []string{CountryES},
+		validate:  validESPhone,
+	},
+	{
+		category:  CatPhone,
+		re:        regexp.MustCompile(`(?:\+44|0044)(?:[ .\-/]?[0-9]{2,4}){3,4}|\b0(?:7[0-9]{3}|1[0-9]{2,4}|2[0-9]{2,4})(?:[ .\-/]?[0-9]{3,4}){2}\b`),
+		countries: []string{CountryUK},
+		validate:  validUKPhone,
 	},
 	{
 		// Monetary amounts — ADVANCED level only (CLAUDE.md §5).
@@ -197,9 +246,10 @@ var piiPatterns = []piiPattern{
 		// Mod-11 checksum validation.
 		// Matches:      485 777 3456 (valid mod-11), 4857773456
 		// Does not match: 485 777 3457 (mutated → checksum fail)
-		category: CatNHS,
-		re:       regexp.MustCompile(`\b[0-9]{3}[ \-]?[0-9]{3}[ \-]?[0-9]{4}\b|\b[0-9]{10}\b`),
-		validate: validNHS,
+		category:  CatNHS,
+		re:        regexp.MustCompile(`\b[0-9]{3}[ \-]?[0-9]{3}[ \-]?[0-9]{4}\b|\b[0-9]{10}\b`),
+		countries: []string{CountryUK},
+		validate:  validNHS,
 	},
 	{
 		// IPv4 addresses. Simple dotted-quad with a range check in
@@ -247,41 +297,59 @@ var piiPatterns = []piiPattern{
 		// is enforced.
 		// Matches:      12345678901
 		// Does not match: 01234567890 (leading 0), 1234567890 (10 digits)
-		category: CatDESteuerID,
-		re:       regexp.MustCompile(`(?:^|[^0-9])([1-9][0-9]{10})(?:[^0-9]|$)`),
-		group:    1,
+		category:  CatDESteuerID,
+		re:        regexp.MustCompile(`(?:^|[^0-9])([1-9][0-9]{10})`),
+		group:     1,
+		countries: []string{CountryDE},
 	},
 	{
 		// Spain NIF (Número de Identificación Fiscal): 8 digits + a
 		// letter whose value is derived from digits mod 23.
 		// Matches:      12345678Z (valid), 00000000T
 		// Does not match: 12345678A (letter wrong for mod-23)
-		category: CatESNIF,
-		re:       regexp.MustCompile(`\b([0-9]{8})([A-Za-z])\b`),
-		validate: validNIF,
+		category:  CatESNIF,
+		re:        regexp.MustCompile(`\b([0-9]{8})([A-Za-z])\b`),
+		countries: []string{CountryES},
+		validate:  validNIF,
 	},
 }
 
-// DetectPII runs every level-appropriate pattern over the text and returns
-// the raw spans (possibly overlapping — e.g. an email inside a URL).
-// Callers resolve overlaps via ResolveOverlaps / ApplySpans.
-//
-// Since BUILD-02 Phase 3 this is a thin preset wrapper over
-// DetectPIISelected; the granular selection is what the pipeline uses.
-func DetectPII(text string, level Level) []Span {
-	return DetectPIISelected(text, PresetSelection(level))
-}
-
 // DetectPIISelected runs exactly the PII patterns whose category is
-// enabled in the selection (BUILD-02 Phase 3 granular switches).
-// Every returned span carries Confidence = ConfidenceDeterministic (1.0);
-// context-word boosting (BUILD-03 Phase C) is best-effort and never lowers
-// the score.
-func DetectPIISelected(text string, sel CategorySelection) []Span {
+// enabled in the selection (BUILD-02 Phase 3 granular switches) AND whose
+// country scope covers the requested country (BUILD-06 Phase 1).
+// Every returned span carries Confidence = ConfidenceDeterministic (1.0).
+//
+// Two country gates apply, and they are deliberately different things:
+//
+//  1. The CATEGORY gate (CategoryCountries in country.go). A whole category
+//     can be national: the Luxembourg matricule means nothing under a French
+//     selection, so the category never runs there.
+//  2. The PATTERN gate (piiPattern.countries). Categories such as VAT and
+//     phone apply everywhere, but each of their patterns is ONE national
+//     format. Only the pattern for the selected country runs. Without this
+//     gate every national format is scanned over every document, which both
+//     costs a full regex pass per country and reports, say, a French VAT
+//     number to a user who selected Luxembourg.
+//
+// An empty country means "not chosen yet" and falls back to CountryLU, the
+// same default the pipeline and the same-format exporter apply, so a direct
+// engine caller cannot silently lose all country-scoped detection.
+func DetectPIISelected(text string, sel CategorySelection, country string) []Span {
+	if country == "" {
+		country = CountryLU
+	}
 	var spans []Span
-	lowerText := "" // built lazily; only needed for the context scan
 	for _, p := range piiPatterns {
 		if !sel[p.category] {
+			continue
+		}
+		// Gate 1: the category itself must apply to this country.
+		if !CategoryAppliesTo(p.category, country) {
+			continue
+		}
+		// Gate 2: a pattern that names countries is a national format and
+		// runs only for the country it belongs to.
+		if len(p.countries) > 0 && !countryInList(country, p.countries) {
 			continue
 		}
 		for _, m := range p.re.FindAllStringSubmatchIndex(text, -1) {
@@ -289,29 +357,94 @@ func DetectPIISelected(text string, sel CategorySelection) []Span {
 			if start < 0 || end <= start {
 				continue
 			}
+			if !hasTrailingDigitBoundary(text, end) {
+				continue
+			}
 			original := text[start:end]
 			if p.validate != nil && !p.validate(original) {
 				continue
-			}
-			conf := ConfidenceDeterministic
-			if words, ok := contextWords[p.category]; ok {
-				if lowerText == "" {
-					lowerText = strings.ToLower(text)
-				}
-				if hasContextWord(lowerText, start, end, words) {
-					conf = capConfidence(conf + ContextBoost)
-				}
 			}
 			spans = append(spans, Span{
 				Start:      start,
 				End:        end,
 				Category:   p.category,
 				Original:   original,
-				Confidence: conf,
+				Confidence: ConfidenceDeterministic,
 			})
 		}
 	}
 	return spans
+}
+
+// countryInList reports whether code is one of the listed country codes.
+// Kept as a plain loop (the lists hold at most a handful of codes, so a map
+// would cost more than it saves) and used by the pattern-level country gate.
+func countryInList(code string, list []string) bool {
+	for _, c := range list {
+		if c == code {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTrailingDigitBoundary(text string, end int) bool {
+	if end >= len(text) {
+		return true
+	}
+	next := text[end]
+	return next < '0' || next > '9'
+}
+
+func digitsOnly(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] >= '0' && s[i] <= '9' {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
+}
+
+func validLUPhone(s string) bool {
+	digits := digitsOnly(s)
+	if strings.HasPrefix(digits, "352") {
+		digits = digits[3:]
+	}
+	return len(digits) == 9
+}
+
+func validFRPhone(s string) bool {
+	digits := digitsOnly(s)
+	if strings.HasPrefix(digits, "33") {
+		digits = "0" + digits[2:]
+	}
+	return len(digits) == 10 && digits[0] == '0'
+}
+
+func validDEPhone(s string) bool {
+	digits := digitsOnly(s)
+	if strings.HasPrefix(digits, "49") {
+		digits = "0" + digits[2:]
+	}
+	return len(digits) >= 10 && len(digits) <= 12 && digits[0] == '0'
+}
+
+func validESPhone(s string) bool {
+	digits := digitsOnly(s)
+	if strings.HasPrefix(digits, "34") {
+		digits = digits[2:]
+	}
+	return len(digits) == 9 && strings.ContainsRune("6789", rune(digits[0]))
+}
+
+func validUKPhone(s string) bool {
+	digits := digitsOnly(s)
+	if strings.HasPrefix(digits, "44") {
+		digits = "0" + digits[2:]
+	}
+	return len(digits) >= 10 && len(digits) <= 11 && digits[0] == '0'
 }
 
 // Confidence constants (BUILD-03 Phase C).
@@ -326,87 +459,7 @@ const (
 	// ConfidenceLLMDefault is the fallback score for LLM proposals that
 	// did not carry an explicit confidence field.
 	ConfidenceLLMDefault float32 = 0.8
-	// ContextBoost is added when a category's context word appears within
-	// contextWindowBytes of a detection (never crossing 1.0).
-	ContextBoost float32 = 0.05
-	// contextWindowBytes is the byte-radius scanned around a hit for a
-	// context word. Small (bounded) to keep the pass linear.
-	contextWindowBytes = 40
 )
-
-// contextWords lists lower-case context markers per PII category. When one
-// of these appears in a small window around a detection, the span's
-// confidence gets a small boost (Presidio's lemma-context idea, done with
-// a plain word list to keep everything deterministic and pure-Go).
-//
-// The word list is intentionally short and low-noise; adding common
-// English words ("the", "and") would boost everything and be pointless.
-var contextWords = map[string][]string{
-	CatEmail:       {"email", "e-mail", "mail", "contact", "@"},
-	CatPhone:       {"phone", "tel", "tél", "call", "mobile", "fax", "gsm", "portable"},
-	CatIBAN:        {"iban", "account", "compte", "swift", "bic"},
-	CatVAT:         {"vat", "tva", "ust", "ust-id", "steuernummer"},
-	CatMatricule:   {"matricule", "national", "id", "identifiant"},
-	CatCreditCard:  {"card", "credit", "debit", "visa", "mastercard", "amex", "cvc", "cvv"},
-	CatNHS:         {"nhs", "health", "patient"},
-	CatIPAddress:   {"ip", "address", "host", "server", "router", "gateway", "dns"},
-	CatMACAddress:  {"mac", "hardware", "interface", "adapter"},
-	CatCrypto:      {"bitcoin", "btc", "wallet", "address"},
-	CatDatabaseURI: {"database", "db", "connection", "conn", "dsn", "uri"},
-	CatDESteuerID:  {"steuer", "steuernummer", "tax", "identifikationsnummer"},
-	CatESNIF:       {"nif", "dni", "fiscal"},
-}
-
-// hasContextWord reports whether any of words appears (as a substring) in
-// text within contextWindowBytes bytes before start or after end. text is
-// expected to be already lower-cased; words are also lower-case.
-func hasContextWord(lowerText string, start, end int, words []string) bool {
-	lo := start - contextWindowBytes
-	if lo < 0 {
-		lo = 0
-	}
-	hi := end + contextWindowBytes
-	if hi > len(lowerText) {
-		hi = len(lowerText)
-	}
-	window := lowerText[lo:hi]
-	for _, w := range words {
-		if strings.Contains(window, w) {
-			return true
-		}
-	}
-	return false
-}
-
-// capConfidence clamps a confidence value to [0.0, 1.0].
-func capConfidence(v float32) float32 {
-	if v > 1.0 {
-		return 1.0
-	}
-	if v < 0 {
-		return 0
-	}
-	return v
-}
-
-// FilterByConfidence drops spans whose Confidence is below the per-category
-// threshold in thresholds. A span with Confidence == 0 is treated as 1.0
-// (back-compat with pre-BUILD-03 code paths that never set the field).
-// A nil or empty thresholds map is a no-op — the filter is opt-in, so
-// existing callers keep their v1 behaviour.
-func FilterByConfidence(spans []Span, thresholds map[string]float32) []Span {
-	if len(thresholds) == 0 {
-		return spans
-	}
-	out := spans[:0]
-	for _, s := range spans {
-		if t, ok := thresholds[s.Category]; ok && effectiveConfidence(s) < t {
-			continue
-		}
-		out = append(out, s)
-	}
-	return out
-}
 
 // FilterByMinConfidence drops every span scoring below one GLOBAL minimum
 // (BUILD-04 CR9), the shape the Configure screen's confidence control
@@ -426,7 +479,7 @@ func FilterByMinConfidence(spans []Span, min float32) []Span {
 	if min <= 0 {
 		return spans
 	}
-	out := spans[:0]
+	out := make([]Span, 0, len(spans))
 	for _, s := range spans {
 		if effectiveConfidence(s) < min {
 			continue

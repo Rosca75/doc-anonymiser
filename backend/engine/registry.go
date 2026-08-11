@@ -20,17 +20,17 @@ import (
 )
 
 // placeholderLabels maps engine category identifiers to the label used
-// inside placeholders. Categories without an entry fall back to the
-// upper-cased identifier, so a future category degrades gracefully instead
-// of breaking.
+// inside placeholders. Every shipped category MUST have an explicit row:
+// silently falling back to the upper-cased identifier would mint a placeholder
+// shape the tests and the UI were never taught about.
 var placeholderLabels = map[string]string{
 	// Entity categories (CLAUDE.md §5).
-	"entity_names":       "ENTITY",
-	"project_names":      "PROJECT",
-	"person_names":       "PERSON",
-	"custom_patterns":    "CUSTOM",
-	"organisation_names": "ORG",
-	"location_names":     "LOCATION",
+	CatEntityNames:       "ENTITY",
+	CatProjectNames:      "PROJECT",
+	CatPersonNames:       "PERSON",
+	CatCustomPatterns:    "CUSTOM",
+	CatOrganisationNames: "ORG",
+	CatLocationNames:     "LOCATION",
 	// PII categories (pass 1).
 	CatEmail:     "EMAIL",
 	CatPhone:     "PHONE",
@@ -103,9 +103,7 @@ func (r *Registry) Assign(category, original string) string {
 
 	label, ok := placeholderLabels[category]
 	if !ok {
-		// Unknown category: degrade to its upper-cased identifier rather
-		// than failing — the placeholder stays readable either way.
-		label = strings.ToUpper(category)
+		panic("engine placeholder label missing for category " + category)
 	}
 	// Hand out the next number for this label, SKIPPING any that a user
 	// override has already taken (BUILD-05 Phase 3). Renaming [CLIENT_1] to
@@ -353,7 +351,7 @@ func (r *Registry) ApplyOverrides(overrides map[string]string) []error {
 // (longer strings must be replaced before their substrings).
 func (r *Registry) Entries() []MappingEntry {
 	out := r.Export()
-	sort.Slice(out, func(i, j int) bool {
+	sort.SliceStable(out, func(i, j int) bool {
 		return len(out[i].Original) > len(out[j].Original)
 	})
 	return out
