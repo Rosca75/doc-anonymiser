@@ -24,48 +24,56 @@ func TestDetectPIICategories(t *testing.T) {
 		name     string
 		text     string
 		level    Level
+		country  string
 		category string
 		want     string // expected matched text ("" = expect NO match of category)
 	}{
 		// --- email ---
-		{"email positive", "contact marie.duval@example.com today", LevelSoft, CatEmail, "marie.duval@example.com"},
-		{"email negative: no TLD", "user@localhost is not external", LevelSoft, CatEmail, ""},
+		{"email positive", "contact marie.duval@example.com today", LevelSoft, CountryLU, CatEmail, "marie.duval@example.com"},
+		{"email negative: no TLD", "user@localhost is not external", LevelSoft, CountryLU, CatEmail, ""},
 		// --- url ---
-		{"url positive", "see https://intra.example.com/report?id=1 now", LevelSoft, CatURL, "https://intra.example.com/report?id=1"},
-		{"url with credentials", "wget http://user:secret@host.example.com/f", LevelSoft, CatURL, "http://user:secret@host.example.com/f"},
-		{"url negative: bare domain", "visit example.com sometime", LevelSoft, CatURL, ""},
+		{"url positive", "see https://intra.example.com/report?id=1 now", LevelSoft, CountryLU, CatURL, "https://intra.example.com/report?id=1"},
+		{"url with credentials", "wget https://svc:tok123@host.example.com/f", LevelSoft, CountryLU, CatURL, "https://svc:tok123@host.example.com/f"},
+		{"url negative: bare domain", "visit example.com sometime", LevelSoft, CountryLU, CatURL, ""},
 		// --- iban ---
-		{"iban positive spaced", "account LU28 0019 4006 4475 0000 please", LevelSoft, CatIBAN, "LU28 0019 4006 4475 0000"},
-		{"iban positive compact", "send to DE89370400440532013000 now", LevelSoft, CatIBAN, "DE89370400440532013000"},
-		{"iban negative: mutated digit fails checksum", "account LU28 0019 4006 4475 0001 please", LevelSoft, CatIBAN, ""},
-		{"iban negative: country word", "LUXEMBOURG is not an IBAN", LevelSoft, CatIBAN, ""},
+		{"iban positive spaced", "account LU28 0019 4006 4475 0000 please", LevelSoft, CountryLU, CatIBAN, "LU28 0019 4006 4475 0000"},
+		{"iban positive compact", "send to DE89370400440532013000 now", LevelSoft, CountryLU, CatIBAN, "DE89370400440532013000"},
+		{"iban negative: mutated digit fails checksum", "account LU28 0019 4006 4475 0001 please", LevelSoft, CountryLU, CatIBAN, ""},
+		{"iban negative: country word", "LUXEMBOURG is not an IBAN", LevelSoft, CountryLU, CatIBAN, ""},
 		// --- vat ---
-		{"vat positive LU", "VAT number LU12345678 on file", LevelSoft, CatVAT, "LU12345678"},
-		{"vat positive FR", "TVA FR40303265045 enregistrée", LevelSoft, CatVAT, "FR40303265045"},
-		{"vat negative: too short", "code LU1234 is not a VAT number", LevelSoft, CatVAT, ""},
+		{"vat positive LU", "VAT number LU12345678 on file", LevelSoft, CountryLU, CatVAT, "LU12345678"},
+		{"vat positive FR", "TVA FR40303265045 enregistr?e", LevelSoft, CountryFR, CatVAT, "FR40303265045"},
+		{"vat negative: too short", "code LU1234 is not a VAT number", LevelSoft, CountryLU, CatVAT, ""},
+		// Country scoping, pattern level (BUILD-06 Phase 1): VAT applies to
+		// every country, but each VAT pattern is ONE national format, so the
+		// French format must stay silent under a Luxembourg selection.
+		{"vat negative: FR format under LU selection", "TVA FR40303265045 enregistree", LevelSoft, CountryLU, CatVAT, ""},
 		// --- matricule ---
-		{"matricule positive", "matricule 1893120105732 registered", LevelSoft, CatMatricule, "1893120105732"},
-		{"matricule negative: 12 digits", "ref 189312010573 stays", LevelSoft, CatMatricule, ""},
-		{"matricule negative: 14 digits", "ref 18931201057321 stays", LevelSoft, CatMatricule, ""},
+		{"matricule positive", "matricule 1893120105732 registered", LevelSoft, CountryLU, CatMatricule, "1893120105732"},
+		// Country scoping, category level: the matricule is a Luxembourg
+		// national ID, so the whole category is off under another country.
+		{"matricule negative: LU number under FR selection", "matricule 1893120105732 registered", LevelSoft, CountryFR, CatMatricule, ""},
+		{"matricule negative: 12 digits", "ref 189312010573 stays", LevelSoft, CountryLU, CatMatricule, ""},
+		{"matricule negative: 14 digits", "ref 18931201057321 stays", LevelSoft, CountryLU, CatMatricule, ""},
 		// --- phone ---
-		{"phone positive international", "call +352 621 000 111 today", LevelSoft, CatPhone, "+352 621 000 111"},
-		{"phone positive FR mobile", "tél. 06 12 34 56 78 merci", LevelSoft, CatPhone, "06 12 34 56 78"},
-		{"phone negative: plain year", "the year 2026 report", LevelSoft, CatPhone, ""},
+		{"phone positive international", "call +352 621 000 111 today", LevelSoft, CountryLU, CatPhone, "+352 621 000 111"},
+		{"phone positive FR mobile", "t?l. 06 12 34 56 78 merci", LevelSoft, CountryFR, CatPhone, "06 12 34 56 78"},
+		{"phone negative: plain year", "the year 2026 report", LevelSoft, CountryLU, CatPhone, ""},
 		// --- amount (advanced only) ---
-		{"amount positive euro sign", "fee of €1,500.00 agreed", LevelAdvanced, CatAmount, "€1,500.00"},
-		{"amount positive suffix", "budget 12 500 EUR total", LevelAdvanced, CatAmount, "12 500 EUR"},
-		{"amount negative: bare number", "about 1500 items", LevelAdvanced, CatAmount, ""},
+		{"amount positive prefix currency", "fee of EUR 1,500.00 agreed", LevelAdvanced, CountryLU, CatAmount, "EUR 1,500.00"},
+		{"amount positive suffix", "budget 12 500 EUR total", LevelAdvanced, CountryLU, CatAmount, "12 500 EUR"},
+		{"amount negative: bare number", "about 1500 items", LevelAdvanced, CountryLU, CatAmount, ""},
 		// --- date (advanced only) ---
-		{"date positive iso", "due 2026-07-23 latest", LevelAdvanced, CatDate, "2026-07-23"},
-		{"date positive eu numeric", "signed 23/07/2026 in Luxembourg", LevelAdvanced, CatDate, "23/07/2026"},
-		{"date positive written en", "meeting on 23 July 2026 confirmed", LevelAdvanced, CatDate, "23 July 2026"},
-		{"date positive written fr", "réunion le 23 juillet 2026 confirmée", LevelAdvanced, CatDate, "23 juillet 2026"},
-		{"date negative: bare year", "since 2026 things changed", LevelAdvanced, CatDate, ""},
+		{"date positive iso", "due 2026-07-23 latest", LevelAdvanced, CountryLU, CatDate, "2026-07-23"},
+		{"date positive eu numeric", "signed 23/07/2026 in Luxembourg", LevelAdvanced, CountryLU, CatDate, "23/07/2026"},
+		{"date positive written en", "meeting on 23 July 2026 confirmed", LevelAdvanced, CountryLU, CatDate, "23 July 2026"},
+		{"date positive written fr", "r?union le 23 juillet 2026 confirm?e", LevelAdvanced, CountryLU, CatDate, "23 juillet 2026"},
+		{"date negative: bare year", "since 2026 things changed", LevelAdvanced, CountryLU, CatDate, ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spans := DetectPII(tt.text, tt.level)
+			spans := DetectPIISelected(tt.text, PresetSelection(tt.level), tt.country)
 			var got []string
 			for _, s := range spans {
 				if s.Category == tt.category {
@@ -93,7 +101,7 @@ func TestDetectPIICategories(t *testing.T) {
 func TestLevelAwareness(t *testing.T) {
 	text := "pay €500 to LU28 0019 4006 4475 0000 on 2026-07-23"
 	for _, level := range []Level{LevelSoft, LevelMedium} {
-		spans := DetectPII(text, level)
+		spans := DetectPIISelected(text, PresetSelection(level), CountryLU)
 		for _, s := range spans {
 			if s.Category == CatAmount || s.Category == CatDate {
 				t.Errorf("%s fired at level %s, want advanced only", s.Category, level)
@@ -103,7 +111,7 @@ func TestLevelAwareness(t *testing.T) {
 			t.Errorf("IBAN must fire at level %s", level)
 		}
 	}
-	adv := DetectPII(text, LevelAdvanced)
+	adv := DetectPIISelected(text, PresetSelection(LevelAdvanced), CountryLU)
 	if !hasCategory(adv, CatAmount) || !hasCategory(adv, CatDate) {
 		t.Errorf("advanced level must add amount+date, got %+v", adv)
 	}
@@ -122,7 +130,7 @@ func hasCategory(spans []Span, cat string) bool {
 // (longest match wins), deterministically.
 func TestOverlapResolution(t *testing.T) {
 	text := "profile at https://example.com/u/marie.duval@example.com end"
-	spans := ResolveOverlaps(DetectPII(text, LevelMedium))
+	spans := ResolveOverlaps(DetectPIISelected(text, PresetSelection(LevelMedium), CountryLU))
 	if len(spans) != 1 {
 		t.Fatalf("want exactly 1 span after resolution, got %+v", spans)
 	}
@@ -139,7 +147,7 @@ func TestOverlapResolution(t *testing.T) {
 func TestApplySpans(t *testing.T) {
 	text := "mail marie.duval@example.com or peter.stone@example.org, mail marie.duval@example.com again"
 	reg := NewRegistry()
-	spans := ResolveOverlaps(DetectPII(text, LevelMedium))
+	spans := ResolveOverlaps(DetectPIISelected(text, PresetSelection(LevelMedium), CountryLU))
 	out := ApplySpans(text, spans, func(s Span) string {
 		return reg.Assign(s.Category, s.CanonicalOrOriginal())
 	})
@@ -162,10 +170,10 @@ func TestRegistryStability(t *testing.T) {
 		t.Errorf("second email should be [EMAIL_2], got %q", p3)
 	}
 	// Category label mapping: person_names → PERSON etc. (CLAUDE.md §5).
-	if p := reg.Assign("person_names", "Marie Duval"); p != "[PERSON_1]" {
+	if p := reg.Assign(CatPersonNames, "Marie Duval"); p != "[PERSON_1]" {
 		t.Errorf("person placeholder = %q, want [PERSON_1]", p)
 	}
-	if p := reg.Assign("entity_names", "Alpine Trust"); p != "[ENTITY_1]" {
+	if p := reg.Assign(CatEntityNames, "Alpine Trust"); p != "[ENTITY_1]" {
 		t.Errorf("client placeholder = %q, want [ENTITY_1]", p)
 	}
 

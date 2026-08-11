@@ -118,14 +118,12 @@ func GridToMarkdownTable(grid [][]string) string {
 }
 
 // GridToCSV serialises a grid back to CSV bytes for export. It uses the
-// standard library writer with LF line endings and minimal quoting, which
-// makes ParseCSV → GridToCSV byte-identical for well-formed input (the
-// round-trip guarantee tested in csvmd_test.go).
+// standard library writer with LF line endings and minimal quoting. Fixture
+// tests pin the byte shape here, and caller-visible export behaviour builds on
+// that canonical form.
 func GridToCSV(grid [][]string) ([]byte, error) {
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
-	// UseCRLF stays false: LF output is valid CSV everywhere (Excel
-	// included) and matches our normalised working form.
 	if err := w.WriteAll(grid); err != nil {
 		// Practically unreachable with a bytes.Buffer destination, but
 		// the error path is kept honest rather than swallowed.

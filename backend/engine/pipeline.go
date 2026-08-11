@@ -74,7 +74,10 @@ type PipelineInput struct {
 	// everything, which reproduces the pre-BUILD-04 behaviour exactly.
 	// See FilterByMinConfidence for what each level currently excludes.
 	MinConfidence float32
-	Allowlist     *Allowlist
+	// Country scopes the country-specific regex categories. Empty falls back to
+	// Luxembourg, the documented application default.
+	Country   string
+	Allowlist *Allowlist
 	// Registry is the session registry. Pass the same instance across
 	// runs to keep placeholders stable for the whole session; nil creates
 	// a fresh one (fresh numbering).
@@ -134,13 +137,35 @@ type Results struct {
 	Report    Report           `json:"report"`
 }
 
+func detectedCategoriesFromCounts(counts map[string]int) []string {
+	var out []string
+	for category, count := range counts {
+		if count > 0 {
+			out = append(out, category)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Entity category identifiers live beside the PII constants so the category
+// set is compiler-checked rather than held together by repeated string
+// literals. These identifiers are engine contracts; labels stay on the
+// frontend.
+const (
+	CatEntityNames       = "entity_names"
+	CatProjectNames      = "project_names"
+	CatPersonNames       = "person_names"
+	CatCustomPatterns    = "custom_patterns"
+	CatOrganisationNames = "organisation_names"
+	CatLocationNames     = "location_names"
+)
+
 // CategorySelection is the granular per-category switch set the pipeline
 // obeys (BUILD-02 Phase 3): every PII category (email, url, iban, vat,
-// matricule, phone, amount, date) and every entity category (entity_names,
-// project_names, person_names, custom_patterns,
-// organisation_names, location_names) maps to on/off. Levels are PRESETS
-// that fill this map (PresetSelection); the UI may then flip individual
-// switches ("custom" mode).
+// matricule, phone, amount, date) and every entity category maps to on/off.
+// Levels are PRESETS that fill this map (PresetSelection); the UI may then
+// flip individual switches ("custom" mode).
 type CategorySelection map[string]bool
 
 // AllPIICategories lists the pass-1 categories in a stable order (used by
@@ -162,8 +187,8 @@ var AllPIICategories = []string{
 // internal_names: the distinction cost the user a decision at every value
 // they added, and the pipeline treated the two identically anyway.
 var AllEntityCategories = []string{
-	"entity_names", "project_names", "person_names",
-	"custom_patterns", "organisation_names", "location_names",
+	CatEntityNames, CatProjectNames, CatPersonNames,
+	CatCustomPatterns, CatOrganisationNames, CatLocationNames,
 }
 
 // PresetSelection reproduces the exact v1 level semantics (CLAUDE.md §5)
@@ -181,17 +206,17 @@ func PresetSelection(level Level) CategorySelection {
 		CatCreditCard: true, CatNHS: true, CatIPAddress: true,
 		CatMACAddress: true, CatCrypto: true, CatDatabaseURI: true,
 		CatDESteuerID: true, CatESNIF: true,
-		"entity_names": true, "project_names": true,
-		"custom_patterns": true,
+		CatEntityNames: true, CatProjectNames: true,
+		CatCustomPatterns: true,
 	}
 	if level == LevelMedium || level == LevelAdvanced {
-		sel["person_names"] = true
+		sel[CatPersonNames] = true
 	}
 	if level == LevelAdvanced {
 		sel[CatAmount] = true
 		sel[CatDate] = true
-		sel["organisation_names"] = true
-		sel["location_names"] = true
+		sel[CatOrganisationNames] = true
+		sel[CatLocationNames] = true
 	}
 	return sel
 }
@@ -207,6 +232,9 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	}
 	if in.Level == "" {
 		in.Level = LevelMedium // the documented default
+	}
+	if in.Country == "" {
+		in.Country = CountryLU
 	}
 	// The granular selection is what the pipeline obeys; a nil selection
 	// falls back to the level preset (v1-equivalent behaviour).
@@ -246,7 +274,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		// Pass 3 preparation: deep-scan proposals become extra entities
 		// for THIS document (they enter the registry, so the post-pass
 		// spreads them to every other document too).
-		docEntities := entities
+		docEntities := append([]Entity(nil), entities...)
 		if in.LLM != nil {
 			emit(in.Progress, ProgressEvent{Stage: "deep-scan", DocIndex: i, DocCount: len(in.Documents), DocName: doc.Name})
 			llmStart := time.Now()
@@ -268,7 +296,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 			llmDurations[i] = llmMS
 		}
 
-		rd, traces := anonymiseDocument(doc, docEntities, in.Patterns, sel, in.MinConfidence, in.Allowlist, reg, in.OnTrace != nil)
+		rd, traces := anonymiseDocument(doc, docEntities, in.Patterns, sel, in.MinConfidence, in.Country, in.Allowlist, reg, in.OnTrace != nil)
 		if in.OnTrace != nil {
 			in.OnTrace(doc.Name, traces)
 		}
@@ -310,10 +338,11 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		}
 		res.Report.TotalReplacements += docTotal
 		dr := DocumentReport{
-			Name:         rd.Name,
-			Replacements: docTotal,
-			ByCategory:   byCat,
-			Warnings:     rd.Warnings,
+			Name:               rd.Name,
+			Replacements:       docTotal,
+			ByCategory:         byCat,
+			Warnings:           rd.Warnings,
+			DetectedCategories: detectedCategoriesFromCounts(byCat),
 		}
 		if i < len(llmDurations) {
 			dr.LLMDurationMS = llmDurations[i]
@@ -322,6 +351,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		res.Report.Documents = append(res.Report.Documents, dr)
 	}
 	res.Report.Values = valueReports(entries, res.Documents)
+	res.Report.DetectedCategories = detectedCategoriesFromCounts(res.Report.ByCategory)
 	finishReport(res, start)
 	return res, nil
 }
@@ -423,7 +453,7 @@ func acceptProposals(proposals []ProposedEntity, sourceText string, allow *Allow
 // entities) over one document, routing grid documents through per-cell
 // processing. When traceEnabled is true it collects the resolved spans of
 // every anonymiseText call and returns them for the caller's OnTrace hook.
-func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern, sel CategorySelection, minConfidence float32, allow *Allowlist, reg *Registry, traceEnabled bool) (ResultDocument, []SpanTrace) {
+func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern, sel CategorySelection, minConfidence float32, country string, allow *Allowlist, reg *Registry, traceEnabled bool) (ResultDocument, []SpanTrace) {
 	rd := ResultDocument{
 		Name:       doc.Name,
 		Format:     doc.Format,
@@ -463,7 +493,7 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 				if traceEnabled {
 					region = fmt.Sprintf("row %d col %d", r, c)
 				}
-				grid[r][c] = anonymiseText(cell, entities, patterns, sel, minConfidence, allow, assign, makeTraceFn(region))
+				grid[r][c] = anonymiseText(cell, entities, patterns, sel, minConfidence, country, allow, assign, makeTraceFn(region))
 			}
 		}
 		rd.Grid = grid
@@ -474,12 +504,12 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 	if doc.Format == FormatXLSXJSON {
 		// Complex sheets: anonymise the raw JSON text, keep both the JSON
 		// (for .json export) and the fenced markdown rendering in sync.
-		rd.JSON = anonymiseText(doc.JSON, entities, patterns, sel, minConfidence, allow, assign, makeTraceFn("json"))
+		rd.JSON = anonymiseText(doc.JSON, entities, patterns, sel, minConfidence, country, allow, assign, makeTraceFn("json"))
 		rd.Anonymised = "```json\n" + rd.JSON + "\n```\n"
 		return rd, traces
 	}
 
-	rd.Anonymised = anonymiseText(doc.Markdown, entities, patterns, sel, minConfidence, allow, assign, makeTraceFn(""))
+	rd.Anonymised = anonymiseText(doc.Markdown, entities, patterns, sel, minConfidence, country, allow, assign, makeTraceFn(""))
 	return rd, traces
 }
 
@@ -488,10 +518,10 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 // custom-pattern pass; entity categories were already filtered by the
 // caller (filterEntities). traceFn, when non-nil, receives the resolved
 // spans (post overlap resolution) before replacement — BUILD-03 Phase E.
-func anonymiseText(text string, entities []Entity, patterns []CustomPattern, sel CategorySelection, minConfidence float32, allow *Allowlist, assign func(Span) string, traceFn func([]Span)) string {
-	spans := FilterAllowed(DetectPIISelected(text, sel), allow)
+func anonymiseText(text string, entities []Entity, patterns []CustomPattern, sel CategorySelection, minConfidence float32, country string, allow *Allowlist, assign func(Span) string, traceFn func([]Span)) string {
+	spans := FilterAllowed(DetectPIISelected(text, sel, country), allow)
 	spans = append(spans, DetectEntities(text, entities, allow)...)
-	if sel["custom_patterns"] {
+	if sel[CatCustomPatterns] {
 		spans = append(spans, DetectCustomPatterns(text, patterns, allow)...)
 	}
 	// The confidence floor is applied BEFORE overlap resolution, so a

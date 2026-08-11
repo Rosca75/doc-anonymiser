@@ -126,6 +126,29 @@ func TestPerDocumentValuesAreScopedToThatDocument(t *testing.T) {
 	}
 }
 
+func TestDetectedCategoriesFollowActualReplacements(t *testing.T) {
+	res := runForReport(t)
+	if strings.Join(res.Report.DetectedCategories, ",") != "email,entity_names,person_names" {
+		t.Fatalf("run detected categories = %v, want [email entity_names person_names]", res.Report.DetectedCategories)
+	}
+
+	var a, b DocumentReport
+	for _, doc := range res.Report.Documents {
+		if doc.Name == "a.txt" {
+			a = doc
+		}
+		if doc.Name == "b.txt" {
+			b = doc
+		}
+	}
+	if strings.Join(a.DetectedCategories, ",") != "entity_names,person_names" {
+		t.Errorf("a.txt detected categories = %v", a.DetectedCategories)
+	}
+	if strings.Join(b.DetectedCategories, ",") != "email,person_names" {
+		t.Errorf("b.txt detected categories = %v", b.DetectedCategories)
+	}
+}
+
 func TestReportMarkdownContainsTheValueTable(t *testing.T) {
 	// The exported report had no per-value data at all, so it could not be used
 	// to check what a batch replaced without opening the application again.

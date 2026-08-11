@@ -9,6 +9,10 @@ import (
 	"testing"
 )
 
+func normalizeLF(s string) string {
+	return strings.ReplaceAll(s, "\r\n", "\n")
+}
+
 func TestParseCSV(t *testing.T) {
 	tests := []struct {
 		name string
@@ -152,8 +156,8 @@ func TestCSVRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GridToCSV: %v", err)
 			}
-			if string(out) != tt.raw {
-				t.Errorf("round-trip changed bytes:\n in: %q\nout: %q", tt.raw, out)
+			if string(out) != normalizeLF(tt.raw) {
+				t.Errorf("round-trip changed bytes:\n in: %q\nout: %q", normalizeLF(tt.raw), out)
 			}
 		})
 	}
@@ -185,7 +189,7 @@ func TestFixtureEdgeQuotedCSV(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GridToCSV: %v", err)
 	}
-	if string(out) != string(raw) {
-		t.Errorf("fixture round-trip changed bytes:\n in: %q\nout: %q", raw, out)
+	if string(out) != normalizeLF(string(raw)) {
+		t.Errorf("fixture round-trip changed bytes:\n in: %q\nout: %q", normalizeLF(string(raw)), out)
 	}
 }

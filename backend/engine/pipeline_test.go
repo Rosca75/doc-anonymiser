@@ -36,7 +36,7 @@ func TestTwoDocumentConsistency(t *testing.T) {
 
 	res := runPipeline(t, PipelineInput{
 		Documents: []Document{docA, docB},
-		Entities:  []Entity{{Category: "entity_names", Canonical: "Alpine Trust"}},
+		Entities:  []Entity{{Category: CatEntityNames, Canonical: "Alpine Trust"}},
 		Level:     LevelMedium,
 		Allowlist: NewEmptyAllowlist(),
 	})
@@ -66,7 +66,7 @@ func TestPostPassSpreadsLateEntities(t *testing.T) {
 	llm := &fakeLLM{
 		perText: map[string][]ProposedEntity{
 			"doc B mentions Project Borealis explicitly.": {
-				{Category: "project_names", Text: "Project Borealis"},
+				{Category: CatProjectNames, Text: "Project Borealis"},
 			},
 		},
 	}
@@ -110,9 +110,9 @@ func TestHallucinationFilterInPipeline(t *testing.T) {
 	text := "The CSSF reviewed the Alpine engagement."
 	llm := &fakeLLM{perText: map[string][]ProposedEntity{
 		text: {
-			{Category: "entity_names", Text: "Alpine"},          // real
-			{Category: "entity_names", Text: "Zenith Holdings"}, // hallucinated
-			{Category: "entity_names", Text: "CSSF"},            // allowlisted
+			{Category: CatEntityNames, Text: "Alpine"},          // real
+			{Category: CatEntityNames, Text: "Zenith Holdings"}, // hallucinated
+			{Category: CatEntityNames, Text: "CSSF"},            // allowlisted
 		},
 	}}
 	res := runPipeline(t, PipelineInput{
@@ -138,9 +138,9 @@ func TestHallucinationFilterInPipeline(t *testing.T) {
 func TestLevelMatrix(t *testing.T) {
 	text := "Marie Duval (marie.duval@example.com) met Alpine Trust in Paris on 2026-07-23 for €5,000."
 	entities := []Entity{
-		{Category: "entity_names", Canonical: "Alpine Trust"},
-		{Category: "person_names", Canonical: "Marie Duval"},
-		{Category: "location_names", Canonical: "Paris"},
+		{Category: CatEntityNames, Canonical: "Alpine Trust"},
+		{Category: CatPersonNames, Canonical: "Marie Duval"},
+		{Category: CatLocationNames, Canonical: "Paris"},
 	}
 	run := func(level Level) string {
 		res := runPipeline(t, PipelineInput{
@@ -219,7 +219,7 @@ func TestGridDocumentConsistency(t *testing.T) {
 	}
 	res := runPipeline(t, PipelineInput{
 		Documents: []Document{doc},
-		Entities:  []Entity{{Category: "person_names", Canonical: "Marie Duval"}},
+		Entities:  []Entity{{Category: CatPersonNames, Canonical: "Marie Duval"}},
 		Level:     LevelMedium,
 		Allowlist: NewEmptyAllowlist(),
 	})
@@ -253,8 +253,14 @@ func TestReportContents(t *testing.T) {
 	if rep.TotalReplacements != 1 || rep.ByCategory[CatEmail] != 1 {
 		t.Errorf("report totals wrong: %+v", rep)
 	}
+	if strings.Join(rep.DetectedCategories, ",") != CatEmail {
+		t.Errorf("detected categories = %v, want [%s]", rep.DetectedCategories, CatEmail)
+	}
 	if len(rep.Documents) != 1 || rep.Documents[0].Replacements != 1 {
 		t.Errorf("per-document report wrong: %+v", rep.Documents)
+	}
+	if strings.Join(rep.Documents[0].DetectedCategories, ",") != CatEmail {
+		t.Errorf("document detected categories = %v, want [%s]", rep.Documents[0].DetectedCategories, CatEmail)
 	}
 	// Ingestion warnings must flow into the report.
 	if len(rep.Documents[0].Warnings) != 1 {

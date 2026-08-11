@@ -143,6 +143,7 @@ func TestApplySettingsRoundTrip(t *testing.T) {
 		OllamaPort:  18434,
 		Model:       "custom:3b",
 		ContextSize: 16384,
+		Country:     engine.CountryLU,
 		UseAI:       true,
 	})
 	if err != nil {
@@ -160,7 +161,7 @@ func TestApplySettingsRoundTrip(t *testing.T) {
 	}
 
 	// Invalid context size is rejected with an actionable message.
-	if _, err := app.ApplySettings(Settings{Level: "soft", OllamaPort: 11434, ContextSize: -1}); err == nil {
+	if _, err := app.ApplySettings(Settings{Level: "soft", OllamaPort: 11434, ContextSize: -1, Country: engine.CountryLU}); err == nil {
 		t.Error("negative context size must be rejected")
 	}
 }

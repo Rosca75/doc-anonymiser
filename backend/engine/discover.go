@@ -272,9 +272,9 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		// Category priority: legal suffix beats title beats the default.
 		switch {
 		case r.hasSuffix:
-			g.category = "entity_names"
+			g.category = CatEntityNames
 		case r.hasTitle && g.category == "":
-			g.category = "person_names"
+			g.category = CatPersonNames
 		}
 		if r.hasSuffix || r.hasTitle {
 			g.qualifies = true
@@ -307,9 +307,9 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		// LLM classification (Phase 8b) refine it.
 		if g.category == "" {
 			if r.words >= 2 {
-				g.category = "person_names"
+				g.category = CatPersonNames
 			} else {
-				g.category = "entity_names"
+				g.category = CatEntityNames
 			}
 		}
 		// Allowlist veto LAST among the ORIGINAL rules (allowlist wins,

@@ -285,8 +285,12 @@ test("toggleCategory flips one switch and flags the selection as custom", () => 
 });
 
 test("selectionPresetName recognises each exact preset", () => {
+  resetState();
   for (const level of ["soft", "medium", "advanced"]) {
-    assert.equal(selectionPresetName(presetCategories(level)), level);
+    assert.equal(selectionPresetName({
+      ...presetCategories(level),
+      ...countryIDCategories(getState().documentCountry),
+    }), level);
   }
 });
 
@@ -591,6 +595,7 @@ test("setCategoryGroup ignores unknown keys and reports no-op runs (CR10)", () =
 
 test("a deselected group makes the selection Custom (CR10)", () => {
   resetState();
+  applyPreset("medium");
   assert.equal(selectionPresetName(getState().settings.categories), "medium");
   setCategoryGroup(EXTENDED_PII_CATEGORIES, false);
   assert.equal(selectionPresetName(getState().settings.categories), "custom");

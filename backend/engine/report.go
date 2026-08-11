@@ -45,6 +45,11 @@ type DocumentReport struct {
 	LLMDurationMS int64 `json:"llmDurationMs,omitempty"`
 	// Values lists what was replaced IN THIS DOCUMENT, most frequent first.
 	Values []ValueReport `json:"values,omitempty"`
+	// DetectedCategories lists the categories that actually produced a value in
+	// this document, sorted alphabetically. It is a set-shaped summary for the
+	// UI: "which kinds of thing did this file contain?" without making the
+	// frontend derive it again from ByCategory.
+	DetectedCategories []string `json:"detectedCategories,omitempty"`
 }
 
 // Report aggregates a whole pipeline run.
@@ -63,6 +68,9 @@ type Report struct {
 	Values     []ValueReport    `json:"values,omitempty"`
 	Documents  []DocumentReport `json:"documents"`
 	DurationMS int64            `json:"durationMs"`
+	// DetectedCategories is the run-level union of categories that actually
+	// replaced at least one value anywhere in the batch, sorted alphabetically.
+	DetectedCategories []string `json:"detectedCategories,omitempty"`
 	// Warnings are run-level notes (not tied to one document).
 	Warnings []string `json:"warnings,omitempty"`
 }
