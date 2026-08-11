@@ -136,11 +136,11 @@ func TestHallucinationFilterInPipeline(t *testing.T) {
 // TestLevelMatrix: the same fixture at soft/medium/advanced produces the
 // expected differing outputs (BUILD.md Phase 4 golden requirement).
 func TestLevelMatrix(t *testing.T) {
-	text := "Marie Duval (marie.duval@example.com) met Alpine Trust in Paris on 2026-07-23 for €5,000."
+	text := "Marie Duval (marie.duval@example.com) met Alpine Trust about Helios on 2026-07-23 for €5,000."
 	entities := []Entity{
 		{Category: CatEntityNames, Canonical: "Alpine Trust"},
 		{Category: CatPersonNames, Canonical: "Marie Duval"},
-		{Category: CatLocationNames, Canonical: "Paris"},
+		{Category: CatOtherNames, Canonical: "Helios"},
 	}
 	run := func(level Level) string {
 		res := runPipeline(t, PipelineInput{
@@ -154,21 +154,21 @@ func TestLevelMatrix(t *testing.T) {
 	}
 
 	soft := run(LevelSoft)
-	// Soft: hard PII + engagement entities; person names, dates,
-	// locations and amounts stay.
-	if soft != "Marie Duval ([EMAIL_1]) met [ENTITY_1] in Paris on 2026-07-23 for €5,000." {
+	// Soft: hard PII + engagement entities; person names, other names, dates
+	// and amounts stay.
+	if soft != "Marie Duval ([EMAIL_1]) met [ENTITY_1] about Helios on 2026-07-23 for €5,000." {
 		t.Errorf("soft output unexpected: %q", soft)
 	}
 
 	medium := run(LevelMedium)
-	// Medium: + person names. Dates and locations kept.
-	if medium != "[PERSON_1] ([EMAIL_1]) met [ENTITY_1] in Paris on 2026-07-23 for €5,000." {
+	// Medium: + person names. Other names, dates and amounts kept.
+	if medium != "[PERSON_1] ([EMAIL_1]) met [ENTITY_1] about Helios on 2026-07-23 for €5,000." {
 		t.Errorf("medium output unexpected: %q", medium)
 	}
 
 	advanced := run(LevelAdvanced)
-	// Advanced: + dates, locations, amounts.
-	if advanced != "[PERSON_1] ([EMAIL_1]) met [ENTITY_1] in [LOCATION_1] on [DATE_1] for [AMOUNT_1]." {
+	// Advanced: + other names, dates, amounts.
+	if advanced != "[PERSON_1] ([EMAIL_1]) met [ENTITY_1] about [OTHER_1] on [DATE_1] for [AMOUNT_1]." {
 		t.Errorf("advanced output unexpected: %q", advanced)
 	}
 }

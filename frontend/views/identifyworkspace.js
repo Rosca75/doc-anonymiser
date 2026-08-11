@@ -39,7 +39,7 @@ import {
   setEntityVariants, setEntityVariantError, addManualVariant,
   addCandidates, acceptCandidate, rejectCandidate,
   acceptAllShown, rejectAllShown, moveVariant,
-  addPattern, removePattern,
+  addPattern, removePattern, NAME_CATEGORIES,
 } from "../state.js";
 import { pendingExpansions } from "../entitymodel.js";
 import {
@@ -53,14 +53,15 @@ import { notify, wireNotice } from "../toast.js";
 import { keepScrollPosition } from "../scroll.js";
 import { CARDS, WORKSPACE, VALUES, CATEGORY_LABELS } from "../copy.js";
 
-// The reviewable entity categories (CLAUDE.md §5) with display labels. These
-// are the categories a user may ADD a value to by hand; the PII categories are
-// detected, not listed.
-export const CATEGORIES = [
-  ["entity_names", "Entities"],
-  ["project_names", "Projects"],
-  ["person_names", "Persons"],
-];
+// The categories a user may ADD a value to by hand, with their display labels.
+// It is ALL of them, derived from the store rather than listed here: every
+// category gates manually typed values as well as detected ones, so a category
+// missing from this dropdown is a value the user cannot declare at all, even
+// though the switch for it is right there in the rail.
+//
+// The PII categories are absent because they are patterns, not values: there is
+// nothing to type into "email addresses" that a regex does not already find.
+export const CATEGORIES = NAME_CATEGORIES.map((c) => [c, CATEGORY_LABELS[c][0]]);
 
 // WORKSPACE_TABS is the tab set, in order.
 export const WORKSPACE_TABS = ["suggestions", "values", "allow", "patterns"];

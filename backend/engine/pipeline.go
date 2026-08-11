@@ -157,17 +157,24 @@ func detectedCategoriesFromCounts(counts map[string]int) []string {
 	return out
 }
 
-// Entity category identifiers live beside the PII constants so the category
-// set is compiler-checked rather than held together by repeated string
-// literals. These identifiers are engine contracts; labels stay on the
-// frontend.
+// Entity category identifiers. They are engine CONTRACTS: they appear in
+// session files and in the exported re-identification key, so they are never
+// renamed to follow a display label. The labels live on the frontend
+// (copy.js CATEGORY_LABELS), cross-checked by ../category_parity_test.go.
+//
+// Every one of them is reachable by manual entry and by the local AI. The
+// annotated ones are additionally reachable OFFLINE, by a heuristic detector;
+// the rest need the AI or a value the user types, and the frontend label says
+// so.
 const (
-	CatEntityNames       = "entity_names"
-	CatProjectNames      = "project_names"
-	CatPersonNames       = "person_names"
-	CatCustomPatterns    = "custom_patterns"
-	CatOrganisationNames = "organisation_names"
-	CatLocationNames     = "location_names"
+	CatEntityNames     = "entity_names"     // + heuristic: legal-suffix runs
+	CatProjectNames    = "project_names"    // + heuristic: codes beside a project cue
+	CatProductNames    = "product_names"    // + heuristic: trademark mark, product head noun
+	CatBrandNames      = "brand_names"      // AI or manual: a brand is world knowledge
+	CatPersonNames     = "person_names"     // + heuristic: title cues, multi-word runs
+	CatIdentifierNames = "identifier_names" // + heuristic: reference and contract codes
+	CatOtherNames      = "other_names"      // AI or manual: "a name, and none of the above"
+	CatCustomPatterns  = "custom_patterns"  // the user's own regexes
 )
 
 // CategorySelection is the granular per-category switch set the pipeline
@@ -189,43 +196,43 @@ var AllPIICategories = []string{
 	CatDatabaseURI, CatDESteuerID, CatESNIF,
 }
 
-// AllEntityCategories lists the entity categories in a stable order.
-// organisation_names and location_names have no manual-entry UI, but LLM
-// proposals use them, so they are selectable switches too.
-// entity_names (BUILD-06) is the merge of the former client_names and
-// internal_names: the distinction cost the user a decision at every value
-// they added, and the pipeline treated the two identically anyway.
+// AllEntityCategories lists the entity categories in a stable order, mirrored
+// by frontend/state.js and checked by ../category_parity_test.go.
 var AllEntityCategories = []string{
-	CatEntityNames, CatProjectNames, CatPersonNames,
-	CatCustomPatterns, CatOrganisationNames, CatLocationNames,
+	CatEntityNames, CatProjectNames, CatProductNames, CatBrandNames,
+	CatPersonNames, CatIdentifierNames, CatOtherNames, CatCustomPatterns,
 }
 
-// PresetSelection reproduces the exact v1 level semantics (CLAUDE.md §5)
-// as a CategorySelection:
+// PresetSelection fills a CategorySelection from a level (CLAUDE.md §5):
 //
-//	soft     = hard PII + entity/project names + custom patterns
-//	medium   = soft + person names (the default)
-//	advanced = medium + amounts, dates, organisations, locations
+//	soft     = hard PII + entity, project and identifier names + custom patterns
+//	medium   = soft + person, product and brand names (the default)
+//	advanced = medium + amounts, dates and other names
+//
+// The tiers are ordered by how much ordinary text each risks catching.
+// identifier_names is code-shaped and near-PII, so it sits with the hard group.
+// product_names and brand_names can catch a PUBLIC product name, which is a
+// per-document allowlist decision rather than a mistake, so they wait for
+// medium. other_names is the noisiest by definition, so it waits for advanced.
 func PresetSelection(level Level) CategorySelection {
 	sel := CategorySelection{
 		CatEmail: true, CatURL: true, CatIBAN: true, CatVAT: true,
 		CatMatricule: true, CatPhone: true,
-		// BUILD-03 Phase B: extended recognizers are all hard PII and
-		// fire at every level, same as the v1 hard-PII group.
 		CatCreditCard: true, CatNHS: true, CatIPAddress: true,
 		CatMACAddress: true, CatCrypto: true, CatDatabaseURI: true,
 		CatDESteuerID: true, CatESNIF: true,
-		CatEntityNames: true, CatProjectNames: true,
+		CatEntityNames: true, CatProjectNames: true, CatIdentifierNames: true,
 		CatCustomPatterns: true,
 	}
 	if level == LevelMedium || level == LevelAdvanced {
 		sel[CatPersonNames] = true
+		sel[CatProductNames] = true
+		sel[CatBrandNames] = true
 	}
 	if level == LevelAdvanced {
 		sel[CatAmount] = true
 		sel[CatDate] = true
-		sel[CatOrganisationNames] = true
-		sel[CatLocationNames] = true
+		sel[CatOtherNames] = true
 	}
 	return sel
 }

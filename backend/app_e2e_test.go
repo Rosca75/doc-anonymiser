@@ -164,12 +164,23 @@ func TestResultsCarryNoSourceCopy(t *testing.T) {
 
 // --- Reported issue 5: the entity-category merge -------------------------
 
-// TestEntityCategoryMergeIsComplete guards the BUILD-06 merge of client_names
-// and internal_names into entity_names. A half-done merge is the dangerous
-// shape: the pipeline silently DROPS an entity whose category is not in the
-// selection, so a value the user listed would simply never be replaced.
-func TestEntityCategoryMergeIsComplete(t *testing.T) {
-	for _, retired := range []string{"client_names", "internal_names"} {
+// TestRetiredCategoriesAreFullyGone guards every category identifier this
+// application has stopped using.
+//
+// A half-done retirement is the dangerous shape: the pipeline silently DROPS an
+// entity whose category is not in the selection, so a value the user listed
+// would simply never be replaced, and a placeholder label left in the registry
+// would mint a shape nothing else knows about.
+//
+//	client_names, internal_names   merged into entity_names
+//	organisation_names             merged into entity_names; it had no
+//	                               detector and no prompt, so it was dead
+//	location_names                 retired outright, for the same reason
+func TestRetiredCategoriesAreFullyGone(t *testing.T) {
+	retiredCategories := []string{
+		"client_names", "internal_names", "organisation_names", "location_names",
+	}
+	for _, retired := range retiredCategories {
 		for _, cat := range engine.AllEntityCategories {
 			if cat == retired {
 				t.Errorf("%s is still an engine category", retired)
@@ -210,23 +221,26 @@ func TestEntityCategoryMergeIsComplete(t *testing.T) {
 	if !strings.Contains(merged, "[ENTITY_1]") {
 		t.Errorf("an entity_names value must become [ENTITY_n], got %q", merged)
 	}
-	for _, gone := range []string{"[CLIENT_", "[INTERNAL_"} {
+	for _, gone := range []string{"[CLIENT_", "[INTERNAL_", "[ORG_", "[LOCATION_"} {
 		if strings.Contains(merged, gone) {
 			t.Errorf("the retired placeholder %s] is still produced: %q", gone, merged)
 		}
 	}
 }
 
-// TestDiscoveryPromptsUseTheMergedCategory: the model is told the category
-// keys by name, so a prompt left on the old keys silently produces proposals
-// the engine then drops as unknown categories.
-func TestDiscoveryPromptsUseTheMergedCategory(t *testing.T) {
+// TestDiscoveryPromptsNameNoRetiredCategory: the model is told the category
+// keys by name, so a prompt left on an old key silently produces proposals the
+// engine then drops as unknown categories.
+func TestDiscoveryPromptsNameNoRetiredCategory(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join("ollama", "client.go"))
 	if err != nil {
 		t.Fatalf("could not read the Ollama client: %v", err)
 	}
 	text := string(source)
-	for _, retired := range []string{`"client_names"`, `"internal_names"`, "[CLIENT_1]"} {
+	for _, retired := range []string{
+		`"client_names"`, `"internal_names"`, `"organisation_names"`, `"location_names"`,
+		"[CLIENT_1]",
+	} {
 		if strings.Contains(text, retired) {
 			t.Errorf("backend/ollama/client.go still mentions %s; the prompts and the engine must agree on the category keys", retired)
 		}

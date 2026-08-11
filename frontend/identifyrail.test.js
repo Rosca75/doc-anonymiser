@@ -16,8 +16,10 @@ import {
   CATEGORY_GROUPS, RAIL_SECTIONS, PRESETS, confidenceEffect, llmGateTooltip,
   llmDisabledTooltip, railBody,
 } from "./views/identifyrail.js";
-import { CONFIGURE, RAIL } from "./copy.js";
-import { ALL_CATEGORIES, resetState, getState, setState, setUseAI } from "./state.js";
+import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
+import {
+  ALL_CATEGORIES, NAME_CATEGORIES, resetState, getState, setState, setUseAI,
+} from "./state.js";
 import { textOf, all, one, exists } from "./testhtml.js";
 
 // --- CR9: every category is reachable from some group ---------------------
@@ -233,4 +235,35 @@ test("the Local AI fields are disabled while the route is off", () => {
   // The port is never gated: it is how a user FIXES a connection, so locking
   // it would lock them out of fixing the thing the gate complains about.
   assert.ok(!("disabled" in one(off, "#ollama-port").attrs));
+});
+
+// --- The trigger grouping (BUILD-06 Phase 6) -------------------------------
+
+test("the detected group holds exactly what a detector can emit", () => {
+  // The group is named "Auto detected values", so its membership is a claim.
+  // custom_patterns is a regex the user WROTE, which is declarative: leaving it
+  // here is the mislabelling the rename exists to fix.
+  const detected = CATEGORY_GROUPS.find(([title]) => title === CONFIGURE.groupDetected);
+  assert.ok(detected, "there must be a detected-values group");
+  assert.deepEqual(detected[1], NAME_CATEGORIES);
+  assert.ok(!detected[1].includes("custom_patterns"),
+    "a regex the user wrote is declared, not detected");
+});
+
+test("the user's own patterns are a group of their own", () => {
+  const declared = CATEGORY_GROUPS.find(([title]) => title === CONFIGURE.groupDeclared);
+  assert.ok(declared, "custom_patterns needs a group that says what it is");
+  assert.deepEqual(declared[1], ["custom_patterns"]);
+});
+
+test("a category only a detection route or manual entry can produce says so", () => {
+  // The switch is NEVER disabled for these: a category gates manually typed
+  // values too, so disabling brand_names with Ollama absent would silently stop
+  // replacing a brand the user typed by hand. The honest signal is the label's
+  // second element, and this turns that comment into something enforced.
+  for (const category of ["brand_names", "other_names"]) {
+    const [, description] = CATEGORY_LABELS[category];
+    assert.match(description, /AI|add(ed)? by you/i,
+      `${category} cannot be found offline, so its description must say where it comes from`);
+  }
 });

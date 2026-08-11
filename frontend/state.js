@@ -224,34 +224,44 @@ export const EXTENDED_PII_CATEGORIES = [
   "crypto", "database_uri", "de_steuer_id", "es_nif",
 ];
 export const ADVANCED_PII_CATEGORIES = ["amount", "date"];
-// entity_names (BUILD-06) is the merge of the former client_names and
-// internal_names. Mirrors engine.AllEntityCategories; the pairing is enforced
-// by ../category_parity_test.go.
-export const NAME_CATEGORIES = ["entity_names", "project_names", "person_names"];
-export const ADVANCED_ENTITY_CATEGORIES = ["organisation_names", "location_names"];
+// The categories a DETECTOR or a manual entry can produce, split by the preset
+// tier that first switches them on. Together they mirror
+// engine.AllEntityCategories, enforced by ../category_parity_test.go.
+export const SOFT_NAME_CATEGORIES = ["entity_names", "project_names", "identifier_names"];
+export const MEDIUM_NAME_CATEGORIES = ["person_names", "product_names", "brand_names"];
+export const ADVANCED_NAME_CATEGORIES = ["other_names"];
+export const NAME_CATEGORIES = [
+  ...SOFT_NAME_CATEGORIES, ...MEDIUM_NAME_CATEGORIES, ...ADVANCED_NAME_CATEGORIES,
+];
+// custom_patterns is the user's own regex. It is declarative rather than
+// detected, which is why it sits on its own here and in its own rail group.
+export const DECLARED_CATEGORIES = ["custom_patterns"];
 export const ALL_CATEGORIES = [
   ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES, ...ADVANCED_PII_CATEGORIES,
-  ...NAME_CATEGORIES, "custom_patterns", ...ADVANCED_ENTITY_CATEGORIES,
+  ...NAME_CATEGORIES, ...DECLARED_CATEGORIES,
 ];
 
 /**
- * presetCategories(level) reproduces engine.PresetSelection exactly:
- * soft = hard PII + entity/project names + custom patterns;
- * medium = soft + persons; advanced = everything.
+ * presetCategories(level) mirrors engine.PresetSelection exactly:
+ *
+ *   soft     hard and extended PII + entity, project and identifier names
+ *            + custom patterns
+ *   medium   soft + person, product and brand names (the default)
+ *   advanced medium + amounts, dates and other names
+ *
+ * @param {string} level "soft", "medium" or "advanced"
+ * @returns {object} every category in ALL_CATEGORIES mapped to on/off
  */
 export function presetCategories(level) {
   const sel = {};
   for (const c of ALL_CATEGORIES) sel[c] = false;
-  for (const c of HARD_PII_CATEGORIES) sel[c] = true;
-  // Extended recognizers are hard PII at every level, matching the Go
-  // PresetSelection exactly (BUILD-04 CR9).
-  for (const c of EXTENDED_PII_CATEGORIES) sel[c] = true;
-  sel.entity_names = sel.project_names = true;
-  sel.custom_patterns = true;
-  if (level === "medium" || level === "advanced") sel.person_names = true;
-  if (level === "advanced") {
-    for (const c of [...ADVANCED_PII_CATEGORIES, ...ADVANCED_ENTITY_CATEGORIES]) sel[c] = true;
-  }
+  const on = [
+    ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES,
+    ...SOFT_NAME_CATEGORIES, ...DECLARED_CATEGORIES,
+  ];
+  if (level === "medium" || level === "advanced") on.push(...MEDIUM_NAME_CATEGORIES);
+  if (level === "advanced") on.push(...ADVANCED_PII_CATEGORIES, ...ADVANCED_NAME_CATEGORIES);
+  for (const c of on) sel[c] = true;
   return sel;
 }
 

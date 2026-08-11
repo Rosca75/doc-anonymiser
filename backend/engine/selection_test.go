@@ -16,16 +16,20 @@ const selectionFixture = `Contact info.desk@example.com or +352 621 000 111.
 Site https://example.com/x holds IBAN LU28 0019 4006 4475 0000 and VAT LU12345678.
 Matricule 1893120105732 was billed EUR 12,500 on 2026-01-15.
 Client Alpine Trust S.A. runs Project Borealis with Paul Stone (internal) and Marie Curie.
-Office in Metropolis for Acme Corp. Code PRJ-42 applies.`
+The Meridian Suite platform ships with Helios. Code PRJ-42 applies.
+Reference INV-88213 is open.`
 
-// selectionEntities declares one entity per entity category.
+// selectionEntities declares one entity per DECLARABLE entity category.
+// identifier_names and other_names are absent on purpose: the first is what the
+// code detector emits and the fixture carries INV-88213 for it, and the second
+// is defined by exclusion, so there is nothing characteristic to declare.
 var selectionEntities = []Entity{
 	{Category: CatEntityNames, Canonical: "Alpine Trust S.A."},
 	{Category: CatProjectNames, Canonical: "Project Borealis"},
 	{Category: CatEntityNames, Canonical: "Paul Stone"},
 	{Category: CatPersonNames, Canonical: "Marie Curie"},
-	{Category: CatOrganisationNames, Canonical: "Acme Corp"},
-	{Category: CatLocationNames, Canonical: "Metropolis"},
+	{Category: CatProductNames, Canonical: "Meridian Suite"},
+	{Category: CatBrandNames, Canonical: "Helios"},
 }
 
 var selectionPatterns = []CustomPattern{{Expr: `PRJ-[0-9]+`}}
@@ -68,8 +72,8 @@ func TestSingleCategorySelection(t *testing.T) {
 		{CatProjectNames, "Project Borealis"},
 		{CatEntityNames, "Paul Stone"},
 		{CatPersonNames, "Marie Curie"},
-		{CatOrganisationNames, "Acme Corp"},
-		{CatLocationNames, "Metropolis"},
+		{CatProductNames, "Meridian Suite"},
+		{CatBrandNames, "Helios"},
 		{CatCustomPatterns, "PRJ-42"},
 	}
 	// Known single-category cross-matches, documented, not bugs: a
@@ -144,10 +148,11 @@ func TestPresetEquivalence(t *testing.T) {
 func TestMixedSelection(t *testing.T) {
 	sel := PresetSelection(LevelMedium)
 	sel[CatEmail] = false
-	sel[CatLocationNames] = true // a custom mix: medium plus locations
-
+	// product_names is ON at medium, and the point of the case below: the
+	// allowlist has to win over an ENABLED category, not merely over a
+	// disabled one, which proves nothing.
 	allow := NewEmptyAllowlist()
-	allow.Add("Metropolis") // allowlisted although location_names is on
+	allow.Add("Meridian Suite")
 
 	res, err := Run(context.Background(), PipelineInput{
 		Documents:  []Document{{Name: "f.txt", Format: FormatTXT, Markdown: selectionFixture}},
@@ -169,7 +174,7 @@ func TestMixedSelection(t *testing.T) {
 	if strings.Contains(out, "Marie Curie") {
 		t.Errorf("persons on: Marie Curie must be replaced, output: %s", out)
 	}
-	if !strings.Contains(out, "Metropolis") {
-		t.Errorf("allowlist must win over the enabled location_names selection, output: %s", out)
+	if !strings.Contains(out, "Meridian Suite") {
+		t.Errorf("allowlist must win over the enabled product_names selection, output: %s", out)
 	}
 }

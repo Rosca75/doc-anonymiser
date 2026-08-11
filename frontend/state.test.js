@@ -254,20 +254,31 @@ test("the import divider state is gone, not merely unused (decision 6)", async (
 });
 
 test("applyPreset fills the expected switches per level", () => {
+  // The tiers are ordered by how much ordinary text each risks catching, and
+  // this walks all three. It mirrors engine.PresetSelection; the pairing itself
+  // is enforced by ../category_parity_test.go.
   resetState();
   applyPreset("soft");
   let c = getState().settings.categories;
   assert.equal(c.email, true);
+  assert.equal(c.identifier_names, true, "reference codes are near-PII, so soft has them");
   assert.equal(c.person_names, false, "soft leaves persons off");
+  assert.equal(c.product_names, false);
   assert.equal(c.amount, false);
+
   applyPreset("medium");
   c = getState().settings.categories;
   assert.equal(c.person_names, true);
+  assert.equal(c.product_names, true, "products and brands join at medium");
+  assert.equal(c.brand_names, true);
+  assert.equal(c.other_names, false, "the noisiest category waits for advanced");
   assert.equal(c.date, false, "medium leaves dates off");
+
   applyPreset("advanced");
   c = getState().settings.categories;
   assert.equal(c.date, true);
-  assert.equal(c.organisation_names, true);
+  assert.equal(c.amount, true);
+  assert.equal(c.other_names, true);
   assert.equal(getState().settings.level, "advanced");
 });
 

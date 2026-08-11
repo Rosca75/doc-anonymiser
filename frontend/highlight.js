@@ -18,9 +18,17 @@ const PLACEHOLDER_RE = /\[([A-Z][A-Z0-9_]*)_(\d+)\]/g;
 // Label → colour family. PII labels share one tint, entity labels another,
 // custom patterns a third (see style.css mark.* classes).
 const PII_LABELS = new Set(["EMAIL", "PHONE", "IBAN", "VAT", "NATIONAL_ID", "URL", "AMOUNT", "DATE"]);
-const ENTITY_LABELS = new Set(["ENTITY", "PROJECT", "PERSON", "ORG", "LOCATION"]);
+const ENTITY_LABELS = new Set([
+  "ENTITY", "PROJECT", "PRODUCT", "BRAND", "PERSON", "ID", "OTHER",
+]);
 
-/** markClass(label) picks the CSS class for one placeholder label. */
+/**
+ * markClass(label) picks the CSS class for one placeholder label.
+ *
+ * A label missing from both sets falls through to "custom", so an entity label
+ * left out of ENTITY_LABELS renders in the wrong tint with nothing failing:
+ * highlight.test.js asserts every label the registry can produce.
+ */
 export function markClass(label) {
   if (PII_LABELS.has(label)) return "pii";
   if (ENTITY_LABELS.has(label)) return "entity";

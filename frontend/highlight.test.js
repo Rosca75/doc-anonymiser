@@ -38,6 +38,15 @@ test("markClass covers the three families", () => {
   assert.equal(markClass("FUTURE_LABEL"), "custom");
 });
 
+test("every entity placeholder label gets the entity tint", () => {
+  // An unknown label falls through to "custom", so a label left out of
+  // ENTITY_LABELS renders in the wrong tint with nothing failing. The list here
+  // is the placeholderLabels table in backend/engine/registry.go, entity half.
+  for (const label of ["ENTITY", "PROJECT", "PRODUCT", "BRAND", "PERSON", "ID", "OTHER"]) {
+    assert.equal(markClass(label), "entity", `${label} must read as an entity`);
+  }
+});
+
 // --- BUILD-02 Phase 10b: mapping-aware marks ---------------------------------
 
 test("mapping adds data attributes and the original in the title", () => {

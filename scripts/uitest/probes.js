@@ -179,7 +179,7 @@
       docName: DOC_NAME,
       placeholderPattern: PLACEHOLDER_RE.source,
       tooltipOriginal: "Marie Duval",
-      categoryCount: 22,
+      categoryCount: 24,
     }),
 
     /**

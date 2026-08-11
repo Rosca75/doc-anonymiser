@@ -25,12 +25,14 @@ import (
 // shape the tests and the UI were never taught about.
 var placeholderLabels = map[string]string{
 	// Entity categories (CLAUDE.md §5).
-	CatEntityNames:       "ENTITY",
-	CatProjectNames:      "PROJECT",
-	CatPersonNames:       "PERSON",
-	CatCustomPatterns:    "CUSTOM",
-	CatOrganisationNames: "ORG",
-	CatLocationNames:     "LOCATION",
+	CatEntityNames:     "ENTITY",
+	CatProjectNames:    "PROJECT",
+	CatProductNames:    "PRODUCT",
+	CatBrandNames:      "BRAND",
+	CatPersonNames:     "PERSON",
+	CatIdentifierNames: "ID",
+	CatOtherNames:      "OTHER",
+	CatCustomPatterns:  "CUSTOM",
 	// PII categories (pass 1).
 	CatEmail:     "EMAIL",
 	CatPhone:     "PHONE",

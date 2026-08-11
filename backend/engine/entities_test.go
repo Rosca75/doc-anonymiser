@@ -199,3 +199,101 @@ func TestEntityReplacementEndToEnd(t *testing.T) {
 		t.Errorf("got %q, want %q", out, want)
 	}
 }
+
+// --- Variant expansion classes (BUILD-06 Phase 2) --------------------------
+
+func TestVariantExpansionClassPerCategory(t *testing.T) {
+	// Three classes, one per row: a category gets person-style expansion,
+	// organisation-style, or none at all. Asserted together because the bug this
+	// guards against is a category quietly moving between them.
+	cases := []struct {
+		name     string
+		entity   Entity
+		want     []string
+		wantOnly bool // the canonical is the ONLY variant
+	}{
+		{
+			name:   "a person expands into initials and surname",
+			entity: Entity{Category: CatPersonNames, Canonical: "Marie Duval"},
+			want:   []string{"M. Duval", "Duval", "Marie"},
+		},
+		{
+			name:   "an organisation loses its legal suffix",
+			entity: Entity{Category: CatEntityNames, Canonical: "Alpine Trust S.A."},
+			want:   []string{"Alpine Trust"},
+		},
+		{
+			name:   "a product is an organisation-style name",
+			entity: Entity{Category: CatProductNames, Canonical: "Meridian Suite Ltd"},
+			want:   []string{"Meridian Suite"},
+		},
+		{
+			// Stripping a token that resembles a legal suffix off a code would
+			// invent a variant matching a DIFFERENT code.
+			name:     "a reference code is expanded literally",
+			entity:   Entity{Category: CatIdentifierNames, Canonical: "PRJ-4471-SE"},
+			wantOnly: true,
+		},
+		{
+			// Nothing is known about the shape of a value filed under "other",
+			// so nothing can be inferred from it.
+			name:     "an other name is expanded literally",
+			entity:   Entity{Category: CatOtherNames, Canonical: "Helios Ltd"},
+			wantOnly: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ExpandVariants(tc.entity)
+			if tc.wantOnly {
+				if len(got) != 1 || got[0] != tc.entity.Canonical {
+					t.Fatalf("want the canonical alone, got %v", got)
+				}
+				return
+			}
+			for _, want := range tc.want {
+				if !containsString(got, want) {
+					t.Errorf("missing variant %q in %v", want, got)
+				}
+			}
+		})
+	}
+}
+
+func TestLiteralOnlyCategoriesStillTakeManualVariants(t *testing.T) {
+	// No AUTOMATIC expansion is not the same as no variants: a spelling the user
+	// typed is an explicit instruction, and the automatic rules are what cannot
+	// be trusted on a code.
+	got := ExpandVariants(Entity{
+		Category:       CatIdentifierNames,
+		Canonical:      "PRJ-4471",
+		ManualVariants: []string{"PRJ 4471"},
+	})
+	if !containsString(got, "PRJ 4471") {
+		t.Errorf("a manual variant must survive on a literal-only category, got %v", got)
+	}
+}
+
+func TestOneLegalSuffixTableServesBothDetectionAndExpansion(t *testing.T) {
+	// Two tables meant smart detection could propose "Bidco SCSp" from a form
+	// only IT knew, and the expansion could then not produce "Bidco".
+	proposed := SmartDetectWithOptions("Bidco SCSp signed the deed.\n",
+		NewEmptyAllowlist(), SmartDetectOptions{})
+	if len(proposed) == 0 || proposed[0].Text != "Bidco SCSp" {
+		t.Fatalf("detection should propose the suffixed name, got %+v", proposed)
+	}
+	expanded := ExpandVariants(Entity{Category: CatEntityNames, Canonical: proposed[0].Text})
+	if !containsString(expanded, "Bidco") {
+		t.Errorf("expansion must strip the same suffix detection recognised, got %v", expanded)
+	}
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}

@@ -172,14 +172,19 @@ var smartLeadingStopwords = map[string]bool{
 	"Ce": true, "Cette": true, "Ces": true, "Nos": true, "Notre": true,
 }
 
-// smartLegalSuffixes is the Luxembourg-aware legal-form gazetteer
-// (detector 2), matched longest-first against the text following a run.
-// Table-driven; extend freely.
-var smartLegalSuffixes = []string{
-	"S.à r.l.", "S.à.r.l.", "S.àr.l.", "Sàrl", "SARL",
-	"S.C.A.", "S.C.S.", "SCSp", "S.p.A.", "S.A.", "SA", "ASBL", "SE",
-	"GmbH", "AG", "N.V.", "B.V.", "Ltd", "LLC", "plc", "SAS", "Inc.", "Inc",
+// productHeadNouns mark a capitalised run as a PRODUCT rather than a company:
+// "Meridian Platform", "Helios Suite". The noun may be the run's own last word
+// or the word immediately after it.
+var productHeadNouns = map[string]bool{
+	"platform": true, "plateforme": true, "suite": true, "edition": true,
+	"sdk": true, "toolkit": true, "framework": true, "engine": true,
+	"module": true, "app": true, "application": true, "software": true,
+	"logiciel": true, "solution": true, "portal": true, "portail": true,
 }
+
+// trademarkMarks follow a product name and almost nothing else. A mark is the
+// highest-precision offline signal in this file and costs one string compare.
+var trademarkMarks = []string{"\u2122", "\u00ae", "\u2120"}
 
 // contextRadius is the snippet half-width around an occurrence (runes).
 const contextRadius = 60
@@ -194,20 +199,9 @@ type smartRun struct {
 	sentenceStart bool // the run begins a sentence
 	hasSuffix     bool // a legal suffix follows (and is included)
 	hasTitle      bool // a person-title cue opened the run
+	hasTrademark  bool // a trademark mark follows the run
+	hasProduct    bool // a product head noun is in or beside the run
 	words         int  // significant (non-particle) word count
-}
-
-// SmartDetect extracts entity candidates from text using the four
-// detectors above, then applies the allowlist veto. Deterministic: the
-// result is sorted by descending count, then first appearance.
-//
-// This is the LEGACY signature, kept so every existing caller and test
-// compiles unchanged (BUILD-04 CR13). It applies no tuning at all, which
-// is exactly the behaviour it had before the options existed. New callers
-// that want the application's stricter defaults use
-// SmartDetectWithOptions(text, allow, DefaultSmartDetectOptions()).
-func SmartDetect(text string, allow *Allowlist) []Candidate {
-	return SmartDetectWithOptions(text, allow, SmartDetectOptions{})
 }
 
 // SmartDetectWithOptions is SmartDetect with the BUILD-04 CR13 tuning
@@ -269,14 +263,20 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		if !r.sentenceStart {
 			g.sentenceOnly = false
 		}
-		// Category priority: legal suffix beats title beats the default.
+		// Category priority, strongest cue first: a legal form names a
+		// company, a trademark names a product, a title names a person, a
+		// product head noun is the weakest of the four and only fills a gap.
 		switch {
 		case r.hasSuffix:
 			g.category = CatEntityNames
+		case r.hasTrademark:
+			g.category = CatProductNames
 		case r.hasTitle && g.category == "":
 			g.category = CatPersonNames
+		case r.hasProduct && g.category == "":
+			g.category = CatProductNames
 		}
-		if r.hasSuffix || r.hasTitle {
+		if r.hasSuffix || r.hasTitle || r.hasTrademark {
 			g.qualifies = true
 		}
 		if len(g.contexts) < maxContexts {
@@ -335,15 +335,40 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		})
 	}
 
-	// Deterministic ranking: frequent candidates first, ties by first
-	// appearance in the document.
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Count != out[j].Count {
-			return out[i].Count > out[j].Count
+	sortCandidates(out, func(text string) int { return groups[text].firstStart })
+
+	// The code detector is a second scanner over the same text (codes.go). It
+	// runs here rather than at the call site so every caller of the offline
+	// route gets the same set, and so the tuning options apply to both scanners
+	// through one filter.
+	codes, codeStarts := detectCodes(text, allow)
+	for _, c := range codes {
+		if keepCandidate(c.Text, smartRun{words: 1}, c.Count, c.Confidence, opts) {
+			out = append(out, c)
 		}
-		return groups[out[i].Text].firstStart < groups[out[j].Text].firstStart
+	}
+	sortCandidates(out, func(text string) int {
+		if g, ok := groups[text]; ok {
+			return g.firstStart
+		}
+		return codeStarts[text]
 	})
 	return out, nil
+}
+
+// sortCandidates imposes the review list's deterministic ranking: the most
+// frequent value first, ties broken by where it first appears in the document.
+// Shared by every offline detector so two lists cannot be ordered differently.
+//
+// @param candidates the list, sorted in place
+// @param firstStart the byte offset of a value's first occurrence
+func sortCandidates(candidates []Candidate, firstStart func(text string) int) {
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Count != candidates[j].Count {
+			return candidates[i].Count > candidates[j].Count
+		}
+		return firstStart(candidates[i].Text) < firstStart(candidates[j].Text)
+	})
 }
 
 // firstRunFor returns the first occurrence of a run text (for word-count
@@ -357,17 +382,10 @@ func firstRunFor(runs []smartRun, text string) smartRun {
 	return smartRun{}
 }
 
-// extractRuns scans the text once and returns every capitalised-run
-// occurrence with its metadata.
-func extractRuns(text string) []smartRun {
-	runs, _ := extractRunsContext(context.Background(), text)
-	return runs
-}
-
-// extractRunsContext is extractRuns that can be interrupted. The token walk
-// is the longest uninterruptible stretch of the offline pass, so this is
-// where Cancel has to be able to land: without it, pressing Cancel on a large
-// document did nothing at all until the whole file was done.
+// extractRunsContext scans the text once and returns every capitalised-run
+// occurrence with its metadata. The token walk is the longest uninterruptible
+// stretch of the offline pass, so it is where cancellation has to be able to
+// land: on a large document nothing else would notice for minutes.
 func extractRunsContext(ctx context.Context, text string) ([]smartRun, error) {
 	tokens := tokenize(text)
 	if err := ctx.Err(); err != nil {
@@ -473,7 +491,7 @@ func extractRunsContext(ctx context.Context, text string) ([]smartRun, error) {
 		//      "Bidco Sàrl": GmbH/Sàrl are capitalised words), or
 		//  (b) the suffix follows the run un-absorbed ("Alpine Trust
 		//      S.A.": single dotted letters never join runs).
-		for _, suffix := range smartLegalSuffixes {
+		for _, suffix := range legalSuffixes {
 			if strings.HasSuffix(r.text, " "+suffix) {
 				r.hasSuffix = true
 				break
@@ -483,7 +501,7 @@ func extractRunsContext(ctx context.Context, text string) ([]smartRun, error) {
 			rest := text[r.end:]
 			trimmed := strings.TrimLeft(rest, " ")
 			pad := len(rest) - len(trimmed)
-			for _, suffix := range smartLegalSuffixes {
+			for _, suffix := range legalSuffixes {
 				if strings.HasPrefix(trimmed, suffix) && suffixBoundaryOK(trimmed, suffix) {
 					r.end = r.end + pad + len(suffix)
 					r.text = text[r.start:r.end]
@@ -492,6 +510,13 @@ func extractRunsContext(ctx context.Context, text string) ([]smartRun, error) {
 				}
 			}
 		}
+
+		// Detector 3: product. A trademark mark is nearly free and nearly
+		// certain; a head noun is weaker and says only "this reads like a
+		// product". Everything else about a product name is world knowledge,
+		// which is what the AI route is for, and the frontend label says so.
+		r.hasTrademark = followedByTrademark(text, r.end)
+		r.hasProduct = r.hasTrademark || hasProductHeadNoun(text, r)
 
 		// Very short candidates are noise ("Al", "Le"), and a run that IS
 		// a bare legal form ("GmbH" discussed as a concept) is not a name.
@@ -525,7 +550,7 @@ func extractRunsContext(ctx context.Context, text string) ([]smartRun, error) {
 // isBareSuffix reports whether the whole run text is just a legal form
 // from the gazetteer (never a candidate on its own).
 func isBareSuffix(s string) bool {
-	for _, suffix := range smartLegalSuffixes {
+	for _, suffix := range legalSuffixes {
 		if s == suffix {
 			return true
 		}
@@ -664,7 +689,10 @@ func contextSnippet(text string, start, end int) string {
 //
 //	0.95  a legal form follows the name ("Alpine Trust S.A."): as close to
 //	      certain as a heuristic gets, companies are named this way on purpose
-//	0.90  a person title introduced it ("Mme Weber", "Dr Keller")
+//	0.90  a trademark mark follows it, or a person title introduced it
+//	      ("Meridian Suite™", "Mme Weber", "Dr Keller")
+//	0.60  a product head noun is in or beside the run ("Helios Platform"):
+//	      it reads like a product, which is weaker than being marked as one
 //	0.80  several words, seen more than once: a repeated full name
 //	0.65  several words, seen once: "Marie Duval" mid-sentence is still a
 //	      strong signal, but a single sighting leaves room for a fluke
@@ -678,8 +706,10 @@ func candidateScore(r smartRun, count int) float32 {
 	switch {
 	case r.hasSuffix:
 		return 0.95
-	case r.hasTitle:
+	case r.hasTrademark, r.hasTitle:
 		return 0.90
+	case r.hasProduct:
+		return 0.60
 	case r.words >= 2 && count >= 2:
 		return 0.80
 	case r.words >= 2:
@@ -733,4 +763,32 @@ func isCommonWordRun(text string) bool {
 		}
 	}
 	return significant > 0
+}
+
+// followedByTrademark reports whether a trademark mark sits immediately after
+// the run, tolerating a single space ("Meridian Suite ™").
+func followedByTrademark(text string, end int) bool {
+	rest := strings.TrimPrefix(text[end:], " ")
+	for _, mark := range trademarkMarks {
+		if strings.HasPrefix(rest, mark) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasProductHeadNoun reports whether a product head noun is the run's own last
+// word ("Helios Platform") or the word straight after it ("Helios platform").
+// The second form matters because writers capitalise the name and not the noun
+// at least as often as they capitalise both.
+func hasProductHeadNoun(text string, r smartRun) bool {
+	fields := strings.Fields(r.text)
+	if len(fields) >= 2 && productHeadNouns[strings.ToLower(fields[len(fields)-1])] {
+		return true
+	}
+	after := strings.Fields(runesAfter(text, r.end, 24))
+	if len(after) == 0 {
+		return false
+	}
+	return productHeadNouns[strings.ToLower(strings.Trim(after[0], ".,;:!?()"))]
 }

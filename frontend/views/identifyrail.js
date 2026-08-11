@@ -37,8 +37,7 @@ import {
   setCategoryGroup, setMinConfidence, setDocumentCountry,
   setSmartDetectOptions, smartDetectOptions,
   ALL_CATEGORIES,
-  HARD_PII_CATEGORIES, EXTENDED_PII_CATEGORIES, NAME_CATEGORIES,
-  ADVANCED_PII_CATEGORIES, ADVANCED_ENTITY_CATEGORIES,
+  NAME_CATEGORIES, DECLARED_CATEGORIES,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { button, chipRow, sectionLabel, collapsibleGroup, wireGroups } from "../ui.js";
@@ -97,34 +96,28 @@ export const PRESETS = [
 // [visible title, category keys]. It is a module constant so the select-all
 // buttons can address a group by INDEX rather than re-deriving the key list, and
 // so identifyrail.test.js can assert that every engine category the store knows
-// about is reachable from some group (BUILD-04 CR9: the BUILD-03 recognizers
-// were unreachable precisely because they belonged to no group).
+// about is reachable from some group: a category in no group is a category the
+// user cannot switch, which reads as "not detected" and is not.
 //
-// Phase 6 regrouped by TRIGGER TYPE (how values are found) instead of preset tier
-// (soft/medium/advanced). This aligns with the rule model: different triggers
-// (regex/native, smart detection, manual declaration) have different UX controls
-// and validations.
-//
-// Note: All BUILD-03 extended recognizers (credit_card, uk_nhs, ip_address,
-// mac_address, crypto, database_uri, de_steuer_id, es_nif) must remain in the
-// same group (CR9) and are grouped with other contact details here.
+// The grouping is by TRIGGER, the user's own model of how a value is found, and
+// not by preset tier. The last two groups are the split that matters: a regex
+// the user wrote is DECLARATIVE, so custom_patterns must never sit under
+// "Auto detected values", and what is left in that group is, by construction,
+// exactly the set a detection route can emit.
 export const CATEGORY_GROUPS = [
-  // Regex/native trigger groups (static PII detection, Smart detection only):
-  [CONFIGURE.groupContact, ["email", "url", "phone", "credit_card", "uk_nhs", "ip_address", "mac_address", "crypto", "database_uri", "de_steuer_id", "es_nif"]],
-  [CONFIGURE.groupTechnical, ["iban", "vat", "matricule"]],
+  [CONFIGURE.groupContact, ["email", "url", "iban", "vat", "matricule", "phone"]],
+  [CONFIGURE.groupTechnical, [
+    "credit_card", "uk_nhs", "ip_address", "mac_address",
+    "crypto", "database_uri", "de_steuer_id", "es_nif",
+  ]],
   [CONFIGURE.groupThorough, ["amount", "date"]],
-  // What a detector proposes, and what the user declares. The split matters:
-  // a regex the user wrote is DECLARATIVE, not auto-detected, and leaving
-  // custom_patterns under "Auto detected values" would reintroduce the exact
-  // mislabelling the rename fixed. What is left in the detected group is, by
-  // construction, the set the detection routes can emit.
-  [CONFIGURE.groupDetected, ["entity_names", "project_names", "person_names", "organisation_names", "location_names"]],
-  [CONFIGURE.groupDeclared, ["custom_patterns"]],
+  [CONFIGURE.groupDetected, NAME_CATEGORIES],
+  [CONFIGURE.groupDeclared, DECLARED_CATEGORIES],
 ];
 
-// REGEX_GROUPS and ENTITY_GROUPS split CATEGORY_GROUPS for Phase 6 UI restructuring.
-// Regex groups are static PII detection rules (shown only in Smart detection).
-// Entity groups are values for auto-detection (shown in both Smart and Local AI).
+// The rail shows the regex groups only under Smart detection, because they are
+// that route's scope; the name groups apply to every route and to values typed
+// by hand, so they show under both.
 const REGEX_GROUPS = CATEGORY_GROUPS.slice(0, 3);
 const ENTITY_GROUPS = CATEGORY_GROUPS.slice(3);
 

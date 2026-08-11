@@ -326,11 +326,15 @@ func (c *Client) Chat(ctx context.Context, model, systemPrompt, userPrompt strin
 // anything not copied exactly from the text is dropped afterwards anyway.
 const discoverSystemPrompt = `You are an entity extraction engine for confidential business documents.
 Extract proper names from the user's document and respond with ONLY a JSON object, no prose, using exactly these keys:
-{"entity_names": [], "project_names": [], "person_names": []}
+{"entity_names": [], "project_names": [], "product_names": [], "brand_names": [], "person_names": [], "identifier_names": [], "other_names": []}
 Rules:
 - entity_names: named organisations, companies, teams and internal systems, whether they are clients, counterparties or internal.
-- project_names: engagement or project code names.
+- project_names: engagement, project or workstream names and code names.
+- product_names: named products, platforms, modules and software.
+- brand_names: brand or trade names, which are how something is marketed rather than the company that owns it.
 - person_names: every natural person, including members of staff. A human being is NEVER an entity_names.
+- identifier_names: reference, contract, invoice and case codes.
+- other_names: a proper name that is none of the above. Use it sparingly, and never as a place to put something you could file elsewhere.
 - Copy every name VERBATIM from the document. Never invent, translate or reformat names.
 - Use [] for a category with no findings.`
 
@@ -398,10 +402,15 @@ func ollamaMerge(batches [][]engine.ProposedEntity) []engine.ProposedEntity {
 
 const deepScanSystemPromptPrefix = `You are an entity extraction engine performing a FINAL review of a business document that was already partially anonymised (placeholders look like [ENTITY_1]).
 Find ONLY residual proper names that are still visible and were missed. Respond with ONLY a JSON object, no prose, using exactly these keys:
-{"entity_names": [], "project_names": [], "person_names": []}
+{"entity_names": [], "project_names": [], "product_names": [], "brand_names": [], "person_names": [], "identifier_names": [], "other_names": []}
 Rules:
-- entity_names: named organisations, companies, teams and internal systems.
-- person_names: every natural person, including members of staff.
+- entity_names: named organisations, companies, teams and internal systems, whether they are clients, counterparties or internal.
+- project_names: engagement, project or workstream names and code names.
+- product_names: named products, platforms, modules and software.
+- brand_names: brand or trade names, which are how something is marketed rather than the company that owns it.
+- person_names: every natural person, including members of staff. A human being is NEVER an entity_names.
+- identifier_names: reference, contract, invoice and case codes.
+- other_names: a proper name that is none of the above. Use it sparingly, and never as a place to put something you could file elsewhere.
 - Copy every name VERBATIM from the document. Never invent names.
 - Do NOT report placeholders like [ENTITY_1] or names from the known list below.
 - Use [] for a category with no findings.`
@@ -469,11 +478,15 @@ func MergeProposals(batches ...[]engine.ProposedEntity) []engine.ProposedEntity 
 const classifySystemPrompt = `You are an entity classification engine for confidential business documents.
 The user sends a list of candidate names, each with short context snippets from the document.
 Assign every candidate to exactly ONE category and respond with ONLY a JSON object, no prose, using exactly these keys:
-{"entity_names": [], "project_names": [], "person_names": []}
+{"entity_names": [], "project_names": [], "product_names": [], "brand_names": [], "person_names": [], "identifier_names": [], "other_names": []}
 Rules:
 - entity_names: named organisations, companies, teams and internal systems, whether they are clients, counterparties or internal.
-- project_names: engagement or project code names.
+- project_names: engagement, project or workstream names and code names.
+- product_names: named products, platforms, modules and software.
+- brand_names: brand or trade names, which are how something is marketed rather than the company that owns it.
 - person_names: every natural person, including members of staff. A human being is NEVER an entity_names.
+- identifier_names: reference, contract, invoice and case codes.
+- other_names: a proper name that is none of the above. Use it sparingly, and never as a place to put something you could file elsewhere.
 - Copy every candidate VERBATIM into one list. Never invent, translate or reformat names.
 - Use [] for a category with no candidates.`
 
@@ -549,8 +562,25 @@ func (c *Client) ClassifyCandidates(ctx context.Context, candidates []engine.Can
 
 // --- JSON reply parsing ---------------------------------------------------
 
-// entityCategories are the exact keys the prompts demand (CLAUDE.md §5).
-var entityCategories = []string{"entity_names", "project_names", "person_names"}
+// entityCategories are the exact keys every prompt in this file demands, and
+// the only keys parseEntityJSON reads back.
+//
+// The three lists have to move together. A key in a prompt that is missing here
+// is silently dropped on parse, and a key here that no prompt requests is a
+// category the model is never asked to fill: either way the category is dead
+// and nothing fails.
+//
+// custom_patterns is deliberately absent: it is the user's own regex, and a
+// model has nothing to say about it.
+var entityCategories = []string{
+	engine.CatEntityNames,
+	engine.CatProjectNames,
+	engine.CatProductNames,
+	engine.CatBrandNames,
+	engine.CatPersonNames,
+	engine.CatIdentifierNames,
+	engine.CatOtherNames,
+}
 
 // parseEntityJSON tolerantly parses the model's JSON reply: accidental
 // markdown code fences are stripped, unknown keys ignored, and each known
