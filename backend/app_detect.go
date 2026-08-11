@@ -118,10 +118,10 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string) (*DetectionR
 		a.mu.Unlock()
 	}()
 
-	allow := engine.NewEmptyAllowlist()
-	for _, t := range allowTerms {
-		allow.Add(t)
-	}
+	// The shared builder (BUILD-06 Phase 4): the detection routes must not
+	// re-propose a value the user removed, or a removal reads as undone the
+	// moment detection runs again.
+	allow := a.allowlistFor(allowTerms)
 	llm.Allow = allow.Contains
 
 	// The AI route needs the switch, a reachable Ollama, and something to

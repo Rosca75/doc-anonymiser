@@ -225,7 +225,10 @@ func TestSessionRoundTripsPlaceholderOverrides(t *testing.T) {
 		t.Fatalf("LoadSession: %v", err)
 	}
 
-	restored, failures := NewRegistryFromSession(loaded)
+	restored, failures, err := NewRegistryFromSession(loaded)
+	if err != nil {
+		t.Fatalf("NewRegistryFromSession: %v", err)
+	}
 	if len(failures) != 0 {
 		t.Fatalf("restoring the overrides must not fail: %v", failures)
 	}

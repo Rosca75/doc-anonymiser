@@ -96,15 +96,19 @@ const initialState = {
   //                   Ollama ENABLES the switch, it never flips it: turning on
   //                   a route that sends the document to a model, however
   //                   local, is the user's decision to make.
-  //   useCloudAI      not built (BUILD-05 decision 8). Always false, kept here
-  //                   so the rail has something honest to render.
+  //   (there is no useCloudAI. The cloud route is not built, BUILD-05
+  //   decision 8, and the rail renders a static "not built yet" panel rather
+  //   than reading a flag. The field existed anyway, was pushed to Go on every
+  //   settings change, and Go discarded it: a setting nothing reads and nothing
+  //   can change is a contract the next reader has to disprove. BRIDGE.md said
+  //   it did not exist, and BRIDGE.md was right.)
   // contextSize is the Ollama num_ctx setting (Phase 5b), default 8192.
   // minConfidence is the detection-confidence floor (BUILD-04 CR9), 0 to
   // 1 on the engine's scale. 0 is the default and keeps every detection,
   // which is exactly the behaviour before the setting existed.
   settings: {
     level: "medium", categories: null, ollamaPort: 11434, model: "", country: DEFAULT_COUNTRY,
-    contextSize: 8192, useAI: false, useSmartDetect: true, useCloudAI: false,
+    contextSize: 8192, useAI: false, useSmartDetect: true,
     minConfidence: 0,
     // smartDetect is the BUILD-04 CR13 tuning for the offline Smart
     // detection pass, matching engine.SmartDetectOptions field for field.

@@ -126,13 +126,16 @@ Windows it steals focus from the window it belongs to.
   hover tooltips.
 - `entitymodel.js` — pure variant view-model (regression-tested).
 - `candidatemodel.js` — pure suggestions filter/sort view-model.
-- `countries.js` — pure document-country table: the per-country example
-  strings for the phone / VAT / national-identification labels and the three
-  country-specific ID categories. Frontend only; there is no locale-aware
-  engine behind it (BUILD-05 decision 2). The country is an ORTHOGONAL axis to
-  the preset: `applyPreset` re-applies it, and `selectionPresetName` excludes
-  the three country-driven categories from its comparison, so picking Standard
-  on a Luxembourg document does not read as "Custom".
+- `countries.js` — the document-country table, MIRRORING the engine's
+  `backend/engine/country.go` exactly as `presetCategories()` mirrors
+  `PresetSelection`: the per-country example strings for the phone / VAT /
+  national-identification labels and which categories each country switches on.
+  Since BUILD-06 Phase 1 the country is a real ENGINE setting, not a display
+  choice (superseding BUILD-05 decision 2): it decides which country-specific
+  regexes run. It stays an ORTHOGONAL axis to the preset: `applyPreset`
+  re-applies it, and `selectionPresetName` excludes the country-driven
+  categories from its comparison, so picking Standard on a Luxembourg document
+  does not read as "Custom".
 - `toast.js` — the state-backed notice strip (`state.notice`).
 - `modal.js` — the in-app confirm, returning `Promise<boolean>`.
 - `scroll.js` — scroll-position preservation across re-renders.

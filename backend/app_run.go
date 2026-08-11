@@ -133,16 +133,13 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 		a.registry = engine.NewRegistry()
 	}
 	reg := a.registry
-	// Remember the run inputs: the same-format export (BUILD-02 Phase 11)
-	// re-runs the identical span machinery over the original bytes.
-	reqCopy := req
-	a.lastReq = &reqCopy
 	a.mu.Unlock()
 
-	allow := engine.NewEmptyAllowlist()
-	for _, t := range req.AllowTerms {
-		allow.Add(t)
-	}
+	// The allowlist and the removals come from one place, so a value the user
+	// removed cannot be honoured here and forgotten by the same-format export
+	// (BUILD-06 Phase 4).
+	allow := a.allowlistFor(req.AllowTerms)
+	removed := a.removedValues()
 
 	// Set when a requested deep scan does not run, so the report says why
 	// rather than leaving the user to wonder what the checkbox did.
@@ -159,6 +156,7 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 		Allowlist:     allow,
 		Registry:      reg,
 		SimpleRules:   req.SimpleRules,
+		Removed:       removed,
 		Progress: func(ev engine.ProgressEvent) {
 			a.emit("pipeline:progress", ev)
 		},
@@ -192,6 +190,18 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 	if results != nil {
 		a.mu.Lock()
 		a.results = results
+		// Remember the run inputs so the same-format export (BUILD-02 Phase 11)
+		// re-runs the identical span machinery over the original bytes.
+		//
+		// Stored AFTER the run, not before (BUILD-06 Phase 8). A run that
+		// validation refused, or that failed outright, used to leave the export
+		// faithfully reproducing a request the application had just declared
+		// invalid: the user saw an error on screen and a same-format file that
+		// disagreed with it.
+		if len(results.Validation.Blocking) == 0 {
+			reqCopy := req
+			a.lastReq = &reqCopy
+		}
 		a.mu.Unlock()
 	}
 	// Cancellation still returns the partial results to the caller; the

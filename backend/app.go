@@ -147,6 +147,56 @@ type App struct {
 	// lastReq remembers the latest pipeline inputs so the same-format
 	// export reproduces identical replacements (BUILD-02 Phase 11).
 	lastReq *RunRequest
+	// removed holds the values the user deleted from the session (BUILD-06
+	// Phase 4). It lives on the App rather than travelling in RunRequest for
+	// two reasons: the prune and the exclusion are two halves of one action
+	// that must not be able to happen separately, and the same-format export
+	// builds its own allowlist from a.lastReq, so a removal carried only in the
+	// request would be honoured by the pipeline and forgotten by the export.
+	// Settings.UseAI is the precedent: BUILD-06 moved that decision into Go for
+	// exactly this reason.
+	//
+	// It is deliberately NOT the allowlist, in state or in the session file: a
+	// removed value must not appear as a term on the Allow tab, and "undo the
+	// removal" must not be the same gesture as "delete an allowlist term". What
+	// it shares with the allowlist is the ENFORCEMENT (allowlistFor folds it in),
+	// because Allowlist.Contains is the single veto every span producer already
+	// consults and a second veto is a seventh caller somebody forgets.
+	removed []engine.RemovedValue
+}
+
+// allowlistFor builds the allowlist every pass and every export must obey: the
+// user's never-anonymise terms, plus the canonical and variant strings of every
+// removed value (engine.ApplyRemovals).
+//
+// It exists so a removal cannot be honoured by the run and forgotten by the
+// export. Every caller that used to build its own `NewEmptyAllowlist()` and add
+// the terms goes through here instead; a new one that does not is the bug this
+// helper is shaped to make obvious.
+//
+// @param terms the never-anonymise terms from the request
+// @return an allowlist ready to hand to the engine, never nil
+func (a *App) allowlistFor(terms []string) *engine.Allowlist {
+	allow := engine.NewEmptyAllowlist()
+	for _, t := range terms {
+		allow.Add(t)
+	}
+	a.mu.Lock()
+	removed := make([]engine.RemovedValue, len(a.removed))
+	copy(removed, a.removed)
+	a.mu.Unlock()
+	engine.ApplyRemovals(allow, removed)
+	return allow
+}
+
+// removedValues returns a copy of the session's removed values, for the callers
+// that need the list itself rather than the veto it produces.
+func (a *App) removedValues() []engine.RemovedValue {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]engine.RemovedValue, len(a.removed))
+	copy(out, a.removed)
+	return out
 }
 
 // NewApp constructs the bound struct. Kept trivial on purpose: anything

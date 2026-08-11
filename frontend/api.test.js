@@ -14,6 +14,8 @@ import assert from "node:assert/strict";
 
 import {
   openDocumentation, documentationURL, exportDocumentFormats, ping, runPipeline,
+  valuePlaceholders, setValuePlaceholder, removeValue, restoreValue,
+  listRemovedValues, nextRulePlaceholder, validateValues,
 } from "./api.js";
 
 /**
@@ -133,6 +135,60 @@ test("a missing bridge REJECTS, it never throws synchronously", () => {
       assert.ok(returned instanceof Promise, `${name} must return a promise`);
       // The rejection still has to be handled, or node reports it as unhandled.
       returned.catch((err) => assert.match(err.message, /Wails bridge not available/));
+    }
+  } finally {
+    if (previous === undefined) delete globalThis.window;
+    else globalThis.window = previous;
+  }
+});
+
+// --- The step 3 value surface (BUILD-06 Phases 4 and 5) --------------------
+
+test("the value wrappers name the Go methods BRIDGE.md documents", async () => {
+  // A bare delegation still has one thing that can be wrong, and it is the one
+  // thing nothing else catches: the METHOD NAME. A typo here is a rejection at
+  // runtime on a button, and every other test in this folder passes.
+  const called = [];
+  const record = (name) => async (...args) => {
+    called.push([name, ...args]);
+    return name;
+  };
+  const app = {
+    ValuePlaceholders: record("ValuePlaceholders"),
+    SetValuePlaceholder: record("SetValuePlaceholder"),
+    RemoveValue: record("RemoveValue"),
+    RestoreValue: record("RestoreValue"),
+    ListRemovedValues: record("ListRemovedValues"),
+    NextRulePlaceholder: record("NextRulePlaceholder"),
+    ValidateValues: record("ValidateValues"),
+  };
+
+  await withStubBridge(app, () => ({}), async () => {
+    assert.equal(await valuePlaceholders(), "ValuePlaceholders");
+    assert.equal(await setValuePlaceholder("[ENTITY_1]", "[CLIENT_1]"), "SetValuePlaceholder");
+    assert.equal(await removeValue("[ENTITY_1]"), "RemoveValue");
+    assert.equal(await restoreValue("[ENTITY_1]"), "RestoreValue");
+    assert.equal(await listRemovedValues(), "ListRemovedValues");
+    assert.equal(await nextRulePlaceholder(), "NextRulePlaceholder");
+    assert.equal(await validateValues({ entities: [] }), "ValidateValues");
+  });
+
+  // The arguments reach Go in the documented order, which is the other half of
+  // the contract: setValuePlaceholder(current, next), not (next, current).
+  assert.deepEqual(called[1], ["SetValuePlaceholder", "[ENTITY_1]", "[CLIENT_1]"]);
+});
+
+test("the value wrappers reject rather than throw when the bridge is absent", async () => {
+  // The rendering harness serves this folder as static files with no Go behind
+  // it, so a view that calls these while rendering must get a rejection it can
+  // catch, never a synchronous throw (frontend/CLAUDE.md, Testing).
+  const previous = globalThis.window;
+  globalThis.window = {}; // a plain browser: no window.go
+  try {
+    for (const wrapper of [valuePlaceholders, listRemovedValues, nextRulePlaceholder]) {
+      const promise = wrapper();
+      assert.ok(promise instanceof Promise, `${wrapper.name} must be async`);
+      await assert.rejects(promise, /must run inside the/, wrapper.name);
     }
   } finally {
     if (previous === undefined) delete globalThis.window;

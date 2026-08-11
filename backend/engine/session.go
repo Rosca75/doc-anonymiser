@@ -30,7 +30,29 @@ import (
 // into entity_names. A version 2 file names categories this build no longer
 // has, so it is refused rather than loaded with entities the pipeline would
 // silently drop.
-const SessionVersion = 3
+// Version 4 (BUILD-06 Phases 1 to 8) is one bump for the whole value-rules
+// change, made once at the end rather than three times along the way. What a
+// version 3 file cannot express:
+//
+//	Settings.Country       the regex categories are now scoped per country
+//	                       (Phase 1). A version 3 file has no country, and
+//	                       guessing one decides which national identifiers a
+//	                       reloaded session hunts for.
+//	the category set        four detected categories were added and two dead
+//	                       ones retired (Phase 2), so a version 3 file names
+//	                       categories this build does not have, exactly as
+//	                       version 2 did.
+//	RemovedValues          the values the user deleted (Phase 4). Absent, they
+//	                       all come back on the next run, which is the one thing
+//	                       a removal is for.
+//	RetiredPlaceholders /  numbers this session has spent but no entry holds
+//	ReservedPlaceholders   (Phases 3 and 4). Absent, they are handed out a
+//	                       second time and the re-identification key stops
+//	                       being reversible.
+//
+// Every one of those is a silent wrong answer rather than a visible failure,
+// which is why the policy is refusal and not a migration.
+const SessionVersion = 4
 
 // SessionSettings mirrors the app settings worth persisting. The engine
 // does not interpret them — they round-trip for app.go. The BUILD-02
@@ -138,25 +160,37 @@ var placeholderParseRe = regexp.MustCompile(`^\[([A-Z][A-Z0-9_]*)_([0-9]+)\]$`)
 // entries (session load). Counters resume from the highest N per label so
 // new assignments continue the numbering instead of colliding.
 //
-// Phase 3: builds byOriginal and byPlaceholder indexes, and treats a
-// duplicated original as a corrupt-file error.
-func NewRegistryFromEntries(entries []MappingEntry) *Registry {
+// Phase 3: builds byOriginal and byPlaceholder indexes, and treats a duplicated
+// original as a corrupt-file error.
+//
+// It RETURNS that error rather than panicking (BUILD-06 Phase 8). This runs
+// inside a bound method on a file the user picked, so a panic here takes the
+// whole application down on a bad file, which is the opposite of the
+// refuse-and-say-why policy every other load failure follows.
+//
+// @param entries the mapping rows from a session file
+// @return the live registry, or an actionable error naming the corruption
+func NewRegistryFromEntries(entries []MappingEntry) (*Registry, error) {
 	r := NewRegistry()
 	for _, e := range entries {
 		entry := e // copy — the map keeps a pointer
 		key := e.Category + "|" + lowered(e.Original)
 		lowerOriginal := lowered(e.Original)
 
-		// Phase 3: check for duplicated originals (corrupt file)
+		// A duplicated original means the registry is corrupt: two entries own
+		// the same value under different categories, breaking the
+		// one-value-one-placeholder invariant. Nothing this application writes
+		// can produce it, so the file has been edited or truncated.
 		if existingKey, ok := r.byOriginal[lowerOriginal]; ok {
-			// A duplicated original means the registry is corrupt: two entries
-			// own the same value under different categories, breaking the
-			// one-value-one-placeholder invariant. This should never happen
-			// in a file this application wrote, but fail clearly if it does.
-			// This panic will be caught and reported by the caller.
-			panic(fmt.Sprintf(
-				"corrupt session file: the original %q appears twice, under categories %q and %q",
-				e.Original, r.entries[existingKey].Category, e.Category))
+			// The FIRST entry's spelling is the one named, because that is the row
+			// the user would recognise; a lower-cased duplicate reads as a
+			// different value and sends them looking for the wrong thing.
+			return nil, fmt.Errorf(
+				"this session file is corrupt: the value %q appears twice in the "+
+					"re-identification key, under the categories %q and %q, so there is no "+
+					"single answer to what it was replaced with. It is refused rather than "+
+					"half-loaded. Use an earlier copy of the session file, or start a new session",
+				r.entries[existingKey].Original, r.entries[existingKey].Category, e.Category)
 		}
 
 		r.entries[key] = &entry
@@ -169,7 +203,7 @@ func NewRegistryFromEntries(entries []MappingEntry) *Registry {
 			}
 		}
 	}
-	return r
+	return r, nil
 }
 
 // NewRegistryFromSession rebuilds a live registry from a loaded session,
@@ -184,12 +218,60 @@ func NewRegistryFromEntries(entries []MappingEntry) *Registry {
 // are returned as failures rather than aborting the load: one stale entry must
 // not cost the user the other twenty.
 //
+// A CORRUPT key, by contrast, aborts: an override that does not apply costs one
+// renamed placeholder, while two entries claiming one value means the key cannot
+// be read at all.
+//
 // @param s a session that LoadSession has already accepted
-// @return the live registry, and one error per override that did not apply
-func NewRegistryFromSession(s Session) (*Registry, []error) {
-	r := NewRegistryFromEntries(s.Registry)
-	if len(s.PlaceholderOverrides) == 0 {
-		return r, nil
+// @return the live registry, one error per override that did not apply, and a
+//
+//	fatal error when the key itself is unreadable
+func NewRegistryFromSession(s Session) (*Registry, []error, error) {
+	r, err := NewRegistryFromEntries(s.Registry)
+	if err != nil {
+		return nil, nil, err
 	}
-	return r, r.ApplyOverrides(s.PlaceholderOverrides)
+
+	// Retired and reserved placeholders restore with the entries (BUILD-06
+	// Phase 8). Both are numbers this session has already spent, and neither is
+	// recoverable from s.Registry, because neither has an entry there any more:
+	//
+	//   retired   a Forget freed the entry and deliberately did NOT free the
+	//             number, because the user may already hold an export in which
+	//             [PERSON_4] means one person. Dropping the set on load would
+	//             hand 4 straight back out and make two artefacts of one session
+	//             disagree, which is the exact ambiguity the refusal exists to
+	//             prevent, arriving one save-and-reload later.
+	//   reserved  a simple-replace rule's replacement, minted outside the
+	//             registry. Forgetting it on load lets an automatic assignment
+	//             collide with a rule the user wrote.
+	//
+	// The counters move up too, or the set would be remembered and then skipped
+	// past one number at a time on every assignment.
+	for _, p := range s.RetiredPlaceholders {
+		r.retired[p] = true
+		r.raiseCounterFor(p)
+	}
+	for _, p := range s.ReservedPlaceholders {
+		r.reserved[p] = true
+		r.raiseCounterFor(p)
+	}
+
+	if len(s.PlaceholderOverrides) == 0 {
+		return r, nil, nil
+	}
+	return r, r.ApplyOverrides(s.PlaceholderOverrides), nil
+}
+
+// raiseCounterFor advances the counter for a placeholder's label so the number
+// it uses is never handed out again. Callers hold no lock: it is only used
+// while a registry is still being built and nothing else can see it.
+func (r *Registry) raiseCounterFor(placeholder string) {
+	m := placeholderParseRe.FindStringSubmatch(placeholder)
+	if m == nil {
+		return
+	}
+	if n, err := strconv.Atoi(m[2]); err == nil && n > r.counters[m[1]] {
+		r.counters[m[1]] = n
+	}
 }

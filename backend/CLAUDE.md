@@ -47,6 +47,35 @@ or above it. `main.go` imports this package and calls `backend.NewApp()`.
   (`GET /api/tags`); the deterministic pipeline must be fully usable without
   it. LLM-dependent controls disable with a tooltip when it is absent.
 
+## The Value model (BUILD-06)
+
+Three files carry it, and each exists because the rule it enforces cannot be
+enforced anywhere else:
+
+- `engine/country.go` — the document country and `CategoryCountries`, the table
+  saying which regex categories apply where, plus `CategoryAppliesTo`. It is
+  the SINGLE source `frontend/countries.js` mirrors. `piiPattern` carries a
+  `countries` field and `DetectPIISelected(text, sel, country)` skips the
+  patterns the country excludes, so a German document is not scanned for French
+  VAT numbers.
+- `engine/conflicts.go` — `ValidateValues`, pure set arithmetic over the
+  declarations that reads no document text, so it is cheap enough to run on
+  every run and every fast re-run. It runs inside `engine.Run` BEFORE pass 1,
+  because the App has two entry points and the engine has one. Blocking
+  conflicts abort before the registry is mutated.
+- `engine/removals.go` — `RemovedValue`, `ApplyRemovals` and `FilterRemoved`.
+  Removals are enforced through `Allowlist.Contains`, the single veto every
+  span producer already consults; the App folds them in once, in
+  `App.allowlistFor`, which run, detection and export all go through so a
+  removal cannot be honoured by one and forgotten by another.
+
+`Registry` owns the one-value-one-replacement invariant through its
+`byOriginal` index, and tracks two sets of numbers it will never hand out
+again: `retired` (a `Forget` freed the entry, deliberately not the number) and
+`reserved` (a rule replacement minted outside the registry). Both persist in
+the session file, or a save-and-reload frees exactly the numbers the removal
+refused to free.
+
 ## Pipeline passes (fixed order)
 
 1. Deterministic PII regex pass (`engine/pii.go`). Regexes are compiled once
@@ -72,7 +101,10 @@ an override took. The renames a user made are recorded rather than inferred
 (`Registry.Overrides`) and persist in the session file; **session files are read
 only by the version that wrote them**, so a file whose `SessionVersion` this
 build does not know is refused with an actionable message instead of
-half-migrated (BUILD-05 decision 1).
+half-migrated (BUILD-05 decision 1). The current version is **4**. A corrupt
+key (two entries claiming one value) is refused the same way, as an ERROR:
+these functions run behind bound methods on a file the user picked, so
+panicking would take the application down on a bad file.
 
 ## Converters (`engine/convert/`) and same-format export (`engine/exportfmt/`)
 

@@ -113,10 +113,13 @@ export const CATEGORY_GROUPS = [
   [CONFIGURE.groupContact, ["email", "url", "phone", "credit_card", "uk_nhs", "ip_address", "mac_address", "crypto", "database_uri", "de_steuer_id", "es_nif"]],
   [CONFIGURE.groupTechnical, ["iban", "vat", "matricule"]],
   [CONFIGURE.groupThorough, ["amount", "date"]],
-  // Manual/auto-detect entity groups (appear in both Smart and Local AI):
-  ["Entity and project names", ["entity_names", "project_names"]],
-  ["Persons and organizations", ["person_names", "organisation_names", "location_names"]],
-  ["Custom patterns", ["custom_patterns"]],
+  // What a detector proposes, and what the user declares. The split matters:
+  // a regex the user wrote is DECLARATIVE, not auto-detected, and leaving
+  // custom_patterns under "Auto detected values" would reintroduce the exact
+  // mislabelling the rename fixed. What is left in the detected group is, by
+  // construction, the set the detection routes can emit.
+  [CONFIGURE.groupDetected, ["entity_names", "project_names", "person_names", "organisation_names", "location_names"]],
+  [CONFIGURE.groupDeclared, ["custom_patterns"]],
 ];
 
 // REGEX_GROUPS and ENTITY_GROUPS split CATEGORY_GROUPS for Phase 6 UI restructuring.

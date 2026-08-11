@@ -134,7 +134,10 @@ func TestSessionSaveLoadEquality(t *testing.T) {
 
 	// Registry restore: existing mappings keep their placeholders and new
 	// assignments continue the numbering (no collisions).
-	restored := NewRegistryFromEntries(loaded.Registry)
+	restored, err := NewRegistryFromEntries(loaded.Registry)
+	if err != nil {
+		t.Fatalf("NewRegistryFromEntries: %v", err)
+	}
 	if p, ok := restored.Lookup(CatEmail, "marie.duval@example.com"); !ok || p != "[EMAIL_1]" {
 		t.Errorf("restored registry lost the email mapping: %q %v", p, ok)
 	}
@@ -218,8 +221,12 @@ func TestExportFileName(t *testing.T) {
 // "field absent" and "file too old" are now two different situations and only
 // the first one is a compatibility question.
 func TestLoadSessionWithoutOptionalFields(t *testing.T) {
-	legacy := []byte(`{
-	  "version": 3,
+	// The version number is DERIVED, not typed. This fixture is about absent
+	// optional fields, so a version bump elsewhere must not fail it: it failed
+	// exactly that way on the BUILD-06 Phase 8 bump, reporting a refusal that
+	// was correct and irrelevant.
+	legacy := fmt.Appendf(nil, `{
+	  "version": %d,
 	  "entities": [{"category": "entity_names", "canonical": "Alpine Trust"}],
 	  "allowTerms": ["CSSF"],
 	  "patterns": [],
@@ -233,7 +240,7 @@ func TestLoadSessionWithoutOptionalFields(t *testing.T) {
 	    "useAI": true
 	  },
 	  "registry": []
-	}`)
+	}`, SessionVersion)
 
 	s, err := LoadSession(legacy)
 	if err != nil {
@@ -279,7 +286,8 @@ func TestSessionRoundTripsMinConfidence(t *testing.T) {
 // turned every filter off" (BUILD-04 CR13). Collapsing the two would
 // silently re-enable filtering for someone who switched it off.
 func TestSessionSmartDetectAbsentVersusExplicitZero(t *testing.T) {
-	absent, err := LoadSession([]byte(`{"version":3,"settings":{"level":"medium"}}`))
+	absent, err := LoadSession(fmt.Appendf(nil,
+		`{"version":%d,"settings":{"level":"medium"}}`, SessionVersion))
 	if err != nil {
 		t.Fatalf("a session with no smartDetect block: %v", err)
 	}

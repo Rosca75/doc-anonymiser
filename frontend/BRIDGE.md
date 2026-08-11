@@ -60,13 +60,21 @@ count can only come from what the writing application cached in
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
-| `getSettings()` | — | `{level, categories, ollamaPort, model, contextSize, useAI, useSmartDetect, minConfidence, smartDetect}` (see app.go `Settings`) |
+| `getSettings()` | — | `{level, categories, country, ollamaPort, model, contextSize, useAI, useSmartDetect, minConfidence, smartDetect}` (see app.go `Settings`) |
 | `applySettings(settings)` | settings object | fresh `OllamaStatus`; rejects with an actionable message on bad input |
 
 `useAI` and `useSmartDetect` are the DETECTION ROUTE switches: Smart detection
 on by default, Local AI off by default and additionally gated on the live
-Ollama probe. There is no cloud route and no `useCloudAI` on the Go side
-(BUILD-05 decision 8).
+Ollama probe. There is no cloud route and no `useCloudAI`, on either side. The
+frontend store carried one and `pushSettings` sent it while Go discarded it,
+which made this line read as a contradiction rather than a contract; BUILD-06
+Phase 8 deleted the field instead of documenting it, because a setting nothing
+reads and nothing can change is a claim the next reader has to disprove.
+
+`country` is the DOCUMENT COUNTRY (BUILD-06 Phase 1), one of the codes in
+`engine.SupportedCountries`. It is a real engine setting, not a frontend
+display choice: it decides which country-specific regex categories run.
+`applySettings` rejects an unknown code.
 
 ## Allowlist (never-anonymise terms)
 
@@ -93,6 +101,31 @@ Ollama probe. There is no cloud route and no `useCloudAI` on the Go side
 | `entityPlaceholder(category, canonical)` | engine category id, value | the placeholder currently assigned to that value, or `""` before the first run |
 | `setEntityPlaceholder(category, canonical, placeholder)` | engine category id, value, `[NAME_N]` | resolves on success; REJECTS with an actionable message when the shape is wrong or the placeholder already belongs to another value. Takes effect on the next run or fast re-run, never retroactively (BUILD-05 Phase 3) |
 
+> **These two are superseded and are scheduled for deletion.** BUILD-06 Phase 5
+> replaces them with `setValuePlaceholder` / `valuePlaceholders` below, which are
+> addressed BY PLACEHOLDER and live on step 3, where the registry always exists.
+> The pair here fails before the first run (`a.registry` is nil) by design of the
+> screen they sit on, which is the bug the move deletes rather than works around.
+> They stay alive only while `views/identifyworkspace.js` still calls them; the
+> frontend half of Phase 5 is outstanding (see `docs/BUILD-07.md`). Do NOT build
+> anything new on them.
+
+## Values, placeholders and removals (step 3, BUILD-06 Phases 4 and 5)
+
+These are the surface behind the step 3 **Replaced values** table: one row per
+value the session replaced, editable placeholder, remove action, and a collapsed
+removed list with restore.
+
+| `api.js` wrapper | Args | Resolves to |
+|---|---|---|
+| `valuePlaceholders()` | — | `[{original, placeholder, category, count}]`, sorted by category then placeholder number. The source for the table, read from the REGISTRY rather than derived from report text, so a row cannot exist that the edit behind it has no entry for. Empty before the first run, which is an empty table, not an error |
+| `setValuePlaceholder(current, next)` | `[NAME_N]`, `[NAME_N]` | resolves on success; REJECTS when the shape is wrong, when `current` is not a placeholder this session assigned, or when `next` already belongs to another value (two originals behind one placeholder makes the key ambiguous). Takes effect on the NEXT run, never retroactively |
+| `removeValue(placeholder)` | `[NAME_N]` | resolves to `{original, category, placeholder, variants}`. Removal prunes the registry entry AND records a session exclusion, so the value stays gone across re-runs and same-format exports. The NUMBER is not freed. Does not re-run: the caller re-runs |
+| `restoreValue(placeholder)` | the placeholder it USED to have | resolves on success; REJECTS when nothing by that placeholder was removed. The value returns on the next run with a NEW number, because the old one stays retired |
+| `listRemovedValues()` | — | `[{original, category, placeholder, variants}]` for the collapsed removed list |
+| `nextRulePlaceholder()` | — | the next free `[CUSTOM_N]`, RESERVED as it is handed over. Replaces the frontend's own numbering, which counted only the rules while `CUSTOM` is also the automatic label for `custom_patterns` matches, so a rule and an automatic assignment could collide. Works before the first run |
+| `validateValues(request)` | `{entities, patterns, rules, allowTerms}` | `{blocking, warnings}`, each `[{kind, severity, message}]`. Blocking conflicts refuse the run, so this is what a screen calls to say so before the user presses it |
+
 ## Run screen (pipeline)
 
 | `api.js` wrapper | Args | Resolves to |
@@ -117,7 +150,7 @@ Ollama probe. There is no cloud route and no `useCloudAI` on the Go side
 | `copyDocument(name)` | name | puts the anonymised text on the clipboard |
 | `exportMapping(format)` | `"csv"`/`"json"` | saves the re-identification key. Call ONLY after the user confirmed the sensitivity warning |
 | `exportReport(format)` | `"json"`/`"md"` | saves the run report, INCLUDING the per-value table (BUILD-06). That table maps placeholders back to real values, so the exported report is a re-identification key: warn before writing it, as for `exportMapping`. |
-| `saveSession(request)` | request | persists the session (entities, allowlist, patterns, rules, settings, registry). Warn the user first: the file contains the re-identification key |
+| `saveSession(request)` | request | persists the session (entities, allowlist, patterns, rules, settings, registry, the removal list and the spent placeholder numbers). Warn the user first: the file contains the re-identification key |
 | `loadSession()` | — | the `Session` object, or `null` when the user cancels |
 
 ## Runtime events (push, not request/reply)

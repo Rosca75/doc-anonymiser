@@ -164,7 +164,12 @@ export const IMPORT = {
 export const CONFIGURE = {
   presetHint: "Start from a preset, then adjust the checkboxes if you need to. Changing any checkbox switches the preset to Custom.",
   groupContact: "Contact and account details",
-  groupNames: "Names",
+  // The rail groups by TRIGGER, the user's own model of how a value is found
+  // (BUILD-06 Phase 6), so these are the names of the three ways it happens.
+  // groupNames was "Names", which said nothing about where the values came
+  // from and sat over a list that also held the user's own regexes.
+  groupDetected: "Auto detected values",
+  groupDeclared: "Your own patterns",
   groupThorough: "Only for thorough anonymisation",
   useAILabel: "Use local AI (Ollama)",
   useAIHint: "When enabled, a language model running on this machine can suggest names to replace and double-check the result. Nothing leaves your computer.",

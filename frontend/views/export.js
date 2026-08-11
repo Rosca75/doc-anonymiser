@@ -475,7 +475,6 @@ function applySession(session) {
       // Absent means ON (BUILD-06): Smart detection is the default route, and
       // a file that says nothing about it must not restore it switched off.
       useSmartDetect: settings.useSmartDetect !== false,
-      useCloudAI: false,
       minConfidence: settings.minConfidence ?? 0,
       // A session that deliberately turned every smart-detection filter off
       // writes zeroes, which must be obeyed; a session that says nothing about

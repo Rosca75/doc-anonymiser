@@ -283,7 +283,9 @@ func TestSessionSettingsRoundTrip(t *testing.T) {
 	// And the same fields must survive the App-side restore, which is where
 	// they were being dropped.
 	app := NewApp()
-	app.applyRestoredSettings(loaded)
+	if _, err := app.applyRestoredSession(loaded); err != nil {
+		t.Fatalf("applyRestoredSession: %v", err)
+	}
 	got := app.GetSettings()
 	if got.MinConfidence != 0.85 {
 		t.Errorf("the restored confidence floor is %v, want 0.85", got.MinConfidence)

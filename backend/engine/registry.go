@@ -51,6 +51,20 @@ var placeholderLabels = map[string]string{
 	CatESNIF:       "ES_NIF",
 }
 
+// PlaceholderLabel returns the label a category's placeholders carry, e.g.
+// "PERSON" for person_names, or "" for a category this build does not know.
+//
+// It exists so callers outside the engine (the App's rule-placeholder minting)
+// can build a placeholder in the SAME shape the registry assigns, rather than
+// upper-casing the identifier and getting [PERSON_NAMES_1] right up until
+// something compares the two.
+//
+// @param category an engine category identifier
+// @return the placeholder label, or "" when the category is unknown
+func PlaceholderLabel(category string) string {
+	return placeholderLabels[category]
+}
+
 // MappingEntry is one row of the exported re-identification key.
 type MappingEntry struct {
 	Original    string `json:"original"`
@@ -455,27 +469,34 @@ func (r *Registry) Forget(category, original string) (MappingEntry, bool) {
 
 // Rename updates a placeholder by its current value, addressed by placeholder
 // because on step 3 the user is looking at report rows and at marks in the
-// Compare pane, and both carry the placeholder (Phase 5). This is essentially
-// a SetPlaceholder wrapper that looks up the entry by placeholder instead of
-// by category/original.
+// Compare pane, and both carry the placeholder (Phase 5). This is a
+// SetPlaceholder wrapper that looks up the entry by placeholder instead of by
+// category and original, so the whole collision refusal lives in one place.
+//
+// The lookup takes the lock and gives it back BEFORE calling SetPlaceholder,
+// which takes it again. It is written as an explicit unlock rather than a
+// deferred one on purpose: a `defer r.mu.Unlock()` here unlocks a mutex
+// SetPlaceholder has already released, and Go answers an unlock of an unlocked
+// mutex with an unrecoverable fatal error, not a panic a caller could contain.
+// Every rename crashed the application until BUILD-06 Phase 8, with no test
+// calling this function to notice.
+//
+// @param current the placeholder as it stands today, in [NAME_N] form
+// @param next the placeholder the user wants instead
+// @return an actionable error the UI shows verbatim, or nil
 func (r *Registry) Rename(current, next string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	key, ok := r.byPlaceholder[current]
 	if !ok {
+		r.mu.Unlock()
 		return fmt.Errorf(
-			"placeholder %q not found in registry",
-			current)
+			"the placeholder %q is not one this session assigned, so there is nothing to rename. "+
+				"Pick a placeholder from the replaced-values list", current)
 	}
-
 	entry := r.entries[key]
-	category := entry.Category
-	original := entry.Original
+	category, original := entry.Category, entry.Original
 	r.mu.Unlock()
 
-	// Use SetPlaceholder's logic, which we need to call unlocked to avoid
-	// nested locks. SetPlaceholder will re-lock.
 	return r.SetPlaceholder(category, original, next)
 }
 

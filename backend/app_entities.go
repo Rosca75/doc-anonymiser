@@ -7,6 +7,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -80,11 +81,10 @@ func (a *App) RunDiscovery(fileNames []string, allowTerms []string) (*DiscoveryR
 	}
 
 	// Wire the allowlist veto exactly once per call: the same allowlist
-	// the pipeline will use later (allowlist wins in EVERY pass).
-	allow := engine.NewEmptyAllowlist()
-	for _, t := range allowTerms {
-		allow.Add(t)
-	}
+	// the pipeline will use later (allowlist wins in EVERY pass), removed
+	// values included, so a detection route cannot re-propose a value the
+	// user has already deleted (BUILD-06 Phase 4).
+	allow := a.allowlistFor(allowTerms)
 
 	// Hold a cancellable context on the App, exactly like the run
 	// pipeline does (BUILD-02 Phase 7d).
@@ -179,10 +179,8 @@ func (a *App) RunSmartDetection(fileNames []string, allowTerms []string, classif
 		return nil, fmt.Errorf("no matching imported files to scan, import documents first, then pick at least one for smart detection")
 	}
 
-	allow := engine.NewEmptyAllowlist()
-	for _, t := range allowTerms {
-		allow.Add(t)
-	}
+	// The shared builder, so removed values stay removed on this route too.
+	allow := a.allowlistFor(allowTerms)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	a.mu.Lock()
@@ -358,27 +356,40 @@ func (a *App) SetValuePlaceholder(placeholder, newPlaceholder string) error {
 // ValuePlaceholders returns all current placeholder assignments:
 // the map of placeholder → {original value, category} for display in step 3.
 //
-// @return map of placeholder to MappingInfo (e.g., {"[ENTITY_1]": {"original": "Acme Corp", "category": "entity_names"}})
-func (a *App) ValuePlaceholders() map[string]MappingInfo {
+// ValuePlaceholders returns one row per value the session has replaced: the
+// source for the step 3 Replaced values table (BUILD-06 Phase 5).
+//
+// It reads the REGISTRY rather than deriving rows from report text, because the
+// registry is what the placeholder editing and the removals both act on: a table
+// built from the report could offer a row the registry has no entry for, and the
+// edit behind it would fail with nothing to point at.
+//
+// @return the mapping rows, sorted by category then placeholder number; empty
+//
+//	before the first run, which is not an error, only an empty table
+func (a *App) ValuePlaceholders() []engine.MappingEntry {
 	a.mu.Lock()
 	reg := a.registry
 	a.mu.Unlock()
 
-	out := map[string]MappingInfo{}
 	if reg == nil {
-		return out
+		return []engine.MappingEntry{}
 	}
-
-	for _, e := range reg.Export() {
-		out[e.Placeholder] = MappingInfo{Original: e.Original, Category: e.Category}
-	}
-	return out
+	return reg.Export()
 }
 
-// RemovedValueInfo is the frontend-facing summary of a removed value.
+// RemovedValueInfo is the frontend-facing summary of a removed value: what the
+// collapsed "removed" list shows, and what RestoreValue is addressed by.
 type RemovedValueInfo struct {
 	Original string `json:"original"`
 	Category string `json:"category"`
+	// Placeholder is what the value USED to become. It is the address for
+	// RestoreValue, and the reason the removed list is readable at all: the user
+	// removed a row from a table of placeholders, so that is what they recognise.
+	Placeholder string `json:"placeholder"`
+	// Variants are the spellings the exclusion also covers, so the UI can say
+	// that removing "Marie Duval" also stopped "M. Duval" being replaced.
+	Variants []string `json:"variants,omitempty"`
 }
 
 // ValidationError is a single validation issue (BUILD-06 Phase 3/4).
@@ -388,140 +399,180 @@ type ValidationError struct {
 	Message  string `json:"message"`
 }
 
-// RemoveValue marks a value as removed so it won't be replaced in future runs
-// (BUILD-06 Phase 4/5). The removal uses the registry.Forget mechanism to mark
-// it as retired; the user can potentially restore it with RestoreValue.
+// RemoveValue deletes one value from the session (BUILD-06 Phases 4 and 5).
 //
-// @param placeholder the placeholder of the value to remove
-// @return actionable error, or nil on success
-func (a *App) RemoveValue(placeholder string) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	reg := a.registry
-	if reg == nil {
-		return fmt.Errorf("no values to remove yet: run the anonymisation first")
-	}
-
-	// Find the original value this placeholder maps to
-	entry, ok := reg.PlaceholderOwner(placeholder)
-	if !ok {
-		return fmt.Errorf("placeholder %q not found in the registry", placeholder)
-	}
-
-	// Use registry.Forget to mark as removed (the entry moves to retired)
-	// This keeps the placeholder reserved so it won't be reused.
-	_, _ = reg.Forget(entry.Category, entry.Original)
-	return nil
-}
-
-// RestoreValue un-marks a value as removed (BUILD-06 Phase 4/5).
-// Currently this is a no-op since removals are not yet persisted in the App.
+// Removal is ONE action with three effects, and they cannot be allowed to
+// happen separately:
 //
-// @param placeholder the placeholder of the value to restore
-// @return actionable error, or nil on success
-func (a *App) RestoreValue(placeholder string) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	reg := a.registry
-	if reg == nil {
-		return fmt.Errorf("no registry yet")
-	}
-
-	// Find the original value
-	entry, ok := reg.PlaceholderOwner(placeholder)
-	if !ok {
-		return fmt.Errorf("placeholder %q not found", placeholder)
-	}
-
-	// TODO Phase 8: implement restoration from retired list
-	// For now, this is a placeholder that will be implemented when session
-	// persistence is added.
-	_ = entry
-	return fmt.Errorf("value restoration will be implemented in Phase 8")
-}
-
-// ListRemovedValues returns all currently removed values so the user can
-// restore them if needed (BUILD-06 Phase 4/5).
+//  1. the registry entry is forgotten, so the re-identification key stops
+//     describing a replacement that no longer happens;
+//  2. the value and its variants are recorded as a session exclusion, which is
+//     what makes the removal stick. A regex-detected value has no Entity to
+//     drop, so the exclusion is the whole mechanism for that trigger kind and
+//     can never be skipped;
+//  3. every later run and every export reads that exclusion through
+//     allowlistFor, so the pipeline's registry post-pass stops re-applying the
+//     value to every document forever (the pipeline.go hole this closes).
 //
-// @return slice of {original, category} for each retired/removed value
-func (a *App) ListRemovedValues() []RemovedValueInfo {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	reg := a.registry
-	if reg == nil {
-		return []RemovedValueInfo{}
-	}
-
-	// Get the list of retired placeholders from the registry
-	retired := reg.Retired()
-	if len(retired) == 0 {
-		return []RemovedValueInfo{}
-	}
-
-	out := make([]RemovedValueInfo, 0, len(retired))
-	for _, placeholder := range retired {
-		entry, ok := reg.PlaceholderOwner(placeholder)
-		if ok {
-			out = append(out, RemovedValueInfo{
-				Original: entry.Original,
-				Category: entry.Category,
-			})
-		}
-	}
-	return out
-}
-
-// NextRulePlaceholder returns the next available placeholder number for
-// simple rules, avoiding collisions with auto-assigned placeholders
-// (BUILD-06 Phase 5). Allows the user to mint new placeholders for
-// find-and-replace rules without accidentally reusing a number.
+// The NUMBER is not freed (Registry.Forget). The user may already hold an
+// exported document, a mapping CSV or a session file in which [PERSON_4] means
+// one person, and handing 4 to somebody else would make two artefacts of one
+// session disagree with nothing able to detect it.
 //
-// @param category the category name (e.g., "email")
-// @return the next placeholder number (e.g., 7 if [EMAIL_1] through [EMAIL_6] are taken)
-func (a *App) NextRulePlaceholder(category string) int {
+// This does NOT re-run the pipeline. RunPipeline holds an in-progress guard and
+// FastRerun is synchronous, so re-running from in here while holding a.mu is a
+// deadlock shape; the caller re-runs, exactly as the reassign flow already does.
+//
+// @param placeholder the placeholder of the value to remove, from the table
+// @return what was removed (so the UI can say so), or an actionable error
+func (a *App) RemoveValue(placeholder string) (*RemovedValueInfo, error) {
 	a.mu.Lock()
 	reg := a.registry
 	a.mu.Unlock()
 
 	if reg == nil {
-		return 1
+		return nil, fmt.Errorf(
+			"there are no replaced values to remove yet: run the anonymisation once, " +
+				"then remove any value it replaced from the list on step 3")
 	}
 
-	// Get all reserved numbers for this category
-	reserved := reg.Reserved()
-	next := 1
-	usedInCategory := make(map[int]bool)
-
-	for _, r := range reserved {
-		// Parse placeholders like "[EMAIL_5]" or "[ENTITY_3]"
-		var cat string
-		var num int
-		if n, _ := fmt.Sscanf(r, "[%[^_]_%d]", &cat, &num); n == 2 && cat == category {
-			usedInCategory[num] = true
-		}
+	entry, ok := reg.PlaceholderOwner(placeholder)
+	if !ok {
+		return nil, fmt.Errorf(
+			"the placeholder %q is not one this session assigned, so there is nothing to remove. "+
+				"Pick a row from the replaced-values list", placeholder)
 	}
 
-	// Also check all current entries in the registry
-	for _, entry := range reg.Entries() {
-		// Extract number from placeholder like [EMAIL_5]
-		var cat string
-		var num int
-		if n, _ := fmt.Sscanf(entry.Placeholder, "[%[^_]_%d]", &cat, &num); n == 2 && cat == category {
-			usedInCategory[num] = true
-		}
+	// The exclusion covers the variants too, or removing "Marie Duval" would
+	// leave "M. Duval" being replaced under a placeholder whose entry is gone.
+	variants := engine.ExpandVariants(engine.Entity{
+		Category:  entry.Category,
+		Canonical: entry.Original,
+	})
+
+	removed := engine.RemovedValue{
+		Category:    entry.Category,
+		Canonical:   strings.ToLower(entry.Original),
+		Variants:    variants,
+		Placeholder: entry.Placeholder,
 	}
 
-	// Find the next available number
-	for {
-		if !usedInCategory[next] {
-			return next
-		}
-		next++
-	}
+	reg.Forget(entry.Category, entry.Original)
+
+	a.mu.Lock()
+	a.removed = append(a.removed, removed)
+	a.mu.Unlock()
+
+	return &RemovedValueInfo{
+		Original:    entry.Original,
+		Category:    entry.Category,
+		Placeholder: entry.Placeholder,
+		Variants:    variants,
+	}, nil
 }
+
+// RestoreValue undoes a removal (BUILD-06 Phases 4 and 5).
+//
+// It drops the exclusion and nothing else, deliberately. The value comes back
+// with a NEW number on the next run, because its old one was retired and stays
+// retired: the whole reason RemoveValue did not free the number is that an
+// artefact carrying it may already have left the machine, and a restore is not
+// evidence that it did not.
+//
+// Like RemoveValue, this does not re-run: the caller does.
+//
+// @param placeholder the placeholder the value USED to have, from the removed list
+// @return an actionable error, or nil
+func (a *App) RestoreValue(placeholder string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	for i, r := range a.removed {
+		if r.Placeholder != placeholder {
+			continue
+		}
+		a.removed = append(a.removed[:i], a.removed[i+1:]...)
+		return nil
+	}
+	return fmt.Errorf(
+		"%q is not in the removed list, so there is nothing to restore. "+
+			"Only a value removed in this session can be restored", placeholder)
+}
+
+// ListRemovedValues returns the values removed in this session, for the
+// collapsed "removed" list on step 3 (BUILD-06 Phases 4 and 5).
+//
+// The list is the App's own exclusion record, NOT the registry's retired
+// placeholders. The two are not the same set and reading the wrong one is
+// silently wrong in both directions: a placeholder retired by a rename is not a
+// removed value, and a removed value survives a session reload while the
+// registry entry behind it does not exist any more at all.
+//
+// @return one row per removed value, never nil
+func (a *App) ListRemovedValues() []RemovedValueInfo {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	out := make([]RemovedValueInfo, 0, len(a.removed))
+	for _, r := range a.removed {
+		out = append(out, RemovedValueInfo{
+			Original:    r.Canonical,
+			Category:    r.Category,
+			Placeholder: r.Placeholder,
+			Variants:    r.Variants,
+		})
+	}
+	return out
+}
+
+// NextRulePlaceholder mints and RESERVES the next free [CUSTOM_N] for a
+// simple-replace rule (BUILD-06 Phase 5).
+//
+// It replaces the frontend's nextCustomNumber, which counted only the existing
+// rules. CUSTOM is also the automatic label for the custom_patterns category, so
+// a rule and an automatic assignment could already collide on the same number,
+// and the exported key would then have two different values behind one
+// placeholder. Asking the registry is the fix: it is the only thing that knows
+// every number already spent, whether by an entry, an override, a reservation or
+// a retirement.
+//
+// The number is reserved as it is handed out, not when the rule is saved. A
+// number handed to the user and not held is a number the next automatic
+// assignment can take while they are still typing.
+//
+// @return the placeholder to put in the rule, or an actionable error
+func (a *App) NextRulePlaceholder() (string, error) {
+	a.mu.Lock()
+	// The session registry, created here if the user reaches the
+	// select-and-replace flow before the first run: it is the same lazily
+	// created instance the pipeline uses, so a number reserved now is still
+	// reserved when the run starts.
+	if a.registry == nil {
+		a.registry = engine.NewRegistry()
+	}
+	reg := a.registry
+	a.mu.Unlock()
+
+	// Reserve() refuses a placeholder that is taken, so walking upwards until it
+	// accepts one is both the search and the claim, with no second definition of
+	// "free" that could drift from the registry's.
+	label := engine.PlaceholderLabel(engine.CatCustomPatterns)
+	for n := 1; n <= maxRulePlaceholder; n++ {
+		candidate := fmt.Sprintf("[%s_%d]", label, n)
+		if err := reg.Reserve(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf(
+		"every %s placeholder up to %d is already in use, which is far past what a "+
+			"session is expected to need. Remove some find-and-replace rules, or start a new session",
+		label, maxRulePlaceholder)
+}
+
+// maxRulePlaceholder bounds the search above. It is a runaway guard, not a
+// product limit: a session with ten thousand custom rules is a bug somewhere
+// else, and an unbounded loop would hang the UI thread rather than say so.
+const maxRulePlaceholder = 10000
 
 // ValidateValuesRequest is the input for ValidateValues (BUILD-06 Phase 5).
 type ValidateValuesRequest struct {
@@ -548,11 +599,9 @@ func (a *App) ValidateValues(req ValidateValuesRequest) (*ValidateValuesResult, 
 	reg := a.registry
 	a.mu.Unlock()
 
-	// Build the allowlist from the request
-	allowlist := engine.NewEmptyAllowlist()
-	for _, t := range req.AllowTerms {
-		allowlist.Add(t)
-	}
+	// The same allowlist the run will use, removals included, so validation
+	// cannot report a conflict the pipeline would not see (or miss one it would).
+	allowlist := a.allowlistFor(req.AllowTerms)
 
 	// Run the engine's validation
 	result := engine.ValidateValues(engine.ValidationInput{

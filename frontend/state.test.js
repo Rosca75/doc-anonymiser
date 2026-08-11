@@ -328,7 +328,10 @@ test("the detection routes start with Smart detection on and both AI routes off"
   resetState();
   assert.equal(getState().settings.useSmartDetect, true);
   assert.equal(getState().settings.useAI, false);
-  assert.equal(getState().settings.useCloudAI, false);
+  // There is no useCloudAI: the cloud route is not built, and the rail renders a
+  // static panel rather than reading a flag (BRIDGE.md).
+  assert.ok(!("useCloudAI" in getState().settings),
+    "a setting Go discards and nothing reads must not exist");
   setState({ ollama: { available: true, models: [], detail: "" } });
   assert.equal(getState().settings.useAI, false, "detecting Ollama must not switch the route on");
 });

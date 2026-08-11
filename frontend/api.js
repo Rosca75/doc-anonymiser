@@ -273,6 +273,65 @@ export async function entityPlaceholder(category, canonical) {
   return bridge().EntityPlaceholder(category, canonical);
 }
 
+// --- Values, placeholders and removals (step 3, BUILD-06 Phases 4 and 5) ---
+//
+// These supersede setEntityPlaceholder / entityPlaceholder above, which are
+// addressed by (category, canonical) and live on step 2, where the registry does
+// not exist yet. Everything here is addressed BY PLACEHOLDER, because on step 3
+// the user is looking at report rows and at marks in the Compare pane and both
+// carry the placeholder.
+
+/** valuePlaceholders() resolves to one row per value the session replaced:
+ *  [{original, placeholder, category, count}], sorted by category then number.
+ *  Empty before the first run, which is an empty table and not an error. */
+export async function valuePlaceholders() {
+  return bridge().ValuePlaceholders();
+}
+
+/**
+ * setValuePlaceholder(current, next) renames a placeholder.
+ *
+ * REJECTS with an actionable message when the shape is wrong, when `current` is
+ * not one this session assigned, or when `next` already belongs to another
+ * value. The rename takes effect on the NEXT run, not retroactively: the text on
+ * screen was produced with the old placeholder.
+ */
+export async function setValuePlaceholder(current, next) {
+  return bridge().SetValuePlaceholder(current, next);
+}
+
+/** removeValue(placeholder) deletes a value from the session and resolves to
+ *  {original, category, placeholder, variants}. It does NOT re-run: the caller
+ *  re-runs, because Go re-running from inside a bound method is a deadlock
+ *  shape (RunPipeline holds an in-progress guard, FastRerun is synchronous). */
+export async function removeValue(placeholder) {
+  return bridge().RemoveValue(placeholder);
+}
+
+/** restoreValue(placeholder) undoes a removal. The value returns on the next
+ *  run with a NEW number: the old one stays retired. */
+export async function restoreValue(placeholder) {
+  return bridge().RestoreValue(placeholder);
+}
+
+/** listRemovedValues() resolves to the collapsed removed list. */
+export async function listRemovedValues() {
+  return bridge().ListRemovedValues();
+}
+
+/** nextRulePlaceholder() resolves to the next free [CUSTOM_N], reserved as it
+ *  is handed over so an automatic assignment cannot take it while the user is
+ *  still typing the rule. */
+export async function nextRulePlaceholder() {
+  return bridge().NextRulePlaceholder();
+}
+
+/** validateValues(request) resolves to {blocking, warnings}. A blocking
+ *  conflict refuses the run, so a screen calls this to say so beforehand. */
+export async function validateValues(request) {
+  return bridge().ValidateValues(request);
+}
+
 // --- Run screen (Phase 8) -------------------------------------------------
 
 /** runPipeline(request) starts the pipeline; resolves immediately (results
