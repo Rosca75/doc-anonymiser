@@ -27,14 +27,14 @@
 import { ping, probeOllama, onEvent, defaultAllowlist } from "./api.js";
 import {
   getState, setState, subscribe,
-  WIZARD_STEPS, canGoTo, goTo, goToScreen, knownStep,
+  WIZARD_STEPS, canGoTo, goToScreen, knownStep,
   applyImportResult,
 } from "./state.js";
 import { escapeHTML } from "./html.js";
 import { topnavHTML, stepbarHTML, headerActionsHTML, appFooterHTML, showDocumentation } from "./shell.js";
 import { modalLayerHTML, wireModal } from "./modal.js";
 import { notify } from "./toast.js";
-import { navigateTo } from "./nav.js";
+import { navigateTo, handleShortcut } from "./nav.js";
 import { renderHome } from "./views/home.js";
 import { renderImport } from "./views/import.js";
 import { renderIdentify } from "./views/identify.js";
@@ -145,21 +145,12 @@ export function boot(root) {
     notify(ev?.message ?? "The detection run stopped unexpectedly.", "warn");
   });
 
-  // Keyboard shortcuts (Phase 10): Ctrl+O jumps to Import, Ctrl+E to
-  // Export (guards still apply, Export needs results). The browser's own
-  // Ctrl+O/Ctrl+E defaults are suppressed inside the app window.
-  document.addEventListener("keydown", (ev) => {
-    if (!(ev.ctrlKey || ev.metaKey)) return;
-    if (ev.key === "o" || ev.key === "O") {
-      ev.preventDefault();
-      goToScreen("wizard");
-      goTo("import");
-    } else if (ev.key === "e" || ev.key === "E") {
-      ev.preventDefault();
-      goToScreen("wizard");
-      goTo("export");
-    }
-  });
+  // Keyboard shortcuts (Phase 10): Ctrl+O jumps to Import, Ctrl+E to Export.
+  // The whole decision lives in nav.js handleShortcut (BUILD-06 Phase 7), which
+  // is why this is a bare listener: the shortcuts move the wizard, and a
+  // shortcut that moved it its own way skipped the confirm and the backward
+  // reset that every other route through nav.js guarantees.
+  document.addEventListener("keydown", handleShortcut);
 }
 
 /** paint(root) renders the whole shell from the current state. */

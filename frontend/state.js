@@ -659,8 +659,27 @@ export function goToScreen(name) {
 // --- Navigation guards ------------------------------------------------------
 
 /**
- * canGoTo(step, s) implements the wizard guards: no step beyond Import
- * without documents, and no Export before a run produced results.
+ * canGoTo(step, s) implements the wizard guards. There are three, and they all
+ * live here rather than in the five places that navigate, so the step bar and
+ * all four screen footers give the same answer (nav.js, frontend/CLAUDE.md).
+ *
+ *   1. no step beyond Import without documents;
+ *   2. no Anonymise while suggestions are still waiting to be reviewed
+ *      (BUILD-06 Phase 7);
+ *   3. no Export before a run produced results.
+ *
+ * Rule 2 is the review gate. Detection produces SUGGESTIONS, not decisions, and
+ * an unreviewed suggestion is neither accepted nor rejected: walking past them
+ * into the run silently answers "reject" for the user on values the detector
+ * thought were worth asking about. The gate is never a dead end, because
+ * rejecting is one action away (rejectAllShown, and views/identify.js readyHint
+ * says so in the footer).
+ *
+ * Rule 2 is deliberately NOT applied to Export. Reaching Export at all requires
+ * results, which means a run already happened with the review done; refusing to
+ * show the user the output of a finished run because a later detection pass
+ * added suggestions would strand them on a screen with nothing to do.
+ *
  * @param {string} step target step name
  * @param {object} [s] state (defaults to the live state; injectable for tests)
  * @returns {boolean}
@@ -668,8 +687,9 @@ export function goToScreen(name) {
 export function canGoTo(step, s = state) {
   if (!WIZARD_STEPS.includes(step)) return false;
   const idx = WIZARD_STEPS.indexOf(step);
-  if (idx > 0 && s.documents.length === 0) return false; // nothing imported yet
-  if (step === "export" && !s.results) return false;     // nothing to export yet
+  if (idx > 0 && s.documents.length === 0) return false;      // nothing imported yet
+  if (step === "anonymise" && s.candidates.length > 0) return false; // still unreviewed
+  if (step === "export" && !s.results) return false;          // nothing to export yet
   return true;
 }
 

@@ -32,8 +32,9 @@ import {
   getState, setState, resetState,
   WIZARD_STEPS, canGoTo, goTo, nextStep,
   isBackward, resetStep, STEP_RESETS,
-  addEntities, addCandidates, applyPreset, setMinConfidence,
+  addCandidates, applyPreset, setMinConfidence,
   addAllowTerm, presetCategories,
+  acceptCandidate, rejectCandidate, rejectAllShown,
 } from "./state.js";
 import { DEFAULT_COUNTRY, countryIDCategories } from "./countries.js";
 
@@ -60,9 +61,15 @@ const SHAPES = {
       { text: "Marie Duval", category: "person_names", count: 2 },
     ], "smart");
   },
+  // "values" is the shape AFTER the review, which is the only way a real
+  // session reaches it: every suggestion has been answered, one accepted and
+  // one rejected, so nothing is left waiting. It used to add the entity beside
+  // the still-unreviewed suggestions, which is a state the UI cannot produce
+  // and, since BUILD-06 Phase 7, one the gate refuses to walk out of.
   values: () => {
     SHAPES.candidates();
-    addEntities([{ category: "person_names", canonical: "Marie Duval" }]);
+    acceptCandidate("Marie Duval");
+    rejectCandidate("Alpine Trust");
   },
   results: () => {
     SHAPES.values();
@@ -89,7 +96,11 @@ test("matrix: which steps each session shape unlocks", () => {
     // Documents unlock everything except Export, which needs results.
     documents: ["import", "identify", "anonymise"],
     configured: ["import", "identify", "anonymise"],
-    candidates: ["import", "identify", "anonymise"],
+    // Suggestions waiting for review SHUT Anonymise (BUILD-06 Phase 7). This
+    // test pinned the opposite until then: "candidates unlocks anonymise" was
+    // asserted as a feature, which is how walking past an unreviewed detection
+    // stayed invisible.
+    candidates: ["import", "identify"],
     values: ["import", "identify", "anonymise"],
     // A finished run unlocks Export.
     results: ["import", "identify", "anonymise", "export"],
@@ -113,6 +124,58 @@ test("matrix: Export is reachable exactly when results exist", () => {
     SHAPES[name]();
     assert.equal(canGoTo("export"), !!getState().results, `shape "${name}"`);
   }
+});
+
+// --- The review gate (BUILD-06 Phase 7) ------------------------------------
+
+test("matrix: Anonymise is reachable exactly when no suggestion is waiting", () => {
+  // The rule stated directly, across every shape, beside the table above: the
+  // table says which steps each shape opens, this says WHY Anonymise is one of
+  // them, so a shape added later cannot pass by accident.
+  for (const name of SHAPE_NAMES) {
+    SHAPES[name]();
+    const s = getState();
+    const want = s.documents.length > 0 && s.candidates.length === 0;
+    assert.equal(canGoTo("anonymise"), want, `shape "${name}"`);
+  }
+});
+
+test("matrix: rejecting the waiting suggestions opens the gate", () => {
+  // The gate must never be a dead end. A user who decides none of the
+  // suggestions are worth keeping (or who switched detection off after it ran)
+  // needs ONE action to get moving again, and this is the one the footer hint
+  // names.
+  SHAPES.candidates();
+  assert.equal(canGoTo("anonymise"), false, "suggestions are waiting");
+
+  const waiting = getState().candidates.map((c) => c.text);
+  assert.equal(rejectAllShown(waiting), waiting.length);
+  assert.equal(canGoTo("anonymise"), true, "nothing is waiting any more");
+
+  // And the move itself now works, rather than only the guard agreeing it could.
+  goTo("identify");
+  assert.equal(nextStep(), true);
+  assert.equal(getState().step, "anonymise");
+});
+
+test("matrix: accepting the waiting suggestions opens the gate too", () => {
+  // Accepting is the other half of the review. It promotes the suggestion into
+  // a value AND clears it from the review list, so the gate opens for the same
+  // reason: nothing is left unanswered.
+  SHAPES.candidates();
+  for (const text of getState().candidates.map((c) => c.text)) acceptCandidate(text);
+  assert.deepEqual(getState().candidates, []);
+  assert.equal(canGoTo("anonymise"), true);
+});
+
+test("matrix: the gate cannot be walked past by stepping forward repeatedly", () => {
+  // The same probe the document guard gets: a shut gate that a determined
+  // nextStep() opens is not a gate.
+  SHAPES.candidates();
+  goTo("identify");
+  for (let i = 0; i < 10; i++) nextStep();
+  assert.equal(getState().step, "identify",
+    "unreviewed suggestions mean Identify is as far as it goes");
 });
 
 // --- Forward moves ---------------------------------------------------------

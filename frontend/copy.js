@@ -396,6 +396,23 @@ export const WORKSPACE = {
   acceptedN(n) {
     return n === 0 ? "Nothing to accept." : `${n} value${n === 1 ? "" : "s"} accepted.`;
   },
+  /** readyToReplace(n) is the Identify footer's sentence when the review is
+   *  done: it counts ACCEPTED values, because that is what the next step acts
+   *  on. Zero is a real answer, not an empty one. */
+  readyToReplace(n) {
+    return `${n} value${n === 1 ? "" : "s"} ready to replace`;
+  },
+  /** reviewGate(n) is the Identify footer's sentence while suggestions are
+   *  still waiting, and the tooltip on the disabled CONTINUE. It is the REASON
+   *  the move is refused (state.js canGoTo rule 2), so it names the one action
+   *  that clears the gate rather than only counting what is left. The bulk
+   *  button acts on the rows in view, so the sentence says so: a search or a
+   *  filter would otherwise leave suggestions behind and the gate shut with no
+   *  visible cause. */
+  reviewGate(n) {
+    return `${n} suggestion${n === 1 ? "" : "s"} still waiting. ` +
+      `Accept or reject each one to continue, or clear any filter and use "Reject all shown".`;
+  },
   rejectedN(n) {
     return n === 0 ? "Nothing to reject." : `${n} suggestion${n === 1 ? "" : "s"} rejected.`;
   },
