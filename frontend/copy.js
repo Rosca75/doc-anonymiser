@@ -232,6 +232,17 @@ export const RAIL = {
   preset: "Preset",
   whatToAnonymise: "What to anonymise",
 
+  // BUILD-06 Phase 6 split the category list in two blocks: the regex-triggered
+  // patterns (found by shape) and the entity categories (found by name). Both
+  // blocks live in the Smart detection section because the category selection is
+  // the ONE scope the whole pipeline reads (CLAUDE.md §5): rendering a second
+  // copy of the same checkboxes inside Local AI would give one setting two
+  // controls, and the second copy would be folded shut and unreachable anyway.
+  valuesAuto: "Values to detect automatically",
+  valuesAutoHint: "These categories are used by every detection route you switch on.",
+  // What the Local AI section says INSTEAD of a second copy of the checkboxes.
+  localValuesHint: "Local AI looks for the same value categories chosen under Smart detection above. Switching this route on adds a model pass over them, it does not change what is selected.",
+
   /** activeCount(n, total) is the rail heading's read-out. */
   activeCount(n, total) {
     return `${n} of ${total} categories on`;

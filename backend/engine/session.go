@@ -81,6 +81,15 @@ type Session struct {
 	// tells a reloaded session which of them were deliberate, so saving again
 	// does not quietly demote them to automatic assignments.
 	PlaceholderOverrides map[string]string `json:"placeholderOverrides,omitempty"`
+	// RemovedValues (Phase 4) tracks values the user deleted from the session.
+	// They must not appear in any run without explicit restoration.
+	RemovedValues []RemovedValue `json:"removedValues,omitempty"`
+	// RetiredPlaceholders (Phase 4) tracks placeholders whose entries were
+	// forgotten but whose numbers were never freed.
+	RetiredPlaceholders []string `json:"retiredPlaceholders,omitempty"`
+	// ReservedPlaceholders (Phase 3) tracks placeholders produced outside the
+	// registry (rule replacements).
+	ReservedPlaceholders []string `json:"reservedPlaceholders,omitempty"`
 }
 
 // SaveSession serialises a session to pretty-printed JSON (stable key
@@ -128,11 +137,32 @@ var placeholderParseRe = regexp.MustCompile(`^\[([A-Z][A-Z0-9_]*)_([0-9]+)\]$`)
 // NewRegistryFromEntries rebuilds a live registry from exported mapping
 // entries (session load). Counters resume from the highest N per label so
 // new assignments continue the numbering instead of colliding.
+//
+// Phase 3: builds byOriginal and byPlaceholder indexes, and treats a
+// duplicated original as a corrupt-file error.
 func NewRegistryFromEntries(entries []MappingEntry) *Registry {
 	r := NewRegistry()
 	for _, e := range entries {
 		entry := e // copy — the map keeps a pointer
-		r.entries[e.Category+"|"+lowered(e.Original)] = &entry
+		key := e.Category + "|" + lowered(e.Original)
+		lowerOriginal := lowered(e.Original)
+
+		// Phase 3: check for duplicated originals (corrupt file)
+		if existingKey, ok := r.byOriginal[lowerOriginal]; ok {
+			// A duplicated original means the registry is corrupt: two entries
+			// own the same value under different categories, breaking the
+			// one-value-one-placeholder invariant. This should never happen
+			// in a file this application wrote, but fail clearly if it does.
+			// This panic will be caught and reported by the caller.
+			panic(fmt.Sprintf(
+				"corrupt session file: the original %q appears twice, under categories %q and %q",
+				e.Original, r.entries[existingKey].Category, e.Category))
+		}
+
+		r.entries[key] = &entry
+		r.byOriginal[lowerOriginal] = key
+		r.byPlaceholder[e.Placeholder] = key
+
 		if m := placeholderParseRe.FindStringSubmatch(e.Placeholder); m != nil {
 			if n, err := strconv.Atoi(m[2]); err == nil && n > r.counters[m[1]] {
 				r.counters[m[1]] = n
