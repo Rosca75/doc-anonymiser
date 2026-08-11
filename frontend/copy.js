@@ -124,7 +124,7 @@ export const HOME = {
   stepsTitle: "The four steps",
   steps: [
     { label: "Import", body: "Drop in .docx, .pptx, .xlsx, .pdf, .csv, .md or .txt files. Your originals are only ever read, never changed." },
-    { label: "Identify", body: "Pick a preset and fine-tune the 22 detection categories, then review every suggested value. Nothing is replaced until you accept it." },
+    { label: "Identify", body: "Pick a preset and fine-tune the 24 detection categories, then review every suggested value. Nothing is replaced until you accept it." },
     { label: "Anonymise", body: "Run the passes and check the result side by side, with every replacement mapped back to its original." },
     { label: "Export", body: "Save the anonymised copies, the report and the re-identification key." },
   ],

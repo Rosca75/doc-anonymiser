@@ -274,18 +274,35 @@ doc-anonymiser/
   the step bar and all four footers inherit it, and the Identify footer's hint
   is the refusal itself, naming the bulk "Reject all shown" so the gate is
   never a dead end.
-- **Entity categories:** `entity_names`, `project_names`, `person_names`,
-  `custom_patterns` (user regex), plus `organisation_names` and
-  `location_names` (LLM proposals only) and the PII categories emitted by
-  pass 1. The user-visible label for `entity_names` is "Entity names".
-  `entity_names` is the BUILD-06 merge of the former `client_names` and
-  `internal_names`: the pipeline treated the two identically, and the
-  distinction cost the user a decision at every value they added. It covers
-  named organisations, companies, teams and internal systems. A human being
-  is always `person_names`, which is why `entity_names` gets
-  organisation-style variant expansion and NOT the person-style expansion
-  (initials, surname-only) `internal_names` used to get: expanding "Delta
-  Industries" to "Industries" would replace an ordinary noun everywhere.
+- **Entity categories:** eight, listed in `engine.AllEntityCategories` and
+  mirrored by `frontend/state.js`. Every one is reachable by manual entry and
+  by the local AI; three are additionally reachable OFFLINE, by a heuristic
+  detector, and the frontend label of the rest says where they come from,
+  enforced by `identifyrail.test.js`.
+
+  | Identifier | Placeholder | Also found offline by |
+  |---|---|---|
+  | `entity_names` | `ENTITY` | legal-suffix runs |
+  | `project_names` | `PROJECT` | codes beside a project cue |
+  | `product_names` | `PRODUCT` | a trademark mark, or a product head noun |
+  | `brand_names` | `BRAND` | nothing: a brand is world knowledge |
+  | `person_names` | `PERSON` | title cues, multi-word runs |
+  | `identifier_names` | `ID` | reference and contract codes |
+  | `other_names` | `OTHER` | nothing: it is defined by exclusion |
+  | `custom_patterns` | `CUSTOM` | the user's own regexes |
+
+  `entity_names` covers named organisations, companies, teams and internal
+  systems. A human being is always `person_names`, which is why `entity_names`
+  gets organisation-style variant expansion and NOT the person-style expansion
+  (initials, surname-only): expanding "Delta Industries" to "Industries" would
+  replace an ordinary noun everywhere. `identifier_names` and `other_names` are
+  expanded LITERALLY (`engine.literalOnlyCategories`): a code has no name
+  structure, and stripping a token that resembles a legal suffix off one would
+  invent a variant matching a different code.
+  The code detector (`backend/engine/codes.go`) requires a separator between
+  the letters and the digits. That is what keeps it out of pass 1's territory,
+  which owns tax and VAT numbers, and `TestCodeDetectorDoesNotOverlapPassOne`
+  holds the boundary.
 - **Engine identifiers are stable, user-visible labels are not (BUILD-05 Phase 0,
   superseding BUILD-04 CR3):** the wizard has **four** steps, and both their
   tokens and their visible labels are: 1 **Import**, 2 **Identify**,
@@ -293,7 +310,7 @@ doc-anonymiser/
   own: the configure choices are the left rail of Identify, and the values,
   suggestions, allowlist and custom patterns are its workspace. The rail lists
   the DETECTION ROUTES as switchable sections (BUILD-06): Smart detection, on
-  by default and owning the scope controls (country, preset, the 22 detection
+  by default and owning the scope controls (country, preset, the 24 detection
   categories, the confidence floor) because they are that route's scope; Local
   AI, off by default; Cloud AI, off and not built. Detecting Ollama ENABLES the
   Local AI switch, it never flips it. Within the scope controls the categories
@@ -318,6 +335,13 @@ doc-anonymiser/
 ## 6. Coding rules
 
 - Heavy comments everywhere; each file starts with a purpose header.
+- **Comments explain intent, never change history.** Say what the code is for
+  and why it is shaped that way. Do NOT write what it used to be, which phase
+  changed it, or which change request asked for it: that is what `git log` and
+  `docs/` are for, and in the code it decays into a story nobody can check. A
+  comment naming a deleted function is a monument, not documentation; if the
+  absence matters, assert it in a test. Where a past mistake explains a rule,
+  state the RULE and the failure it prevents, in the present tense.
 - Go standard library first. No new dependency without adding it to the
   BUILD.md dependency table AND the pinned-versions table below.
 - **A change is not finished until its tests move with it.** This is a hard

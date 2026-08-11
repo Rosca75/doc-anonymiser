@@ -167,6 +167,13 @@ Windows it steals focus from the window it belongs to.
 - Headings stay at **regular weight**: hierarchy comes from size and space,
   never bold.
 
+## Comment rules
+
+Comments explain intent, never change history (root `CLAUDE.md` §6). No phase
+numbers, no change-request numbers, no "this used to be a table", and no
+tombstone blocks for deleted functions. Where a past mistake explains a rule,
+state the rule and the failure it prevents, in the present tense.
+
 ## Copy rules
 
 - **No em dashes (U+2014)** in any user-visible string. Enforced on the JS

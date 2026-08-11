@@ -62,7 +62,18 @@ enforced anywhere else:
   declarations that reads no document text, so it is cheap enough to run on
   every run and every fast re-run. It runs inside `engine.Run` BEFORE pass 1,
   because the App has two entry points and the engine has one. Blocking
-  conflicts abort before the registry is mutated.
+  conflicts abort before the registry is mutated. `Run`'s preamble is ordered
+  removals, then validation over what is left, then reservations: a removed
+  value stops being a declaration, so validating it as one would refuse every
+  run after a removal. The overlap WARNINGS come from
+  `ResolveOverlapsWithLosers`, the one place the decision is made, because a
+  parallel check can disagree with the pipeline and then describe something
+  that did not happen.
+- `engine/codes.go` — the offline detector for CODE-SHAPED values, a second
+  scanner over the raw text. It is separate from `discover.go` because that
+  file's tokenizer treats a digit as a word boundary, so no code shape can
+  surface through it, and teaching it digits would change what every other
+  detector sees.
 - `engine/removals.go` — `RemovedValue`, `ApplyRemovals` and `FilterRemoved`.
   Removals are enforced through `Allowlist.Contains`, the single veto every
   span producer already consults; the App folds them in once, in
@@ -81,8 +92,11 @@ refused to free.
 1. Deterministic PII regex pass (`engine/pii.go`). Regexes are compiled once
    at package init and documented with match / deliberately-no-match examples.
 2. Known-entity pass (`engine/entities.go`): discovery + manual entities,
-   expanded into name variants (initials, surname-only, first-name-only,
-   hyphen/space), longest-match-first.
+   expanded into name variants, longest-match-first. Expansion has three
+   classes and a category belongs to exactly one: person-style (initials,
+   surname-only, first-name-only, hyphen/space), organisation-style (a legal
+   suffix stripped, never added), and literal, for the categories with no name
+   structure to expand.
 3. Optional LLM deep-scan pass (`engine/discover.go` + `ollama`): every
    LLM-proposed entity passes a **hallucination filter** (dropped unless the
    exact string occurs in the source text) and respects the allowlist.
@@ -130,8 +144,9 @@ panicking would take the application down on a bad file.
 
 - Heavy comments everywhere; each file opens with a purpose header. The owner
   is not a Go expert and orchestrates agents, so explain intent, not just
-  mechanics. Error messages must be actionable: what failed, what was
-  expected, how to fix it.
+  mechanics. Comments never carry change history: no phase numbers, no "this
+  used to", no tombstones for deleted functions (root `CLAUDE.md` §6). Error
+  messages must be actionable: what failed, what was expected, how to fix it.
 - **A change is not finished until its tests move with it** (root `CLAUDE.md`
   section 6). In the same change: update the tests that asserted the old
   behaviour, add a test for the new behaviour, delete the tests for behaviour
