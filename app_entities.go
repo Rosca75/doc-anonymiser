@@ -383,7 +383,7 @@ type RemovedValueInfo struct {
 
 // ValidationError is a single validation issue (BUILD-06 Phase 3/4).
 type ValidationError struct {
-	Kind     string `json:"kind"` // "duplicate", "collision", "conflict"
+	Kind     string `json:"kind"`     // "duplicate", "collision", "conflict"
 	Severity string `json:"severity"` // "block", "warn"
 	Message  string `json:"message"`
 }
@@ -556,12 +556,12 @@ func (a *App) ValidateValues(req ValidateValuesRequest) (*ValidateValuesResult, 
 
 	// Run the engine's validation
 	result := engine.ValidateValues(engine.ValidationInput{
-		Entities:    req.Entities,
-		Patterns:    req.Patterns,
-		SimpleRules: req.Rules,
-		Allowlist:   allowlist,
-		Categories:  nil,
-		Registry:    reg,
+		Entities:       req.Entities,
+		Patterns:       req.Patterns,
+		SimpleRules:    req.Rules,
+		Allowlist:      allowlist,
+		Categories:     nil,
+		Registry:       reg,
 		SkipValidation: false,
 	})
 

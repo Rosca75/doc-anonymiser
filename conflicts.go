@@ -40,13 +40,13 @@ type ValidationResult struct {
 
 // ValidationInput is what ValidateValues needs to check.
 type ValidationInput struct {
-	Entities   []Entity            // declared entities
-	Patterns   []CustomPattern     // user-written regex patterns
-	SimpleRules []SimpleRule        // find-and-replace rules
-	Allowlist  *Allowlist          // terms never to replace
-	Categories CategorySelection    // which categories are active
-	Registry   *Registry           // may be nil before the first run
-	SkipValidation bool             // for tests that deliberately create conflicts
+	Entities       []Entity          // declared entities
+	Patterns       []CustomPattern   // user-written regex patterns
+	SimpleRules    []SimpleRule      // find-and-replace rules
+	Allowlist      *Allowlist        // terms never to replace
+	Categories     CategorySelection // which categories are active
+	Registry       *Registry         // may be nil before the first run
+	SkipValidation bool              // for tests that deliberately create conflicts
 }
 
 // ValidateValues checks for conflicts and returns them categorised as
@@ -100,7 +100,7 @@ func checkDuplicateValues(entities []Entity) []Conflict {
 							"two categories cannot share one placeholder",
 						e.Canonical, prevCategory, e.Category),
 					Fix: fmt.Sprintf(
-						"delete the value from one category, or uncheck one category "+
+						"delete the value from one category, or uncheck one category " +
 							"in the scope panel"),
 				})
 			}
@@ -218,7 +218,7 @@ func checkSimpleRuleConflicts(rules []SimpleRule, registry *Registry) []Conflict
 								"the exported re-identification key would become ambiguous",
 							rule.Replace, owner.Original),
 						Fix: fmt.Sprintf(
-							"change the replace value to a different placeholder, "+
+							"change the replace value to a different placeholder, " +
 								"or remove the rule"),
 					})
 				}
