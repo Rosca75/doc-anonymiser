@@ -289,10 +289,10 @@ func TestDetectionCancellationIsHonestAboutIt(t *testing.T) {
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
 			app.mu.Lock()
-			running := app.cancelDiscovery != nil
+			running := app.cancelDetection != nil
 			app.mu.Unlock()
 			if running {
-				app.CancelDiscovery()
+				app.CancelDetection()
 				return
 			}
 			time.Sleep(time.Millisecond)
@@ -318,7 +318,7 @@ func TestDetectionCancellationIsHonestAboutIt(t *testing.T) {
 func TestDetectionRefusesAConcurrentRun(t *testing.T) {
 	app := detectionApp()
 	_, cancel := context.WithCancel(context.Background())
-	app.cancelDiscovery = cancel
+	app.cancelDetection = cancel
 	defer cancel()
 
 	if _, err := app.RunDetection([]string{"a.txt"}, nil); err == nil {

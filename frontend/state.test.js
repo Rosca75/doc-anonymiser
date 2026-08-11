@@ -24,7 +24,7 @@ import {
   applyImportResult,
   setNotice, clearNotice, NOTICE_TONES,
   setDocumentCountry,
-  addPendingValue, removePendingValue, clearPendingValues,
+  setValueTables,
   dismissWarning, visibleWarnings,
   setExportDir, startNewBatch, setMetaReview,
   askConfirm, answerConfirm,
@@ -1095,77 +1095,6 @@ test("a real category change still reads as Custom", () => {
 
 // --- The Anonymise screen's editing surfaces (BUILD-05 Phase 7) ----------
 
-test("addPendingValue records the chip AND adds the value to replace", () => {
-  // The two go together: the entity is what makes a fast re-run replace the
-  // value, the chip is what says it will not happen until the user presses it.
-  resetState();
-  assert.equal(addPendingValue("person_names", "P. Stone"), true);
-  const s = getState();
-  assert.deepEqual(s.pendingValues, [{ category: "person_names", text: "P. Stone" }]);
-  assert.equal(s.entities.length, 1);
-  assert.equal(s.entities[0].canonical, "P. Stone");
-  assert.equal(s.entities[0].category, "person_names");
-});
-
-test("addPendingValue trims, and refuses an empty value", () => {
-  resetState();
-  assert.equal(addPendingValue("person_names", "  P. Stone  "), true);
-  assert.equal(getState().pendingValues[0].text, "P. Stone");
-  for (const empty of ["", "   ", undefined, null]) {
-    assert.equal(addPendingValue("person_names", empty), false, JSON.stringify(empty));
-  }
-  assert.equal(getState().pendingValues.length, 1);
-});
-
-test("addPendingValue refuses a duplicate, case-insensitively", () => {
-  resetState();
-  addPendingValue("person_names", "P. Stone");
-  assert.equal(addPendingValue("person_names", "p. stone"), false);
-  assert.equal(addPendingValue("entity_names", "P. STONE"), false,
-    "the category does not make it a different value");
-  assert.equal(getState().pendingValues.length, 1);
-});
-
-test("addPendingValue refuses a value that is already on the list to replace", () => {
-  // A chip for something already being replaced would promise a change the
-  // re-run cannot make.
-  resetState();
-  addEntities([{ category: "entity_names", canonical: "Aurora Group" }]);
-  assert.equal(addPendingValue("entity_names", "Aurora Group"), false);
-  assert.deepEqual(getState().pendingValues, []);
-});
-
-test("removePendingValue undoes the WHOLE of what Add did", () => {
-  // The chip's cross has to remove the entity too, or the value would keep being
-  // replaced with no chip left to say so.
-  resetState();
-  addPendingValue("person_names", "P. Stone");
-  addPendingValue("entity_names", "Aurora Group");
-  removePendingValue("P. Stone");
-  const s = getState();
-  assert.deepEqual(s.pendingValues.map((p) => p.text), ["Aurora Group"]);
-  assert.deepEqual(s.entities.map((e) => e.canonical), ["Aurora Group"]);
-});
-
-test("removePendingValue ignores a value that is not pending", () => {
-  resetState();
-  addEntities([{ category: "entity_names", canonical: "Aurora Group" }]);
-  removePendingValue("Aurora Group");
-  assert.equal(getState().entities.length, 1,
-    "a value that was never pending must not be removed by the chip handler");
-});
-
-test("clearPendingValues empties the chips but KEEPS the values", () => {
-  // The re-run just used those entities; dropping them would undo the re-run.
-  resetState();
-  addPendingValue("person_names", "P. Stone");
-  addPendingValue("entity_names", "Aurora Group");
-  assert.equal(clearPendingValues(), 2);
-  assert.deepEqual(getState().pendingValues, []);
-  assert.equal(getState().entities.length, 2);
-  assert.equal(clearPendingValues(), 0, "clearing an empty list is a no-op");
-});
-
 test("dismissWarning hides one warning and visibleWarnings drops it", () => {
   resetState();
   setState({ results: { report: { warnings: ["pdf skipped", "extras in headers"] } } });
@@ -1242,7 +1171,9 @@ function finishedBatch() {
   addCandidates([{ text: "Thomas Berger", category: "person_names" }], "smart");
   addPattern("INV-\\d{6}");
   addSimpleRule({ find: "4471-B", replace: "[CUSTOM_1]", caseSensitive: true });
-  addPendingValue("entity_names", "Aurora Group");
+  setValueTables(
+    [{ original: "Marie Duval", placeholder: "[PERSON_1]", category: "person_names", count: 2 }],
+    [{ original: "Aurora Group", placeholder: "[ENTITY_1]", category: "entity_names" }]);
   dismissWarning("w");
   addAllowTerm("CSSF");
   setDocumentCountry("DE");
@@ -1260,7 +1191,8 @@ test("startNewBatch clears everything about THIS batch", () => {
   assert.deepEqual(s.candidates, []);
   assert.deepEqual(s.patterns, []);
   assert.deepEqual(s.simpleRules, []);
-  assert.deepEqual(s.pendingValues, []);
+  assert.deepEqual(s.replacedValues, []);
+  assert.deepEqual(s.removedValues, []);
   assert.deepEqual(s.dismissedWarnings, []);
   assert.deepEqual(s.metaReview, {});
   assert.equal(s.results, null);
@@ -1336,4 +1268,51 @@ test("setExportDir stores and trims, and can forget the folder", () => {
   assert.equal(setExportDir(""), "");
   assert.equal(getState().exportDir, "");
   assert.equal(setExportDir(undefined), "");
+});
+
+// --- The step 3 value tables (BUILD-06 Phase 5) ----------------------------
+
+test("setValueTables mirrors both halves of the registry at once", () => {
+  // Both lists land together because they are one picture: a value moves from
+  // one to the other, and updating them separately shows it in both or in
+  // neither for one repaint.
+  resetState();
+  const replaced = [{ original: "Marie Duval", placeholder: "[PERSON_1]", category: "person_names", count: 3 }];
+  const removed = [{ original: "Thomas Berger", placeholder: "[PERSON_2]", category: "person_names" }];
+
+  setValueTables(replaced, removed);
+  assert.deepEqual(getState().replacedValues, replaced);
+  assert.deepEqual(getState().removedValues, removed);
+});
+
+test("setValueTables treats a missing list as empty rather than undefined", () => {
+  // A bridge that answered with nothing must not leave the view mapping over
+  // undefined, which throws while rendering and takes the screen down.
+  resetState();
+  setValueTables(undefined, undefined);
+  assert.deepEqual(getState().replacedValues, []);
+  assert.deepEqual(getState().removedValues, []);
+});
+
+test("leaving the Anonymise step backwards clears the value tables", () => {
+  // They describe a run. Keeping them past a reset would show the previous
+  // run's replacements beside no run at all.
+  resetState();
+  setValueTables(
+    [{ original: "Marie Duval", placeholder: "[PERSON_1]", category: "person_names", count: 1 }],
+    [{ original: "Thomas Berger", placeholder: "[PERSON_2]", category: "person_names" }]);
+  resetStep("anonymise");
+  assert.deepEqual(getState().replacedValues, []);
+  assert.deepEqual(getState().removedValues, []);
+});
+
+test("resultDoc is declared state and a reset clears it", () => {
+  // It was introduced ad hoc by the view, against state.js's own rule, so it
+  // survived resetStep and pointed the Compare pane at a document from a run
+  // that no longer existed.
+  resetState();
+  assert.ok("resultDoc" in getState(), "the field has to be declared here");
+  setState({ resultDoc: "a.docx" });
+  resetStep("anonymise");
+  assert.equal(getState().resultDoc, null);
 });

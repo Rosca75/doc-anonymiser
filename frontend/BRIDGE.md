@@ -98,17 +98,12 @@ display choice: it decides which country-specific regex categories run.
 | `countTermMatches(term)` | term | `{count, documents}`, the live read-out under the manual add-value row (debounced) |
 | `validatePattern(expr)` | regex | `""` (valid) or the error message |
 | `patternMatches(expr)` | regex | up to 20 sample matches across the loaded documents, shown live under the pattern field: a regex that compiles and matches nothing is the common mistake |
-| `entityPlaceholder(category, canonical)` | engine category id, value | the placeholder currently assigned to that value, or `""` before the first run |
-| `setEntityPlaceholder(category, canonical, placeholder)` | engine category id, value, `[NAME_N]` | resolves on success; REJECTS with an actionable message when the shape is wrong or the placeholder already belongs to another value. Takes effect on the next run or fast re-run, never retroactively (BUILD-05 Phase 3) |
 
-> **These two are superseded and are scheduled for deletion.** BUILD-06 Phase 5
-> replaces them with `setValuePlaceholder` / `valuePlaceholders` below, which are
-> addressed BY PLACEHOLDER and live on step 3, where the registry always exists.
-> The pair here fails before the first run (`a.registry` is nil) by design of the
-> screen they sit on, which is the bug the move deletes rather than works around.
-> They stay alive only while `views/identifyworkspace.js` still calls them; the
-> frontend half of Phase 5 is outstanding (see `docs/BUILD-07.md`). Do NOT build
-> anything new on them.
+`setEntityPlaceholder` and `entityPlaceholder` are GONE. They were addressed by
+(category, canonical) and lived on step 2, where the registry does not exist
+yet, so the editor behind them failed before the first run by construction. The
+step 3 table below replaces them, and a superseded method left alive is a second
+contract the frontend can drift onto.
 
 ## Values, placeholders and removals (step 3, BUILD-06 Phases 4 and 5)
 

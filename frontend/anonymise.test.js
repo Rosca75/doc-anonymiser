@@ -15,8 +15,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  countOccurrences, valuesInCategory, formatDuration, nextCustomNumber, continueHint,
-  compareCard, reportCard, filterValues,
+  countOccurrences, valuesInCategory, formatDuration, continueHint,
+  compareCard, reportCard, valuesCard, filterValues,
 } from "./views/anonymise.js";
 import { textOf, all } from "./testhtml.js";
 
@@ -79,28 +79,62 @@ function reportState(patch = {}) {
       },
     },
     mapping: {},
-    pendingValues: [],
+    replacedValues: RUN_VALUES,
+    removedValues: [],
+    entities: [],
     simpleRules: [],
     dismissedWarnings: [],
     ...patch,
   };
 }
 
-test("the report lists every replaced value without any clicking", () => {
-  // Reported issue 7: values WERE replaced and the report showed only category
-  // totals, each of which had to be opened one at a time.
-  const html = reportCard(reportState());
-  const rows = all(html, "div.report-item");
+test("the Replaced values table lists every value without any clicking", () => {
+  const html = valuesCard(reportState());
+  const rows = all(html, "div.value-row");
   assert.equal(rows.length, 3);
   assert.deepEqual(rows.map((r) => textOf(r.outer, "span.report-original")),
     ["Marie Duval", "Meridian Consulting", "Thomas Berger"]);
   assert.deepEqual(rows.map((r) => textOf(r.outer, "span.report-count")), ["3", "2", "1"]);
 });
 
-test("the value list warns that it shows the re-identification key", () => {
-  // Unlike the exported report on the Export screen, this list shows originals
-  // in clear, so it has to say so.
-  assert.match(reportCard(reportState()), /re-identification key/);
+test("every row offers the two things a value can have done to it", () => {
+  // The replacement string is editable and the value is removable, for EVERY
+  // trigger: the rows come from the registry, which does not record what found
+  // a value, so a regex match and a name typed by hand get the same row.
+  const rows = all(valuesCard(reportState()), "div.value-row");
+  for (const row of rows) {
+    assert.ok(all(row.outer, "input.ph-input").length === 1,
+      "the placeholder has to be editable here, the only screen where it exists");
+    assert.ok(all(row.outer, "button.value-remove").length === 1,
+      "any value can be removed after the run");
+  }
+});
+
+test("the table reads the registry, not the report", () => {
+  // A row built from report text could offer an edit with no registry entry
+  // behind it, and the edit would fail on a value the screen just showed.
+  const s = reportState({ replacedValues: [] });
+  assert.equal(all(valuesCard(s), "div.value-row").length, 0,
+    "no registry rows means no table rows, whatever the report says");
+});
+
+test("removed values are a collapsed list with a way back", () => {
+  const s = reportState({
+    removedValues: [{ original: "Thomas Berger", category: "person_names", placeholder: "[PERSON_2]" }],
+  });
+  const html = valuesCard(s);
+  const removed = all(html, "div.removed-row");
+  assert.equal(removed.length, 1);
+  assert.equal(textOf(removed[0].outer, "span.report-original"), "Thomas Berger");
+  assert.ok(all(removed[0].outer, "button.value-restore").length === 1);
+  assert.match(html, /NEW placeholder/,
+    "the restore has to say the number changes, because an export may carry the old one");
+});
+
+test("with nothing removed the list is absent, not empty", () => {
+  assert.equal(all(valuesCard(reportState()), "div.removed-row").length, 0);
+  assert.ok(!valuesCard(reportState()).includes("Removed values"),
+    "a heading over an empty list invites a search for something that is not there");
 });
 
 test("the report says what the run did, including a degraded AI pass", () => {
@@ -121,10 +155,11 @@ test("filterValues searches the value and the placeholder, because users use bot
 });
 
 test("an empty run says so rather than rendering an empty list", () => {
-  const s = reportState();
+  const s = reportState({ replacedValues: [] });
   s.results.report.values = [];
   s.results.documents = [];
   assert.match(reportCard(s), /Nothing was replaced/);
+  assert.match(valuesCard(s), /Nothing was replaced/);
 });
 
 test("valuesInCategory filters the list Go computed", () => {
@@ -153,24 +188,6 @@ test("formatDuration handles a missing or negative figure", () => {
   for (const bad of [undefined, null, -1, NaN]) {
     assert.equal(formatDuration(bad), "0 ms", JSON.stringify(bad));
   }
-});
-
-// --- nextCustomNumber ---------------------------------------------------
-
-test("nextCustomNumber continues from the existing custom rules", () => {
-  // Two selections in a row must not both propose [CUSTOM_1].
-  assert.equal(nextCustomNumber({ simpleRules: [] }), 1);
-  assert.equal(nextCustomNumber({ simpleRules: [{ replace: "[CUSTOM_1]" }] }), 2);
-  assert.equal(nextCustomNumber({
-    simpleRules: [{ replace: "[CUSTOM_1]" }, { replace: "[CUSTOM_4]" }],
-  }), 5, "it continues past the HIGHEST, so a gap does not cause a collision");
-});
-
-test("nextCustomNumber ignores rules that are not custom placeholders", () => {
-  assert.equal(nextCustomNumber({
-    simpleRules: [{ replace: "redacted" }, { replace: "[PERSON_9]" }, { replace: "" }],
-  }), 1);
-  assert.equal(nextCustomNumber({}), 1);
 });
 
 // --- continueHint -------------------------------------------------------

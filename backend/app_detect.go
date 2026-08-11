@@ -102,19 +102,19 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string) (*DetectionR
 	a.mu.Lock()
 	settings := a.settings
 	llm := a.llm
-	if a.cancelDiscovery != nil {
+	if a.cancelDetection != nil {
 		a.mu.Unlock()
 		return nil, fmt.Errorf("a detection run is already in progress, cancel it or wait for it to finish")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	// ONE slot for the WHOLE run, both phases: the gap between two separately
 	// cancellable calls is what made Cancel a no-op between the passes.
-	a.cancelDiscovery = cancel
+	a.cancelDetection = cancel
 	a.mu.Unlock()
 	defer func() {
 		cancel()
 		a.mu.Lock()
-		a.cancelDiscovery = nil
+		a.cancelDetection = nil
 		a.mu.Unlock()
 	}()
 
@@ -191,6 +191,20 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string) (*DetectionR
 	emitted = true
 	a.emit("detection:done", res)
 	return res, nil
+}
+
+// CancelDetection aborts the in-flight detection run. A no-op when idle.
+//
+// One cancellation slot serves every route, so this reaches whichever one is
+// running, including mid-file: the offline scanner and the chunked model calls
+// both take the same context.
+func (a *App) CancelDetection() {
+	a.mu.Lock()
+	cancel := a.cancelDetection
+	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // refineCategories asks the local model to categorise the offline route's
@@ -280,7 +294,12 @@ func (a *App) runAIPhase(ctx context.Context, docs []engine.Document, llm *ollam
 		readable = append(readable, doc)
 	}
 
+	// Partial work is kept whatever ends the loop, which is why the merge is
+	// deferred: a cancellation used to return straight out of the loop and throw
+	// away every proposal the files before it had produced.
 	var batches [][]engine.ProposedEntity
+	defer func() { res.Proposals = ollama.MergeProposals(batches...) }()
+
 	for i, doc := range readable {
 		if ctx.Err() != nil {
 			return
@@ -308,7 +327,6 @@ func (a *App) runAIPhase(ctx context.Context, docs []engine.Document, llm *ollam
 				fmt.Sprintf("the local AI failed on %q: %v", doc.Name, err))
 		}
 	}
-	res.Proposals = ollama.MergeProposals(batches...)
 }
 
 // overallFraction maps a position inside one phase onto the whole run.

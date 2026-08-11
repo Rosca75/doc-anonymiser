@@ -64,56 +64,92 @@ func TestExpandEntityVariantsAdapter(t *testing.T) {
 	}
 }
 
-func TestRunDiscoveryMergesAndDedupes(t *testing.T) {
-	// Two docs mention the same client with different casing plus one
-	// distinct person each; the merged result must contain the client
-	// once (first spelling) and both persons.
-	app := newTestApp(t, func(user string) string {
+// aiOnlyApp is newTestApp with the AI route on and the offline route off, so a
+// test about what the model proposes is not also reading heuristic candidates.
+func aiOnlyApp(t *testing.T, replyFor func(userPrompt string) string) *App {
+	t.Helper()
+	app := newTestApp(t, replyFor)
+	app.settings.UseAI = true
+	app.settings.UseSmartDetect = false
+	return app
+}
+
+func TestDetectionMergesAndDedupesAcrossFiles(t *testing.T) {
+	// Two documents name the same entity with different casing plus one distinct
+	// person each. The merged result carries the entity once, in the spelling
+	// seen first, and both people.
+	app := aiOnlyApp(t, func(user string) string {
 		if strings.Contains(user, "doc one") {
-			return `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":["Marie Duval"]}`
+			return `{"entity_names":["Alpine Trust"],"person_names":["Marie Duval"]}`
 		}
-		return `{"entity_names":["ALPINE TRUST"],"project_names":[],"person_names":["Peter Stone"]}`
+		return `{"entity_names":["ALPINE TRUST"],"person_names":["Peter Stone"]}`
 	})
 	app.docs = []engine.Document{
 		{Name: "one.txt", Format: engine.FormatTXT, Markdown: "doc one: Alpine Trust with Marie Duval"},
 		{Name: "two.txt", Format: engine.FormatTXT, Markdown: "doc two: ALPINE TRUST with Peter Stone"},
 	}
 
-	res, err := app.RunDiscovery([]string{"one.txt", "two.txt"}, nil)
+	res, err := app.RunDetection([]string{"one.txt", "two.txt"}, nil)
 	if err != nil {
-		t.Fatalf("RunDiscovery: %v", err)
+		t.Fatalf("RunDetection: %v", err)
 	}
-	got := res.Proposals
-	if len(got) != 3 {
-		t.Fatalf("want 3 merged proposals (client deduped), got %+v", got)
+	if len(res.Proposals) != 3 {
+		t.Fatalf("want 3 merged proposals with the entity deduped, got %+v", res.Proposals)
 	}
-	if got[0].Text != "Alpine Trust" {
-		t.Errorf("first-seen spelling must win, got %q", got[0].Text)
+	if res.Proposals[0].Text != "Alpine Trust" {
+		t.Errorf("the first-seen spelling must win, got %q", res.Proposals[0].Text)
 	}
-	if res.Cancelled || !strings.Contains(res.Status, "2 file(s)") {
-		t.Errorf("status = %+v, want a completed 2-file status", res)
+	if res.Cancelled {
+		t.Errorf("a completed run must not report itself cancelled: %+v", res)
 	}
 }
 
-func TestRunDiscoveryRespectsAllowlist(t *testing.T) {
-	app := newTestApp(t, func(string) string {
-		return `{"entity_names":["CSSF","Alpine Trust"],"project_names":[],"person_names":[]}`
+func TestDetectionRespectsTheAllowlist(t *testing.T) {
+	app := aiOnlyApp(t, func(string) string {
+		return `{"entity_names":["CSSF","Alpine Trust"],"person_names":[]}`
 	})
-	app.docs = []engine.Document{{Name: "a.txt", Format: engine.FormatTXT, Markdown: "CSSF and Alpine Trust"}}
+	app.docs = []engine.Document{
+		{Name: "a.txt", Format: engine.FormatTXT, Markdown: "CSSF and Alpine Trust"},
+	}
 
-	res, err := app.RunDiscovery([]string{"a.txt"}, []string{"CSSF"})
+	res, err := app.RunDetection([]string{"a.txt"}, []string{"CSSF"})
 	if err != nil {
-		t.Fatalf("RunDiscovery: %v", err)
+		t.Fatalf("RunDetection: %v", err)
 	}
 	if len(res.Proposals) != 1 || res.Proposals[0].Text != "Alpine Trust" {
-		t.Errorf("allowlisted proposal must be vetoed, got %+v", res.Proposals)
+		t.Errorf("an allowlisted proposal must be vetoed, got %+v", res.Proposals)
 	}
 }
 
-func TestRunDiscoveryNoMatchingFiles(t *testing.T) {
-	app := NewApp()
-	if _, err := app.RunDiscovery([]string{"ghost.txt"}, nil); err == nil {
-		t.Error("discovery over zero files must fail actionably")
+func TestDetectionOverZeroFilesFailsActionably(t *testing.T) {
+	if _, err := NewApp().RunDetection([]string{"ghost.txt"}, nil); err == nil {
+		t.Error("detection over zero files must fail rather than report an empty success")
+	}
+}
+
+func TestDetectionSkipsAFileTooLargeForTheModel(t *testing.T) {
+	// A document beyond the context window is SKIPPED and said so, rather than
+	// failing the run: the limit is a fact about the model, not a mistake the
+	// user made, and the offline route read the file anyway.
+	app := aiOnlyApp(t, func(string) string { return `{"entity_names":[],"person_names":[]}` })
+	app.llm.ContextSize = 512
+	app.docs = []engine.Document{
+		{Name: "small.txt", Format: engine.FormatTXT, Markdown: "Alpine Trust is small."},
+		{Name: "huge.txt", Format: engine.FormatTXT, Markdown: strings.Repeat("line of text\n", 20000)},
+	}
+
+	res, err := app.RunDetection([]string{"small.txt", "huge.txt"}, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].Name != "huge.txt" {
+		t.Fatalf("the oversized file must be reported as skipped, got %+v", res.Skipped)
+	}
+	if !strings.Contains(res.Skipped[0].Reason, "Smart detection") {
+		t.Errorf("the reason must say the file was still read offline, got %q", res.Skipped[0].Reason)
+	}
+	if len(res.Errors) != 0 {
+		t.Errorf("a skipped file is not an error: %+v", res.Errors)
 	}
 }
 
@@ -141,15 +177,14 @@ func TestValidateAndTestPattern(t *testing.T) {
 	}
 }
 
-// --- BUILD-02 Phase 7 tests ------------------------------------------------
-
-// TestRunDiscoveryCancellation: cancelling after the first file returns
-// partial proposals, no error, and the documented status line.
-func TestRunDiscoveryCancellation(t *testing.T) {
+// TestDetectionCancellationKeepsWhatItFound: cancelling mid-run returns the
+// partial proposals and no error. Partial work is worth keeping, and the caller
+// decides how to describe it.
+func TestDetectionCancellationKeepsWhatItFound(t *testing.T) {
 	var calls atomic.Int32
-	app := newTestApp(t, func(user string) string {
+	app := aiOnlyApp(t, func(string) string {
 		calls.Add(1)
-		return `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`
+		return `{"entity_names":["Alpine Trust"],"person_names":[]}`
 	})
 	app.docs = []engine.Document{
 		{Name: "one.txt", Format: engine.FormatTXT, Markdown: "Alpine Trust one"},
@@ -157,84 +192,56 @@ func TestRunDiscoveryCancellation(t *testing.T) {
 		{Name: "three.txt", Format: engine.FormatTXT, Markdown: "Alpine Trust three"},
 	}
 
-	// Cancel as soon as the first progress event fires: the run stops
-	// after the in-flight file, keeping its proposals.
+	// Cancel as soon as the second file starts: the run stops after the file in
+	// flight and keeps its proposals.
 	old := runtimeEventsEmit
 	runtimeEventsEmit = func(a *App, name string, payload interface{}) {
-		if name == "discovery:progress" {
-			if idx, _ := payload.(map[string]interface{})["docIndex"].(int); idx == 1 {
-				a.CancelDiscovery()
-			}
+		if p, ok := payload.(DetectionProgress); ok && p.DocIndex == 1 {
+			a.CancelDetection()
 		}
 	}
 	defer func() { runtimeEventsEmit = old }()
-	app.ctx = context.Background() // any non-nil ctx routes emit() to our stub
+	app.ctx = context.Background() // any non-nil ctx routes emit() to the stub
 
-	res, err := app.RunDiscovery([]string{"one.txt", "two.txt", "three.txt"}, nil)
+	res, err := app.RunDetection([]string{"one.txt", "two.txt", "three.txt"}, nil)
 	if err != nil {
-		t.Fatalf("a cancelled discovery must not be an error: %v", err)
+		t.Fatalf("a cancelled run must not be an error: %v", err)
 	}
-	if !res.Cancelled || !strings.Contains(res.Status, "of 3 files") {
-		t.Errorf("status = %+v, want cancelled after N of 3 files", res)
+	if !res.Cancelled {
+		t.Errorf("the run must report itself cancelled: %+v", res)
 	}
 	if len(res.Proposals) == 0 {
 		t.Error("partial proposals must survive cancellation")
 	}
 	if calls.Load() > 2 {
-		t.Errorf("scan must stop after the cancelled file, made %d chat calls", calls.Load())
+		t.Errorf("the scan must stop after the cancelled file, made %d chat calls", calls.Load())
 	}
 }
 
-// TestEstimateDiscoveryOversize: a file beyond the chunk cap is flagged
-// TooLarge with the documented advice; a small file is not.
-func TestEstimateDiscoveryOversize(t *testing.T) {
-	app := NewApp()
-	app.llm.ContextSize = 512 // 1152-byte chunks
-	app.docs = []engine.Document{
-		{Name: "small.txt", Format: engine.FormatTXT, Markdown: "tiny"},
-		{Name: "huge.txt", Format: engine.FormatTXT, Markdown: strings.Repeat("line of text\n", 20000)},
-	}
-	ests := app.EstimateDiscovery([]string{"small.txt", "huge.txt"})
-	if len(ests) != 2 {
-		t.Fatalf("want 2 estimates, got %+v", ests)
-	}
-	if ests[0].TooLarge || ests[0].Chunks != 1 {
-		t.Errorf("small file flagged: %+v", ests[0])
-	}
-	if !ests[1].TooLarge || !strings.Contains(ests[1].Message, "Smart detection") {
-		t.Errorf("huge file must be flagged with the smart-detection advice: %+v", ests[1])
-	}
-}
-
-// TestDiscoveryProgressEvents: exactly one progress event per file, with
-// the file name in the payload.
-func TestDiscoveryProgressEvents(t *testing.T) {
-	app := newTestApp(t, func(string) string {
-		return `{"entity_names":[],"project_names":[],"person_names":[]}`
-	})
+// TestDetectionReportsProgressPerFile: one event per file at least, each naming
+// the file, so a long run never looks hung.
+func TestDetectionReportsProgressPerFile(t *testing.T) {
+	app := aiOnlyApp(t, func(string) string { return `{"entity_names":[],"person_names":[]}` })
 	app.docs = []engine.Document{
 		{Name: "one.txt", Format: engine.FormatTXT, Markdown: "text one"},
 		{Name: "two.txt", Format: engine.FormatTXT, Markdown: "text two"},
 	}
 
-	var events []map[string]interface{}
+	var named []string
 	old := runtimeEventsEmit
 	runtimeEventsEmit = func(a *App, name string, payload interface{}) {
-		if name == "discovery:progress" {
-			events = append(events, payload.(map[string]interface{}))
+		if p, ok := payload.(DetectionProgress); ok && p.ChunkCount == 0 {
+			named = append(named, p.DocName)
 		}
 	}
 	defer func() { runtimeEventsEmit = old }()
 	app.ctx = context.Background()
 
-	if _, err := app.RunDiscovery([]string{"one.txt", "two.txt"}, nil); err != nil {
+	if _, err := app.RunDetection([]string{"one.txt", "two.txt"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 2 {
-		t.Fatalf("want one progress event per file, got %d", len(events))
-	}
-	if events[0]["docName"] != "one.txt" || events[1]["docName"] != "two.txt" {
-		t.Errorf("progress payloads wrong: %+v", events)
+	if len(named) != 2 || named[0] != "one.txt" || named[1] != "two.txt" {
+		t.Errorf("want one progress event per file, in order, got %v", named)
 	}
 }
 
@@ -291,32 +298,32 @@ func TestExcludedVariants(t *testing.T) {
 	}
 }
 
-// TestRunSmartDetectionReturnsCandidatesNotEntities: the binding returns
-// candidates for review; the App holds no entity state to mutate, and the
-// result carries counts and the offline status.
-func TestRunSmartDetectionReturnsCandidatesNotEntities(t *testing.T) {
+// TestOfflineRouteReturnsCandidatesNotEntities: detection proposes candidates
+// for review; the App holds no entity state to mutate, and nothing is replaced
+// until the user accepts a suggestion.
+func TestOfflineRouteReturnsCandidatesNotEntities(t *testing.T) {
 	app := NewApp()
+	app.settings.SmartDetect = engine.SmartDetectOptions{} // no filtering
 	app.docs = []engine.Document{
 		{Name: "a.txt", Format: engine.FormatTXT,
 			Markdown: "Meeting with Marie Duval about Alpine Trust S.A. Later Marie Duval called again."},
 	}
-	// A zero options value means "no filtering", so this test keeps
-	// asserting the unfiltered detector output (BUILD-04 CR13).
-	res, err := app.RunSmartDetection([]string{"a.txt"}, []string{"CSSF"}, false, engine.SmartDetectOptions{})
+
+	res, err := app.RunDetection([]string{"a.txt"}, []string{"CSSF"})
 	if err != nil {
-		t.Fatalf("RunSmartDetection: %v", err)
+		t.Fatalf("RunDetection: %v", err)
 	}
-	if res.Cancelled || !strings.Contains(res.Status, "1 file(s)") {
-		t.Errorf("status = %+v", res)
+	if res.Cancelled {
+		t.Errorf("a completed run must not report itself cancelled: %+v", res)
 	}
 	byText := map[string]engine.Candidate{}
 	for _, c := range res.Candidates {
 		byText[c.Text] = c
 	}
-	if c, ok := byText["Marie Duval"]; !ok || c.Category != "person_names" || c.Count < 2 {
-		t.Errorf("Marie Duval candidate wrong: %+v", res.Candidates)
+	if c, ok := byText["Marie Duval"]; !ok || c.Category != engine.CatPersonNames || c.Count < 2 {
+		t.Errorf("the person candidate is wrong: %+v", res.Candidates)
 	}
-	if c, ok := byText["Alpine Trust S.A."]; !ok || c.Category != "entity_names" {
-		t.Errorf("suffix client candidate wrong: %+v", res.Candidates)
+	if c, ok := byText["Alpine Trust S.A."]; !ok || c.Category != engine.CatEntityNames {
+		t.Errorf("the legal-suffix candidate is wrong: %+v", res.Candidates)
 	}
 }

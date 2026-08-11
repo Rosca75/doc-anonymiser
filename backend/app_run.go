@@ -238,8 +238,10 @@ func (a *App) FastRerun(req RunRequest) (*engine.Results, error) {
 	return a.runPipelineBlocking(context.Background(), req)
 }
 
-// GetResults returns the latest results (view refresh after navigation).
-func (a *App) GetResults() *engine.Results {
+// latestResults is the last run's output. Like documentInfos, it is not bound:
+// results reach the frontend on the "pipeline:done" event and as FastRerun's
+// return value.
+func (a *App) latestResults() *engine.Results {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.results

@@ -95,7 +95,7 @@ func TestSourceTextSurvivesTheWholeFlow(t *testing.T) {
 		t.Fatalf("same-format export failed: %v", err)
 	}
 
-	for _, info := range app.ListDocuments() {
+	for _, info := range app.documentInfos() {
 		want, ok := atImport[info.Name]
 		if !ok {
 			t.Errorf("document %q appeared after import", info.Name)

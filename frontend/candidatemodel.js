@@ -68,22 +68,6 @@ export function visibleCandidates(candidates, filter = DEFAULT_CANDIDATE_FILTER)
   return rows.sort(sorter);
 }
 
-/**
- * candidateCategoryCounts(candidates) returns {category: count} over the
- * given list. The bulk Accept all / Deny all buttons use it to render
- * only the categories that actually have rows, and to say how many rows
- * each button will act on (BUILD-04 CR15: a bulk button must never be a
- * surprise).
- * @param {Array} candidates any candidate list, filtered or not
- * @returns {Record<string, number>}
- */
-export function candidateCategoryCounts(candidates) {
-  const counts = {};
-  for (const c of candidates ?? []) {
-    counts[c.category] = (counts[c.category] ?? 0) + 1;
-  }
-  return counts;
-}
 
 /**
  * toggleCountSort(sort) flips the occurrence sort between descending and

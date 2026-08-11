@@ -133,7 +133,6 @@
       running: false,
       progress: null,
       discovery: null,
-      pendingValues: [],
       dismissedWarnings: [],
       simpleRules: [],
       notice: null,
@@ -156,6 +155,12 @@
       mapping: Object.fromEntries(
         VALUES.map((v) => [v.placeholder, { original: v.original, category: v.category }]),
       ),
+      // The step 3 Replaced values table. It mirrors the Go registry, which the
+      // harness does not have, so the seed stands in for it: without this the
+      // table renders empty and the checks below measure a card that is not
+      // there.
+      replacedValues: VALUES,
+      removedValues: [],
     });
     await settle();
   }
@@ -240,6 +245,9 @@
       // style.css rule that justifies it.
       const ALLOWED_SCROLLERS = [
         ".card-body", ".pane-body", ".cgroup-body", ".rail", ".card-column", ".table-scroll",
+        // The Replaced values table scrolls inside its own box: a batch can
+        // replace hundreds of values, and the card body may not grow the page.
+        ".report-value-rows",
       ];
 
       const scrollers = [];

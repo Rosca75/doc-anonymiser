@@ -76,7 +76,7 @@ func TestLargeFilePreviewTruncation(t *testing.T) {
 	}
 	app.docs = docs
 
-	infos := app.ListDocuments()
+	infos := app.documentInfos()
 	if !infos[0].PreviewTruncated {
 		t.Fatal("preview of a huge document must be marked truncated")
 	}
@@ -229,19 +229,26 @@ func TestFreePathNumbersInsteadOfOverwriting(t *testing.T) {
 	}
 }
 
-// TestSetEntityPlaceholderBeforeAnyRun: the field exists on the entity cards
-// from the start, so pressing it before a run has to say what to do rather than
-// fail obscurely.
-func TestSetEntityPlaceholderBeforeAnyRun(t *testing.T) {
-	app := NewApp()
-	err := app.SetEntityPlaceholder("entity_names", "Meridian Consulting", "[BANK_A_1]")
+// TestSetValuePlaceholderBeforeAnyRun: the Replaced values table only exists
+// after a run, but the bound method is reachable from anywhere, so it has to
+// say what to do rather than fail obscurely.
+func TestSetValuePlaceholderBeforeAnyRun(t *testing.T) {
+	err := NewApp().SetValuePlaceholder("[ENTITY_1]", "[BANK_A_1]")
 	if err == nil {
 		t.Fatal("there is nothing to rename before the first run")
 	}
 	if !strings.Contains(err.Error(), "run the anonymisation") {
 		t.Errorf("the refusal must say what to do first, got: %v", err)
 	}
-	if got := app.EntityPlaceholder("entity_names", "Meridian Consulting"); got != "" {
-		t.Errorf("EntityPlaceholder before a run = %q, want \"\"", got)
+}
+
+// TestValuePlaceholdersBeforeAnyRunIsEmptyNotAnError: an empty table is the
+// honest answer before a run, and the view renders it as such.
+func TestValuePlaceholdersBeforeAnyRunIsEmptyNotAnError(t *testing.T) {
+	if got := NewApp().ValuePlaceholders(); len(got) != 0 {
+		t.Errorf("ValuePlaceholders before a run = %+v, want empty", got)
+	}
+	if got := NewApp().ListRemovedValues(); len(got) != 0 {
+		t.Errorf("ListRemovedValues before a run = %+v, want empty", got)
 	}
 }

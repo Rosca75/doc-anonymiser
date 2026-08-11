@@ -143,23 +143,18 @@ func TestPresetEquivalence(t *testing.T) {
 	}
 }
 
-// TestMixedSelection: persons on + emails off leaves emails intact, and
-// the allowlist still wins over any enabled selection.
+// TestMixedSelection: persons on and emails off leaves emails intact, while
+// everything else the selection asks for still happens.
 func TestMixedSelection(t *testing.T) {
 	sel := PresetSelection(LevelMedium)
 	sel[CatEmail] = false
-	// product_names is ON at medium, and the point of the case below: the
-	// allowlist has to win over an ENABLED category, not merely over a
-	// disabled one, which proves nothing.
-	allow := NewEmptyAllowlist()
-	allow.Add("Meridian Suite")
 
 	res, err := Run(context.Background(), PipelineInput{
 		Documents:  []Document{{Name: "f.txt", Format: FormatTXT, Markdown: selectionFixture}},
 		Entities:   selectionEntities,
 		Patterns:   selectionPatterns,
 		Categories: sel,
-		Allowlist:  allow,
+		Allowlist:  NewEmptyAllowlist(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -169,12 +164,35 @@ func TestMixedSelection(t *testing.T) {
 		t.Errorf("emails off: the address must survive, output: %s", out)
 	}
 	if !strings.Contains(out, "[ENTITY_1]") {
-		t.Errorf("clients on: Alpine Trust must be replaced, output: %s", out)
+		t.Errorf("entities on: Alpine Trust must be replaced, output: %s", out)
 	}
 	if strings.Contains(out, "Marie Curie") {
 		t.Errorf("persons on: Marie Curie must be replaced, output: %s", out)
 	}
-	if !strings.Contains(out, "Meridian Suite") {
-		t.Errorf("allowlist must win over the enabled product_names selection, output: %s", out)
+}
+
+// TestAllowlistWinsOverAnEnabledCategory: an allowlisted term is never replaced,
+// by any pass, even when the category that would have caught it is switched on.
+//
+// The term here is DETECTED rather than declared. Declaring a value that is also
+// allowlisted is a blocking conflict now (conflicts.go): the allowlist still
+// wins, but a run where the user asked for both is refused rather than silently
+// resolved, because nothing anywhere said why the value survived.
+func TestAllowlistWinsOverAnEnabledCategory(t *testing.T) {
+	allow := NewEmptyAllowlist()
+	allow.Add("info.desk@example.com")
+
+	res, err := Run(context.Background(), PipelineInput{
+		Documents:  []Document{{Name: "f.txt", Format: FormatTXT, Markdown: selectionFixture}},
+		Entities:   selectionEntities,
+		Categories: PresetSelection(LevelMedium),
+		Allowlist:  allow,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := res.Documents[0].Anonymised
+	if !strings.Contains(out, "info.desk@example.com") {
+		t.Errorf("the allowlist must win over the enabled email category, output: %s", out)
 	}
 }

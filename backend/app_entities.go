@@ -5,14 +5,12 @@
 package backend
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"doc-anonymiser/backend/engine"
-	"doc-anonymiser/backend/ollama"
 )
 
 // runtimeEventsEmit is an indirection over the Wails event runtime so unit
@@ -22,322 +20,28 @@ var runtimeEventsEmit = func(a *App, name string, payload interface{}) {
 	runtime.EventsEmit(a.ctx, name, payload)
 }
 
-// DiscoveryResult is what RunDiscovery hands back to the UI: merged
-// proposals plus a human-readable status (BUILD-02 Phase 7d). A cancelled
-// run is NOT an error: the partial proposals are kept and Status explains
-// how far the scan got.
-type DiscoveryResult struct {
-	Proposals []engine.ProposedEntity `json:"proposals"`
-	Status    string                  `json:"status"`
-	Cancelled bool                    `json:"cancelled"`
-}
-
-// DiscoveryEstimate is the pre-run size check for one file (BUILD-02
-// Phase 7e, wrapping Phase 5d EstimateChunks). TooLarge files should be
-// excluded by the UI before the run starts, never fail mid-run.
-type DiscoveryEstimate struct {
-	Name     string `json:"name"`
-	Chunks   int    `json:"chunks"`
-	TooLarge bool   `json:"tooLarge"`
-	Message  string `json:"message,omitempty"`
-}
-
-// EstimateDiscovery reports the chunk count per named file so the UI can
-// warn about (and exclude) oversized documents before a discovery run.
-func (a *App) EstimateDiscovery(fileNames []string) []DiscoveryEstimate {
-	a.mu.Lock()
-	llm := a.llm
-	a.mu.Unlock()
-
-	docs := a.docsByName(fileNames)
-	out := make([]DiscoveryEstimate, 0, len(docs))
-	for _, doc := range docs {
-		est := DiscoveryEstimate{Name: doc.Name, Chunks: llm.EstimateChunks(doc.Markdown)}
-		if est.Chunks > ollama.MaxChunksPerDocument {
-			est.TooLarge = true
-			est.Message = fmt.Sprintf(
-				"%q is very large (%d chunks); it is excluded from AI discovery. Split it into smaller files or run Smart detection instead.",
-				doc.Name, est.Chunks)
-		}
-		out = append(out, est)
-	}
-	return out
-}
-
-// RunDiscovery executes the Phase-A discovery prompt on the named imported
-// files (the user picks representative ones) and returns merged,
-// deduplicated proposals for the review table. allowTerms is the current
-// session allowlist — allowlisted proposals are vetoed inside the client.
-//
-// Progress is emitted per file on the "discovery:progress" event so the UI
-// can show which file is being scanned. The run is cancellable via
-// CancelDiscovery: cancellation between files AND between chunks (the
-// client honours ctx) returns the partial proposals with a
-// "cancelled after N of M files" status instead of an error.
-func (a *App) RunDiscovery(fileNames []string, allowTerms []string) (*DiscoveryResult, error) {
-	docs := a.docsByName(fileNames)
-	if len(docs) == 0 {
-		return nil, fmt.Errorf("no matching imported files to scan, import documents first, then pick at least one for discovery")
-	}
-
-	// Wire the allowlist veto exactly once per call: the same allowlist
-	// the pipeline will use later (allowlist wins in EVERY pass), removed
-	// values included, so a detection route cannot re-propose a value the
-	// user has already deleted (BUILD-06 Phase 4).
-	allow := a.allowlistFor(allowTerms)
-
-	// Hold a cancellable context on the App, exactly like the run
-	// pipeline does (BUILD-02 Phase 7d).
-	ctx, cancel := context.WithCancel(context.Background())
-	a.mu.Lock()
-	if a.cancelDiscovery != nil {
-		a.mu.Unlock()
-		cancel()
-		return nil, fmt.Errorf("a discovery run is already in progress, cancel it or wait for it to finish")
-	}
-	a.cancelDiscovery = cancel
-	llm := a.llm
-	a.mu.Unlock()
-	defer func() {
-		cancel()
-		a.mu.Lock()
-		a.cancelDiscovery = nil
-		a.mu.Unlock()
-	}()
-	llm.Allow = allow.Contains
-
-	var batches [][]engine.ProposedEntity
-	completed := 0
-	for i, doc := range docs {
-		if ctx.Err() != nil {
-			break // cancelled between files
-		}
-		a.emit("discovery:progress", map[string]interface{}{
-			"docIndex": i, "docCount": len(docs), "docName": doc.Name,
-		})
-		proposals, err := llm.Discover(ctx, doc.Markdown)
-		// Partial chunk proposals survive a mid-file cancellation.
-		if len(proposals) > 0 {
-			batches = append(batches, proposals)
-		}
-		if err != nil {
-			if ctx.Err() != nil {
-				break // cancelled mid-file; keep what we have
-			}
-			return nil, fmt.Errorf("discovery failed on %q: %w", doc.Name, err)
-		}
-		completed++
-	}
-
-	res := &DiscoveryResult{Proposals: ollama.MergeProposals(batches...)}
-	if ctx.Err() != nil && completed < len(docs) {
-		res.Cancelled = true
-		res.Status = fmt.Sprintf("cancelled after %d of %d files", completed, len(docs))
-	} else {
-		res.Status = fmt.Sprintf("scanned %d file(s)", completed)
-	}
-	return res, nil
-}
-
-// CancelDiscovery aborts an in-flight discovery run (between files, or
-// mid-chunk via HTTP context cancellation). A no-op when idle. Smart
-// detection runs share the same cancellation slot.
-func (a *App) CancelDiscovery() {
-	a.mu.Lock()
-	cancel := a.cancelDiscovery
-	a.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-}
-
-// SmartDetectionResult is what RunSmartDetection returns: candidates for
-// the review UI (NEVER auto-committed entities, BUILD-02 Phase 9b) plus
-// a status line mirroring DiscoveryResult.
-type SmartDetectionResult struct {
-	Candidates []engine.Candidate `json:"candidates"`
-	Status     string             `json:"status"`
-	Cancelled  bool               `json:"cancelled"`
-}
-
-// RunSmartDetection executes the offline Smart-detection tier over the
-// named files (BUILD-02 Phase 8c), mirroring RunDiscovery: per-file
-// progress events, cancellable, allowlist from the UI state. When
-// classify is true AND the local AI is reachable, candidate categories
-// are refined through ClassifyCandidates (span classification: only
-// candidate texts and snippets travel to the model, never documents).
-// Classification failures degrade to the heuristic categories with a
-// status note; they never fail the run (the deterministic tier is the
-// whole point of Smart detection).
-//
-// opts is the BUILD-04 CR13 tuning the Values screen sends. A zero value
-// means no filtering, so a caller that has nothing to say still gets the
-// pre-BUILD-04 behaviour rather than a surprise.
-func (a *App) RunSmartDetection(fileNames []string, allowTerms []string, classify bool, opts engine.SmartDetectOptions) (*SmartDetectionResult, error) {
-	docs := a.docsByName(fileNames)
-	if len(docs) == 0 {
-		return nil, fmt.Errorf("no matching imported files to scan, import documents first, then pick at least one for smart detection")
-	}
-
-	// The shared builder, so removed values stay removed on this route too.
-	allow := a.allowlistFor(allowTerms)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	a.mu.Lock()
-	if a.cancelDiscovery != nil {
-		a.mu.Unlock()
-		cancel()
-		return nil, fmt.Errorf("a discovery run is already in progress, cancel it or wait for it to finish")
-	}
-	a.cancelDiscovery = cancel
-	llm := a.llm
-	a.mu.Unlock()
-	defer func() {
-		cancel()
-		a.mu.Lock()
-		a.cancelDiscovery = nil
-		a.mu.Unlock()
-	}()
-
-	// Per-file smart detection, merged case-sensitively by text: counts
-	// add up, contexts cap at 3, and a suffix/title-derived category
-	// (client/person) wins over the positional default.
-	merged := map[string]*engine.Candidate{}
-	var order []string
-	completed := 0
-	for i, doc := range docs {
-		if ctx.Err() != nil {
-			break
-		}
-		a.emit("discovery:progress", map[string]interface{}{
-			"docIndex": i, "docCount": len(docs), "docName": doc.Name,
-		})
-		for _, cand := range engine.SmartDetectWithOptions(doc.Markdown, allow, opts) {
-			m, ok := merged[cand.Text]
-			if !ok {
-				copyCand := cand
-				merged[cand.Text] = &copyCand
-				order = append(order, cand.Text)
-				continue
-			}
-			m.Count += cand.Count
-			// The strongest sighting across documents wins: a name that
-			// appears once in one file and next to a legal form in another
-			// is as good as the legal-form sighting (BUILD-04 CR13).
-			if cand.Confidence > m.Confidence {
-				m.Confidence = cand.Confidence
-			}
-			for _, ctxSnippet := range cand.Contexts {
-				if len(m.Contexts) >= 3 {
-					break
-				}
-				m.Contexts = append(m.Contexts, ctxSnippet)
-			}
-		}
-		completed++
-	}
-
-	candidates := make([]engine.Candidate, 0, len(order))
-	for _, key := range order {
-		candidates = append(candidates, *merged[key])
-	}
-
-	res := &SmartDetectionResult{Candidates: candidates}
-	if ctx.Err() != nil && completed < len(docs) {
-		res.Cancelled = true
-		res.Status = fmt.Sprintf("cancelled after %d of %d files", completed, len(docs))
-		return res, nil
-	}
-	res.Status = fmt.Sprintf("scanned %d file(s)", completed)
-
-	// Optional AI category refinement (BUILD-02 Phase 8b).
-	if classify && len(candidates) > 0 {
-		llm.Allow = allow.Contains
-		proposals, err := llm.ClassifyCandidates(ctx, candidates)
-		if err != nil {
-			res.Status += "; AI classification unavailable, heuristic categories kept (" + err.Error() + ")"
-		} else {
-			refined := map[string]string{}
-			for _, p := range proposals {
-				refined[p.Text] = p.Category
-			}
-			for i := range res.Candidates {
-				if cat, ok := refined[res.Candidates[i].Text]; ok {
-					res.Candidates[i].Category = cat
-				}
-			}
-			res.Status += "; categories refined by the local AI"
-		}
-	}
-	return res, nil
-}
-
 // ExpandEntityVariants returns the automatic + manual variants of one
 // entity for the expandable variant list in the review table.
 func (a *App) ExpandEntityVariants(e engine.Entity) []string {
 	return engine.ExpandVariants(e)
 }
 
-// SetEntityPlaceholder renames the placeholder one value gets replaced with
-// (BUILD-05 Phase 3): the editable field on an entity card in the Identify
-// workspace.
+// --- The step 3 value surface -----------------------------------------------
 //
-// It exists because "[CLIENT_1]" is sometimes less useful downstream than a
-// name the reader recognises, and the user is the only one who knows which.
-// The engine validates the shape and refuses a collision (engine.Registry
-// SetPlaceholder); this method only finds the registry and reports back.
+// Every method here is addressed BY PLACEHOLDER, because on step 3 the user is
+// looking at report rows and at marks in the Compare pane and both carry the
+// placeholder. Renaming a value and removing it are the two rules a Value obeys
+// once a run has produced it, and this is the only surface for either.
+
+// SetValuePlaceholder renames what one value is replaced with.
 //
-// The rename takes effect on the NEXT run or fast re-run, not retroactively:
-// the anonymised text already on screen was produced with the old placeholder,
-// and silently rewriting it here would leave the report and the mapping
-// describing text that no longer exists.
+// The rename takes effect on the NEXT run, not retroactively: the text on
+// screen was produced with the old placeholder, and rewriting it here would
+// leave the report and the mapping describing text that no longer exists.
 //
-// @param category the engine category identifier (never a visible label)
-// @param canonical the real-world value whose placeholder is being renamed
-// @param placeholder the new placeholder, in [NAME_N] form
+// @param placeholder the placeholder as it stands, in [NAME_N] form
+// @param newPlaceholder what the user wants instead
 // @return an actionable error the UI shows verbatim, or nil
-func (a *App) SetEntityPlaceholder(category, canonical, placeholder string) error {
-	a.mu.Lock()
-	reg := a.registry
-	a.mu.Unlock()
-
-	if reg == nil {
-		return fmt.Errorf(
-			"there are no placeholders to rename yet: run the anonymisation once, " +
-				"then edit the placeholder of any value it replaced")
-	}
-	return reg.SetPlaceholder(category, canonical, placeholder)
-}
-
-// EntityPlaceholder returns the placeholder currently assigned to one value,
-// or "" when it has not been assigned one yet (BUILD-05 Phase 3).
-//
-// The entity cards render the field read-only-looking-but-empty in that case,
-// which is honest: before a run there is nothing to rename.
-//
-// @param category the engine category identifier
-// @param canonical the real-world value
-// @return the placeholder, or "" when none is assigned
-func (a *App) EntityPlaceholder(category, canonical string) string {
-	a.mu.Lock()
-	reg := a.registry
-	a.mu.Unlock()
-	if reg == nil {
-		return ""
-	}
-	placeholder, _ := reg.Lookup(category, canonical)
-	return placeholder
-}
-
-// --- Phase 5 methods: value management and placeholder editing on step 3 ---
-
-// SetValuePlaceholder renames the placeholder assigned to a value after the
-// anonymisation run (BUILD-06 Phase 5, step 3). The user can customize what
-// each original value becomes (e.g., changing [ENTITY_1] to [CLIENT_ACME]).
-//
-// @param placeholder the existing placeholder (e.g., "[ENTITY_1]")
-// @param newPlaceholder the new placeholder (e.g., "[CLIENT_ACME]")
-// @return an actionable error, or nil on success
 func (a *App) SetValuePlaceholder(placeholder, newPlaceholder string) error {
 	a.mu.Lock()
 	reg := a.registry
@@ -346,10 +50,8 @@ func (a *App) SetValuePlaceholder(placeholder, newPlaceholder string) error {
 	if reg == nil {
 		return fmt.Errorf(
 			"there are no placeholders to edit yet: run the anonymisation once, " +
-				"then edit a placeholder on step 3 (Anonymise)")
+				"then edit any placeholder in the replaced-values list")
 	}
-
-	// Use the registry Rename method to validate and apply the change
 	return reg.Rename(placeholder, newPlaceholder)
 }
 

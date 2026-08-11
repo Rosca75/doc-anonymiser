@@ -9,7 +9,9 @@
 //                    value list without an explicit accept. Sortable by value
 //                    and by count, filterable by type and by source.
 //   My values        the values that WILL be replaced, one card each, with the
-//                    editable placeholder, the type badge and the variant chips.
+//                    type badge and the variant chips. Renaming what a value
+//                    BECOMES is a step 3 action, on the Replaced values table:
+//                    there is nothing to rename until a run has assigned one.
 //   Never anonymise  the allowlist, which wins over every pass.
 //   Patterns         user regular expressions, with a valid / error badge.
 //
@@ -31,7 +33,7 @@
 
 import {
   runDetection, cancelDetection, countTermMatches, patternMatches,
-  expandVariants, validatePattern, setEntityPlaceholder, entityPlaceholder,
+  expandVariants, validatePattern,
 } from "../api.js";
 import {
   getState, setState, llmEnabled, detectionRoutesOn,
@@ -330,7 +332,7 @@ function distinct(rows, field) {
 
 // --- My values ------------------------------------------------------------
 
-/** valuesTab(s) is one card per value: name, type, editable placeholder,
+/** valuesTab(s) is one card per value: name, type,
  *  variant chips and an add-variant control. */
 function valuesTab(s) {
   const addRow =
@@ -357,17 +359,10 @@ function valuesTab(s) {
   return addRow + cards;
 }
 
-/**
- * valueCard(e) renders one value.
- *
- * The placeholder field is editable (BUILD-05 Phase 3). Before the first run
- * there is nothing to rename, so it renders empty and disabled with a tooltip
- * saying so rather than showing a guess the engine has not made.
- */
+/** valueCard(e) renders one value: its name, its type and its variant chips. */
 function valueCard(e) {
   const key = entityKey(e.category, e.canonical);
   const type = CATEGORY_LABELS[e.category]?.[0] ?? e.category;
-  const placeholder = e.placeholder ?? "";
   const feedback = rowFeedback.get(key);
 
   const variants = [...(e.variants ?? []), ...(e.manualVariants ?? [])];
@@ -401,10 +396,6 @@ function valueCard(e) {
     `<div class="value-head">` +
     `<span class="value-name">${escapeHTML(e.canonical)}</span>` +
     `<span class="fmt-badge">${escapeHTML(type)}</span>` +
-    `<input class="ph-input mono" value="${escapeHTML(placeholder)}"` +
-    (placeholder ? "" : ` disabled placeholder="${escapeHTML(WORKSPACE.placeholderPending)}"`) +
-    ` title="${escapeHTML(placeholder ? WORKSPACE.placeholderTooltip : WORKSPACE.placeholderPendingTooltip)}"` +
-    ` aria-label="${escapeHTML(WORKSPACE.placeholderLabel)}"/>` +
     `</div>` +
     button("", {
       kind: "ghost", cls: "value-remove icon-action danger", icon: "close",
@@ -656,23 +647,6 @@ function wireValues(container) {
       keepScrollPosition(() => removeEntity(cat, canonical));
     });
 
-    // The editable placeholder (BUILD-05 Phase 3). Go validates the shape and
-    // refuses a collision; a refusal is shown ON THE ROW rather than as a
-    // notice, because it is about this value and the fix is in this field.
-    const ph = cardEl.querySelector(".ph-input");
-    if (ph && !ph.disabled) {
-      ph.addEventListener("change", async () => {
-        try {
-          await setEntityPlaceholder(cat, canonical, ph.value);
-          rowFeedback.delete(key);
-          await refreshPlaceholders();
-        } catch (err) {
-          rowFeedback.set(key, String(err?.message ?? err));
-          setState({});
-        }
-      });
-    }
-
     // The add-variant control reveals an INLINE input rather than opening a
     // dialog: native dialogs are banned (decision 10), and an inline field is
     // fewer steps than a dialog anyway.
@@ -857,31 +831,7 @@ async function refreshVariants() {
       setEntityVariantError(e.category, e.canonical, String(err?.message ?? err));
     }
   }
-  await refreshPlaceholders();
   return pending.length;
-}
-
-/**
- * refreshPlaceholders() reads the placeholder Go currently has for each value,
- * so the editable field shows the truth rather than a guess.
- *
- * Before the first run there are none, and every field renders disabled with a
- * tooltip saying why. This is a read, so a bridge failure costs the field its
- * value and nothing else.
- */
-async function refreshPlaceholders() {
-  const entities = getState().entities;
-  let changed = false;
-  const next = [];
-  for (const e of entities) {
-    let placeholder = e.placeholder ?? "";
-    try {
-      placeholder = (await entityPlaceholder(e.category, e.canonical)) ?? "";
-    } catch { /* no bridge (plain browser): leave the field empty */ }
-    if (placeholder !== (e.placeholder ?? "")) changed = true;
-    next.push({ ...e, placeholder });
-  }
-  if (changed) setState({ entities: next });
 }
 
 // --- Patterns wiring ------------------------------------------------------

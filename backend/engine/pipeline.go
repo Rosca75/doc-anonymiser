@@ -271,9 +271,22 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		res.Report.LLMPass = "completed"
 	}
 
-	// Phase 3/4: Run validation before touching any text
-	validation := ValidateValues(ValidationInput{
-		Entities:       in.Entities,
+	// The preamble, in this order and no other:
+	//
+	//   1. removals first. A removed value stops being a declaration, so it must
+	//      not be validated as one: it is enforced through the allowlist, and
+	//      validating it would refuse every run after a removal as a value that
+	//      is both declared and never-anonymised.
+	//   2. validation second, over what is left, BEFORE any text is touched. A
+	//      half-run that assigned placeholders for a configuration the user was
+	//      just told is invalid is unrecoverable without a new session.
+	//   3. reservations third, so a rule's replacement cannot be handed to an
+	//      automatic assignment during the run that follows.
+	ApplyRemovals(in.Allowlist, in.Removed)
+	entities := FilterRemoved(filterEntities(in.Entities, sel), in.Removed)
+
+	res.Validation = ValidateValues(ValidationInput{
+		Entities:       entities,
 		Patterns:       in.Patterns,
 		SimpleRules:    in.SimpleRules,
 		Allowlist:      in.Allowlist,
@@ -281,18 +294,20 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		Registry:       reg,
 		SkipValidation: in.SkipValidation,
 	})
-	res.Validation = validation
-
-	// Return early if there are blocking conflicts
-	if len(validation.Blocking) > 0 {
+	if len(res.Validation.Blocking) > 0 {
 		return res, nil
 	}
 
-	// Phase 4: Apply removals to allowlist
-	ApplyRemovals(in.Allowlist, in.Removed)
+	for _, rule := range in.SimpleRules {
+		// An error means the placeholder is already taken, which validation has
+		// just cleared, so there is nothing left to report.
+		_ = reg.Reserve(rule.Replace)
+	}
 
-	// Phase 4: Filter removed values (updated to use FilterRemoved)
-	entities := FilterRemoved(filterEntities(in.Entities, sel), in.Removed)
+	// Overlap warnings come from the ONE place the decision is made, the span
+	// resolver, and accumulate across every document and grid cell of the run.
+	overlaps := newOverlapWarnings()
+	collectOverlapWarning := overlaps.add
 
 	// --- Passes 1–3, per document. --------------------------------------
 	// llmDurations records per-document deep-scan timing for the report
@@ -304,7 +319,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		if err := ctx.Err(); err != nil {
 			res.Report.Warnings = append(res.Report.Warnings,
 				fmt.Sprintf("run cancelled after %d of %d documents", i, len(in.Documents)))
-			finishReport(res, start)
+			finishReport(res, start, overlaps)
 			return res, err
 		}
 		emit(in.Progress, ProgressEvent{Stage: "deterministic", DocIndex: i, DocCount: len(in.Documents), DocName: doc.Name})
@@ -320,7 +335,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 			llmMS := time.Since(llmStart).Milliseconds()
 			if err != nil {
 				if ctx.Err() != nil { // cancelled mid-call
-					finishReport(res, start)
+					finishReport(res, start, overlaps)
 					return res, ctx.Err()
 				}
 				// Ollama died mid-run: degrade THIS pass with a warning,
@@ -334,7 +349,15 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 			llmDurations[i] = llmMS
 		}
 
-		rd, traces := anonymiseDocument(doc, docEntities, in.Patterns, sel, in.MinConfidence, in.Country, in.Allowlist, reg, in.OnTrace != nil)
+		scope := detectionScope{
+			entities:      docEntities,
+			patterns:      in.Patterns,
+			categories:    sel,
+			minConfidence: in.MinConfidence,
+			country:       in.Country,
+			allow:         in.Allowlist,
+		}
+		rd, traces := anonymiseDocument(doc, scope, reg, collectOverlapWarning, in.OnTrace != nil)
 		if in.OnTrace != nil {
 			in.OnTrace(doc.Name, traces)
 		}
@@ -347,7 +370,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	entries := reg.Entries() // longest original first
 	for i := range res.Documents {
 		if err := ctx.Err(); err != nil {
-			finishReport(res, start)
+			finishReport(res, start, overlaps)
 			return res, err
 		}
 		emit(in.Progress, ProgressEvent{Stage: "post-pass", DocIndex: i, DocCount: len(res.Documents), DocName: res.Documents[i].Name})
@@ -390,7 +413,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	}
 	res.Report.Values = valueReports(entries, res.Documents)
 	res.Report.DetectedCategories = detectedCategoriesFromCounts(res.Report.ByCategory)
-	finishReport(res, start)
+	finishReport(res, start, overlaps)
 	return res, nil
 }
 
@@ -442,8 +465,14 @@ func emit(fn func(ProgressEvent), ev ProgressEvent) {
 	}
 }
 
-func finishReport(res *Results, start time.Time) {
+// finishReport stamps the run's duration and folds in the warnings collected
+// while it ran. Every exit from Run goes through it, including cancellation, so
+// a partial run still reports what it saw.
+func finishReport(res *Results, start time.Time, overlaps *overlapWarnings) {
 	res.Report.DurationMS = time.Since(start).Milliseconds()
+	if overlaps != nil {
+		res.Validation.Warnings = append(res.Validation.Warnings, overlaps.conflicts()...)
+	}
 }
 
 // filterEntities keeps the entities whose category is active at the
@@ -487,11 +516,32 @@ func acceptProposals(proposals []ProposedEntity, sourceText string, allow *Allow
 	return out
 }
 
-// anonymiseDocument runs passes 1+2 (and the already-merged pass-3
+// detectionScope is the fixed configuration passes 1 and 2 share for one run:
+// what to look for, how sure a detection has to be, and what is off limits. It
+// is a struct because seven positional parameters threaded through four call
+// sites is a shape where a swapped pair compiles and silently changes what gets
+// replaced.
+type detectionScope struct {
+	entities      []Entity
+	patterns      []CustomPattern
+	categories    CategorySelection
+	minConfidence float32
+	country       string
+	allow         *Allowlist
+}
+
+// anonymiseDocument runs passes 1 and 2 (with the already-merged pass-3
 // entities) over one document, routing grid documents through per-cell
-// processing. When traceEnabled is true it collects the resolved spans of
-// every anonymiseText call and returns them for the caller's OnTrace hook.
-func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern, sel CategorySelection, minConfidence float32, country string, allow *Allowlist, reg *Registry, traceEnabled bool) (ResultDocument, []SpanTrace) {
+// processing.
+//
+// @param onDropped receives the spans overlap resolution discarded, so the run
+//
+//	can warn about them from the ONE place the decision is made
+//
+// @param traceEnabled collects the resolved spans for the caller's OnTrace hook
+func anonymiseDocument(doc Document, scope detectionScope, reg *Registry,
+	onDropped func([]Span), traceEnabled bool) (ResultDocument, []SpanTrace) {
+
 	rd := ResultDocument{
 		Name:       doc.Name,
 		Format:     doc.Format,
@@ -504,9 +554,8 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 		return reg.Assign(s.Category, s.CanonicalOrOriginal())
 	}
 
-	// tracer captures the resolved spans of each anonymiseText call when
-	// tracing is on, tagging them by region so grid/json documents can be
-	// walked cell-by-cell in the trace output.
+	// Tracing tags spans by region, so grid and json documents can be walked
+	// cell by cell in the trace output.
 	var traces []SpanTrace
 	makeTraceFn := func(region string) func([]Span) {
 		if !traceEnabled {
@@ -521,8 +570,8 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 	}
 
 	if doc.Grid != nil {
-		// Grid documents: anonymise cell by cell, then re-render the
-		// markdown from the anonymised grid so preview == export.
+		// Grid documents: anonymise cell by cell, then re-render the markdown
+		// from the anonymised grid so preview and export agree.
 		grid := make([][]string, len(doc.Grid))
 		for r, row := range doc.Grid {
 			grid[r] = make([]string, len(row))
@@ -531,7 +580,7 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 				if traceEnabled {
 					region = fmt.Sprintf("row %d col %d", r, c)
 				}
-				grid[r][c] = anonymiseText(cell, entities, patterns, sel, minConfidence, country, allow, assign, makeTraceFn(region))
+				grid[r][c] = anonymiseText(cell, scope, assign, makeTraceFn(region), onDropped)
 			}
 		}
 		rd.Grid = grid
@@ -540,35 +589,41 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 	}
 
 	if doc.Format == FormatXLSXJSON {
-		// Complex sheets: anonymise the raw JSON text, keep both the JSON
-		// (for .json export) and the fenced markdown rendering in sync.
-		rd.JSON = anonymiseText(doc.JSON, entities, patterns, sel, minConfidence, country, allow, assign, makeTraceFn("json"))
+		// Complex sheets: anonymise the raw JSON text, keeping both the JSON
+		// (for the .json export) and the fenced markdown rendering in sync.
+		rd.JSON = anonymiseText(doc.JSON, scope, assign, makeTraceFn("json"), onDropped)
 		rd.Anonymised = "```json\n" + rd.JSON + "\n```\n"
 		return rd, traces
 	}
 
-	rd.Anonymised = anonymiseText(doc.Markdown, entities, patterns, sel, minConfidence, country, allow, assign, makeTraceFn(""))
+	rd.Anonymised = anonymiseText(doc.Markdown, scope, assign, makeTraceFn(""), onDropped)
 	return rd, traces
 }
 
-// anonymiseText is the shared passes-1+2 core over one piece of text.
-// The CategorySelection gates BOTH the PII categories (pass 1) and the
-// custom-pattern pass; entity categories were already filtered by the
-// caller (filterEntities). traceFn, when non-nil, receives the resolved
-// spans (post overlap resolution) before replacement — BUILD-03 Phase E.
-func anonymiseText(text string, entities []Entity, patterns []CustomPattern, sel CategorySelection, minConfidence float32, country string, allow *Allowlist, assign func(Span) string, traceFn func([]Span)) string {
-	spans := FilterAllowed(DetectPIISelected(text, sel, country), allow)
-	spans = append(spans, DetectEntities(text, entities, allow)...)
-	if sel[CatCustomPatterns] {
-		spans = append(spans, DetectCustomPatterns(text, patterns, allow)...)
+// anonymiseText is the shared passes-1-and-2 core over one piece of text.
+//
+// The category selection gates BOTH the PII categories (pass 1) and the
+// custom-pattern pass; entity categories were already filtered by the caller
+// (filterEntities).
+func anonymiseText(text string, scope detectionScope, assign func(Span) string,
+	traceFn func([]Span), onDropped func([]Span)) string {
+
+	spans := FilterAllowed(DetectPIISelected(text, scope.categories, scope.country), scope.allow)
+	spans = append(spans, DetectEntities(text, scope.entities, scope.allow)...)
+	if scope.categories[CatCustomPatterns] {
+		spans = append(spans, DetectCustomPatterns(text, scope.patterns, scope.allow)...)
 	}
-	// The confidence floor is applied BEFORE overlap resolution, so a
-	// discarded low-confidence span cannot suppress a stronger one it
-	// happens to overlap (BUILD-04 CR9). At the default 0 this is a no-op.
-	spans = FilterByMinConfidence(spans, minConfidence)
-	resolved := ResolveOverlaps(spans)
+	// The confidence floor is applied BEFORE overlap resolution, so a discarded
+	// low-confidence span cannot suppress a stronger one it happens to overlap.
+	// At the default 0 this is a no-op.
+	spans = FilterByMinConfidence(spans, scope.minConfidence)
+
+	resolved, dropped := ResolveOverlapsWithLosers(spans)
 	if traceFn != nil {
 		traceFn(resolved)
+	}
+	if onDropped != nil && len(dropped) > 0 {
+		onDropped(dropped)
 	}
 	return ApplySpans(text, resolved, assign)
 }

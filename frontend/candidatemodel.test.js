@@ -11,7 +11,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  visibleCandidates, candidateCategoryCounts,
+  visibleCandidates,
   toggleCountSort, toggleValueSort, DEFAULT_CANDIDATE_FILTER,
 } from "./candidatemodel.js";
 
@@ -140,25 +140,8 @@ test("the sort toggles flip and adopt", () => {
 
 // --- CR15: the bulk-action counts ----------------------------------------
 
-test("category counts describe exactly the rows given", () => {
-  // Two of the fixture rows were client_names and internal_names before the
-  // BUILD-06 merge, so they now count as one entity_names pair.
-  assert.deepEqual(candidateCategoryCounts(fixture()), {
-    person_names: 2, entity_names: 2, project_names: 1,
-  });
-});
 
-test("counts follow the filter, which is what the bulk buttons promise", () => {
-  // The button says "Accept all 1 person" when a search leaves one row,
-  // and the reducer is handed exactly that row (CR15).
-  const rows = visibleCandidates(fixture(), { ...DEFAULT_CANDIDATE_FILTER, search: "marie" });
-  assert.deepEqual(candidateCategoryCounts(rows), { person_names: 1 });
-});
 
-test("counts of an empty list are an empty object", () => {
-  assert.deepEqual(candidateCategoryCounts([]), {});
-  assert.deepEqual(candidateCategoryCounts(undefined), {});
-});
 
 // --- The across-category bulk actions (BUILD-05 Phase 6) ------------------
 //

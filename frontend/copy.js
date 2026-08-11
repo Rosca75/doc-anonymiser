@@ -171,7 +171,6 @@ export const CONFIGURE = {
   groupDetected: "Auto detected values",
   groupDeclared: "Your own patterns",
   groupThorough: "Only for thorough anonymisation",
-  useAILabel: "Use local AI (Ollama)",
   useAIHint: "When enabled, a language model running on this machine can suggest names to replace and double-check the result. Nothing leaves your computer.",
   contextSizeHint: "Higher values let the AI read longer documents at once but use more memory.",
   aiOffTooltip: "Local AI is turned off. Turn it on with the switch on the Local AI section of Configure.",
@@ -216,7 +215,6 @@ export function categoryLabels(examples = {}) {
 // section labels. The category labels and the confidence copy stay in CONFIGURE
 // below, which is where they were and where the parity guard looks.
 export const RAIL = {
-  tabsLabel: "Configure sections",
   tabSmart: "Smart detection",
   tabLocalAI: "Local AI",
   tabCloudAI: "Cloud AI",
@@ -463,10 +461,6 @@ export const WORKSPACE = {
   variantAlreadyThere(v) {
     return `${v} is already one of the spellings.`;
   },
-  placeholderLabel: "The replacement value",
-  placeholderTooltip: "Edit what this value is replaced with. It takes effect on the next run.",
-  placeholderPending: "after the run",
-  placeholderPendingTooltip: "Placeholders are assigned when the anonymisation runs, so there is nothing to rename yet.",
 
   // Patterns.
   patternsHint: "Regular expressions are matched in addition to the categories you selected. A pattern that does not compile is kept but never used.",
@@ -546,7 +540,25 @@ export const ANONYMISE = {
   // The flat value list (BUILD-06). It is the answer to "what did you
   // replace?", which the category totals never gave.
   valuesTitle: "Replaced values",
+  /** valuesSummary(n, removed) is the folded card's read-out. The removed count
+   *  is shown only when there is one: "0 removed" invites a search for a list
+   *  that is not there. */
+  valuesSummary(n, removed) {
+    const values = `${n} value${n === 1 ? "" : "s"}`;
+    return removed ? `${values}, ${removed} removed` : values;
+  },
   valuesKeyWarning: "Shows real values: this is your re-identification key.",
+  placeholderLabel: "The replacement value",
+  placeholderTooltip: "Edit what this value is replaced with. It takes effect on the next run, not on the text already shown.",
+  removeValue: "Remove, and stop replacing it",
+  /** valueRemoved(v) confirms a removal and says how far it reaches. */
+  valueRemoved(v) {
+    return `${v} will not be replaced any more, in this run or the next.`;
+  },
+  restoreValue: "Restore",
+  valueRestored: "The value is being replaced again, with a new placeholder.",
+  removedTitle: "Removed values",
+  removedHint: "A restored value comes back with a NEW placeholder, because the old one may already be in a document you exported.",
   valuesFilterPlaceholder: "Filter values",
   valuesFilterEmpty: "No replaced value matches this filter.",
   byCategoryTitle: "By category",
@@ -564,16 +576,16 @@ export const ANONYMISE = {
 
   // Something missed?
   missedTitle: "Something missed?",
-  /** missedSummary(n) is the folded card's read-out. */
+  /** missedSummary(n) is the folded card's read-out: how many values the next
+   *  run will look for. */
   missedSummary(n) {
-    return n === 0 ? "add a value" : `${n} waiting`;
+    return n === 0 ? "add a value" : `${n} value${n === 1 ? "" : "s"} to replace`;
   },
   missedHint: "Add the value, then re-run the fast passes. Existing placeholders keep their numbers.",
   missedCategoryLabel: "The type of value",
   missedLabel: "A value the run missed",
   missedPlaceholder: "missed value, e.g. P. Stone",
   addValue: "Add value",
-  removePending: "Remove, and stop replacing it",
   /** missedAlreadyThere(v) explains an add that changed nothing. */
   missedAlreadyThere(v) {
     return `${v} is already on the list of values to replace.`;
@@ -581,8 +593,7 @@ export const ANONYMISE = {
   fastRerun: "Fast re-run",
   /** fastRerunDone(n) reports what the re-run applied. */
   fastRerunDone(n) {
-    if (n === 0) return "Re-ran the fast passes. Existing placeholders kept their numbers.";
-    return `Re-ran the fast passes with ${n} added value${n === 1 ? "" : "s"}. ` +
+    return `Re-ran the fast passes over ${n} value${n === 1 ? "" : "s"}. ` +
       `Existing placeholders kept their numbers.`;
   },
 

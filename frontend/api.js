@@ -112,11 +112,6 @@ export async function removeDocument(name) {
   return bridge().RemoveDocument(name);
 }
 
-/** listDocuments() returns the current DocumentInfo list. */
-export async function listDocuments() {
-  return bridge().ListDocuments();
-}
-
 /**
  * getDocumentSource(name) resolves to the SOURCE text of one imported
  * document, `{found, markdown, truncated, isGrid}`.
@@ -132,11 +127,6 @@ export async function getDocumentSource(name) {
 }
 
 // --- Settings ----------------------------------------------------------
-
-/** getSettings() resolves to {level, ollamaPort, model}. */
-export async function getSettings() {
-  return bridge().GetSettings();
-}
 
 /** applySettings(settings) stores settings and resolves to the fresh
  *  OllamaStatus (rejects with an actionable message on bad input). */
@@ -193,48 +183,13 @@ export async function runDetection(fileNames, allowTerms) {
  *  It shares Go's single cancellation slot, so it reaches whichever route is
  *  running, including mid-file. */
 export async function cancelDetection() {
-  return bridge().CancelDiscovery();
-}
-
-/** runDiscovery(fileNames, allowTerms) resolves to a DiscoveryResult
- *  {proposals: [{category, text}], status, cancelled}. A cancelled run
- *  resolves with partial proposals; only real failures reject. */
-export async function runDiscovery(fileNames, allowTerms) {
-  return bridge().RunDiscovery(fileNames, allowTerms);
-}
-
-/** cancelDiscovery() aborts the in-flight discovery run (no-op if idle). */
-export async function cancelDiscovery() {
-  return bridge().CancelDiscovery();
-}
-
-/** estimateDiscovery(fileNames) resolves to per-file size estimates
- *  [{name, chunks, tooLarge, message}] so oversized files can be
- *  excluded BEFORE the run starts. */
-export async function estimateDiscovery(fileNames) {
-  return bridge().EstimateDiscovery(fileNames);
+  return bridge().CancelDetection();
 }
 
 /** expandVariants(entity) resolves to the variant list of one entity
  *  ({category, canonical, manualVariants, excludedVariants}). */
 export async function expandVariants(entity) {
   return bridge().ExpandEntityVariants(entity);
-}
-
-/**
- * runSmartDetection(fileNames, allowTerms, classify, options) resolves to
- * a SmartDetectionResult {candidates, status, cancelled}. Works fully
- * offline; classify=true refines categories via the local AI.
- *
- * options is the BUILD-04 CR13 tuning
- * ({minLength, minOccurrences, excludeCommonWords, minConfidence}),
- * matching engine.SmartDetectOptions field for field. Omitting it sends
- * the zero value, which means "no filtering".
- */
-export async function runSmartDetection(fileNames, allowTerms, classify, options) {
-  return bridge().RunSmartDetection(fileNames, allowTerms, !!classify, options ?? {
-    minLength: 0, minOccurrences: 0, excludeCommonWords: false, minConfidence: 0,
-  });
 }
 
 /** countTermMatches(term) resolves to {count, documents} for the live
@@ -252,25 +207,6 @@ export async function validatePattern(expr) {
  *  loaded documents. */
 export async function patternMatches(expr) {
   return bridge().PatternMatches(expr);
-}
-
-/**
- * setEntityPlaceholder(category, canonical, placeholder) renames the
- * placeholder one value is replaced with (BUILD-05 Phase 3).
- *
- * REJECTS with an actionable message when the shape is wrong or the
- * placeholder already belongs to another value; the caller shows that message
- * verbatim. The rename takes effect on the next run or fast re-run, not
- * retroactively.
- */
-export async function setEntityPlaceholder(category, canonical, placeholder) {
-  return bridge().SetEntityPlaceholder(category, canonical, placeholder);
-}
-
-/** entityPlaceholder(category, canonical) resolves to the placeholder
- *  currently assigned to a value, or "" before the first run. */
-export async function entityPlaceholder(category, canonical) {
-  return bridge().EntityPlaceholder(category, canonical);
 }
 
 // --- Values, placeholders and removals (step 3, BUILD-06 Phases 4 and 5) ---
@@ -351,11 +287,6 @@ export async function fastRerun(request) {
   return bridge().FastRerun(request);
 }
 
-/** getResults() resolves to the latest Results (or null). */
-export async function getResults() {
-  return bridge().GetResults();
-}
-
 /** getMapping() resolves to the placeholder → {original, category}
  *  lookup for tooltips and reassignment (empty before the first run). */
 export async function getMapping() {
@@ -386,12 +317,6 @@ export async function getSameFormatMetadata(name, ext) {
  *  copy with the REVIEWED metadata values and filename. */
 export async function saveSameFormat(name, ext, fields, filename) {
   return bridge().SaveSameFormat(name, ext, fields, filename);
-}
-
-/** exportAllZip() saves every anonymised document into one zip, asking for a
- *  location with the native save dialog. */
-export async function exportAllZip() {
-  return bridge().ExportAllZip();
 }
 
 /**

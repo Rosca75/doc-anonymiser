@@ -107,7 +107,7 @@ func TestFastRerunAppliesEntityWithoutLLM(t *testing.T) {
 		t.Errorf("fast rerun must not call the LLM (calls went %d → %d)", callsAfterFirst, chatCalls.Load())
 	}
 	// The stored results are refreshed for the export screen.
-	if app.GetResults() != res2 {
+	if app.latestResults() != res2 {
 		t.Error("GetResults must return the latest run")
 	}
 }

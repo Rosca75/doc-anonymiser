@@ -140,10 +140,9 @@ type App struct {
 	// running / cancelRun manage the in-flight pipeline goroutine.
 	running   bool
 	cancelRun context.CancelFunc
-	// cancelDiscovery manages the in-flight detection slot. BUILD-06 folded the
-	// old discovery and smart-detection runs into one shared cancellation slot;
-	// the name stays for compatibility with older helpers and tests.
-	cancelDiscovery context.CancelFunc
+	// cancelDetection is the ONE cancellation slot every detection route shares,
+	// so a single Cancel reaches whichever one is running.
+	cancelDetection context.CancelFunc
 	// lastReq remembers the latest pipeline inputs so the same-format
 	// export reproduces identical replacements (BUILD-02 Phase 11).
 	lastReq *RunRequest
@@ -401,8 +400,10 @@ func (a *App) GetDocumentSource(name string) DocumentSource {
 	return DocumentSource{}
 }
 
-// ListDocuments returns the current import list (used on view refresh).
-func (a *App) ListDocuments() []DocumentInfo {
+// documentInfos is the current import list. Nothing bound calls it: the
+// frontend receives the list as the RESULT of importing or removing, so a
+// second read path would be a second answer to "what is imported".
+func (a *App) documentInfos() []DocumentInfo {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.documentInfosLocked()
