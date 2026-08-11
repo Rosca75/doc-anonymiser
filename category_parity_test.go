@@ -161,3 +161,21 @@ func TestEveryEngineCategoryHasAFrontendLabel(t *testing.T) {
 			strings.Join(missing, ", "))
 	}
 }
+
+func TestCountryTableParity(t *testing.T) {
+	raw, err := os.ReadFile("frontend/countries.js")
+	if err != nil {
+		t.Fatalf("could not read frontend/countries.js: %v", err)
+	}
+	js := string(raw)
+	for category, countries := range engine.CategoryCountriesCopy() {
+		if !strings.Contains(js, fmt.Sprintf("%s:", category)) {
+			t.Fatalf("frontend/countries.js is missing CATEGORY_COUNTRIES row for %s", category)
+		}
+		for _, code := range countries {
+			if !strings.Contains(js, fmt.Sprintf(`"%s"`, code)) {
+				t.Fatalf("frontend/countries.js is missing country %s for %s", code, category)
+			}
+		}
+	}
+}
