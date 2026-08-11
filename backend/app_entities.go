@@ -331,6 +331,265 @@ func (a *App) EntityPlaceholder(category, canonical string) string {
 	return placeholder
 }
 
+// --- Phase 5 methods: value management and placeholder editing on step 3 ---
+
+// SetValuePlaceholder renames the placeholder assigned to a value after the
+// anonymisation run (BUILD-06 Phase 5, step 3). The user can customize what
+// each original value becomes (e.g., changing [ENTITY_1] to [CLIENT_ACME]).
+//
+// @param placeholder the existing placeholder (e.g., "[ENTITY_1]")
+// @param newPlaceholder the new placeholder (e.g., "[CLIENT_ACME]")
+// @return an actionable error, or nil on success
+func (a *App) SetValuePlaceholder(placeholder, newPlaceholder string) error {
+	a.mu.Lock()
+	reg := a.registry
+	a.mu.Unlock()
+
+	if reg == nil {
+		return fmt.Errorf(
+			"there are no placeholders to edit yet: run the anonymisation once, " +
+				"then edit a placeholder on step 3 (Anonymise)")
+	}
+
+	// Use the registry Rename method to validate and apply the change
+	return reg.Rename(placeholder, newPlaceholder)
+}
+
+// ValuePlaceholders returns all current placeholder assignments:
+// the map of placeholder → {original value, category} for display in step 3.
+//
+// @return map of placeholder to MappingInfo (e.g., {"[ENTITY_1]": {"original": "Acme Corp", "category": "entity_names"}})
+func (a *App) ValuePlaceholders() map[string]MappingInfo {
+	a.mu.Lock()
+	reg := a.registry
+	a.mu.Unlock()
+
+	out := map[string]MappingInfo{}
+	if reg == nil {
+		return out
+	}
+
+	for _, e := range reg.Export() {
+		out[e.Placeholder] = MappingInfo{Original: e.Original, Category: e.Category}
+	}
+	return out
+}
+
+// RemovedValueInfo is the frontend-facing summary of a removed value.
+type RemovedValueInfo struct {
+	Original string `json:"original"`
+	Category string `json:"category"`
+}
+
+// ValidationError is a single validation issue (BUILD-06 Phase 3/4).
+type ValidationError struct {
+	Kind     string `json:"kind"`     // "duplicate", "collision", "conflict"
+	Severity string `json:"severity"` // "block", "warn"
+	Message  string `json:"message"`
+}
+
+// RemoveValue marks a value as removed so it won't be replaced in future runs
+// (BUILD-06 Phase 4/5). The removal uses the registry.Forget mechanism to mark
+// it as retired; the user can potentially restore it with RestoreValue.
+//
+// @param placeholder the placeholder of the value to remove
+// @return actionable error, or nil on success
+func (a *App) RemoveValue(placeholder string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	reg := a.registry
+	if reg == nil {
+		return fmt.Errorf("no values to remove yet: run the anonymisation first")
+	}
+
+	// Find the original value this placeholder maps to
+	entry, ok := reg.PlaceholderOwner(placeholder)
+	if !ok {
+		return fmt.Errorf("placeholder %q not found in the registry", placeholder)
+	}
+
+	// Use registry.Forget to mark as removed (the entry moves to retired)
+	// This keeps the placeholder reserved so it won't be reused.
+	_, _ = reg.Forget(entry.Category, entry.Original)
+	return nil
+}
+
+// RestoreValue un-marks a value as removed (BUILD-06 Phase 4/5).
+// Currently this is a no-op since removals are not yet persisted in the App.
+//
+// @param placeholder the placeholder of the value to restore
+// @return actionable error, or nil on success
+func (a *App) RestoreValue(placeholder string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	reg := a.registry
+	if reg == nil {
+		return fmt.Errorf("no registry yet")
+	}
+
+	// Find the original value
+	entry, ok := reg.PlaceholderOwner(placeholder)
+	if !ok {
+		return fmt.Errorf("placeholder %q not found", placeholder)
+	}
+
+	// TODO Phase 8: implement restoration from retired list
+	// For now, this is a placeholder that will be implemented when session
+	// persistence is added.
+	_ = entry
+	return fmt.Errorf("value restoration will be implemented in Phase 8")
+}
+
+// ListRemovedValues returns all currently removed values so the user can
+// restore them if needed (BUILD-06 Phase 4/5).
+//
+// @return slice of {original, category} for each retired/removed value
+func (a *App) ListRemovedValues() []RemovedValueInfo {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	reg := a.registry
+	if reg == nil {
+		return []RemovedValueInfo{}
+	}
+
+	// Get the list of retired placeholders from the registry
+	retired := reg.Retired()
+	if len(retired) == 0 {
+		return []RemovedValueInfo{}
+	}
+
+	out := make([]RemovedValueInfo, 0, len(retired))
+	for _, placeholder := range retired {
+		entry, ok := reg.PlaceholderOwner(placeholder)
+		if ok {
+			out = append(out, RemovedValueInfo{
+				Original: entry.Original,
+				Category: entry.Category,
+			})
+		}
+	}
+	return out
+}
+
+// NextRulePlaceholder returns the next available placeholder number for
+// simple rules, avoiding collisions with auto-assigned placeholders
+// (BUILD-06 Phase 5). Allows the user to mint new placeholders for
+// find-and-replace rules without accidentally reusing a number.
+//
+// @param category the category name (e.g., "email")
+// @return the next placeholder number (e.g., 7 if [EMAIL_1] through [EMAIL_6] are taken)
+func (a *App) NextRulePlaceholder(category string) int {
+	a.mu.Lock()
+	reg := a.registry
+	a.mu.Unlock()
+
+	if reg == nil {
+		return 1
+	}
+
+	// Get all reserved numbers for this category
+	reserved := reg.Reserved()
+	next := 1
+	usedInCategory := make(map[int]bool)
+
+	for _, r := range reserved {
+		// Parse placeholders like "[EMAIL_5]" or "[ENTITY_3]"
+		var cat string
+		var num int
+		if n, _ := fmt.Sscanf(r, "[%[^_]_%d]", &cat, &num); n == 2 && cat == category {
+			usedInCategory[num] = true
+		}
+	}
+
+	// Also check all current entries in the registry
+	for _, entry := range reg.Entries() {
+		// Extract number from placeholder like [EMAIL_5]
+		var cat string
+		var num int
+		if n, _ := fmt.Sscanf(entry.Placeholder, "[%[^_]_%d]", &cat, &num); n == 2 && cat == category {
+			usedInCategory[num] = true
+		}
+	}
+
+	// Find the next available number
+	for {
+		if !usedInCategory[next] {
+			return next
+		}
+		next++
+	}
+}
+
+// ValidateValuesRequest is the input for ValidateValues (BUILD-06 Phase 5).
+type ValidateValuesRequest struct {
+	Entities   []engine.Entity        `json:"entities"`
+	Patterns   []engine.CustomPattern `json:"patterns"`
+	Rules      []engine.SimpleRule    `json:"rules"`
+	AllowTerms []string               `json:"allowTerms"`
+}
+
+// ValidateValuesResult is the output from ValidateValues.
+type ValidateValuesResult struct {
+	Blocking []ValidationError `json:"blocking"`
+	Warnings []ValidationError `json:"warnings"`
+}
+
+// ValidateValues checks the current entities, patterns and rules for conflicts
+// before running the pipeline (BUILD-06 Phase 3/5). Returns blocking errors
+// (which prevent the run) and warnings (informational only).
+//
+// @param req the validation request with entities, patterns, rules and allowlist
+// @return blocking errors (must be resolved before running) and warnings
+func (a *App) ValidateValues(req ValidateValuesRequest) (*ValidateValuesResult, error) {
+	a.mu.Lock()
+	reg := a.registry
+	a.mu.Unlock()
+
+	// Build the allowlist from the request
+	allowlist := engine.NewEmptyAllowlist()
+	for _, t := range req.AllowTerms {
+		allowlist.Add(t)
+	}
+
+	// Run the engine's validation
+	result := engine.ValidateValues(engine.ValidationInput{
+		Entities:       req.Entities,
+		Patterns:       req.Patterns,
+		SimpleRules:    req.Rules,
+		Allowlist:      allowlist,
+		Categories:     nil,
+		Registry:       reg,
+		SkipValidation: false,
+	})
+
+	// Convert to frontend-friendly format
+	blocking := make([]ValidationError, len(result.Blocking))
+	for i, c := range result.Blocking {
+		blocking[i] = ValidationError{
+			Kind:     c.Kind,
+			Severity: c.Severity,
+			Message:  c.Message,
+		}
+	}
+
+	warnings := make([]ValidationError, len(result.Warnings))
+	for i, c := range result.Warnings {
+		warnings[i] = ValidationError{
+			Kind:     c.Kind,
+			Severity: c.Severity,
+			Message:  c.Message,
+		}
+	}
+
+	return &ValidateValuesResult{
+		Blocking: blocking,
+		Warnings: warnings,
+	}, nil
+}
+
 // TermMatchInfo is the live manual-entry preview payload (BUILD-02
 // Phase 9c): how often a term occurs, and in how many documents.
 type TermMatchInfo struct {

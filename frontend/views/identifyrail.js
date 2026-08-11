@@ -99,12 +99,31 @@ export const PRESETS = [
 // so identifyrail.test.js can assert that every engine category the store knows
 // about is reachable from some group (BUILD-04 CR9: the BUILD-03 recognizers
 // were unreachable precisely because they belonged to no group).
+//
+// Phase 6 regrouped by TRIGGER TYPE (how values are found) instead of preset tier
+// (soft/medium/advanced). This aligns with the rule model: different triggers
+// (regex/native, smart detection, manual declaration) have different UX controls
+// and validations.
+//
+// Note: All BUILD-03 extended recognizers (credit_card, uk_nhs, ip_address,
+// mac_address, crypto, database_uri, de_steuer_id, es_nif) must remain in the
+// same group (CR9) and are grouped with other contact details here.
 export const CATEGORY_GROUPS = [
-  [CONFIGURE.groupContact, HARD_PII_CATEGORIES],
-  [CONFIGURE.groupTechnical, EXTENDED_PII_CATEGORIES],
-  [CONFIGURE.groupNames, [...NAME_CATEGORIES, "custom_patterns"]],
-  [CONFIGURE.groupThorough, [...ADVANCED_PII_CATEGORIES, ...ADVANCED_ENTITY_CATEGORIES]],
+  // Regex/native trigger groups (static PII detection, Smart detection only):
+  [CONFIGURE.groupContact, ["email", "url", "phone", "credit_card", "uk_nhs", "ip_address", "mac_address", "crypto", "database_uri", "de_steuer_id", "es_nif"]],
+  [CONFIGURE.groupTechnical, ["iban", "vat", "matricule"]],
+  [CONFIGURE.groupThorough, ["amount", "date"]],
+  // Manual/auto-detect entity groups (appear in both Smart and Local AI):
+  ["Entity and project names", ["entity_names", "project_names"]],
+  ["Persons and organizations", ["person_names", "organisation_names", "location_names"]],
+  ["Custom patterns", ["custom_patterns"]],
 ];
+
+// REGEX_GROUPS and ENTITY_GROUPS split CATEGORY_GROUPS for Phase 6 UI restructuring.
+// Regex groups are static PII detection rules (shown only in Smart detection).
+// Entity groups are values for auto-detection (shown in both Smart and Local AI).
+const REGEX_GROUPS = CATEGORY_GROUPS.slice(0, 3);
+const ENTITY_GROUPS = CATEGORY_GROUPS.slice(3);
 
 /**
  * renderIdentifyRail(container) fills the rail card.
@@ -227,8 +246,9 @@ function smartSection(s) {
     });
 }
 
-/** scopeBlocks(s) is the country, the preset, the category groups and the
- *  confidence floor, in that order: broadest choice first. */
+/** scopeBlocks(s) is the country, the preset, the REGEX categories, and the
+  *  confidence floor, in that order: broadest choice first.
+  *  Entity categories appear later under "Values to detect automatically". */
 function scopeBlocks(s) {
   return `<div class="rail-block">` +
     sectionLabel(RAIL.country) +
@@ -242,7 +262,12 @@ function scopeBlocks(s) {
     `</div>` +
     `<div class="rail-block">` +
     sectionLabel(RAIL.whatToAnonymise) +
-    categoryGroups(s) +
+    categoryGroups(s, REGEX_GROUPS, "regex") +
+    `</div>` +
+    `<div class="rail-block">` +
+    sectionLabel(RAIL.valuesAuto) +
+    categoryGroups(s, ENTITY_GROUPS, "entity") +
+    `<p class="hint">${escapeHTML(RAIL.valuesAutoHint)}</p>` +
     `</div>` +
     `<div class="rail-block">` +
     sectionLabel(CONFIGURE.confidenceTitle) +
@@ -273,17 +298,19 @@ function presetChips(s) {
 }
 
 /**
- * categoryGroups(s) renders the four collapsible groups, each with its n/m count
- * and its select-all / deselect-all pair.
+ * categoryGroups(s, groups, type) renders collapsible groups, each with its n/m
+ * count and its select-all / deselect-all pair.
  *
  * The examples beside three of the labels come from the country (decision 2),
  * overlaid on copy.js CATEGORY_LABELS at render time rather than stored five
  * times over.
+ *
+ * type is "regex" (static PII detection) or "entity" (auto-detection values).
  */
-function categoryGroups(s) {
+function categoryGroups(s, groups, type = "regex") {
   const labels = categoryLabels(examplesFor(s.documentCountry));
 
-  return CATEGORY_GROUPS.map(([title, keys], index) => {
+  return groups.map(([title, keys], index) => {
     const on = keys.filter((k) => s.settings.categories?.[k]).length;
     const rows = keys.map((key) => {
       const [label, example] = labels[key] ?? [key, ""];
@@ -300,21 +327,22 @@ function categoryGroups(s) {
     }).join("");
 
     // Icon-only bulk switches: the group header is narrow, and "Select all"
-    // plus "Deselect all" across four groups would be sixteen words of chrome.
+    // plus "Deselect all" across six groups would be twelve words of chrome.
+    // Data attributes encode both type and index so wireScope can look up the right group.
     const bulk =
       button("", {
         kind: "ghost", cls: "cat-group-all icon-action ok", icon: "check",
         ariaLabel: `${CONFIGURE.selectAll}: ${title}`, title: CONFIGURE.selectAll,
-        data: { group: String(index), on: "1" },
+        data: { groupType: type, group: String(index), on: "1" },
       }) +
       button("", {
         kind: "ghost", cls: "cat-group-all icon-action", icon: "remove",
         ariaLabel: `${CONFIGURE.deselectAll}: ${title}`, title: CONFIGURE.deselectAll,
-        data: { group: String(index), on: "0" },
+        data: { groupType: type, group: String(index), on: "0" },
       });
 
-    return collapsibleGroup(`cat-group-${index}`, title, rows, {
-      open: !collapsedGroups.has(`cat-group-${index}`),
+    return collapsibleGroup(`cat-group-${type}-${index}`, title, rows, {
+      open: !collapsedGroups.has(`cat-group-${type}-${index}`),
       countLabel: `${on}/${keys.length}`,
       headRightHTML: bulk,
     });
@@ -400,7 +428,9 @@ function wireScope(container) {
       // The button lives in the group header, which is itself a toggle; stop
       // the click before wireGroups reads it as a request to fold the group.
       ev.stopPropagation();
-      const group = CATEGORY_GROUPS[Number(btn.dataset.group)];
+      const type = btn.dataset.groupType || "regex";
+      const groupArray = type === "entity" ? ENTITY_GROUPS : REGEX_GROUPS;
+      const group = groupArray[Number(btn.dataset.group)];
       if (!group) return;
       keepScrollPosition(() => {
         // ONE reducer call flips the whole group, so there is exactly one
@@ -514,6 +544,15 @@ function localAISection(s) {
     `</label>` +
     `<p class="hint">${escapeHTML(CONFIGURE.contextSizeHint)}</p>` +
     button(RAIL.reprobe, { kind: "secondary", id: "btn-reprobe", icon: "refresh" }) +
+    `</div>` +
+    // NO second copy of the category checkboxes here. There is ONE category
+    // selection in the engine (engine.CategorySelection), so a second set of
+    // boxes would be two controls for one setting; worse, this section is folded
+    // shut by default, so those boxes render at zero height and the user cannot
+    // tick them at all (the rendering harness fails on exactly that). The route
+    // says which list it reads instead.
+    `<div class="rail-block">` +
+    `<p class="hint">${escapeHTML(RAIL.localValuesHint)}</p>` +
     `</div>`;
 }
 

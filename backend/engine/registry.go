@@ -77,25 +77,59 @@ type Registry struct {
 	// This is what the session file persists so a reloaded session keeps the
 	// user's names.
 	overrides map[string]string
+	// byOriginal (Phase 3) maps lower(original) to the SINGLE entry key that
+	// owns it, so one real-world string can only ever have ONE placeholder,
+	// whatever category a later pass thinks it belongs to. Phase 3 ensures
+	// Assign checks this before minting a second.
+	byOriginal map[string]string
+	// byPlaceholder (Phase 3) maps placeholder to entry key (replaces the O(n)
+	// scan in placeholderTakenLocked).
+	byPlaceholder map[string]string
+	// retired (Phase 3) tracks placeholders whose ENTRY a Forget freed but whose
+	// NUMBER it did not: the user may already have exported a document with
+	// [PERSON_4] meaning one person, and handing 4 to somebody else would make
+	// two artefacts of one session disagree with nothing able to detect it.
+	retired map[string]bool
+	// reserved (Phase 3) tracks placeholders produced outside the registry
+	// (rule replacements), so automatic assignment does not collide.
+	reserved map[string]bool
 }
 
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		counters:  map[string]int{},
-		entries:   map[string]*MappingEntry{},
-		overrides: map[string]string{},
+		counters:      map[string]int{},
+		entries:       map[string]*MappingEntry{},
+		overrides:     map[string]string{},
+		byOriginal:    map[string]string{},
+		byPlaceholder: map[string]string{},
+		retired:       map[string]bool{},
+		reserved:      map[string]bool{},
 	}
 }
 
 // Assign returns the stable placeholder for (category, original), creating
 // a new one on first sight and bumping the occurrence count every time.
 // This is the function handed to ApplySpans by the pipeline.
+//
+// Phase 3 invariant: if byOriginal already owns the string under another
+// category, return the existing placeholder and bump its count rather than
+// minting a second. Precedence is the fixed pass order: pass 1 (PII) before
+// pass 2 (entities) before pass 3 (LLM), so a string that is both an email
+// and a declared entity becomes [EMAIL_n].
 func (r *Registry) Assign(category, original string) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	key := category + "|" + strings.ToLower(original)
+	lowerOriginal := strings.ToLower(original)
+	// Phase 3: Check if this string already has a placeholder under another category
+	if existingKey, ok := r.byOriginal[lowerOriginal]; ok {
+		e := r.entries[existingKey]
+		e.Count++
+		return e.Placeholder
+	}
+
+	key := category + "|" + lowerOriginal
 	if e, ok := r.entries[key]; ok {
 		e.Count++
 		return e.Placeholder
@@ -106,12 +140,13 @@ func (r *Registry) Assign(category, original string) string {
 		panic("engine placeholder label missing for category " + category)
 	}
 	// Hand out the next number for this label, SKIPPING any that a user
-	// override has already taken (BUILD-05 Phase 3). Renaming [CLIENT_1] to
-	// [CLIENT_5] means the fifth automatic client must not also become
-	// [CLIENT_5]: two originals sharing one placeholder makes the
-	// re-identification key ambiguous, which silently destroys the ability to
-	// undo the anonymisation. Advancing the counter is the fix, so the numbers
-	// simply have a gap.
+	// override has already taken (BUILD-05 Phase 3), or that a reserved or
+	// retired placeholder has used. Renaming [CLIENT_1] to [CLIENT_5] means
+	// the fifth automatic client must not also become [CLIENT_5]: two
+	// originals sharing one placeholder makes the re-identification key
+	// ambiguous, which silently destroys the ability to undo the
+	// anonymisation. Advancing the counter is the fix, so the numbers simply
+	// have a gap.
 	var placeholder string
 	for {
 		r.counters[label]++
@@ -127,35 +162,43 @@ func (r *Registry) Assign(category, original string) string {
 		Count:       1,
 	}
 	r.entries[key] = e
+	r.byOriginal[lowerOriginal] = key
+	r.byPlaceholder[placeholder] = key
 	return e.Placeholder
 }
 
-// placeholderTakenLocked reports whether any entry already uses a placeholder.
-// Caller holds r.mu.
-//
-// The check spans every category, not just one: the exported key is a single
-// flat list, so [PERSON_1] meaning two different people is ambiguous even when
-// the two sit in different categories.
+// placeholderTakenLocked reports whether a placeholder is taken by an entry,
+// or reserved (Phase 3), or retired (Phase 3). Caller holds r.mu.
 func (r *Registry) placeholderTakenLocked(placeholder string) bool {
-	for _, e := range r.entries {
-		if e.Placeholder == placeholder {
-			return true
-		}
-	}
-	return false
+	_, inEntries := r.byPlaceholder[placeholder]
+	_, inReserved := r.reserved[placeholder]
+	_, inRetired := r.retired[placeholder]
+	return inEntries || inReserved || inRetired
 }
 
 // Lookup returns the placeholder already assigned to (category, original)
 // without creating one; ok is false when it was never seen. Used by the
 // post-pass (Phase 4) to re-apply known mappings across all documents.
+//
+// Phase 3: resolves through byOriginal when the exact category key misses,
+// because one string can only own one placeholder across all categories.
 func (r *Registry) Lookup(category, original string) (string, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	e, ok := r.entries[category+"|"+strings.ToLower(original)]
-	if !ok {
-		return "", false
+
+	lowerOriginal := strings.ToLower(original)
+	// First try the exact category key
+	key := category + "|" + lowerOriginal
+	if e, ok := r.entries[key]; ok {
+		return e.Placeholder, true
 	}
-	return e.Placeholder, true
+	// Phase 3: if not found under this category, check if byOriginal owns it
+	// under another category
+	if existingKey, ok := r.byOriginal[lowerOriginal]; ok {
+		e := r.entries[existingKey]
+		return e.Placeholder, true
+	}
+	return "", false
 }
 
 // Export returns the full mapping sorted by category then placeholder
@@ -242,7 +285,8 @@ func (r *Registry) SetPlaceholder(category, original, placeholder string) error 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	key := category + "|" + strings.ToLower(original)
+	lowerOriginal := strings.ToLower(original)
+	key := category + "|" + lowerOriginal
 	entry, ok := r.entries[key]
 	if !ok {
 		return fmt.Errorf(
@@ -261,6 +305,7 @@ func (r *Registry) SetPlaceholder(category, original, placeholder string) error 
 	}
 
 	// A collision check across the WHOLE registry, not just this category.
+	// Phase 3: also check reserved and retired placeholders.
 	for otherKey, other := range r.entries {
 		if otherKey == key {
 			continue
@@ -274,6 +319,23 @@ func (r *Registry) SetPlaceholder(category, original, placeholder string) error 
 				next, other.Original)
 		}
 	}
+	if r.reserved[next] {
+		return fmt.Errorf(
+			"%s is reserved for an automatic rule assignment: two values cannot share "+
+				"one placeholder. Pick a different name or a different number",
+			next)
+	}
+	if r.retired[next] {
+		return fmt.Errorf(
+			"%s is a retired placeholder: the number was already used, and re-using it "+
+				"would make earlier artefacts disagree with the re-identification key. "+
+				"Pick a different number",
+			next)
+	}
+
+	// Update byPlaceholder: remove old placeholder, add new one
+	delete(r.byPlaceholder, entry.Placeholder)
+	r.byPlaceholder[next] = key
 
 	entry.Placeholder = next
 	r.recordOverrideLocked(key, next)
@@ -355,4 +417,140 @@ func (r *Registry) Entries() []MappingEntry {
 		return len(out[i].Original) > len(out[j].Original)
 	})
 	return out
+}
+
+// Forget drops the mapping so the key stops describing a replacement that no
+// longer happens (Phase 4). THE NUMBER IS NOT FREED: the user may already
+// have exported a document, a mapping CSV or a session in which [PERSON_4]
+// means one person, and handing 4 to somebody else would make two artefacts
+// of one session disagree with nothing able to detect it. Same ambiguity
+// SetPlaceholder's collision refusal exists to prevent.
+//
+// Forget returns the removed entry (to allow RestoreValue to use it) and a
+// bool indicating whether the entry was found.
+func (r *Registry) Forget(category, original string) (MappingEntry, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	lowerOriginal := strings.ToLower(original)
+	key := category + "|" + lowerOriginal
+	entry, ok := r.entries[key]
+	if !ok {
+		return MappingEntry{}, false
+	}
+
+	// Record the placeholder as retired
+	r.retired[entry.Placeholder] = true
+
+	// Clean up indexes
+	delete(r.entries, key)
+	delete(r.byOriginal, lowerOriginal)
+	delete(r.byPlaceholder, entry.Placeholder)
+
+	// Clean up overrides if any
+	delete(r.overrides, key)
+
+	return *entry, true
+}
+
+// Rename updates a placeholder by its current value, addressed by placeholder
+// because on step 3 the user is looking at report rows and at marks in the
+// Compare pane, and both carry the placeholder (Phase 5). This is essentially
+// a SetPlaceholder wrapper that looks up the entry by placeholder instead of
+// by category/original.
+func (r *Registry) Rename(current, next string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	key, ok := r.byPlaceholder[current]
+	if !ok {
+		return fmt.Errorf(
+			"placeholder %q not found in registry",
+			current)
+	}
+
+	entry := r.entries[key]
+	category := entry.Category
+	original := entry.Original
+	r.mu.Unlock()
+
+	// Use SetPlaceholder's logic, which we need to call unlocked to avoid
+	// nested locks. SetPlaceholder will re-lock.
+	return r.SetPlaceholder(category, original, next)
+}
+
+// Reserve marks a placeholder as reserved (Phase 3), so automatic assignment
+// does not collide with rule replacements. Returns an error if the placeholder
+// is already taken.
+func (r *Registry) Reserve(placeholder string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if !placeholderShapeRe.MatchString(placeholder) {
+		return fmt.Errorf(
+			"%q is not a valid placeholder shape",
+			placeholder)
+	}
+
+	if r.placeholderTakenLocked(placeholder) {
+		return fmt.Errorf(
+			"%q is already taken or reserved",
+			placeholder)
+	}
+
+	r.reserved[placeholder] = true
+	return nil
+}
+
+// Reserved returns all reserved placeholders (Phase 3).
+func (r *Registry) Reserved() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	out := make([]string, 0, len(r.reserved))
+	for p := range r.reserved {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Retired returns all retired placeholders (Phase 4).
+func (r *Registry) Retired() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	out := make([]string, 0, len(r.retired))
+	for p := range r.retired {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// PlaceholderOwner returns the MappingEntry that owns a placeholder
+// (Phase 4), or an empty entry and false if not found.
+func (r *Registry) PlaceholderOwner(placeholder string) (MappingEntry, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	key, ok := r.byPlaceholder[placeholder]
+	if !ok {
+		return MappingEntry{}, false
+	}
+	return *r.entries[key], true
+}
+
+// OwnerCategory returns the category that owns an original string
+// (Phase 4), or empty string and false if not found.
+func (r *Registry) OwnerCategory(original string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	lowerOriginal := strings.ToLower(original)
+	key, ok := r.byOriginal[lowerOriginal]
+	if !ok {
+		return "", false
+	}
+	return r.entries[key].Category, true
 }

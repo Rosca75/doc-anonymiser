@@ -86,6 +86,11 @@ type PipelineInput struct {
 	LLM LLM
 	// SimpleRules run last, in order (simplereplace.go).
 	SimpleRules []SimpleRule
+	// Removed (Phase 4) tracks values the user deleted from the session.
+	// They must not appear in any run without explicit restoration.
+	Removed []RemovedValue
+	// SkipValidation (Phase 3) is for tests that deliberately create conflicts.
+	SkipValidation bool
 	// Progress, when set, receives per-document stage events.
 	Progress func(ProgressEvent)
 	// OnTrace, when set, receives the final resolved spans (post-filter,
@@ -135,6 +140,10 @@ type ResultDocument struct {
 type Results struct {
 	Documents []ResultDocument `json:"documents"`
 	Report    Report           `json:"report"`
+	// Validation (Phase 3) contains any conflicts detected before the run.
+	// Blocking conflicts mean the pipeline did not run (Documents and Report
+	// are empty). Warnings are generated during the run.
+	Validation ValidationResult `json:"validation,omitempty"`
 }
 
 func detectedCategoriesFromCounts(counts map[string]int) []string {
@@ -242,7 +251,6 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	if sel == nil {
 		sel = PresetSelection(in.Level)
 	}
-	entities := filterEntities(in.Entities, sel)
 
 	res := &Results{
 		Report: Report{
@@ -255,6 +263,29 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	if in.LLM != nil {
 		res.Report.LLMPass = "completed"
 	}
+
+	// Phase 3/4: Run validation before touching any text
+	validation := ValidateValues(ValidationInput{
+		Entities:       in.Entities,
+		Patterns:       in.Patterns,
+		SimpleRules:    in.SimpleRules,
+		Allowlist:      in.Allowlist,
+		Categories:     sel,
+		Registry:       reg,
+		SkipValidation: in.SkipValidation,
+	})
+	res.Validation = validation
+
+	// Return early if there are blocking conflicts
+	if len(validation.Blocking) > 0 {
+		return res, nil
+	}
+
+	// Phase 4: Apply removals to allowlist
+	ApplyRemovals(in.Allowlist, in.Removed)
+
+	// Phase 4: Filter removed values (updated to use FilterRemoved)
+	entities := FilterRemoved(filterEntities(in.Entities, sel), in.Removed)
 
 	// --- Passes 1–3, per document. --------------------------------------
 	// llmDurations records per-document deep-scan timing for the report

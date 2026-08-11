@@ -217,8 +217,12 @@ test("the scope controls live inside the Smart detection section", () => {
 
 test("every category checkbox is reachable without switching anything", () => {
   // With tabs, three quarters of the rail was one click away and invisible.
+  // Every category is now rendered ONCE, in the Smart detection section: one
+  // setting, one control. A second copy inside Local AI would be folded shut by
+  // default and therefore not reachable at all, which is what this test is for.
   const boxes = all(railHTML(), "input.cat-toggle").map((b) => b.attrs["data-category"]);
-  assert.deepEqual(boxes.slice().sort(), ALL_CATEGORIES.slice().sort());
+  assert.deepEqual(boxes.slice().sort(), ALL_CATEGORIES.slice().sort(),
+    "every category exactly once, with no duplicate checkbox for the same setting");
 });
 
 test("the Local AI fields are disabled while the route is off", () => {
