@@ -469,6 +469,15 @@ main#view.page { overflow-y: auto; }
   border: 1px solid var(--gray-4); border-radius: var(--card-radius);
   padding: 0.85rem 1.5rem;
 }
+/* When a screen supplies its footer as a card foot (Import, Identify), the
+   step-footer sits inside .card-foot, which already owns the padding, border
+   and background. It must fill that foot so its own space-between pushes the
+   primary button to the right, instead of taking only its content width and
+   collapsing (and cropping) against the left. The doubled chrome is dropped
+   here; the standalone footer (Anonymise, Export) keeps it. */
+.card-foot > .step-footer {
+  flex: 1; padding: 0; border-top: none; background: none;
+}
 .step-back { color: var(--ink-2); font-size: 0.875rem; padding: 0.2rem 0; }
 .step-back:hover { background: none; color: var(--accent); }
 .step-footer-right { display: flex; align-items: center; gap: 1rem; }
