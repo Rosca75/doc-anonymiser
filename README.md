@@ -65,13 +65,9 @@ and your work survives navigating between Home and the wizard.
 5. **Export**: save the anonymised documents through a save dialog
    (single files, a zip of everything, or the clipboard). CSV files come
    back out as CSV; Word, PowerPoint and Excel files can export a
-   same-format copy with layout preserved. PDF export is experimental: it
-   edits the original document in place, replacing only the sensitive words
-   (the replacement text is drawn in a standard font, so its spacing may
-   differ slightly) and keeping the rest of the page untouched; if a
-   particular PDF cannot be edited safely it falls back to a simplified
-   regenerated layout. Each same-format export is behind a
-   document-properties review. Your original files are never modified.
+   same-format copy with layout preserved (PDF experimentally, as a
+   simplified regenerated layout), each behind a document-properties
+   review. Your original files are never modified.
 
 ## Optional: local AI assistance with Ollama
 
