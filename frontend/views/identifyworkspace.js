@@ -438,9 +438,29 @@ function patternsTab(s) {
     }) +
     `</div>`).join("");
 
+  // The worked examples: eight clickable starter expressions. Each is a button
+  // so it is reachable by keyboard and announces itself; clicking it fills the
+  // add box above (wirePatterns), where the live feedback then explains what it
+  // matches. This is the whole "you do not have to be a regex expert" feature.
+  const examples = WORKSPACE.patternExamples.map((ex) =>
+    `<button type="button" class="pattern-example" data-expr="${escapeHTML(ex.expr)}"` +
+    ` aria-label="${escapeHTML(WORKSPACE.useExample(ex.expr))}">` +
+    `<span class="mono">${escapeHTML(ex.expr)}</span>` +
+    `<span class="pattern-example-label">${escapeHTML(ex.label)}</span>` +
+    `<span class="pattern-example-sample mono" title="${escapeHTML(WORKSPACE.matchesSample(ex.sample))}">` +
+    `${escapeHTML(WORKSPACE.matchesSample(ex.sample))}</span>` +
+    `</button>`).join("");
+  const examplesBlock =
+    `<div class="pattern-examples">` +
+    `<p class="section-label">${escapeHTML(WORKSPACE.patternExamplesLabel)}</p>` +
+    `<p class="hint">${escapeHTML(WORKSPACE.patternExamplesHint)}</p>` +
+    `<div class="pattern-example-list">${examples}</div>` +
+    `</div>`;
+
   return `<p class="hint">${escapeHTML(WORKSPACE.patternsHint)}</p>` + addRow +
+    `<div id="pattern-feedback" class="hint"></div>` +
     (rows ? `<div class="grid-box">${rows}</div>` : "") +
-    `<div id="pattern-feedback" class="hint"></div>`;
+    examplesBlock;
 }
 
 // --- Wiring ---------------------------------------------------------------
@@ -883,6 +903,24 @@ function wirePatterns(container) {
   for (const row of container.querySelectorAll(".pattern-row")) {
     row.querySelector(".pattern-del")?.addEventListener("click", () => {
       keepScrollPosition(() => removePattern(row.dataset.expr));
+    });
+  }
+
+  // Clicking an example drops it into the add box and immediately runs the same
+  // live feedback the user would get by typing it, so they see what it matches
+  // before deciding to add it. It deliberately does NOT add the pattern: the
+  // examples are a starting point to tweak, not a one-click commit.
+  for (const ex of container.querySelectorAll(".pattern-example")) {
+    ex.addEventListener("click", () => {
+      drafts.pattern = ex.dataset.expr;
+      setState({}); // repaint so the input shows the chosen expression
+      const draft = container.querySelector("#pattern-draft");
+      if (draft) {
+        draft.focus();
+        // Re-run the input listener wired above, which validates and reports
+        // the sample matches for the newly-filled expression.
+        draft.dispatchEvent(new Event("input"));
+      }
     });
   }
 }
