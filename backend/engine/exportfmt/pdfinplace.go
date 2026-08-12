@@ -95,15 +95,25 @@ func pdfiumInstance() (pdfium.Pdfium, error) {
 	return inst, nil
 }
 
-// pendingReplacement captures everything needed to rebuild one edited text
-// run after the loop that discovered it: the object to delete, its new
-// text, and the geometry/colour to reproduce.
+// pendingReplacement is one object edit discovered on a page: the object to
+// change, the text it should now carry (empty means "remove the object
+// entirely", used for the trailing glyphs of a value that spanned several
+// objects), and the geometry/colour to reproduce for a non-empty edit.
 type pendingReplacement struct {
 	original references.FPDF_PAGEOBJECT
 	newText  string
+	remove   bool // true: delete the object, do not insert a replacement
 	fontSize float32
 	matrix   structs.FPDF_FS_MATRIX
 	color    structs.FPDF_COLOR
+}
+
+// collectedObject is one text object plus the byte range its decoded text
+// occupies in the page-level concatenation.
+type collectedObject struct {
+	obj        references.FPDF_PAGEOBJECT
+	text       string
+	start, end int
 }
 
 // anonymisePDFInPlace edits the ORIGINAL pdf bytes so that only the text
@@ -171,8 +181,26 @@ func anonymisePDFInPlace(raw []byte, cfg Config) ([]byte, error) {
 }
 
 // anonymisePDFPage edits one page and returns the number of text objects it
-// replaced. It gathers replacements first, then applies them, so removing
-// objects never disturbs the iteration.
+// changed. It works at PAGE level rather than per object, because real
+// Word/Outlook PDF exports fragment a single logical string across many text
+// objects (a hyperlinked email is often emitted one glyph per object, e.g.
+// "j","o","h",...,"@","p","w","c"). Detecting per object would then never
+// see a whole email, phone or name, so nothing sensitive would be replaced
+// and the self-check would reject the file, forcing a full regeneration.
+//
+// Instead we concatenate every text object's decoded text in drawing order
+// (which is reading order within a run, so a fragmented value is a
+// CONTIGUOUS substring of the concatenation), run the SAME span machinery as
+// the body pipeline over the whole page — including the registry's
+// known-original pass, which matches the exact emails/names the pipeline
+// already assigned — then map each replacement span back onto the objects it
+// covers:
+//   - the object where the value STARTS keeps any text before the value and
+//     gains the placeholder (rendered in the standard font);
+//   - objects fully inside the value are removed;
+//   - the object where the value ENDS keeps any text after the value.
+//
+// Objects no span touches are left byte-identical.
 func anonymisePDFPage(inst pdfium.Pdfium, docRef references.FPDF_DOCUMENT, index int, cfg Config) (int, error) {
 	pg, err := inst.FPDF_LoadPage(&requests.FPDF_LoadPage{Document: docRef, Index: index})
 	if err != nil {
@@ -192,7 +220,9 @@ func anonymisePDFPage(inst pdfium.Pdfium, docRef references.FPDF_DOCUMENT, index
 		return 0, fmt.Errorf("page %d objects could not be counted (%v)", index+1, err)
 	}
 
-	var pending []pendingReplacement
+	// Pass 1: gather every text object and build the page concatenation.
+	var objs []collectedObject
+	var concat strings.Builder
 	for i := 0; i < count.Count; i++ {
 		obj, err := inst.FPDFPage_GetObject(&requests.FPDFPage_GetObject{Page: pageArg, Index: i})
 		if err != nil {
@@ -209,27 +239,44 @@ func anonymisePDFPage(inst pdfium.Pdfium, docRef references.FPDF_DOCUMENT, index
 		if err != nil {
 			return 0, fmt.Errorf("page %d text object could not be decoded (%v)", index+1, err)
 		}
-		anon, n := cfg.AnonymiseText(got.Text)
-		if n == 0 || anon == got.Text {
-			continue // nothing sensitive in this run
-		}
+		start := concat.Len()
+		concat.WriteString(got.Text)
+		objs = append(objs, collectedObject{obj: obj.PageObject, text: got.Text, start: start, end: concat.Len()})
+	}
 
-		size, err := inst.FPDFTextObj_GetFontSize(&requests.FPDFTextObj_GetFontSize{PageObject: obj.PageObject})
+	// Pass 2: detect over the whole page, then decide each object's new text.
+	repls := cfg.Replacements(concat.String())
+	if len(repls) == 0 {
+		return 0, nil
+	}
+	page := concat.String()
+
+	var pending []pendingReplacement
+	for _, co := range objs {
+		newText, changed := rebuildObjectText(page, co, repls)
+		if !changed {
+			continue
+		}
+		if newText == "" {
+			pending = append(pending, pendingReplacement{original: co.obj, remove: true})
+			continue
+		}
+		size, err := inst.FPDFTextObj_GetFontSize(&requests.FPDFTextObj_GetFontSize{PageObject: co.obj})
 		if err != nil {
 			return 0, fmt.Errorf("page %d font size could not be read (%v)", index+1, err)
 		}
-		mtx, err := inst.FPDFPageObj_GetMatrix(&requests.FPDFPageObj_GetMatrix{PageObject: obj.PageObject})
+		mtx, err := inst.FPDFPageObj_GetMatrix(&requests.FPDFPageObj_GetMatrix{PageObject: co.obj})
 		if err != nil {
 			return 0, fmt.Errorf("page %d text position could not be read (%v)", index+1, err)
 		}
 		// Colour is best-effort: default to opaque black if unreadable.
 		color := structs.FPDF_COLOR{R: 0, G: 0, B: 0, A: 255}
-		if col, err := inst.FPDFPageObj_GetFillColor(&requests.FPDFPageObj_GetFillColor{PageObject: obj.PageObject}); err == nil {
+		if col, err := inst.FPDFPageObj_GetFillColor(&requests.FPDFPageObj_GetFillColor{PageObject: co.obj}); err == nil {
 			color = col.FillColor
 		}
 		pending = append(pending, pendingReplacement{
-			original: obj.PageObject,
-			newText:  anon,
+			original: co.obj,
+			newText:  newText,
 			fontSize: size.FontSize,
 			matrix:   mtx.Matrix,
 			color:    color,
@@ -250,9 +297,67 @@ func anonymisePDFPage(inst pdfium.Pdfium, docRef references.FPDF_DOCUMENT, index
 	return len(pending), nil
 }
 
-// applyPDFReplacement removes one original text object and inserts its
-// anonymised replacement in the standard font at the same geometry.
+// rebuildObjectText computes what one object's text should become after the
+// page's replacement spans are applied. It returns the new text and whether
+// it differs from the original. The placeholder for a span is emitted only in
+// the object where that span STARTS; objects that merely continue a span keep
+// just the text outside it (empty for a fully-covered object). Byte offsets
+// are into the page concatenation and match the engine's span offsets.
+func rebuildObjectText(page string, co collectedObject, repls []Replacement) (string, bool) {
+	oStart, oEnd := co.start, co.end
+	var b strings.Builder
+	cursor := oStart
+	touched := false
+	for _, r := range repls {
+		if r.End <= oStart || r.Start >= oEnd {
+			continue // this span does not overlap the object
+		}
+		touched = true
+		// Text between the previous cursor and the span, within the object.
+		segStart := r.Start
+		if segStart < oStart {
+			segStart = oStart
+		}
+		if cursor < segStart {
+			b.WriteString(page[cursor:segStart])
+		}
+		// Emit the placeholder only in the object where the span begins.
+		if r.Start >= oStart && r.Start < oEnd {
+			b.WriteString(r.Text)
+		}
+		segEnd := r.End
+		if segEnd > oEnd {
+			segEnd = oEnd
+		}
+		if segEnd > cursor {
+			cursor = segEnd
+		}
+	}
+	if !touched {
+		return co.text, false
+	}
+	if cursor < oEnd {
+		b.WriteString(page[cursor:oEnd])
+	}
+	nt := b.String()
+	return nt, nt != co.text
+}
+
+// applyPDFReplacement realises one object edit. For a remove-only edit (the
+// trailing glyphs of a value that spanned multiple objects) it just deletes
+// the object. Otherwise it removes the original run and inserts the new text
+// in the standard font at the same geometry.
 func applyPDFReplacement(inst pdfium.Pdfium, docRef references.FPDF_DOCUMENT, pageArg requests.Page, p pendingReplacement) error {
+	if p.remove {
+		if _, err := inst.FPDFPage_RemoveObject(&requests.FPDFPage_RemoveObject{Page: pageArg, PageObject: p.original}); err != nil {
+			return fmt.Errorf("original text could not be removed (%v)", err)
+		}
+		if _, err := inst.FPDFPageObj_Destroy(&requests.FPDFPageObj_Destroy{PageObject: p.original}); err != nil {
+			return fmt.Errorf("original text could not be released (%v)", err)
+		}
+		return nil
+	}
+
 	newObj, err := inst.FPDFPageObj_NewTextObj(&requests.FPDFPageObj_NewTextObj{
 		Document: docRef,
 		Font:     replacementFont,
