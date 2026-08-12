@@ -4,10 +4,48 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 )
+
+// TestValidationMarshalsWithLowercaseKeys locks the JSON contract the Anonymise
+// screen reads. The results ride to the frontend on the "pipeline:done" event,
+// and the frontend reads results.validation.blocking[].message and .fix to
+// explain a refused run. If these tags regress to Go's capitalised field names,
+// the run is refused but the screen shows a silent 0/0/0 mismatch instead, which
+// is the exact bug this contract prevents.
+func TestValidationMarshalsWithLowercaseKeys(t *testing.T) {
+	res := ValidationResult{
+		Blocking: []Conflict{{
+			Kind:     "collision",
+			Severity: "block",
+			Value:    "Mendonça",
+			Message:  "two values claim the same spelling",
+			Fix:      "remove one of them",
+			Refs:     []ValueRef{{Kind: "entity", Category: "person_names", Canonical: "mendonça"}},
+		}},
+	}
+	raw, err := json.Marshal(res)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := string(raw)
+	for _, key := range []string{
+		`"blocking"`, `"kind"`, `"severity"`, `"value"`, `"message"`, `"fix"`,
+		`"refs"`, `"category"`, `"canonical"`,
+	} {
+		if !strings.Contains(got, key) {
+			t.Errorf("expected key %s in %s", key, got)
+		}
+	}
+	for _, bad := range []string{`"Blocking"`, `"Message"`, `"Fix"`, `"Kind"`} {
+		if strings.Contains(got, bad) {
+			t.Errorf("capitalised key %s leaked into %s", bad, got)
+		}
+	}
+}
 
 // blocking runs ValidateValues over one declaration set and returns the kinds
 // it refused, so a table case can name them.

@@ -16,27 +16,32 @@ import (
 )
 
 // ValueRef identifies one occurrence of a value across the system.
+//
+// The json tags matter: this rides inside Results.Validation on the
+// "pipeline:done" event, and the Anonymise screen reads it to explain a refused
+// run. Without them the frontend would receive Go's capitalised field names and
+// the report would silently disagree with what the engine produced.
 type ValueRef struct {
-	Kind      string // "regex" | "entity" | "custom_pattern" | "simple_rule"
-	Category  string // category the value belongs to
-	Canonical string // lower-cased value
-	Detail    string // extra context (e.g., the regex pattern)
+	Kind      string `json:"kind"`               // "regex" | "entity" | "custom_pattern" | "simple_rule"
+	Category  string `json:"category"`           // category the value belongs to
+	Canonical string `json:"canonical"`          // lower-cased value
+	Detail    string `json:"detail,omitempty"`   // extra context (e.g., the regex pattern)
 }
 
 // Conflict is a value that violates an invariant and must be resolved.
 type Conflict struct {
-	Kind     string     // "ambiguity" | "overlap" | "collision" | "reserved"
-	Severity string     // "block" | "warn"
-	Value    string     // the problematic value
-	Refs     []ValueRef // all places this value appears
-	Message  string     // what failed
-	Fix      string     // how to fix it
+	Kind     string     `json:"kind"`           // "ambiguity" | "overlap" | "collision" | "reserved"
+	Severity string     `json:"severity"`       // "block" | "warn"
+	Value    string     `json:"value"`          // the problematic value
+	Refs     []ValueRef `json:"refs,omitempty"` // all places this value appears
+	Message  string     `json:"message"`        // what failed
+	Fix      string     `json:"fix"`            // how to fix it
 }
 
 // ValidationResult is the outcome of ValidateValues.
 type ValidationResult struct {
-	Blocking []Conflict // conflicts that prevent running the pipeline
-	Warnings []Conflict // conflicts that the pipeline will handle but should notify about
+	Blocking []Conflict `json:"blocking,omitempty"` // conflicts that prevent running the pipeline
+	Warnings []Conflict `json:"warnings,omitempty"` // conflicts that the pipeline will handle but should notify about
 }
 
 // ValidationInput is what ValidateValues needs to check.

@@ -711,6 +711,14 @@ input, select {
 .banner.warn  { background: var(--gray-6); border: 1px solid var(--warn); color: var(--text); }
 .banner .dismiss { border: none; background: none; font-weight: 700; }
 
+/* The refused-run panel: a left-aligned column, not the space-between banner
+   layout, because it carries a heading, an explanation and a list rather than
+   one line plus a dismiss button. */
+.banner.blocked-banner { display: flex; justify-content: flex-start; align-items: flex-start; }
+.blocked-banner .banner-icon { color: var(--err); flex: none; }
+.blocked-banner .banner-body { display: flex; flex-direction: column; gap: 0.35rem; }
+.blocked-banner .blocked-list { margin: 0.15rem 0 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.4rem; }
+
 /* --- Identify rail (BUILD-05 Phase 5) ------------------------------------ */
 
 /* BUILD-06: the rail's tab row is GONE. The four peer tabs presented Scope as

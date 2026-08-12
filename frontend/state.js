@@ -1269,6 +1269,26 @@ export function visibleWarnings(s = state) {
   return (s.results?.report?.warnings ?? []).filter((w) => !dismissed.has(w));
 }
 
+/**
+ * blockingConflicts(s) is the conflicts that made the last run refuse to touch
+ * any text.
+ *
+ * The engine validates the declared values BEFORE pass 1, and a blocking
+ * conflict (two values that would both claim the same spelling, a value that is
+ * also allowlisted, and so on) aborts the run before the registry is mutated.
+ * When that happens the results carry empty documents and an empty report, so a
+ * screen that reads only the report shows a finished run that replaced nothing.
+ * That is the mismatch a refused run produces: a zero summary beside a value
+ * table still holding an earlier run's registry. This is the one field that
+ * says the run was refused, and why, so the Anonymise screen can explain it
+ * instead of leaving the user to guess.
+ * @param {object} [s] state
+ * @returns {Array<{kind, severity, value, message, fix}>}
+ */
+export function blockingConflicts(s = state) {
+  return s.results?.validation?.blocking ?? [];
+}
+
 // --- Same-format metadata review --------------------------
 
 /** setMetaReview(docName, review) stores (or replaces) one document's
