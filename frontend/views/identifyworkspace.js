@@ -1,29 +1,29 @@
 // views/identifyworkspace.js, the WORKSPACE of wizard step 2, Identify
-// (BUILD-02 Phase 9 as views/values.js; renamed by BUILD-05 Phase 2 and relaid
-// out into the mock-up's four tabs by BUILD-05 Phase 6).
 //
 // Four tabs, each with its item count in the tab itself:
 //
-//   Suggestions      the review gate. Everything any detection method proposes
+//   Suggestions the review gate. Everything any detection method proposes
 //                    waits here until the user accepts it: NOTHING reaches the
 //                    value list without an explicit accept. Sortable by value
 //                    and by count, filterable by type and by source.
-//   My values        the values that WILL be replaced, one card each, with the
-//                    editable placeholder, the type badge and the variant chips.
-//   Never anonymise  the allowlist, which wins over every pass.
-//   Patterns         user regular expressions, with a valid / error badge.
+//   My values the values that WILL be replaced, one card each, with the
+//                    type badge and the variant chips. Renaming what a value
+//                    BECOMES is a step 3 action, on the Replaced values table:
+//                    there is nothing to rename until a run has assigned one.
+//   Never anonymise the allowlist, which wins over every pass.
+//   Patterns user regular expressions, with a valid / error badge.
 //
-// One structural change beyond the layout (BUILD-05 Phase 6): "Run detection" is
+// One structural change beyond the layout: "Run detection" is
 // ONE button in the card header. It used to be a panel with a per-file checkbox
 // list and a separate button per method.
 //
-// BUILD-06 made it ONE bridge call as well (api.js runDetection): Go runs every
+//  made it ONE bridge call as well (api.js runDetection): Go runs every
 // switched-on route under one cancellation context, reports one monotonic
 // progress fraction across the whole run, and always ends with a terminal
 // event. This module no longer sequences the passes, no longer computes a
 // percentage, and no longer decides which routes run.
 //
-// Naming note (BUILD-04 CR3, restated by BUILD-05 Phase 0): the visible labels
+// Naming note: the visible labels
 // have changed twice now, from "Entities" to "Values" to this half of
 // "Identify". The ENGINE identifiers this module manipulates (the category keys
 // entity_names, person_names, ... and the state.entities array) have not changed
@@ -31,7 +31,7 @@
 
 import {
   runDetection, cancelDetection, countTermMatches, patternMatches,
-  expandVariants, validatePattern, setEntityPlaceholder, entityPlaceholder,
+  expandVariants, validatePattern,
 } from "../api.js";
 import {
   getState, setState, llmEnabled, detectionRoutesOn,
@@ -39,7 +39,7 @@ import {
   setEntityVariants, setEntityVariantError, addManualVariant,
   addCandidates, acceptCandidate, rejectCandidate,
   acceptAllShown, rejectAllShown, moveVariant,
-  addPattern, removePattern,
+  addPattern, removePattern, NAME_CATEGORIES,
 } from "../state.js";
 import { pendingExpansions } from "../entitymodel.js";
 import {
@@ -53,14 +53,15 @@ import { notify, wireNotice } from "../toast.js";
 import { keepScrollPosition } from "../scroll.js";
 import { CARDS, WORKSPACE, VALUES, CATEGORY_LABELS } from "../copy.js";
 
-// The reviewable entity categories (CLAUDE.md §5) with display labels. These
-// are the categories a user may ADD a value to by hand; the PII categories are
-// detected, not listed.
-export const CATEGORIES = [
-  ["entity_names", "Entities"],
-  ["project_names", "Projects"],
-  ["person_names", "Persons"],
-];
+// The categories a user may ADD a value to by hand, with their display labels.
+// It is ALL of them, derived from the store rather than listed here: every
+// category gates manually typed values as well as detected ones, so a category
+// missing from this dropdown is a value the user cannot declare at all, even
+// though the switch for it is right there in the rail.
+//
+// The PII categories are absent because they are patterns, not values: there is
+// nothing to type into "email addresses" that a regex does not already find.
+export const CATEGORIES = NAME_CATEGORIES.map((c) => [c, CATEGORY_LABELS[c][0]]);
 
 // WORKSPACE_TABS is the tab set, in order.
 export const WORKSPACE_TABS = ["suggestions", "values", "allow", "patterns"];
@@ -122,7 +123,7 @@ function head(s, busy) {
     ` aria-label="${escapeHTML(VALUES.searchPlaceholder)}"/></label>`;
 
   // The run button says what it will DO, which depends on which detection
-  // ROUTES are switched on in the rail (BUILD-06). With every route off there
+  // ROUTES are switched on in the rail. With every route off there
   // is nothing to run, and the button says so rather than running an empty
   // pass and reporting "0 suggestions" as if it had looked.
   const aiOK = llmEnabled(s);
@@ -156,14 +157,14 @@ function subtitle(s) {
 /**
  * progressStrip(s) is the bar shown while a detection run is in flight.
  *
- * The percentage comes from GO (BUILD-06): it covers the whole run across
+ * The percentage comes from GO: it covers the whole run across
  * every route, so it cannot rewind when the second route starts over with a
  * smaller file count. Recomputing it here from (current+1)/total per route is
  * exactly the bug that made the bar jump backwards mid-run.
  */
 export function progressStrip(s) {
   const d = s.discovery;
-  // The gate is deliberately `=== true` and nothing else (BUILD-04 CR17): the
+  // The gate is deliberately `=== true` and nothing else: the
   // bar must depend on a run being in flight, never on a leftover object.
   if (d?.running !== true) return "";
   const pct = Math.max(0, Math.min(100, Math.round((d.fraction ?? 0) * 100)));
@@ -274,7 +275,7 @@ function suggestionHeader(s) {
   // the user has to read past.
   const typeOptions = distinct(s.candidates, "category")
     .map((key) => ({ value: key, label: (CATEGORY_LABELS[key]?.[0] ?? key).toUpperCase() }));
-  // Sources render whatever is present (decision 9). "Pattern" is deliberately
+  // Sources render whatever is present. "Pattern" is deliberately
   // absent: deterministic PII matches are applied without review by design and
   // never enter state.candidates, so offering it as a filter would promise rows
   // that cannot appear.
@@ -329,7 +330,7 @@ function distinct(rows, field) {
 
 // --- My values ------------------------------------------------------------
 
-/** valuesTab(s) is one card per value: name, type, editable placeholder,
+/** valuesTab(s) is one card per value: name, type,
  *  variant chips and an add-variant control. */
 function valuesTab(s) {
   const addRow =
@@ -344,8 +345,8 @@ function valuesTab(s) {
     `</select>` +
     button(WORKSPACE.addValue, { kind: "secondary", id: "btn-add-value" }) +
     `</div>` +
-    // The live match count (BUILD-06). The bridge method for it has existed
-    // since BUILD-02 and nothing called it, so a user typing a value had no
+    // The live match count. The bridge method for it has existed
+    // since and nothing called it, so a user typing a value had no
     // way of knowing whether it occurs in their documents at all until after a
     // run. A value that matches nothing is almost always a typo.
     `<p class="hint" id="value-matches">${escapeHTML(drafts.valueMatches)}</p>`;
@@ -356,23 +357,16 @@ function valuesTab(s) {
   return addRow + cards;
 }
 
-/**
- * valueCard(e) renders one value.
- *
- * The placeholder field is editable (BUILD-05 Phase 3). Before the first run
- * there is nothing to rename, so it renders empty and disabled with a tooltip
- * saying so rather than showing a guess the engine has not made.
- */
+/** valueCard(e) renders one value: its name, its type and its variant chips. */
 function valueCard(e) {
   const key = entityKey(e.category, e.canonical);
   const type = CATEGORY_LABELS[e.category]?.[0] ?? e.category;
-  const placeholder = e.placeholder ?? "";
   const feedback = rowFeedback.get(key);
 
   const variants = [...(e.variants ?? []), ...(e.manualVariants ?? [])];
   // The chips are DRAGGABLE onto another value card, which is how a variant is
-  // regrouped when the expansion attached it to the wrong value (BUILD-02
-  // Phase 9d, kept through the BUILD-05 relayout). The mock-up does not show
+  // regrouped when the expansion attached it to the wrong value
+  // kept through the relayout). The mock-up does not show
   // this, but the capability is real, tested (state.js moveVariant) and has no
   // other home: dropping it would mean a mis-grouped spelling could only be
   // fixed by excluding it here and re-typing it there.
@@ -387,7 +381,7 @@ function valueCard(e) {
     `</span>`).join("");
 
   // "pending" is a real state, not an absence: null variants mean an expansion
-  // is in flight, [] means it finished and found none (BUILD-02 Phase 7a).
+  // is in flight, [] means it finished and found none.
   const variantNote = e.variantError
     ? `<span class="hint bad">${escapeHTML(e.variantError)}</span>`
     : (e.variants === null || e.variants === undefined)
@@ -400,10 +394,6 @@ function valueCard(e) {
     `<div class="value-head">` +
     `<span class="value-name">${escapeHTML(e.canonical)}</span>` +
     `<span class="fmt-badge">${escapeHTML(type)}</span>` +
-    `<input class="ph-input mono" value="${escapeHTML(placeholder)}"` +
-    (placeholder ? "" : ` disabled placeholder="${escapeHTML(WORKSPACE.placeholderPending)}"`) +
-    ` title="${escapeHTML(placeholder ? WORKSPACE.placeholderTooltip : WORKSPACE.placeholderPendingTooltip)}"` +
-    ` aria-label="${escapeHTML(WORKSPACE.placeholderLabel)}"/>` +
     `</div>` +
     button("", {
       kind: "ghost", cls: "value-remove icon-action danger", icon: "close",
@@ -508,7 +498,7 @@ function wireDetection(container) {
     const all = getState().documents.map((d) => d.name);
     if (all.length === 0) return;
 
-    // ONE call for the whole run (BUILD-06). Go decides which routes are on,
+    // ONE call for the whole run. Go decides which routes are on,
     // skips what the local AI cannot read and says so, keeps going past a
     // file that failed, and always ends the run with a terminal event that
     // clears the progress bar. The old two-call sequence could not do any of
@@ -655,25 +645,8 @@ function wireValues(container) {
       keepScrollPosition(() => removeEntity(cat, canonical));
     });
 
-    // The editable placeholder (BUILD-05 Phase 3). Go validates the shape and
-    // refuses a collision; a refusal is shown ON THE ROW rather than as a
-    // notice, because it is about this value and the fix is in this field.
-    const ph = cardEl.querySelector(".ph-input");
-    if (ph && !ph.disabled) {
-      ph.addEventListener("change", async () => {
-        try {
-          await setEntityPlaceholder(cat, canonical, ph.value);
-          rowFeedback.delete(key);
-          await refreshPlaceholders();
-        } catch (err) {
-          rowFeedback.set(key, String(err?.message ?? err));
-          setState({});
-        }
-      });
-    }
-
     // The add-variant control reveals an INLINE input rather than opening a
-    // dialog: native dialogs are banned (decision 10), and an inline field is
+    // dialog: native dialogs are banned, and an inline field is
     // fewer steps than a dialog anyway.
     cardEl.querySelector(".variant-add")?.addEventListener("click", () => {
       revealVariantInput(cardEl, cat, canonical, key);
@@ -697,7 +670,7 @@ function wireValues(container) {
 
 /**
  * wireVariantDrag(container) makes a variant chip draggable onto another value
- * card, which regroups it (BUILD-02 Phase 9d).
+ * card, which regroups it.
  *
  * The payload is carried in a module-local variable rather than only in the
  * DataTransfer, because a WebView's dragover handler cannot read DataTransfer
@@ -749,7 +722,7 @@ function wireVariantDrag(container) {
 
 /**
  * revealVariantInput(cardEl, category, canonical, key) swaps the "add" chip for
- * an inline text input, because decision 10 bans prompt() and an inline field is
+ * an inline text input, because bans prompt() and an inline field is
  * fewer steps than a dialog anyway.
  *
  * It does NOT go through a state change: the input is transient, and a repaint
@@ -821,7 +794,7 @@ function excludeVariant(category, canonical, variant) {
 
 /** variantCount(category, canonical) is how many spellings a value carries right
  *  now, automatic and manual together. The add flow compares it before and after
- *  so a duplicate gets an explanation instead of silence (BUILD-04 CR17). */
+ *  so a duplicate gets an explanation instead of silence. */
 function variantCount(category, canonical) {
   const e = getState().entities.find(
     (x) => entityKey(x.category, x.canonical) === entityKey(category, canonical));
@@ -832,7 +805,7 @@ function variantCount(category, canonical) {
 /**
  * refreshVariants() asks Go to expand every value whose variants are PENDING
  * (variants === null: just added, edited, or variant-amended). Settled rows,
- * including "expanded, none found" ([]), are never re-expanded (Phase 7a).
+ * including "expanded, none found" ([]), are never re-expanded.
  *
  * Sequential on purpose: the lists are tiny and ordering keeps the UI
  * deterministic.
@@ -840,7 +813,7 @@ function variantCount(category, canonical) {
 async function refreshVariants() {
   // The snapshot is taken ONCE, before any await. Every expansion below writes
   // to the store and therefore repaints, and re-reading the list mid-loop would
-  // mean expanding rows a repaint had already settled (BUILD-04 CR17).
+  // mean expanding rows a repaint had already settled.
   const pending = pendingExpansions(getState().entities);
   for (const e of pending) {
     try {
@@ -852,35 +825,11 @@ async function refreshVariants() {
     } catch (err) {
       // A failure becomes a VISIBLE error on the row, and settles it, so the
       // placeholder cannot spin forever and the row is not retried on every
-      // repaint (BUILD-02 Phase 7a, re-pinned by CR17).
+      // repaint.
       setEntityVariantError(e.category, e.canonical, String(err?.message ?? err));
     }
   }
-  await refreshPlaceholders();
   return pending.length;
-}
-
-/**
- * refreshPlaceholders() reads the placeholder Go currently has for each value,
- * so the editable field shows the truth rather than a guess.
- *
- * Before the first run there are none, and every field renders disabled with a
- * tooltip saying why. This is a read, so a bridge failure costs the field its
- * value and nothing else.
- */
-async function refreshPlaceholders() {
-  const entities = getState().entities;
-  let changed = false;
-  const next = [];
-  for (const e of entities) {
-    let placeholder = e.placeholder ?? "";
-    try {
-      placeholder = (await entityPlaceholder(e.category, e.canonical)) ?? "";
-    } catch { /* no bridge (plain browser): leave the field empty */ }
-    if (placeholder !== (e.placeholder ?? "")) changed = true;
-    next.push({ ...e, placeholder });
-  }
-  if (changed) setState({ entities: next });
 }
 
 // --- Patterns wiring ------------------------------------------------------
@@ -902,7 +851,7 @@ function wirePatterns(container) {
       feedback.textContent = error;
       return;
     }
-    // It compiles: now say what it actually MATCHES (BUILD-06). The sample
+    // It compiles: now say what it actually MATCHES. The sample
     // matches existed behind a bridge method nothing called, which left
     // "this expression compiles" as the only feedback a regex ever got, and
     // a regex that compiles and matches nothing is the common mistake.

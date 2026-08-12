@@ -1,16 +1,16 @@
-// engine/ooxml/ooxml.go — the shared OOXML plumbing (BUILD-05 Phase 3).
+// engine/ooxml/ooxml.go — the shared OOXML plumbing.
 //
 // docx, pptx and xlsx are all zip archives with the same `docProps/` layout,
 // and TWO parts of the codebase need to read from it:
 //
-//	engine/exportfmt/metadata.go  harvests the reviewable properties (Author,
+//	engine/exportfmt/metadata.go harvests the reviewable properties (Author,
 //	                              Company, Title, ...) before a same-format
 //	                              export rewrites them.
-//	engine/convert/*.go           reads the CACHED COUNTS (<Pages>, <Slides>,
+//	engine/convert/*.go reads the CACHED COUNTS (<Pages>, <Slides>,
 //	                              <Words>, <Lines>) so the import list can say
 //	                              "6 pages" instead of "412 lines".
 //
-// Before BUILD-05 the first of those owned a private zip walk and a private
+// Before the first of those owned a private zip walk and a private
 // XML token scan. The second needed the same two things, so this package holds
 // them once. It is deliberately tiny and deliberately generic: it knows how to
 // pull a named part out of an OOXML archive and how to read the text of named

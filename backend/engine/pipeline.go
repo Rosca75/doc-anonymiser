@@ -48,7 +48,7 @@ type LLM interface {
 }
 
 // ProgressEvent is emitted before each per-document stage so the UI can
-// render live progress (Phase 8). Stage is one of "deterministic",
+// render live progress. Stage is one of "deterministic",
 // "deep-scan", "post-pass".
 type ProgressEvent struct {
 	Stage    string `json:"stage"`
@@ -66,12 +66,12 @@ type PipelineInput struct {
 	// when Categories is nil.
 	Level Level
 	// Categories is the granular switch set the pipeline obeys
-	// (BUILD-02 Phase 3). nil means "use PresetSelection(Level)", which
+	// nil means "use PresetSelection(Level)", which
 	// reproduces the v1 behaviour byte for byte.
 	Categories CategorySelection
 	// MinConfidence drops every detected span scoring below it, on the
-	// BUILD-03 Phase C scale (BUILD-04 CR9). 0 (the default) keeps
-	// everything, which reproduces the pre-BUILD-04 behaviour exactly.
+	//  scale. 0 (the default) keeps
+	// everything, which reproduces the pre- behaviour exactly.
 	// See FilterByMinConfidence for what each level currently excludes.
 	MinConfidence float32
 	// Country scopes the country-specific regex categories. Empty falls back to
@@ -86,10 +86,10 @@ type PipelineInput struct {
 	LLM LLM
 	// SimpleRules run last, in order (simplereplace.go).
 	SimpleRules []SimpleRule
-	// Removed (Phase 4) tracks values the user deleted from the session.
+	// Removed tracks values the user deleted from the session.
 	// They must not appear in any run without explicit restoration.
 	Removed []RemovedValue
-	// SkipValidation (Phase 3) is for tests that deliberately create conflicts.
+	// SkipValidation is for tests that deliberately create conflicts.
 	SkipValidation bool
 	// Progress, when set, receives per-document stage events.
 	Progress func(ProgressEvent)
@@ -98,14 +98,14 @@ type PipelineInput struct {
 	// document. One SpanTrace per anonymisation call — for grid or JSON
 	// documents that means one trace per cell / json region, tagged via
 	// SpanTrace.Region. nil disables tracing entirely (zero cost: no
-	// collection, no callback dispatch). BUILD-03 Phase E.
+	// collection, no callback dispatch). .
 	OnTrace func(docName string, traces []SpanTrace)
 }
 
 // SpanTrace is one snapshot of the spans a single anonymiseText call was
 // about to replace, keyed by the region of the document they came from
 // (empty for the document body, "row R col C" for grid cells, "json" for
-// complex xlsx sheets). BUILD-03 Phase E.
+// complex xlsx sheets). .
 type SpanTrace struct {
 	Region string `json:"region,omitempty"`
 	Spans  []Span `json:"spans"`
@@ -140,7 +140,7 @@ type ResultDocument struct {
 type Results struct {
 	Documents []ResultDocument `json:"documents"`
 	Report    Report           `json:"report"`
-	// Validation (Phase 3) contains any conflicts detected before the run.
+	// Validation contains any conflicts detected before the run.
 	// Blocking conflicts mean the pipeline did not run (Documents and Report
 	// are empty). Warnings are generated during the run.
 	Validation ValidationResult `json:"validation,omitempty"`
@@ -157,75 +157,82 @@ func detectedCategoriesFromCounts(counts map[string]int) []string {
 	return out
 }
 
-// Entity category identifiers live beside the PII constants so the category
-// set is compiler-checked rather than held together by repeated string
-// literals. These identifiers are engine contracts; labels stay on the
-// frontend.
+// Entity category identifiers. They are engine CONTRACTS: they appear in
+// session files and in the exported re-identification key, so they are never
+// renamed to follow a display label. The labels live on the frontend
+// (copy.js CATEGORY_LABELS), cross-checked by ../category_parity_test.go.
+//
+// Every one of them is reachable by manual entry and by the local AI. The
+// annotated ones are additionally reachable OFFLINE, by a heuristic detector;
+// the rest need the AI or a value the user types, and the frontend label says
+// so.
 const (
-	CatEntityNames       = "entity_names"
-	CatProjectNames      = "project_names"
-	CatPersonNames       = "person_names"
-	CatCustomPatterns    = "custom_patterns"
-	CatOrganisationNames = "organisation_names"
-	CatLocationNames     = "location_names"
+	CatEntityNames     = "entity_names"     // + heuristic: legal-suffix runs
+	CatProjectNames    = "project_names"    // + heuristic: codes beside a project cue
+	CatProductNames    = "product_names"    // + heuristic: trademark mark, product head noun
+	CatBrandNames      = "brand_names"      // AI or manual: a brand is world knowledge
+	CatPersonNames     = "person_names"     // + heuristic: title cues, multi-word runs
+	CatIdentifierNames = "identifier_names" // + heuristic: reference and contract codes
+	CatOtherNames      = "other_names"      // AI or manual: "a name, and none of the above"
+	CatCustomPatterns  = "custom_patterns"  // the user's own regexes
 )
 
 // CategorySelection is the granular per-category switch set the pipeline
-// obeys (BUILD-02 Phase 3): every PII category (email, url, iban, vat,
+// obeys: every PII category (email, url, iban, vat,
 // matricule, phone, amount, date) and every entity category maps to on/off.
 // Levels are PRESETS that fill this map (PresetSelection); the UI may then
 // flip individual switches ("custom" mode).
 type CategorySelection map[string]bool
 
 // AllPIICategories lists the pass-1 categories in a stable order (used by
-// presets, tests and the configure UI documentation). BUILD-03 Phase B
+// presets, tests and the configure UI documentation).
 // added the extended recognizers after the v1 group so v1 UI ordering is
 // preserved and any UI that iterates this list sees new categories at the
 // tail.
 var AllPIICategories = []string{
 	CatEmail, CatURL, CatIBAN, CatVAT, CatMatricule, CatPhone, CatAmount, CatDate,
-	// Extended (BUILD-03 Phase B) — hard PII, enabled at every preset.
+	// Extended — hard PII, enabled at every preset.
 	CatCreditCard, CatNHS, CatIPAddress, CatMACAddress, CatCrypto,
 	CatDatabaseURI, CatDESteuerID, CatESNIF,
 }
 
-// AllEntityCategories lists the entity categories in a stable order.
-// organisation_names and location_names have no manual-entry UI, but LLM
-// proposals use them, so they are selectable switches too.
-// entity_names (BUILD-06) is the merge of the former client_names and
-// internal_names: the distinction cost the user a decision at every value
-// they added, and the pipeline treated the two identically anyway.
+// AllEntityCategories lists the entity categories in a stable order, mirrored
+// by frontend/state.js and checked by ../category_parity_test.go.
 var AllEntityCategories = []string{
-	CatEntityNames, CatProjectNames, CatPersonNames,
-	CatCustomPatterns, CatOrganisationNames, CatLocationNames,
+	CatEntityNames, CatProjectNames, CatProductNames, CatBrandNames,
+	CatPersonNames, CatIdentifierNames, CatOtherNames, CatCustomPatterns,
 }
 
-// PresetSelection reproduces the exact v1 level semantics (CLAUDE.md §5)
-// as a CategorySelection:
+// PresetSelection fills a CategorySelection from a level (CLAUDE.md §5):
 //
-//	soft     = hard PII + entity/project names + custom patterns
-//	medium   = soft + person names (the default)
-//	advanced = medium + amounts, dates, organisations, locations
+//	soft     = hard PII + entity, project and identifier names + custom patterns
+//	medium   = soft + person, product and brand names (the default)
+//	advanced = medium + amounts, dates and other names
+//
+// The tiers are ordered by how much ordinary text each risks catching.
+// identifier_names is code-shaped and near-PII, so it sits with the hard group.
+// product_names and brand_names can catch a PUBLIC product name, which is a
+// per-document allowlist decision rather than a mistake, so they wait for
+// medium. other_names is the noisiest by definition, so it waits for advanced.
 func PresetSelection(level Level) CategorySelection {
 	sel := CategorySelection{
 		CatEmail: true, CatURL: true, CatIBAN: true, CatVAT: true,
 		CatMatricule: true, CatPhone: true,
-		// BUILD-03 Phase B: extended recognizers are all hard PII and
-		// fire at every level, same as the v1 hard-PII group.
 		CatCreditCard: true, CatNHS: true, CatIPAddress: true,
 		CatMACAddress: true, CatCrypto: true, CatDatabaseURI: true,
 		CatDESteuerID: true, CatESNIF: true,
-		CatEntityNames: true, CatProjectNames: true,
+		CatEntityNames: true, CatProjectNames: true, CatIdentifierNames: true,
 		CatCustomPatterns: true,
 	}
 	if level == LevelMedium || level == LevelAdvanced {
 		sel[CatPersonNames] = true
+		sel[CatProductNames] = true
+		sel[CatBrandNames] = true
 	}
 	if level == LevelAdvanced {
 		sel[CatAmount] = true
 		sel[CatDate] = true
-		sel[CatOrganisationNames] = true
-		sel[CatLocationNames] = true
+		sel[CatOtherNames] = true
 	}
 	return sel
 }
@@ -264,9 +271,22 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		res.Report.LLMPass = "completed"
 	}
 
-	// Phase 3/4: Run validation before touching any text
-	validation := ValidateValues(ValidationInput{
-		Entities:       in.Entities,
+	// The preamble, in this order and no other:
+	//
+	//   1. removals first. A removed value stops being a declaration, so it must
+	//      not be validated as one: it is enforced through the allowlist, and
+	//      validating it would refuse every run after a removal as a value that
+	//      is both declared and never-anonymised.
+	//   2. validation second, over what is left, BEFORE any text is touched. A
+	//      half-run that assigned placeholders for a configuration the user was
+	//      just told is invalid is unrecoverable without a new session.
+	//   3. reservations third, so a rule's replacement cannot be handed to an
+	//      automatic assignment during the run that follows.
+	ApplyRemovals(in.Allowlist, in.Removed)
+	entities := FilterRemoved(filterEntities(in.Entities, sel), in.Removed)
+
+	res.Validation = ValidateValues(ValidationInput{
+		Entities:       entities,
 		Patterns:       in.Patterns,
 		SimpleRules:    in.SimpleRules,
 		Allowlist:      in.Allowlist,
@@ -274,30 +294,31 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		Registry:       reg,
 		SkipValidation: in.SkipValidation,
 	})
-	res.Validation = validation
-
-	// Return early if there are blocking conflicts
-	if len(validation.Blocking) > 0 {
+	if len(res.Validation.Blocking) > 0 {
 		return res, nil
 	}
 
-	// Phase 4: Apply removals to allowlist
-	ApplyRemovals(in.Allowlist, in.Removed)
+	for _, rule := range in.SimpleRules {
+		// An error means the placeholder is already taken, which validation has
+		// just cleared, so there is nothing left to report.
+		_ = reg.Reserve(rule.Replace)
+	}
 
-	// Phase 4: Filter removed values (updated to use FilterRemoved)
-	entities := FilterRemoved(filterEntities(in.Entities, sel), in.Removed)
+	// Overlap warnings come from the ONE place the decision is made, the span
+	// resolver, and accumulate across every document and grid cell of the run.
+	overlaps := newOverlapWarnings()
 
 	// --- Passes 1–3, per document. --------------------------------------
 	// llmDurations records per-document deep-scan timing for the report
-	// (soft budget 30 s / 50 KB, surfaced per BUILD.md Phase 9).
+	// (soft budget 30 s / 50 KB, surfaced per).
 	llmDurations := make([]int64, len(in.Documents))
 	for i, doc := range in.Documents {
-		// Cancellation is honoured between documents (Phase 8 test);
+		// Cancellation is honoured between documents;
 		// mid-LLM cancellation is the LLM implementation's job via ctx.
 		if err := ctx.Err(); err != nil {
 			res.Report.Warnings = append(res.Report.Warnings,
 				fmt.Sprintf("run cancelled after %d of %d documents", i, len(in.Documents)))
-			finishReport(res, start)
+			finishReport(res, start, overlaps)
 			return res, err
 		}
 		emit(in.Progress, ProgressEvent{Stage: "deterministic", DocIndex: i, DocCount: len(in.Documents), DocName: doc.Name})
@@ -313,7 +334,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 			llmMS := time.Since(llmStart).Milliseconds()
 			if err != nil {
 				if ctx.Err() != nil { // cancelled mid-call
-					finishReport(res, start)
+					finishReport(res, start, overlaps)
 					return res, ctx.Err()
 				}
 				// Ollama died mid-run: degrade THIS pass with a warning,
@@ -327,7 +348,15 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 			llmDurations[i] = llmMS
 		}
 
-		rd, traces := anonymiseDocument(doc, docEntities, in.Patterns, sel, in.MinConfidence, in.Country, in.Allowlist, reg, in.OnTrace != nil)
+		scope := detectionScope{
+			entities:      docEntities,
+			patterns:      in.Patterns,
+			categories:    sel,
+			minConfidence: in.MinConfidence,
+			country:       in.Country,
+			allow:         in.Allowlist,
+		}
+		rd, traces := anonymiseDocument(doc, scope, reg, overlaps, in.OnTrace != nil)
 		if in.OnTrace != nil {
 			in.OnTrace(doc.Name, traces)
 		}
@@ -340,7 +369,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	entries := reg.Entries() // longest original first
 	for i := range res.Documents {
 		if err := ctx.Err(); err != nil {
-			finishReport(res, start)
+			finishReport(res, start, overlaps)
 			return res, err
 		}
 		emit(in.Progress, ProgressEvent{Stage: "post-pass", DocIndex: i, DocCount: len(res.Documents), DocName: res.Documents[i].Name})
@@ -383,7 +412,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	}
 	res.Report.Values = valueReports(entries, res.Documents)
 	res.Report.DetectedCategories = detectedCategoriesFromCounts(res.Report.ByCategory)
-	finishReport(res, start)
+	finishReport(res, start, overlaps)
 	return res, nil
 }
 
@@ -435,8 +464,14 @@ func emit(fn func(ProgressEvent), ev ProgressEvent) {
 	}
 }
 
-func finishReport(res *Results, start time.Time) {
+// finishReport stamps the run's duration and folds in the warnings collected
+// while it ran. Every exit from Run goes through it, including cancellation, so
+// a partial run still reports what it saw.
+func finishReport(res *Results, start time.Time, overlaps *overlapWarnings) {
 	res.Report.DurationMS = time.Since(start).Milliseconds()
+	if overlaps != nil {
+		res.Validation.Warnings = append(res.Validation.Warnings, overlaps.conflicts()...)
+	}
 }
 
 // filterEntities keeps the entities whose category is active at the
@@ -469,7 +504,7 @@ func acceptProposals(proposals []ProposedEntity, sourceText string, allow *Allow
 			continue // e.g. organisation_names proposed at medium level
 		}
 		// An AI proposal is trusted LESS than a value the user listed
-		// (BUILD-04 CR9): stamping ConfidenceLLMDefault here is what lets
+		// stamping ConfidenceLLMDefault here is what lets
 		// PipelineInput.MinConfidence separate the two tiers.
 		out = append(out, Entity{
 			Category:   p.Category,
@@ -480,11 +515,32 @@ func acceptProposals(proposals []ProposedEntity, sourceText string, allow *Allow
 	return out
 }
 
-// anonymiseDocument runs passes 1+2 (and the already-merged pass-3
+// detectionScope is the fixed configuration passes 1 and 2 share for one run:
+// what to look for, how sure a detection has to be, and what is off limits. It
+// is a struct because seven positional parameters threaded through four call
+// sites is a shape where a swapped pair compiles and silently changes what gets
+// replaced.
+type detectionScope struct {
+	entities      []Entity
+	patterns      []CustomPattern
+	categories    CategorySelection
+	minConfidence float32
+	country       string
+	allow         *Allowlist
+}
+
+// anonymiseDocument runs passes 1 and 2 (with the already-merged pass-3
 // entities) over one document, routing grid documents through per-cell
-// processing. When traceEnabled is true it collects the resolved spans of
-// every anonymiseText call and returns them for the caller's OnTrace hook.
-func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern, sel CategorySelection, minConfidence float32, country string, allow *Allowlist, reg *Registry, traceEnabled bool) (ResultDocument, []SpanTrace) {
+// processing.
+//
+// @param overlaps collects the spans overlap resolution discarded, so the run
+//
+//	warns about them from the ONE place the decision is made. nil skips it.
+//
+// @param traceEnabled collects the resolved spans for the caller's OnTrace hook
+func anonymiseDocument(doc Document, scope detectionScope, reg *Registry,
+	overlaps *overlapWarnings, traceEnabled bool) (ResultDocument, []SpanTrace) {
+
 	rd := ResultDocument{
 		Name:       doc.Name,
 		Format:     doc.Format,
@@ -497,9 +553,8 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 		return reg.Assign(s.Category, s.CanonicalOrOriginal())
 	}
 
-	// tracer captures the resolved spans of each anonymiseText call when
-	// tracing is on, tagging them by region so grid/json documents can be
-	// walked cell-by-cell in the trace output.
+	// Tracing tags spans by region, so grid and json documents can be walked
+	// cell by cell in the trace output.
 	var traces []SpanTrace
 	makeTraceFn := func(region string) func([]Span) {
 		if !traceEnabled {
@@ -514,8 +569,8 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 	}
 
 	if doc.Grid != nil {
-		// Grid documents: anonymise cell by cell, then re-render the
-		// markdown from the anonymised grid so preview == export.
+		// Grid documents: anonymise cell by cell, then re-render the markdown
+		// from the anonymised grid so preview and export agree.
 		grid := make([][]string, len(doc.Grid))
 		for r, row := range doc.Grid {
 			grid[r] = make([]string, len(row))
@@ -524,7 +579,7 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 				if traceEnabled {
 					region = fmt.Sprintf("row %d col %d", r, c)
 				}
-				grid[r][c] = anonymiseText(cell, entities, patterns, sel, minConfidence, country, allow, assign, makeTraceFn(region))
+				grid[r][c] = anonymiseText(cell, scope, assign, makeTraceFn(region), overlaps)
 			}
 		}
 		rd.Grid = grid
@@ -533,35 +588,45 @@ func anonymiseDocument(doc Document, entities []Entity, patterns []CustomPattern
 	}
 
 	if doc.Format == FormatXLSXJSON {
-		// Complex sheets: anonymise the raw JSON text, keep both the JSON
-		// (for .json export) and the fenced markdown rendering in sync.
-		rd.JSON = anonymiseText(doc.JSON, entities, patterns, sel, minConfidence, country, allow, assign, makeTraceFn("json"))
+		// Complex sheets: anonymise the raw JSON text, keeping both the JSON
+		// (for the .json export) and the fenced markdown rendering in sync.
+		rd.JSON = anonymiseText(doc.JSON, scope, assign, makeTraceFn("json"), overlaps)
 		rd.Anonymised = "```json\n" + rd.JSON + "\n```\n"
 		return rd, traces
 	}
 
-	rd.Anonymised = anonymiseText(doc.Markdown, entities, patterns, sel, minConfidence, country, allow, assign, makeTraceFn(""))
+	rd.Anonymised = anonymiseText(doc.Markdown, scope, assign, makeTraceFn(""), overlaps)
 	return rd, traces
 }
 
-// anonymiseText is the shared passes-1+2 core over one piece of text.
-// The CategorySelection gates BOTH the PII categories (pass 1) and the
-// custom-pattern pass; entity categories were already filtered by the
-// caller (filterEntities). traceFn, when non-nil, receives the resolved
-// spans (post overlap resolution) before replacement — BUILD-03 Phase E.
-func anonymiseText(text string, entities []Entity, patterns []CustomPattern, sel CategorySelection, minConfidence float32, country string, allow *Allowlist, assign func(Span) string, traceFn func([]Span)) string {
-	spans := FilterAllowed(DetectPIISelected(text, sel, country), allow)
-	spans = append(spans, DetectEntities(text, entities, allow)...)
-	if sel[CatCustomPatterns] {
-		spans = append(spans, DetectCustomPatterns(text, patterns, allow)...)
+// anonymiseText is the shared passes-1-and-2 core over one piece of text.
+//
+// The category selection gates BOTH the PII categories (pass 1) and the
+// custom-pattern pass; entity categories were already filtered by the caller
+// (filterEntities).
+func anonymiseText(text string, scope detectionScope, assign func(Span) string,
+	traceFn func([]Span), overlaps *overlapWarnings) string {
+
+	spans := FilterAllowed(DetectPIISelected(text, scope.categories, scope.country), scope.allow)
+	spans = append(spans, DetectEntities(text, scope.entities, scope.allow)...)
+	if scope.categories[CatCustomPatterns] {
+		spans = append(spans, DetectCustomPatterns(text, scope.patterns, scope.allow)...)
 	}
-	// The confidence floor is applied BEFORE overlap resolution, so a
-	// discarded low-confidence span cannot suppress a stronger one it
-	// happens to overlap (BUILD-04 CR9). At the default 0 this is a no-op.
-	spans = FilterByMinConfidence(spans, minConfidence)
-	resolved := ResolveOverlaps(spans)
+	// The confidence floor is applied BEFORE overlap resolution, so a discarded
+	// low-confidence span cannot suppress a stronger one it happens to overlap.
+	// At the default 0 this is a no-op.
+	spans = FilterByMinConfidence(spans, scope.minConfidence)
+
+	// The losers are collected only while the warning collector still wants
+	// them. Gathering them regardless costs an allocation per discarded span on
+	// a path that runs over every document, and a document full of name
+	// variants discards several per replacement.
+	resolved, dropped := resolveOverlaps(spans, overlaps != nil && overlaps.wants())
 	if traceFn != nil {
 		traceFn(resolved)
+	}
+	if len(dropped) > 0 {
+		overlaps.add(dropped)
 	}
 	return ApplySpans(text, resolved, assign)
 }
@@ -643,7 +708,7 @@ func replaceKnownOriginal(text string, e MappingEntry, onHit func()) string {
 // known registry original in text, word-boundary anchored and never
 // inside an existing placeholder. The span's Canonical is the registry
 // original, so Registry.Assign maps it back to the SAME placeholder.
-// Callers (the same-format export, BUILD-02 Phase 11) combine these with
+// Callers (the same-format export) combine these with
 // the pass-1/2 spans and run ResolveOverlaps; pass entries longest-first
 // (Registry.Entries) so longer originals win ties.
 func DetectKnownOriginals(text string, entries []MappingEntry) []Span {

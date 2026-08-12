@@ -1,5 +1,4 @@
 // engine/convert/fixtures_test.go — test-helper fixture generators
-// (BUILD.md Phase 1B activity 6).
 //
 // The .docx and .pptx fixtures are assembled as raw OOXML zip structures
 // with the standard library only; the .xlsx fixture is generated with
@@ -96,7 +95,7 @@ func buildZip(t *testing.T, entries map[string]string) []byte {
 	return buf.Bytes()
 }
 
-// --- .docx fixture ------------------------------------------------------
+// --- .docx fixture -------------------------------------------------------
 
 // buildDocxFixture assembles a minimal-but-valid .docx exercising every
 // mapped feature: Heading1, bold/italic runs, a hyperlink, an image
@@ -151,7 +150,7 @@ func buildDocxFixture(t *testing.T) []byte {
 	})
 }
 
-// --- .pptx fixture ------------------------------------------------------
+// --- .pptx fixture -------------------------------------------------------
 
 // buildPptxFixture assembles a two-slide deck: slide 1 has a title, a body
 // with two outline levels, a table and speaker notes (resolved via rels);
@@ -202,7 +201,7 @@ func buildPptxFixture(t *testing.T) []byte {
 	})
 }
 
-// --- .xlsx fixture ------------------------------------------------------
+// --- .xlsx fixture -------------------------------------------------------
 
 // buildXlsxFixture generates a workbook with excelize: a FLAT sheet
 // ("Clients": clean header + data, some trailing empties to trim) and a
@@ -261,7 +260,7 @@ func buildXlsxFixture(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-// --- .pdf fixtures ------------------------------------------------------
+// --- .pdf fixtures -------------------------------------------------------
 
 // buildPDF hand-constructs a minimal single-page text PDF (raw PDF syntax,
 // stdlib only) whose xref offsets are computed programmatically. Each

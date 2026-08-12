@@ -5,7 +5,7 @@
 // Why this file exists: neither module had a unit test, and
 // ../frontend_tests_test.go said so out loud rather than letting the gap sit
 // invisible. They are tested together because they are one decision seen from
-// two sides (BUILD-05 decision 10): every native confirm() and alert() left the
+// two sides: every native confirm() and alert() left the
 // application, a question became modal.js and a statement became toast.js, and
 // the thing worth pinning is that the two stayed separate.
 //
@@ -32,7 +32,7 @@ function fresh() {
   resetState();
 }
 
-// --- The notice strip ------------------------------------------------------
+// --- The notice strip ----------------------------------------------------
 
 test("no notice renders nothing at all", () => {
   fresh();
@@ -93,7 +93,7 @@ test("a notice's text is escaped, because it can quote a document name", () => {
   assert.ok(!html.includes("<script>"), "a document name is user data and must be escaped");
 });
 
-// --- The in-app confirm ----------------------------------------------------
+// --- The in-app confirm --------------------------------------------------
 
 test("nothing being asked renders no overlay", () => {
   fresh();
@@ -169,7 +169,7 @@ test("a question's copy is escaped, because it quotes document names", () => {
 });
 
 test("a statement and a question are separate channels", () => {
-  // The split IS decision 10. If a notice ever rendered through the modal layer
+  // The split IS. If a notice ever rendered through the modal layer
   // (or the reverse) the application would be back to blocking on things that are
   // only informational.
   fresh();

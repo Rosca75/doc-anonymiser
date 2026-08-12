@@ -1,5 +1,5 @@
 // engine/exportfmt/xlsx.go — same-format export for Excel workbooks
-// (BUILD-02 Phase 11e), via the already-pinned excelize: open the
+// via the already-pinned excelize: open the
 // workbook from the import-time bytes, apply the pipeline mapping to
 // STRING cells only, and save to new bytes. Shared strings, styles,
 // merged cells and column widths survive because excelize preserves

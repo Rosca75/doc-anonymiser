@@ -1,14 +1,14 @@
-// shell.test.js, markup tests for the application shell (BUILD-04 Phase 2).
+// shell.test.js, markup tests for the application shell.
 //
 // These lock the two shell rules that used to live as inline template
 // strings in main.js and had no coverage at all:
 //
-//   CR4: the top menu is the SAME on every screen, only the highlight
+//   the top menu is the SAME on every screen, only the highlight
 //        moves. A regression here (a screen quietly dropping or adding an
 //        entry) is exactly what the owner reported.
-//   CR7: the step indicators render inside .stepbar, never inside the header,
-//        and only for the wizard. BUILD-05 Phase 2 relaid that bar out as
-//        numbered circles with a check mark for completed steps.
+//   the step indicators render inside .stepbar, never inside the header,
+//        and only for the wizard. The bar renders numbered circles with a
+//        check mark for completed steps.
 //
 // Run with `node --test "frontend/**/*.test.js"`.
 
@@ -32,7 +32,7 @@ function labelsOf(html) {
     .map((m) => m[1].replace(/<[^>]*>/g, "").trim());
 }
 
-// --- CR4: the permanent top menu -----------------------------------------
+// --- the permanent top menu ----------------------------------------------
 
 test("the top menu holds exactly Home, Anonymise documents, Documentation", () => {
   assert.deepEqual(
@@ -84,7 +84,7 @@ test("top-menu entries render as plain text, no icon (BUILD-05 CR3)", () => {
   assert.equal((html.match(/<svg/g) ?? []).length, 0);
 });
 
-// --- CR7: the wizard step bar --------------------------------------------
+// --- the wizard step bar -------------------------------------------------
 
 test("the step bar carries every step, numbered, with a way out of the flow", () => {
   const html = stepbarHTML(STEPS, "import", LABELS, () => true);
@@ -158,7 +158,7 @@ test("the step bar escapes labels and tokens", () => {
   assert.ok(html.includes(`data-step="a&lt;b"`));
 });
 
-// --- CR6: the documentation window ----------------------------------------
+// --- the documentation window --------------------------------------------
 
 test("Documentation is a menu entry with no screen of its own", () => {
   // The in-app docs screen was retired: the entry opens a separate

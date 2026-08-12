@@ -1,4 +1,4 @@
-// engine/exportfmt/metadata_test.go — BUILD-02 Phase 12 tests: property
+// engine/exportfmt/metadata_test.go —  tests: property
 // extraction, pipeline proposals (allowlist wins), reviewed rewrite
 // round-trip, non-string custom properties untouched, and the filename
 // mapping table.

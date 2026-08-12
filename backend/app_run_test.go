@@ -1,4 +1,4 @@
-// app_run_test.go — Phase 8 Go tests: cancellation stops the pipeline
+// app_run_test.go — tests cancellation stops the pipeline
 // between documents, and the fast re-run path applies a new entity without
 // touching the LLM again.
 package backend
@@ -62,7 +62,7 @@ func TestFastRerunAppliesEntityWithoutLLM(t *testing.T) {
 
 	app := NewApp()
 	app.llm = ollama.New(srv.URL)
-	// The deep scan is gated on the Local AI switch in Go (BUILD-06), so a
+	// The deep scan is gated on the Local AI switch in Go, so a
 	// test that exercises it has to turn the route on, exactly like a user.
 	app.settings.UseAI = true
 	app.docs = []engine.Document{{
@@ -107,7 +107,7 @@ func TestFastRerunAppliesEntityWithoutLLM(t *testing.T) {
 		t.Errorf("fast rerun must not call the LLM (calls went %d → %d)", callsAfterFirst, chatCalls.Load())
 	}
 	// The stored results are refreshed for the export screen.
-	if app.GetResults() != res2 {
+	if app.latestResults() != res2 {
 		t.Error("GetResults must return the latest run")
 	}
 }
@@ -127,7 +127,7 @@ func TestRunPipelineRejectsEmptyAndConcurrent(t *testing.T) {
 	}
 }
 
-// TestApplySettingsRoundTrip (BUILD-02 Phase 6): ContextSize, UseAI and
+// TestApplySettingsRoundTrip: ContextSize, UseAI and
 // Categories survive ApplySettings and reach the Ollama client / pipeline
 // configuration.
 func TestApplySettingsRoundTrip(t *testing.T) {
@@ -166,7 +166,7 @@ func TestApplySettingsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestPipelineDonePayloadIncludesMapping (BUILD-02 Phase 10a): after a
+// TestPipelineDonePayloadIncludesMapping: after a
 // run, GetMapping resolves placeholders to originals, and the
 // pipeline:done payload embeds the mapping next to the results fields.
 func TestPipelineDonePayloadIncludesMapping(t *testing.T) {

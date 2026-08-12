@@ -1,4 +1,4 @@
-// engine/export.go — egress helpers for Phase 9 (CLAUDE.md §5: every
+// engine/export.go — egress helpers (CLAUDE.md §5: every
 // export is an explicit user action; no export path produces a binary
 // Office/PDF format).
 //
@@ -16,8 +16,10 @@ import (
 )
 
 // ExportExtensions lists the offered export formats per document format
-// (BUILD.md Phase 9 activity 1). The first entry is the default. Since
-// BUILD-02 Phase 11 the SOURCE format is offered too (same-format
+// The first entry is the default. Since
+//
+//	the SOURCE format is offered too (same-format
+//
 // export, listed last so text formats stay the default): the copy is
 // produced by rewriting the in-memory original bytes; the file on disk
 // is never touched.
@@ -36,7 +38,7 @@ func ExportExtensions(f Format) []string {
 	case FormatPPTX:
 		return []string{"md", "txt", "pptx"}
 	case FormatPDF:
-		// The PDF same-format copy is EXPERIMENTAL (BUILD-02 Phase 13):
+		// The PDF same-format copy is EXPERIMENTAL:
 		// a regenerated simplified layout, never the original design.
 		return []string{"md", "txt", "pdf"}
 	default: // md → markdown (or plain text)
@@ -100,7 +102,7 @@ func ExportFileName(docName, ext string) string {
 	return name + "_anon." + ext
 }
 
-// SameFormatFileName proposes an anonymised export filename (BUILD-02
+// SameFormatFileName proposes an anonymised export filename
 // Phase 12d): the base name goes through the registry mapping
 // (case-insensitive, longest original first, same code as the
 // post-pass), the '#' of xlsx sheet names is sanitised as usual, and if
@@ -143,7 +145,7 @@ func isAlnum(s string) bool {
 }
 
 // BuildExportZip packs every anonymised document into a single zip using
-// each document's DEFAULT export format (BUILD.md Phase 9 activity 2).
+// each document's DEFAULT export format.
 func BuildExportZip(results *Results) ([]byte, error) {
 	if results == nil || len(results.Documents) == 0 {
 		return nil, fmt.Errorf("there are no results to export, run the pipeline first")

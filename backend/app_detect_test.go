@@ -1,4 +1,4 @@
-// app_detect_test.go — tests for the unified detection run (BUILD-06).
+// app_detect_test.go — tests for the unified detection run.
 //
 // These guard the reported issue "detection sometimes does not complete, the
 // progress is difficult to follow". Each test names the specific way the old
@@ -209,7 +209,7 @@ func TestOverallFractionIsMonotonicAcrossUnevenPhases(t *testing.T) {
 		}
 		previous = got
 	}
-	// Phase 0 reads ten files, phase 1 reads two (eight were too large).
+	// reads ten files, phase 1 reads two (eight were too large).
 	for i := 0; i < 10; i++ {
 		check(0, 2, i, 10, 0, 0)
 	}
@@ -289,10 +289,10 @@ func TestDetectionCancellationIsHonestAboutIt(t *testing.T) {
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
 			app.mu.Lock()
-			running := app.cancelDiscovery != nil
+			running := app.cancelDetection != nil
 			app.mu.Unlock()
 			if running {
-				app.CancelDiscovery()
+				app.CancelDetection()
 				return
 			}
 			time.Sleep(time.Millisecond)
@@ -318,7 +318,7 @@ func TestDetectionCancellationIsHonestAboutIt(t *testing.T) {
 func TestDetectionRefusesAConcurrentRun(t *testing.T) {
 	app := detectionApp()
 	_, cancel := context.WithCancel(context.Background())
-	app.cancelDiscovery = cancel
+	app.cancelDetection = cancel
 	defer cancel()
 
 	if _, err := app.RunDetection([]string{"a.txt"}, nil); err == nil {

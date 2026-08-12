@@ -1,4 +1,4 @@
-// Package exportfmt implements SAME-FORMAT export (BUILD-02 Phases 11-13):
+// Package exportfmt implements SAME-FORMAT export:
 // writing a NEW anonymised copy of a docx/pptx/xlsx file with the source
 // formatting preserved.
 //

@@ -84,7 +84,7 @@ func (c *cdpClient) close() { c.ws.close() }
 // send issues one command and returns its "result" object.
 //
 // It reads until the reply with OUR id arrives, handing everything else to
-// record(). That is why there is no separate event pump: the harness is always
+// record. That is why there is no separate event pump: the harness is always
 // either inside a send or about to be, and drain() covers the gaps.
 func (c *cdpClient) send(method string, params map[string]any) (json.RawMessage, error) {
 	id := c.nextID

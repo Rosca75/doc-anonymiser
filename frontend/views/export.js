@@ -1,24 +1,23 @@
-// views/export.js, wizard step 4: every egress path (Phase 9; relaid out to
-// match Export.dc.html by BUILD-05 Phase 8).
+// views/export.js, wizard step 4: every egress path.
 //
 // A column of cards on the left, the document list on the right:
 //
-//   Export         the destination folder, Browse, and EXPORT ALL AS ZIP. The
-//                  folder drives the ZIP AND NOTHING ELSE (decision 4): every
+//   Export the destination folder, Browse, and EXPORT ALL AS ZIP. The
+//                  folder drives the ZIP AND NOTHING ELSE: every
 //                  other export keeps its own save dialog, so nothing
 //                  key-bearing can land on disk from a single click.
-//   Value mapping  the re-identification key, as CSV or JSON, behind the
+//   Value mapping the re-identification key, as CSV or JSON, behind the
 //                  key-bearing modal. Wears the key tint.
-//   Report         counts per category and the settings used. Contains no
+//   Report counts per category and the settings used. Contains no
 //                  original values, so no warning and no tint.
-//   Session        save and load, so a follow-up batch reuses the same
+//   Session save and load, so a follow-up batch reuses the same
 //                  placeholders. Contains the key, so it wears the same gate.
-//   Documents      one row per anonymised document with its _anon output name,
+//   Documents one row per anonymised document with its _anon output name,
 //                  its counts, its per-format buttons and a copy button. The
 //                  properties review for a same-format save opens inline here,
 //                  because that is where the button that opened it lives.
 //
-// Every native confirm() is gone (decision 10): the key warning is the in-app
+// There is no native confirm(): the key warning is the in-app
 // modal, and so is the confirmation on START A NEW BATCH.
 
 import {
@@ -39,7 +38,7 @@ import { stepFooterHTML, wireStepFooter } from "../nav.js";
 import { CARDS, EXPORT } from "../copy.js";
 import { DEFAULT_COUNTRY } from "../countries.js";
 
-// Native Office extensions are the same-format copies (BUILD-02 Phase 11): they
+// Native Office extensions are the same-format copies: they
 // keep the original layout and never touch the source file.
 const NATIVE_EXTS = new Set(["docx", "pptx", "xlsx", "pdf"]);
 
@@ -232,7 +231,7 @@ export function outputName(name) {
   return `${name.slice(0, dot)}_anon${name.slice(dot)}`;
 }
 
-// --- The properties review (BUILD-02 Phase 12c) --------------------------
+// --- The properties review --------------------------
 
 /**
  * metaReviewPanel(docName, review) renders one document's properties review:
@@ -381,7 +380,7 @@ function wireDestination(container) {
 
 /**
  * wireKeyBearing(container) gates the two key-bearing exports behind the in-app
- * modal (decision 10, replacing the native confirm()).
+ * modal).
  *
  * The confirm button names the ACTION ("Export CSV") rather than saying "OK", so
  * the last thing the user reads before the key leaves the application is what is
@@ -446,12 +445,12 @@ function wireSession(container) {
  * applySession(session) restores the frontend state from a loaded session.
  *
  * Go has already restored the registry and the settings; this is the other half.
- * The per-field `?? default` fallbacks that used to be here are GONE
- * (BUILD-05 decision 1): they existed to read files written by older versions,
- * and the loader now refuses those outright, so a session that reaches here was
- * written by this build and has every field. What remains are two genuine cases:
- * a field that is legitimately absent because the user never set it, and the
- * settings that describe the MACHINE rather than the batch.
+ *
+ * There are no per-field defaults for a missing value: the loader refuses a
+ * file written by any other version, so a session that reaches here has every
+ * field. The two `??` below are the genuine cases: a field legitimately absent
+ * because the user never set it, and the settings that describe the MACHINE
+ * rather than the batch.
  */
 function applySession(session) {
   const settings = session.settings ?? {};
@@ -472,10 +471,9 @@ function applySession(session) {
       model: settings.model,
       contextSize: settings.contextSize,
       useAI: settings.useAI,
-      // Absent means ON (BUILD-06): Smart detection is the default route, and
+      // Absent means ON: Smart detection is the default route, and
       // a file that says nothing about it must not restore it switched off.
       useSmartDetect: settings.useSmartDetect !== false,
-      useCloudAI: false,
       minConfidence: settings.minConfidence ?? 0,
       // A session that deliberately turned every smart-detection filter off
       // writes zeroes, which must be obeyed; a session that says nothing about
@@ -485,7 +483,7 @@ function applySession(session) {
     },
   });
   // The document country is not part of a session file: it is a frontend-only
-  // display choice (decision 2). Re-applying the default keeps the rail's
+  // display choice. Re-applying the default keeps the rail's
   // country and its identifier switches agreeing after a load, which is the one
   // way they could otherwise drift.
   setDocumentCountry(DEFAULT_COUNTRY);
@@ -507,7 +505,7 @@ function wireDocuments(container) {
       const { name, ext } = btn.dataset;
       if (NATIVE_EXTS.has(ext)) {
         // A same-format save goes through the properties review FIRST
-        // (BUILD-02 Phase 12c). Decisions persist per document for the session,
+        // Decisions persist per document for the session,
         // so the review only happens before the first such save of a file.
         if (getState().metaReview?.[name]?.ext === ext) {
           notify(EXPORT.reviewAlreadyOpen(name), "info");

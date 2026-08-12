@@ -1,5 +1,4 @@
 // identifyworkspace.test.js, tests for the detection progress strip
-// (BUILD-06).
 //
 // The reported issue was "detection sometimes does not complete, the progress
 // is difficult to follow". The Go side owns completion (one terminal event) and
@@ -31,7 +30,7 @@ function running(patch = {}) {
 }
 
 test("no bar unless a run is actually in flight", () => {
-  // The gate is `=== true` on purpose (BUILD-04 CR17): a leftover object must
+  // The gate is `=== true` on purpose: a leftover object must
   // not resurrect the bar.
   assert.equal(progressStrip({ discovery: null }), "");
   assert.equal(progressStrip({ discovery: { running: false, fraction: 0.5 } }), "");

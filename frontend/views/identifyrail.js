@@ -1,6 +1,4 @@
 // views/identifyrail.js, the LEFT RAIL of wizard step 2, Identify
-// (BUILD-02 Phase 6 as views/configure.js; renamed by BUILD-05 Phase 2 when
-// Configure stopped being a step of its own; re-laid out by BUILD-06).
 //
 // The rail lists the DETECTION ROUTES, one switchable section each, in the
 // order they run. It used to be four peer tabs (Scope, Smart detection, Local
@@ -9,15 +7,15 @@
 // were alternatives rather than independent switches, and that Cloud AI was as
 // real as the other three.
 //
-//   Smart detection  ON by default, switchable off. The offline heuristic
+//   Smart detection ON by default, switchable off. The offline heuristic
 //                    pass. Its SCOPE (document country, preset, the 22
 //                    detection categories, the confidence floor) and its
 //                    strictness are nested inside it, because they are the
 //                    settings this route reads.
-//   Local AI         OFF by default. The Ollama port (host locked to loopback,
+//   Local AI OFF by default. The Ollama port (host locked to loopback,
 //                    CLAUDE.md §8), the model and the context size. Detecting
 //                    Ollama enables the switch; it never flips it.
-//   Cloud AI         OFF and disabled, a placeholder (decision 8).
+//   Cloud AI OFF and disabled, a placeholder.
 //
 // Nothing here gates the deterministic PII pass: that is not a detection
 // route, it is what the Anonymise step always does.
@@ -37,8 +35,7 @@ import {
   setCategoryGroup, setMinConfidence, setDocumentCountry,
   setSmartDetectOptions, smartDetectOptions,
   ALL_CATEGORIES,
-  HARD_PII_CATEGORIES, EXTENDED_PII_CATEGORIES, NAME_CATEGORIES,
-  ADVANCED_PII_CATEGORIES, ADVANCED_ENTITY_CATEGORIES,
+  NAME_CATEGORIES, DECLARED_CATEGORIES,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { button, chipRow, sectionLabel, collapsibleGroup, wireGroups } from "../ui.js";
@@ -97,31 +94,28 @@ export const PRESETS = [
 // [visible title, category keys]. It is a module constant so the select-all
 // buttons can address a group by INDEX rather than re-deriving the key list, and
 // so identifyrail.test.js can assert that every engine category the store knows
-// about is reachable from some group (BUILD-04 CR9: the BUILD-03 recognizers
-// were unreachable precisely because they belonged to no group).
+// about is reachable from some group: a category in no group is a category the
+// user cannot switch, which reads as "not detected" and is not.
 //
-// Phase 6 regrouped by TRIGGER TYPE (how values are found) instead of preset tier
-// (soft/medium/advanced). This aligns with the rule model: different triggers
-// (regex/native, smart detection, manual declaration) have different UX controls
-// and validations.
-//
-// Note: All BUILD-03 extended recognizers (credit_card, uk_nhs, ip_address,
-// mac_address, crypto, database_uri, de_steuer_id, es_nif) must remain in the
-// same group (CR9) and are grouped with other contact details here.
+// The grouping is by TRIGGER, the user's own model of how a value is found, and
+// not by preset tier. The last two groups are the split that matters: a regex
+// the user wrote is DECLARATIVE, so custom_patterns must never sit under
+// "Auto detected values", and what is left in that group is, by construction,
+// exactly the set a detection route can emit.
 export const CATEGORY_GROUPS = [
-  // Regex/native trigger groups (static PII detection, Smart detection only):
-  [CONFIGURE.groupContact, ["email", "url", "phone", "credit_card", "uk_nhs", "ip_address", "mac_address", "crypto", "database_uri", "de_steuer_id", "es_nif"]],
-  [CONFIGURE.groupTechnical, ["iban", "vat", "matricule"]],
+  [CONFIGURE.groupContact, ["email", "url", "iban", "vat", "matricule", "phone"]],
+  [CONFIGURE.groupTechnical, [
+    "credit_card", "uk_nhs", "ip_address", "mac_address",
+    "crypto", "database_uri", "de_steuer_id", "es_nif",
+  ]],
   [CONFIGURE.groupThorough, ["amount", "date"]],
-  // Manual/auto-detect entity groups (appear in both Smart and Local AI):
-  ["Entity and project names", ["entity_names", "project_names"]],
-  ["Persons and organizations", ["person_names", "organisation_names", "location_names"]],
-  ["Custom patterns", ["custom_patterns"]],
+  [CONFIGURE.groupDetected, NAME_CATEGORIES],
+  [CONFIGURE.groupDeclared, DECLARED_CATEGORIES],
 ];
 
-// REGEX_GROUPS and ENTITY_GROUPS split CATEGORY_GROUPS for Phase 6 UI restructuring.
-// Regex groups are static PII detection rules (shown only in Smart detection).
-// Entity groups are values for auto-detection (shown in both Smart and Local AI).
+// The rail shows the regex groups only under Smart detection, because they are
+// that route's scope; the name groups apply to every route and to values typed
+// by hand, so they show under both.
 const REGEX_GROUPS = CATEGORY_GROUPS.slice(0, 3);
 const ENTITY_GROUPS = CATEGORY_GROUPS.slice(3);
 
@@ -142,7 +136,7 @@ export function renderIdentifyRail(container) {
     `<div id="settings-error"></div>`;
 
   // Every section is on screen at once now, so every section is wired every
-  // time. The tab-switching dance that used to decide which wiring ran is gone
+  // time. There is no tab-switching dance deciding which wiring runs
   // with the tabs.
   wireSectionSwitches(container);
   wireScope(container);
@@ -154,7 +148,7 @@ export function renderIdentifyRail(container) {
     setState({}); // repaint; folding is view state
   });
   // Cloud AI is a placeholder panel with a switch that cannot be operated
-  // (decision 8), so there is deliberately nothing to wire for it.
+  // so there is deliberately nothing to wire for it.
 }
 
 /**
@@ -301,7 +295,7 @@ function presetChips(s) {
  * categoryGroups(s, groups, type) renders collapsible groups, each with its n/m
  * count and its select-all / deselect-all pair.
  *
- * The examples beside three of the labels come from the country (decision 2),
+ * The examples beside three of the labels come from the country,
  * overlaid on copy.js CATEGORY_LABELS at render time rather than stored five
  * times over.
  *
@@ -350,7 +344,7 @@ function categoryGroups(s, groups, type = "regex") {
 }
 
 /**
- * confidenceControl(s) renders the detection-confidence floor (BUILD-04 CR9).
+ * confidenceControl(s) renders the detection-confidence floor.
  *
  * It is deliberately NOT gated on the local AI: every detection carries a score
  * whether or not Ollama is running. A slider in whole percent rather than a
@@ -372,7 +366,7 @@ function confidenceControl(s) {
  * confidenceEffect(percent) puts the current slider position into words, so the
  * user reads what the setting DOES rather than a bare number.
  *
- * BUILD-05 decision 3 rewrote this copy. The mock-up's version described a
+ *  rewrote this copy. The mock-up's version described a
  * source-tiered rule ("values that only the local AI suggested are skipped"),
  * which the engine does not implement: what the setting actually is is a FLOOR
  * on the confidence score every detection carries. The thresholds below mirror
@@ -415,7 +409,7 @@ function wireScope(container) {
 
   for (const box of container.querySelectorAll(".cat-toggle")) {
     // keepScrollPosition wraps the state change so the full re-render it
-    // triggers lands with the rail where the user left it (BUILD-04 CR12:
+    // triggers lands with the rail where the user left it (:
     // ticking a box in a long list used to jump back to the top).
     box.addEventListener("change", () => keepScrollPosition(() => {
       toggleCategory(box.dataset.category, box.checked);
@@ -569,7 +563,7 @@ function wireLocalAI(container) {
 // --- Cloud AI -------------------------------------------------------------
 
 /**
- * cloudAISection() is a placeholder panel and NOTHING else (decision 8).
+ * cloudAISection() is a placeholder panel and NOTHING else.
  *
  * Deliberately absent, because a separate improvement plan owns this feature and
  * must not have to trip over half-built scaffolding: no provider list, no

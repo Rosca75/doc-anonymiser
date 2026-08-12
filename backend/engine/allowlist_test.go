@@ -1,4 +1,4 @@
-// engine/allowlist_test.go — BUILD-02 Phase 4 tests: tolerant allowlist
+// engine/allowlist_test.go —  tests: tolerant allowlist
 // CSV parsing, the downloadable template, and the surfaced seed defaults.
 package engine
 

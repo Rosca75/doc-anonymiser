@@ -1,8 +1,8 @@
-// views/allowlist.js, the never-anonymise editor (BUILD-02 Phase 6c; reflowed
-// into the mock-up's chip layout by BUILD-05 Phase 6).
+// views/allowlist.js, the never-anonymise editor (; reflowed
+// into the mock-up's chip layout by).
 //
 // It is one component over the one state.allowlist list, so the user always sees
-// a single consistent allowlist. Since BUILD-05 it has exactly ONE home, the
+// a single consistent allowlist. Since it has exactly ONE home, the
 // "Never anonymise" tab of the Identify workspace: it was rendered on two
 // screens before, which is why it was written as a shared panel, and it stays a
 // separate module because it is a self-contained editor with its own bridge
@@ -11,9 +11,9 @@
 // The layout is now an add row plus a box of removable chips, rather than a
 // collapsible panel with a pill list. Two consequences worth knowing:
 //
-//   The "Clear all" bulk button is gone. It lived in the panel header, which no
+//   There is no "Clear all" bulk button. It lived in the panel header, which no
 //   longer exists, and it was the last native confirm() on this screen
-//   (decision 10). Removing terms one chip at a time is the ordinary case, and
+//   Removing terms one chip at a time is the ordinary case, and
 //   a list of ten seeded terms is not a list anyone needs to empty in one go.
 //   The engine defaults are still seeded at startup and still removable
 //   individually.
@@ -75,7 +75,7 @@ export function wireAllowlistChips(container, drafts = {}) {
   input.addEventListener("input", () => { drafts.allow = input.value; });
 
   // Every mutation re-renders the whole screen, so each one carries the scroll
-  // position across (BUILD-04 CR12): this tab can be a long list of chips, and a
+  // position across: this tab can be a long list of chips, and a
   // jump to the top after removing one is exactly where it hurts.
   const add = () => {
     const term = (input.value ?? "").trim();

@@ -150,7 +150,7 @@ unknown height is not a contract.
   state with no placeholders anywhere would pass for the wrong reason. The pane is
   also asserted to be non-empty, for the same reason.
 - **the Configure rail is three route sections**, no `[data-railtab]` chips, Smart
-  detection on, Local AI off, Cloud AI present but disabled, and all 22 category
+  detection on, Local AI off, Cloud AI present but disabled, and all 24 category
   checkboxes present **and laid out with a non-zero height** (issue 3). Present in
   the DOM is not the same as reachable.
 - **a real `mouseenter` on a `mark[data-original]` produces a visible

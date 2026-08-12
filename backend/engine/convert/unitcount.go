@@ -1,5 +1,5 @@
 // engine/convert/unitcount.go — the import list's "size in the document's own
-// terms" (BUILD-05 Phase 3, decision 5).
+// terms".
 //
 // A byte size tells a user almost nothing about whether they picked the right
 // file. "6 pages" or "12 slides" does. So each converter that can name a unit
@@ -10,10 +10,10 @@
 // difference is the whole reason they are separate functions rather than one
 // switch:
 //
-//	PptxSlides  Derived from the archive's SHAPE (how many slideN.xml parts
+//	PptxSlides Derived from the archive's SHAPE (how many slideN.xml parts
 //	            there are). ALWAYS correct.
-//	PDFPages    From the PDF's own page tree. Always correct.
-//	DocxPages   Read from what the last writing application CACHED. Correct
+//	PDFPages From the PDF's own page tree. Always correct.
+//	DocxPages Read from what the last writing application CACHED. Correct
 //	            when Word wrote the file, potentially stale otherwise, and
 //	            absent entirely for files written by minimal tooling. Zero
 //	            means "no answer", and the caller falls back to lines.

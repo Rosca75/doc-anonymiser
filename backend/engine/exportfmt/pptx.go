@@ -1,5 +1,5 @@
 // engine/exportfmt/pptx.go — same-format export for PowerPoint files
-// (BUILD-02 Phase 11d): every slide and notes slide goes through the
+// every slide and notes slide goes through the
 // text-run replacement; everything else (masters, layouts, media,
 // themes) survives bit-for-bit.
 package exportfmt

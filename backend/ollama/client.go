@@ -43,7 +43,7 @@ const DefaultModel = "qwen2.5:3b-instruct"
 // not pulled — see Chat).
 const ErrTooOld = "Ollama too old, please update"
 
-// DefaultContextSize is the default num_ctx sent to Ollama (BUILD-02
+// DefaultContextSize is the default num_ctx sent to Ollama
 // Phase 5b). 8192 replaces the implicit model default (often 2048 for
 // small models), because whole document chunks are sent as prompts. The
 // user can change it in Configure; 0 means "let the model default apply"
@@ -52,12 +52,12 @@ const DefaultContextSize = 8192
 
 // chunkOverlapBytes is how much consecutive chunks overlap so an entity
 // name sitting exactly on a chunk boundary is still seen whole by at
-// least one chunk (BUILD-02 Phase 5c).
+// least one chunk.
 const chunkOverlapBytes = 512
 
 // MaxChunksPerDocument caps how many chunks one document may produce.
 // Beyond this the scan would take unreasonably long on a small local
-// model; the caller gets an actionable error instead (BUILD-02 Phase 5d).
+// model; the caller gets an actionable error instead.
 const MaxChunksPerDocument = 64
 
 // OllamaStatus is the result of probing the local Ollama server. It is sent
@@ -89,14 +89,14 @@ type Client struct {
 	// wins in EVERY pass.
 	Allow func(string) bool
 	// ContextSize is the num_ctx option sent with every chat request
-	// (BUILD-02 Phase 5b). Defaults to DefaultContextSize in New; 0 omits
+	// Defaults to DefaultContextSize in New; 0 omits
 	// the option so the model default applies. It also drives the
 	// document chunk budget (promptBudgetBytes).
 	ContextSize int
 
 	// probeClient carries a short timeout so a missing Ollama never hangs
 	// the UI; chatClient allows slow small-model generations (120 s,
-	// BUILD.md Phase 5) — both honour context cancellation on top.
+	// ) — both honour context cancellation on top.
 	probeClient *http.Client
 	chatClient  *http.Client
 }
@@ -246,7 +246,7 @@ func (c *Client) Chat(ctx context.Context, model, systemPrompt, userPrompt strin
 	}
 	if c.ContextSize > 0 {
 		// num_ctx only travels when explicitly configured; 0 keeps the
-		// model default (BUILD-02 Phase 5b).
+		// model default.
 		reqBody.Options = &chatOptions{NumCtx: c.ContextSize}
 	}
 	body, err := json.Marshal(reqBody)
@@ -267,7 +267,7 @@ func (c *Client) Chat(ctx context.Context, model, systemPrompt, userPrompt strin
 	}
 	defer resp.Body.Close()
 
-	// Distinct error surfaces per status (BUILD-02 Phase 5a). The old
+	// Distinct error surfaces per status. The old
 	// two-branch mapping wrongly blamed "model not installed" for ANY
 	// non-200, including HTTP 400 context overflows — never again.
 	if resp.StatusCode != http.StatusOK {
@@ -326,17 +326,21 @@ func (c *Client) Chat(ctx context.Context, model, systemPrompt, userPrompt strin
 // anything not copied exactly from the text is dropped afterwards anyway.
 const discoverSystemPrompt = `You are an entity extraction engine for confidential business documents.
 Extract proper names from the user's document and respond with ONLY a JSON object, no prose, using exactly these keys:
-{"entity_names": [], "project_names": [], "person_names": []}
+{"entity_names": [], "project_names": [], "product_names": [], "brand_names": [], "person_names": [], "identifier_names": [], "other_names": []}
 Rules:
 - entity_names: named organisations, companies, teams and internal systems, whether they are clients, counterparties or internal.
-- project_names: engagement or project code names.
+- project_names: engagement, project or workstream names and code names.
+- product_names: named products, platforms, modules and software.
+- brand_names: brand or trade names, which are how something is marketed rather than the company that owns it.
 - person_names: every natural person, including members of staff. A human being is NEVER an entity_names.
+- identifier_names: reference, contract, invoice and case codes.
+- other_names: a proper name that is none of the above. Use it sparingly, and never as a place to put something you could file elsewhere.
 - Copy every name VERBATIM from the document. Never invent, translate or reformat names.
 - Use [] for a category with no findings.`
 
 // Discover runs the Phase-A prompt on one document's text and returns raw
 // category → names proposals for the review screen. Long documents are
-// CHUNKED (BUILD-02 Phase 5c): each chunk is scanned in sequence, ctx
+// CHUNKED: each chunk is scanned in sequence, ctx
 // cancellation is honoured between chunks, per-chunk proposals merge
 // through MergeProposals, and the hallucination filter runs against the
 // FULL document text (an entity split across a boundary is covered by the
@@ -347,7 +351,7 @@ func (c *Client) Discover(ctx context.Context, text string) ([]engine.ProposedEn
 
 // DiscoverWithProgress is Discover with a per-chunk callback, so a long
 // document reports progress instead of sitting frozen on one caption for
-// minutes (BUILD-06). onChunk is called BEFORE each chunk is sent, with the
+// minutes. onChunk is called BEFORE each chunk is sent, with the
 // 0-based index and the total; nil disables it.
 func (c *Client) DiscoverWithProgress(ctx context.Context, text string, onChunk func(index, total int)) ([]engine.ProposedEntity, error) {
 	return c.scanChunks(ctx, text, onChunk, func(chunk string) (string, error) {
@@ -359,7 +363,7 @@ func (c *Client) DiscoverWithProgress(ctx context.Context, text string, onChunk 
 // chat per chunk via chat(), parse, merge, then hallucination-filter
 // against the whole document. On mid-loop cancellation the proposals
 // gathered so far are returned WITH the context error, so callers can
-// keep partial results (BUILD-02 Phase 7d).
+// keep partial results.
 func (c *Client) scanChunks(ctx context.Context, text string, onChunk func(index, total int), chat func(chunk string) (string, error)) ([]engine.ProposedEntity, error) {
 	chunks, err := c.Chunks(text)
 	if err != nil {
@@ -398,17 +402,22 @@ func ollamaMerge(batches [][]engine.ProposedEntity) []engine.ProposedEntity {
 
 const deepScanSystemPromptPrefix = `You are an entity extraction engine performing a FINAL review of a business document that was already partially anonymised (placeholders look like [ENTITY_1]).
 Find ONLY residual proper names that are still visible and were missed. Respond with ONLY a JSON object, no prose, using exactly these keys:
-{"entity_names": [], "project_names": [], "person_names": []}
+{"entity_names": [], "project_names": [], "product_names": [], "brand_names": [], "person_names": [], "identifier_names": [], "other_names": []}
 Rules:
-- entity_names: named organisations, companies, teams and internal systems.
-- person_names: every natural person, including members of staff.
+- entity_names: named organisations, companies, teams and internal systems, whether they are clients, counterparties or internal.
+- project_names: engagement, project or workstream names and code names.
+- product_names: named products, platforms, modules and software.
+- brand_names: brand or trade names, which are how something is marketed rather than the company that owns it.
+- person_names: every natural person, including members of staff. A human being is NEVER an entity_names.
+- identifier_names: reference, contract, invoice and case codes.
+- other_names: a proper name that is none of the above. Use it sparingly, and never as a place to put something you could file elsewhere.
 - Copy every name VERBATIM from the document. Never invent names.
 - Do NOT report placeholders like [ENTITY_1] or names from the known list below.
 - Use [] for a category with no findings.`
 
 // DeepScan implements engine.LLM: it proposes residual entities for one
 // document, excluding what is already known, and applies the hallucination
-// filter and allowlist veto before returning (BUILD.md Phase 5).
+// filter and allowlist veto before returning.
 func (c *Client) DeepScan(ctx context.Context, text string, known []engine.Entity) ([]engine.ProposedEntity, error) {
 	system := deepScanSystemPromptPrefix
 	if len(known) > 0 {
@@ -443,7 +452,7 @@ func (c *Client) filterProposals(proposals []engine.ProposedEntity, sourceText s
 
 // MergeProposals merges multi-file discovery results, deduplicating
 // case-insensitively per category while keeping first-seen spelling and
-// order (BUILD.md Phase 5 activity 4).
+// order.
 func MergeProposals(batches ...[]engine.ProposedEntity) []engine.ProposedEntity {
 	seen := map[string]bool{}
 	var out []engine.ProposedEntity
@@ -460,7 +469,7 @@ func MergeProposals(batches ...[]engine.ProposedEntity) []engine.ProposedEntity 
 	return out
 }
 
-// --- Candidate span classification (BUILD-02 Phase 8b) ----------------------
+// --- Candidate span classification ----------------------
 
 // classifySystemPrompt asks for one category per candidate, strict JSON
 // with the exact category keys. Only candidate TEXTS and short context
@@ -469,11 +478,15 @@ func MergeProposals(batches ...[]engine.ProposedEntity) []engine.ProposedEntity 
 const classifySystemPrompt = `You are an entity classification engine for confidential business documents.
 The user sends a list of candidate names, each with short context snippets from the document.
 Assign every candidate to exactly ONE category and respond with ONLY a JSON object, no prose, using exactly these keys:
-{"entity_names": [], "project_names": [], "person_names": []}
+{"entity_names": [], "project_names": [], "product_names": [], "brand_names": [], "person_names": [], "identifier_names": [], "other_names": []}
 Rules:
 - entity_names: named organisations, companies, teams and internal systems, whether they are clients, counterparties or internal.
-- project_names: engagement or project code names.
+- project_names: engagement, project or workstream names and code names.
+- product_names: named products, platforms, modules and software.
+- brand_names: brand or trade names, which are how something is marketed rather than the company that owns it.
 - person_names: every natural person, including members of staff. A human being is NEVER an entity_names.
+- identifier_names: reference, contract, invoice and case codes.
+- other_names: a proper name that is none of the above. Use it sparingly, and never as a place to put something you could file elsewhere.
 - Copy every candidate VERBATIM into one list. Never invent, translate or reformat names.
 - Use [] for a category with no candidates.`
 
@@ -549,8 +562,25 @@ func (c *Client) ClassifyCandidates(ctx context.Context, candidates []engine.Can
 
 // --- JSON reply parsing ---------------------------------------------------
 
-// entityCategories are the exact keys the prompts demand (CLAUDE.md §5).
-var entityCategories = []string{"entity_names", "project_names", "person_names"}
+// entityCategories are the exact keys every prompt in this file demands, and
+// the only keys parseEntityJSON reads back.
+//
+// The three lists have to move together. A key in a prompt that is missing here
+// is silently dropped on parse, and a key here that no prompt requests is a
+// category the model is never asked to fill: either way the category is dead
+// and nothing fails.
+//
+// custom_patterns is deliberately absent: it is the user's own regex, and a
+// model has nothing to say about it.
+var entityCategories = []string{
+	engine.CatEntityNames,
+	engine.CatProjectNames,
+	engine.CatProductNames,
+	engine.CatBrandNames,
+	engine.CatPersonNames,
+	engine.CatIdentifierNames,
+	engine.CatOtherNames,
+}
 
 // parseEntityJSON tolerantly parses the model's JSON reply: accidental
 // markdown code fences are stripped, unknown keys ignored, and each known
@@ -602,7 +632,7 @@ func parseEntityJSON(reply string) ([]engine.ProposedEntity, error) {
 	return out, nil
 }
 
-// --- Document chunking (BUILD-02 Phase 5c/5d) ------------------------------
+// --- Document chunking ------------------------------
 
 // promptBudgetBytes derives the per-chunk byte budget from the configured
 // context size: roughly 3 bytes of typical text per token, with 25% of
@@ -616,7 +646,7 @@ func (c *Client) promptBudgetBytes() int {
 }
 
 // Chunks splits a document into prompt-sized chunks, enforcing the
-// MaxChunksPerDocument cap with an actionable error (BUILD-02 Phase 5d).
+// MaxChunksPerDocument cap with an actionable error.
 func (c *Client) Chunks(text string) ([]string, error) {
 	budget := c.promptBudgetBytes()
 	chunks := chunkText(text, budget, chunkOverlapBytes)
@@ -629,7 +659,7 @@ func (c *Client) Chunks(text string) ([]string, error) {
 }
 
 // EstimateChunks reports how many chunks a document would produce, so the
-// UI can warn BEFORE starting a discovery run (BUILD-02 Phase 5d/7e).
+// UI can warn BEFORE starting a discovery run.
 func (c *Client) EstimateChunks(text string) int {
 	return len(chunkText(text, c.promptBudgetBytes(), chunkOverlapBytes))
 }

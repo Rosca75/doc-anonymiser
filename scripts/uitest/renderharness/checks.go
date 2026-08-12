@@ -261,10 +261,13 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 		fmt.Sprintf("disabled: %s, checked: %s", describeBool(got.CloudDisabled), describeBool(got.CloudOn)),
 		"Cloud AI is not built (BUILD-05 decision 8) and renders disabled rather than omitted.")
 
-	r.assert("every category checkbox is present", got.Categories >= fx.CategoryCount,
-		fmt.Sprintf("at least %d .cat-toggle checkboxes", fx.CategoryCount),
+	r.assert("every category checkbox is present", got.Categories == fx.CategoryCount,
+		fmt.Sprintf("exactly %d .cat-toggle checkboxes", fx.CategoryCount),
 		fmt.Sprintf("%d", got.Categories),
-		"state.js ALL_CATEGORIES plus the country-specific ID categories must all reach the rail.")
+		"Every state.js ALL_CATEGORIES entry reaches the rail, and the rail invents none. "+
+			"This is an equality, not a floor: with a floor, adding a category and leaving the "+
+			"fixture behind keeps the harness green, which is a test reporting safety it no "+
+			"longer provides.")
 
 	r.assert("every category checkbox is reachable without clicking",
 		got.Categories > 0 && got.CategoriesWithSize == got.Categories,

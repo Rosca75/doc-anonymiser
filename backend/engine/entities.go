@@ -6,7 +6,7 @@
 // name VARIANTS ("Marie Duval" → "M. Duval", "Duval", "Marie", …) so the
 // pass catches informal references, then all variants are matched
 // longest-first with word-boundary anchoring — "Alten" must never fire
-// inside "Altenberg" (BUILD.md Phase 3).
+// inside "Altenberg".
 //
 // Matching is case-insensitive (headers shout "ALPINE TRUST"), and every
 // span is checked against the allowlist BEFORE being kept — an allowlisted
@@ -23,8 +23,7 @@ import (
 
 // Entity is one known engagement entity.
 type Entity struct {
-	// Category is one of the CLAUDE.md §5 entity categories:
-	// entity_names, project_names, person_names.
+	// Category is one of AllEntityCategories.
 	Category string `json:"category"`
 	// Canonical is the full name as entered/discovered.
 	Canonical string `json:"canonical"`
@@ -33,12 +32,12 @@ type Entity struct {
 	ManualVariants []string `json:"manualVariants,omitempty"`
 	// ExcludedVariants are spellings this entity must NOT match, even
 	// when the automatic expansion would produce them. Written by the
-	// variant drag-and-drop regrouping (BUILD-02 Phase 9d): moving a
+	// variant drag-and-drop regrouping: moving a
 	// variant to another entity excludes it here so exactly one entity
 	// matches it afterwards.
 	ExcludedVariants []string `json:"excludedVariants,omitempty"`
 	// Confidence is how much this entity is trusted, in [0.0, 1.0]
-	// (BUILD-04 CR9, using the BUILD-03 Phase C scale). Zero means "not
+	// Zero means "not
 	// stated", which DetectEntities reads as ConfidenceManualDefault:
 	// every entity the USER listed is a high-trust entity.
 	//
@@ -51,33 +50,52 @@ type Entity struct {
 	Confidence float32 `json:"confidence,omitempty"`
 }
 
-// personCategories lists the categories whose canonical names are people —
-// they get person-style variant expansion (initials, surname-only, …).
-// Everything else is treated as an organisation-style name.
-// entity_names is deliberately NOT here. It absorbed the former
-// internal_names, which were staff names and did want person-style variants,
-// but the merged category is dominated by organisations: expanding "Delta
-// Industries" into the surname variant "Industries" would replace an ordinary
-// noun everywhere it appears. A member of staff belongs in person_names, and
-// the discovery prompts say so.
+// Variant expansion has three classes, and a category belongs to exactly one.
+//
+//	person        initials, surname-only, first-name-only, hyphen/space swaps
+//	organisation  the name with a legal suffix stripped
+//	literal       no expansion at all
+//
+// personCategories holds the first. Only person_names is a human being;
+// entity_names in particular is dominated by organisations, and expanding
+// "Delta Industries" into the surname variant "Industries" would replace an
+// ordinary noun everywhere it appears.
 var personCategories = map[string]bool{
 	CatPersonNames: true,
 }
 
+// literalOnlyCategories holds the third: values with no name structure to
+// expand. A reference code like "PRJ-4471-A" has no legal suffix and no
+// surname, and organisation-style stripping would happily remove a trailing
+// token that resembles one and invent a variant matching a DIFFERENT code.
+// other_names is here because it is defined by exclusion: nothing is known
+// about the shape of a value filed there, so nothing can be inferred from it.
+var literalOnlyCategories = map[string]bool{
+	CatIdentifierNames: true,
+	CatOtherNames:      true,
+}
+
 // nameParticles are the lower-case surname particles that glue multi-word
-// surnames together ("Jean de la Croix" → surname "de la Croix"). Checked
-// case-insensitively; documented per BUILD.md Phase 3.
+// surnames together ("Jean de la Croix" -> surname "de la Croix"). Checked
+// case-insensitively.
 var nameParticles = map[string]bool{
 	"de": true, "la": true, "le": true, "du": true, "des": true,
 	"van": true, "von": true, "der": true, "den": true, "d'": true,
 }
 
-// legalSuffixes is the documented list of organisation legal forms that
-// are stripped to produce a suffix-free variant ("Alpine Trust S.A." also
-// matches "Alpine Trust"). Longest-first so "S.à r.l." wins over "S.A.".
+// legalSuffixes lists the organisation legal forms this engine knows, longest
+// first so "S.à r.l." wins over "S.A.". It is ONE table, used by both the
+// variant expansion here and the smart detector in discover.go: with two
+// tables, detection proposed "Bidco SCSp" from a form only it knew, and the
+// expansion could then not produce "Bidco".
+//
+// Suffixes are only ever STRIPPED, never added: adding one invents a name that
+// may belong to a different legal entity.
 var legalSuffixes = []string{
 	"S.à r.l.", "S.à.r.l.", "S.àr.l.", "Sàrl", "SARL",
-	"S.A.", "SA", "GmbH", "AG", "SE", "Ltd", "Limited", "LLC", "plc", "Inc.", "Inc",
+	"S.C.A.", "S.C.S.", "SCSp", "S.p.A.", "S.A.", "SA", "ASBL", "SE",
+	"GmbH", "AG", "N.V.", "B.V.", "Ltd", "Limited", "LLC", "plc", "SAS",
+	"Inc.", "Inc",
 }
 
 // minVariantLen guards against dangerously short variants: replacing every
@@ -111,9 +129,12 @@ func ExpandVariants(e Entity) []string {
 
 	add(e.Canonical)
 
-	if personCategories[e.Category] {
+	switch {
+	case literalOnlyCategories[e.Category]:
+		// No automatic expansion; manual variants below still apply.
+	case personCategories[e.Category]:
 		expandPersonInto(e.Canonical, add)
-	} else {
+	default:
 		expandOrgInto(e.Canonical, add)
 	}
 
@@ -178,9 +199,8 @@ func expandPersonInto(name string, add func(string)) {
 }
 
 // expandOrgInto generates organisation variants: the name with its legal
-// suffix stripped (if one is present) so "Alpine Trust S.A." also matches
-// "Alpine Trust". Suffixes are never ADDED — that would invent names that
-// may belong to different legal entities.
+// suffix stripped (if one is present), so "Alpine Trust S.A." also matches
+// "Alpine Trust".
 func expandOrgInto(name string, add func(string)) {
 	for _, suffix := range legalSuffixes {
 		trimmed := strings.TrimSuffix(name, " "+suffix)
@@ -244,7 +264,7 @@ func DetectEntities(text string, entities []Entity, allow *Allowlist) []Span {
 					Canonical: e.Canonical,
 					// An entity that states its own confidence keeps it
 					// (AI proposals do); anything else is a value the user
-					// listed, which is high trust (BUILD-04 CR9).
+					// listed, which is high trust.
 					Confidence: entityConfidence(e),
 				})
 			}
@@ -295,7 +315,7 @@ func firstRuneAt(s string, i int) rune {
 }
 
 // CountTermMatches counts case-insensitive, word-boundary-anchored
-// occurrences of term in text (BUILD-02 Phase 9c: the live "Found N
+// occurrences of term in text (: the live "Found N
 // times" preview for manual entries). Same boundary rule as the entity
 // pass, so the preview never promises a match the pipeline would reject
 // ("Lux" does not match inside "Luxembourg").
@@ -324,7 +344,7 @@ type CustomPattern struct {
 }
 
 // ValidateCustomPattern compile-checks a user regex and returns an
-// actionable error for the UI (BUILD.md Phase 3 activity 3).
+// actionable error for the UI.
 func ValidateCustomPattern(expr string) error {
 	if strings.TrimSpace(expr) == "" {
 		return fmt.Errorf("the pattern is empty, enter a regular expression, e.g. PRJ-[0-9]+ to match project codes")
@@ -356,7 +376,7 @@ func DetectCustomPatterns(text string, patterns []CustomPattern, allow *Allowlis
 			spans = append(spans, Span{
 				Start:      m[0],
 				End:        m[1],
-				Category:   "custom_patterns",
+				Category:   CatCustomPatterns,
 				Original:   original,
 				Confidence: ConfidenceDeterministic,
 			})

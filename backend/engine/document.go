@@ -42,11 +42,11 @@ const (
 
 // LargeFileThreshold is the size above which a file gets a "very large"
 // warning (still processed — the warning just explains possible slowness).
-// 10 MB per BUILD.md Phase 1 activity 3.
+// 10 MB per activity 3.
 const LargeFileThreshold = 10 * 1024 * 1024
 
 // MaxPreviewLines caps how many lines of a document the UI preview shows
-// (BUILD.md Phase 10: render the first 5 000 lines; the FULL content is
+// (: render the first 5 000 lines; the FULL content is
 // still processed by the pipeline — only the preview is cut).
 const MaxPreviewLines = 5000
 
@@ -98,7 +98,7 @@ type Document struct {
 	// A warning never blocks processing — that is what errors are for.
 	Warnings []string
 	// UnitCount and Unit are the document's SIZE IN ITS OWN TERMS, for the
-	// import list (BUILD-05 Phase 3, decision 5): "6 pages", "12 slides",
+	// import list: "6 pages", "12 slides",
 	// "48 rows", "412 lines". A byte size tells a user nothing about whether
 	// they picked the right file; the number of pages does.
 	//
@@ -210,7 +210,7 @@ func LoadAll(name string, raw []byte) ([]Document, error) {
 		}
 		// A page count is what a Word user recognises, but it can only come
 		// from what Word cached at save time, and plenty of files carry no
-		// cached count at all (decision 5). Zero falls back to lines.
+		// cached count at all. Zero falls back to lines.
 		setUnitCount(&doc, convert.DocxPages(raw), UnitPage)
 		return []Document{doc}, nil
 
@@ -306,7 +306,7 @@ func LoadAll(name string, raw []byte) ([]Document, error) {
 func Load(name string, raw []byte) (Document, error) {
 	// Detect the format from the file extension, case-insensitively, so
 	// "REPORT.TXT" from an old Windows share still works. Extension-only
-	// detection is a deliberate CLAUDE.md §5 / BUILD.md Phase 1 decision:
+	// detection is a deliberate CLAUDE.md §5 /  decision:
 	// no content sniffing.
 	ext := strings.ToLower(filepath.Ext(name))
 
@@ -346,7 +346,7 @@ func Load(name string, raw []byte) (Document, error) {
 		// Markdown is already our working form — pass it through with
 		// only line-ending normalisation so downstream regexes can
 		// assume "\n" everywhere. Content inside code fences is treated
-		// like any other text in v1 (BUILD.md Phase 1 activity 4).
+		// like any other text in v1.
 		doc := Document{
 			Name:     name,
 			Format:   FormatMD,
@@ -380,7 +380,7 @@ func Load(name string, raw []byte) (Document, error) {
 
 	default:
 		// Clear, actionable rejection for everything else. The binary
-		// Office/PDF formats are accepted via LoadAll (Phase 1B); this
+		// Office/PDF formats are accepted via LoadAll; this
 		// text-only entry point lists what IT accepts.
 		return Document{}, fmt.Errorf(
 			"unsupported file type %q (file %q): doc-anonymiser accepts .txt, .csv, .md, .docx, .pptx, .xlsx and .pdf, rename or convert the file to one of those formats first",

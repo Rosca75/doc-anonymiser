@@ -1,4 +1,4 @@
-// app_export.go — bound methods for the Export screen (Phase 9): per-file
+// app_export.go — bound methods for the Export screen: per-file
 // save, export-all zip, clipboard, mapping/report export and session
 // save/load. Every path goes through an explicit native dialog — nothing
 // is ever written without the user choosing a destination (CLAUDE.md §5),
@@ -66,7 +66,7 @@ func (a *App) ExportDocumentFormats(name string) ([]string, error) {
 
 // SaveDocument exports one anonymised document in the chosen extension via
 // the native save dialog. Native Office extensions route through the
-// same-format rewriter (BUILD-02 Phase 11); text extensions through
+// same-format rewriter; text extensions through
 // ExportBytes as before.
 func (a *App) SaveDocument(name, ext string) error {
 	rd, err := a.findResultDoc(name)
@@ -122,7 +122,7 @@ func (a *App) sameFormatBytes(name, ext string) ([]byte, error) {
 }
 
 // SameFormatMeta is the review payload for one document's same-format
-// export (BUILD-02 Phase 12): every document property with its proposed
+// export: every document property with its proposed
 // replacement, plus the proposed anonymised filename.
 type SameFormatMeta struct {
 	Fields   []exportfmt.MetaProposal `json:"fields"`
@@ -174,7 +174,7 @@ func (a *App) SaveSameFormat(name, ext string, reviewed []exportfmt.MetaField, f
 	var data []byte
 	var err error
 	if ext == "pdf" {
-		// EXPERIMENTAL regenerated PDF (BUILD-02 Phase 13): built from
+		// EXPERIMENTAL regenerated PDF: built from
 		// the anonymised working text with the reviewed metadata; the
 		// exporter runs a leak self-check before returning bytes.
 		rd, ferr := a.findResultDoc(name)
@@ -225,10 +225,9 @@ func (a *App) sameFormatConfig(name string) (exportfmt.Config, *engine.Document,
 	if req == nil || reg == nil {
 		return exportfmt.Config{}, nil, fmt.Errorf("no run inputs available yet; run the pipeline first, then export the same-format copy")
 	}
-	allow := engine.NewEmptyAllowlist()
-	for _, t := range req.AllowTerms {
-		allow.Add(t)
-	}
+	// Through the shared builder, so a value the user removed does not reappear
+	// in a same-format copy after the pipeline stopped replacing it
+	allow := a.allowlistFor(req.AllowTerms)
 	categories := req.Categories
 	if categories == nil {
 		categories = settings.Categories
@@ -273,14 +272,14 @@ func (a *App) ExportAllZip() error {
 }
 
 // ChooseExportFolder opens the native directory picker and returns the folder
-// the user chose, or "" when they cancelled (BUILD-05 Phase 3).
+// the user chose, or "" when they cancelled.
 //
 // It ONLY picks a folder; nothing is written here. The chosen path is
 // remembered by the frontend rather than stored as a Go setting, because it is
 // a convenience for one batch and does not belong in a session file next to the
 // re-identification key.
 //
-// The folder drives the ZIP export and nothing else (decision 4). Single-file
+// The folder drives the ZIP export and nothing else. Single-file
 // saves, the key, the report and the session all keep their own save dialogs, so
 // no click can put something key-bearing on disk without a dialog naming the
 // exact file.
@@ -298,7 +297,7 @@ func (a *App) ChooseExportFolder() (string, error) {
 }
 
 // ExportAllZipTo writes the batch zip straight into a folder the user already
-// chose, with no second dialog (BUILD-05 Phase 3).
+// chose, with no second dialog.
 //
 // This is the ONLY method that writes without a dialog, and it is allowed to
 // because the user picked the destination explicitly through
@@ -448,14 +447,23 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 	a.mu.Lock()
 	settings := a.settings
 	smartDetect := settings.SmartDetect
+	removed := make([]engine.RemovedValue, len(a.removed))
+	copy(removed, a.removed)
 	var registry []engine.MappingEntry
 	var overrides map[string]string
+	// retired and reserved are numbers this session has spent that no entry
+	// holds, so they cannot be recovered from `registry` on load
+	// Losing them hands the same number out twice, and the
+	// re-identification key stops being reversible with nothing able to notice.
+	var retired, reserved []string
 	if a.registry != nil {
 		registry = a.registry.Export()
-		// The placeholders the user renamed (BUILD-05 Phase 3). The renamed
+		// The placeholders the user renamed. The renamed
 		// values are already inside `registry`; this records which of them were
 		// deliberate, so re-saving a reloaded session does not demote them.
 		overrides = a.registry.Overrides()
+		retired = a.registry.Retired()
+		reserved = a.registry.Reserved()
 	}
 	a.mu.Unlock()
 
@@ -478,6 +486,9 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 		},
 		Registry:             registry,
 		PlaceholderOverrides: overrides,
+		RemovedValues:        removed,
+		RetiredPlaceholders:  retired,
+		ReservedPlaceholders: reserved,
 	})
 	if err != nil {
 		return err
@@ -508,10 +519,8 @@ func (a *App) LoadSessionFromFile() (*engine.Session, error) {
 		return nil, err
 	}
 
-	// The registry and the settings restore together (extracted so the tests
-	// can exercise the restore without a file dialog).
-	overrideFailures := a.applyRestoredSettings(session)
-	if _, err := a.ApplySettings(a.GetSettings()); err != nil {
+	overrideFailures, err := a.applyRestoredSession(session)
+	if err != nil {
 		return nil, err
 	}
 
@@ -522,24 +531,63 @@ func (a *App) LoadSessionFromFile() (*engine.Session, error) {
 	return &session, nil
 }
 
-// applyRestoredSettings puts a loaded session's registry and settings into the
-// App, and reports the placeholder overrides that could not be restored.
+// applyRestoredSession installs a loaded session's registry, removals and
+// settings, and reports the placeholder overrides that could not be restored.
 //
-// EVERY persisted setting is restored here. The confidence floor and the smart
+// VALIDATION HAPPENS FIRST, and nothing is installed until all of it passes
+// The previous order swapped the registry and the settings
+// in and validated afterwards, so a file this application refused still left the
+// App holding that file's registry, behind an error message the UI reads as
+// "nothing was loaded". The next export would then have written the rejected
+// file's re-identification key.
+//
+// EVERY persisted setting is restored. The confidence floor and the smart
 // detection tuning used to be missing from this literal, so loading a session
 // silently reset the floor to 0 and the tuning to the shipped defaults: two
 // settings that decide what gets replaced, quietly changed by an action the
 // user reads as "restore what I saved".
-func (a *App) applyRestoredSettings(session engine.Session) []error {
+//
+// @param session a session LoadSession has already accepted
+// @return one error per override that did not apply (warnings, not failures),
+//
+//	and a fatal error that leaves the App exactly as it was
+func (a *App) applyRestoredSession(session engine.Session) ([]error, error) {
+	// 1. Build, do not install. Restore the registry AND which placeholders the
+	//    user had renamed. An override that no longer applies
+	//    is reported as a report warning rather than failing the load: one stale
+	//    entry must not cost the user the other twenty. A corrupt key is fatal.
+	registry, overrideFailures, err := engine.NewRegistryFromSession(session)
+	if err != nil {
+		return nil, err
+	}
+
+	restored := a.restoredSettings(session)
+
+	// 2. Validate. ApplySettings checks every field and only then stores, so a
+	//    rejected file stops here with the App untouched.
+	if _, err := a.ApplySettings(restored); err != nil {
+		return nil, fmt.Errorf(
+			"this session file could not be loaded: %v. Nothing was changed, "+
+				"the session you had open is still open", err)
+	}
+
+	// 3. Install the rest.
+	a.mu.Lock()
+	a.registry = registry
+	// The values the user removed. They restore with the session, or
+	// every one of them silently comes back on the next run.
+	a.removed = append([]engine.RemovedValue(nil), session.RemovedValues...)
+	a.mu.Unlock()
+
+	return overrideFailures, nil
+}
+
+// restoredSettings computes the Settings a loaded session asks for, without
+// installing them. Pure apart from reading the current settings for the fields
+// the file had nothing to say about.
+func (a *App) restoredSettings(session engine.Session) Settings {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	// Restore the registry AND which placeholders the user had renamed
-	// (BUILD-05 Phase 3). An override that no longer applies is reported as a
-	// report warning rather than failing the load: one stale entry must not
-	// cost the user the other twenty.
-	registry, overrideFailures := engine.NewRegistryFromSession(session)
-	a.registry = registry
 
 	restored := Settings{
 		Level:          session.Settings.Level,
@@ -561,7 +609,7 @@ func (a *App) applyRestoredSettings(session engine.Session) []error {
 	}
 	// An omitted optional block means "keep the current setting" rather than
 	// silently resetting it. This is NOT version compatibility (a file from
-	// another version is refused outright, BUILD-05 decision 1): it is a file
+	// another version is refused outright): it is a file
 	// this version wrote that simply had nothing to say about these fields.
 	if restored.Categories == nil {
 		restored.Categories = a.settings.Categories
@@ -572,8 +620,7 @@ func (a *App) applyRestoredSettings(session engine.Session) []error {
 	if restored.Country == "" {
 		restored.Country = a.settings.Country
 	}
-	a.settings = restored
-	return overrideFailures
+	return restored
 }
 
 // jsonMarshalIndent is a tiny wrapper so the import list stays tidy above.

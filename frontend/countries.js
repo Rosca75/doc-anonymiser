@@ -1,4 +1,4 @@
-// countries.js, the document-country table (BUILD-05 Phase 5, decision 2).
+// countries.js, the document-country table.
 //
 // The Identify rail's country selector now mirrors the engine's country model.
 // It still swaps the example strings, but it also reflects which regex

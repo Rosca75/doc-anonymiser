@@ -1,19 +1,11 @@
-// copy.js, the single home for user-visible strings (BUILD-02 Phase 2e).
+// copy.js, the single home for user-visible strings.
 //
 // Keeping copy in one module gives the style guard (copy.test.js) and a
-// future i18n pass exactly one place to look. Style rules (BUILD-02 ground
-// rule 4): no em dashes, no "+" as a stand-in for "and", no unexplained
+// future i18n pass exactly one place to look. Style rules: no em dashes, no "+" as a stand-in for "and", no unexplained
 // jargon such as "PII" without an example, full sentences.
 
-// The per-step explainer banner (BUILD-02 Phase 2e STEP_BANNERS) is GONE
-// (BUILD-05 Phase 2). It was a strip of prose above every screen, repeating on
-// each visit what the screen's own controls already said, and it cost the
-// screens the vertical space the fixed-height card workspace needs. Its useful
-// sentences moved into the card subtitles below, where they sit next to the
-// heading they explain and scroll away with nothing.
-
-// WORKFLOW: the step bar under the permanent top menu (BUILD-04 CR7, relaid
-// out for BUILD-05 Phase 2). The separate "Anonymisation workflow" title is
+// WORKFLOW: the step bar under the permanent top menu (, relaid
+// out for). The separate "Anonymisation workflow" title is
 // gone; the back link that replaced it is `backToFlow`, and it is what the
 // mock-ups show in that slot.
 export const WORKFLOW = {
@@ -57,7 +49,7 @@ export const CARDS = {
   },
 };
 
-// FOOTER: the permanent strip under every screen (BUILD-05 CR2), matching
+// FOOTER: the permanent strip under every screen, matching
 // the Claude Design mockup's welcome page. version is the same string as
 // wails.json productVersion; there is no bound Go method to read it live
 // yet, so it is a plain literal here until that wiring exists.
@@ -66,7 +58,7 @@ export const FOOTER = {
   localProcessing: "Local processing only",
 };
 
-// NAV: navigation copy (BUILD-04 CR16). Going BACK through the wizard
+// NAV: navigation copy. Going BACK through the wizard
 // resets the step being left, so the user is asked first, in words that
 // say what will and will not be lost.
 export const NAV = {
@@ -90,7 +82,7 @@ export const NAV = {
   },
   // Going BACK through the wizard resets the step being left, so the user is
   // asked first, in words that say what will and will not be lost. This is an
-  // in-app modal now, not a native confirm (BUILD-05 decision 10), so the
+  // in-app modal now, not a native confirm, so the
   // question is a title plus a body rather than one cramped line.
   backConfirmTitle(step) {
     return `Reset the ${NAV.stepNames[step] ?? step} step?`;
@@ -103,8 +95,8 @@ export const NAV = {
   backConfirmLabel: "Go back and reset",
 };
 
-// Home page copy (BUILD-02 Phase 2b, rewritten for BUILD-04 CR1, sidebar
-// added in BUILD-05 CR1).
+// Home page copy (, rewritten for, sidebar
+// added in).
 //
 // The body is an ARRAY of three paragraphs, rendered one <p> each by
 // views/home.js. The three cover, in order: who stays in control, the two
@@ -116,7 +108,7 @@ export const NAV = {
 // the wizard so a first-time user knows what they are signing up for before
 // they click Anonymise documents.
 //
-// BUILD-05 Phase 2 cut it from five entries to four, matching the wizard.
+//  cut it from five entries to four, matching the wizard.
 // Unlike before, the labels here ARE the wizard's own step names: the sidebar
 // used to say "Configure / Identify" for steps the wizard called "Values /
 // Run", which meant the landing page taught a vocabulary the application then
@@ -132,18 +124,18 @@ export const HOME = {
   stepsTitle: "The four steps",
   steps: [
     { label: "Import", body: "Drop in .docx, .pptx, .xlsx, .pdf, .csv, .md or .txt files. Your originals are only ever read, never changed." },
-    { label: "Identify", body: "Pick a preset and fine-tune the 22 detection categories, then review every suggested value. Nothing is replaced until you accept it." },
+    { label: "Identify", body: "Pick a preset and fine-tune the 24 detection categories, then review every suggested value. Nothing is replaced until you accept it." },
     { label: "Anonymise", body: "Run the passes and check the result side by side, with every replacement mapped back to its original." },
     { label: "Export", body: "Save the anonymised copies, the report and the re-identification key." },
   ],
   docsLink: "Read the documentation",
 };
 
-// The documentation placeholder page was retired by BUILD-04 CR6: real
+// The documentation placeholder page was retired by: real
 // documentation now lives in frontend/docs/index.html and opens in its own
 // window, so there is no in-app docs screen and no placeholder string.
 
-// Import screen copy (BUILD-05 Phase 4).
+// Import screen copy.
 export const IMPORT = {
   addFiles: "ADD FILES",
   dropTitle: "Drag files here to import",
@@ -159,39 +151,41 @@ export const IMPORT = {
   hintEmpty: "Add at least one document to continue",
 };
 
-// Configure step copy (BUILD-02 Phase 6). Plain language: no "PII", no
+// Configure step copy. Plain language: no "PII", no
 // abbreviations without an example, full sentences.
 export const CONFIGURE = {
   presetHint: "Start from a preset, then adjust the checkboxes if you need to. Changing any checkbox switches the preset to Custom.",
   groupContact: "Contact and account details",
-  groupNames: "Names",
+  // The rail groups by TRIGGER, the user's own model of how a value is found
+  // so these are the names of the three ways it happens.
+  // groupNames was "Names", which said nothing about where the values came
+  // from and sat over a list that also held the user's own regexes.
+  groupDetected: "Auto detected values",
+  groupDeclared: "Your own patterns",
   groupThorough: "Only for thorough anonymisation",
-  useAILabel: "Use local AI (Ollama)",
   useAIHint: "When enabled, a language model running on this machine can suggest names to replace and double-check the result. Nothing leaves your computer.",
   contextSizeHint: "Higher values let the AI read longer documents at once but use more memory.",
   aiOffTooltip: "Local AI is turned off. Turn it on with the switch on the Local AI section of Configure.",
   allowHint: "Terms in this list survive every pass, even when they also appear as names to replace.",
-  // BUILD-04 CR9: the group that surfaces the BUILD-03 recognizers.
+  // the group that surfaces the recognizers.
   groupTechnical: "Payment, tax and technical identifiers",
-  // BUILD-04 CR10: the per-group bulk buttons.
+  // the per-group bulk buttons.
   selectAll: "Select all",
   deselectAll: "Deselect all",
-  // BUILD-04 CR9: the detection-confidence control. Plain language, with
+  // the detection-confidence control. Plain language, with
   // the two thresholds that actually change something spelled out.
   confidenceTitle: "Detection confidence",
   confidenceLabel: "Minimum confidence",
   confidenceHint: "Every detection carries a score for how certain it is. Anything below the minimum you set here is left alone. Keep it at 0 to replace everything that is found, which is how the application behaves by default.",
-  // confidenceScale is GONE (BUILD-05 decision 3). It described a source-tiered
-  // rule ("above 80, the values that only the local AI suggested are left
-  // alone") that the engine does not implement: the setting is a floor on a
-  // score, not a rule about who proposed a value. What the floor actually does
-  // at each position is views/identifyrail.js confidenceEffect(), which is
-  // tested for exactly that.
+  // What the floor does at each position is views/identifyrail.js
+  // confidenceEffect(), and it is described there rather than here: the setting
+  // is a floor on a SCORE, and copy calling it a rule about who proposed a
+  // value would describe something the engine does not do.
 };
 
 /**
  * categoryLabels(examples) returns CATEGORY_LABELS with the country-dependent
- * examples replaced (BUILD-05 Phase 5).
+ * examples replaced.
  *
  * @param {Record<string,string>} examples category key to example string, as
  *   countries.js examplesFor() produces
@@ -207,16 +201,15 @@ export function categoryLabels(examples = {}) {
   return out;
 }
 
-// Identify RAIL copy (BUILD-05 Phase 5): the four tabs and the Scope tab's
+// Identify RAIL copy: the four tabs and the Scope tab's
 // section labels. The category labels and the confidence copy stay in CONFIGURE
 // below, which is where they were and where the parity guard looks.
 export const RAIL = {
-  tabsLabel: "Configure sections",
   tabSmart: "Smart detection",
   tabLocalAI: "Local AI",
   tabCloudAI: "Cloud AI",
 
-  // BUILD-06: the three routes are switchable sections, not tabs. Scope stopped
+  // the three routes are switchable sections, not tabs. Scope stopped
   // being a section of its own because it is the scope OF smart detection.
   smartIntro: "Finds names by how they are written, on this machine and without any AI. It runs on the categories you choose below.",
   smartTuning: "Strictness",
@@ -232,7 +225,7 @@ export const RAIL = {
   preset: "Preset",
   whatToAnonymise: "What to anonymise",
 
-  // BUILD-06 Phase 6 split the category list in two blocks: the regex-triggered
+  //  split the category list in two blocks: the regex-triggered
   // patterns (found by shape) and the entity categories (found by name). Both
   // blocks live in the Smart detection section because the category selection is
   // the ONE scope the whole pipeline reads (CLAUDE.md §5): rendering a second
@@ -257,18 +250,18 @@ export const RAIL = {
   noModels: "(no models found)",
   reprobe: "Check again",
 
-  // The Cloud AI placeholder (decision 8). It commits only to the thing that
+  // The Cloud AI placeholder. It commits only to the thing that
   // will not change about the feature: nothing leaves the machine until the user
   // has said in writing what may.
   cloudNotYet: "Not available yet",
   cloudBody: "Connecting to a cloud endpoint is not built yet. When it is, this is where you will pick the provider, the model and the endpoint, and confirm in writing what may leave this machine before anything is sent.",
 };
 
-// Values step copy (BUILD-04 Phase 5): the smart-detection tuning block
-// (CR13) and the suggestions table (CR14/CR15).
+// Values step copy: the smart-detection tuning block
+//  and the suggestions table.
 export const VALUES = {
   // Smart detection tuning. It moved to the Identify RAIL's own tab
-  // (BUILD-05 Phase 5), which RAIL.tabSmart titles, so the block no longer
+  // which RAIL.tabSmart titles, so the block no longer
   // needs a heading of its own.
   smartSettingsHint: "Smart detection guesses which words are names from how they are written, so it always proposes some things that are not names. These settings decide how strict it is. Set them all to zero, and untick the box, to see everything it can find.",
   smartMinLength: "Shortest value",
@@ -281,7 +274,7 @@ export const VALUES = {
   smartMinConfidenceHint: "Higher values keep only the strongest suggestions, such as a name followed by a company form or introduced by a title.",
 
   // The suggestions table's search box and its two sort tooltips. The column
-  // HEADINGS moved to WORKSPACE (BUILD-05 Phase 6), where they are upper-case
+  // HEADINGS moved to WORKSPACE, where they are upper-case
   // because they sit in a header strip rather than above a form.
   searchPlaceholder: "search values",
   sortValueHint: "Sort by value, A to Z or Z to A.",
@@ -289,7 +282,7 @@ export const VALUES = {
   noMatchingSuggestions: "No suggestion matches the current search and type filter.",
 };
 
-// The never-anonymise editor (BUILD-05 Phase 6). The list wins over every pass,
+// The never-anonymise editor. The list wins over every pass,
 // which is why the hint says so rather than describing the control.
 export const ALLOWLIST = {
   label: "A term to never anonymise",
@@ -311,7 +304,7 @@ export const ALLOWLIST = {
   templateSaved: "Template saved. Fill in one term per row and import it back.",
 };
 
-// Identify WORKSPACE copy (BUILD-05 Phase 6): the four tabs, the suggestions
+// Identify WORKSPACE copy: the four tabs, the suggestions
 // table, the value cards and the pattern rows.
 export const WORKSPACE = {
   tabsLabel: "Identify sections",
@@ -337,7 +330,7 @@ export const WORKSPACE = {
   runNeedsRoute: "No detection route is on. Turn on Smart detection or Local AI in Configure.",
   runNeedsDocuments: "Import at least one document first.",
   cancel: "Cancel",
-  // The progress caption (BUILD-06). It is assembled from these parts rather
+  // The progress caption. It is assembled from these parts rather
   // than written as one sentence, because a run that feels stuck raises three
   // separate questions: which route is this, where in the batch is it, and
   // where inside this file.
@@ -396,10 +389,27 @@ export const WORKSPACE = {
   acceptedN(n) {
     return n === 0 ? "Nothing to accept." : `${n} value${n === 1 ? "" : "s"} accepted.`;
   },
+  /** readyToReplace(n) is the Identify footer's sentence when the review is
+   *  done: it counts ACCEPTED values, because that is what the next step acts
+   *  on. Zero is a real answer, not an empty one. */
+  readyToReplace(n) {
+    return `${n} value${n === 1 ? "" : "s"} ready to replace`;
+  },
+  /** reviewGate(n) is the Identify footer's sentence while suggestions are
+   *  still waiting, and the tooltip on the disabled CONTINUE. It is the REASON
+   *  the move is refused (state.js canGoTo rule 2), so it names the one action
+   *  that clears the gate rather than only counting what is left. The bulk
+   *  button acts on the rows in view, so the sentence says so: a search or a
+   *  filter would otherwise leave suggestions behind and the gate shut with no
+   *  visible cause. */
+  reviewGate(n) {
+    return `${n} suggestion${n === 1 ? "" : "s"} still waiting. ` +
+      `Accept or reject each one to continue, or clear any filter and use "Reject all shown".`;
+  },
   rejectedN(n) {
     return n === 0 ? "Nothing to reject." : `${n} suggestion${n === 1 ? "" : "s"} rejected.`;
   },
-  // The source badge labels. "Pattern" is deliberately absent (decision 9):
+  // The source badge labels. "Pattern" is deliberately absent:
   // deterministic matches are applied without review and never become
   // suggestions, so naming a source that cannot appear would promise rows the
   // table can never show.
@@ -441,10 +451,6 @@ export const WORKSPACE = {
   variantAlreadyThere(v) {
     return `${v} is already one of the spellings.`;
   },
-  placeholderLabel: "The replacement value",
-  placeholderTooltip: "Edit what this value is replaced with. It takes effect on the next run.",
-  placeholderPending: "after the run",
-  placeholderPendingTooltip: "Placeholders are assigned when the anonymisation runs, so there is nothing to rename yet.",
 
   // Patterns.
   patternsHint: "Regular expressions are matched in addition to the categories you selected. A pattern that does not compile is kept but never used.",
@@ -463,7 +469,7 @@ export const WORKSPACE = {
   removePattern: "Remove this pattern",
 };
 
-// Anonymise screen copy (BUILD-05 Phase 7).
+// Anonymise screen copy.
 export const ANONYMISE = {
   // The run card.
   run: "RUN",
@@ -521,10 +527,28 @@ export const ANONYMISE = {
   reportEmpty: "Nothing was replaced in the files in scope.",
   valuePlaceholder: "Value / placeholder",
   occurrences: "Occur.",
-  // The flat value list (BUILD-06). It is the answer to "what did you
+  // The flat value list. It is the answer to "what did you
   // replace?", which the category totals never gave.
   valuesTitle: "Replaced values",
+  /** valuesSummary(n, removed) is the folded card's read-out. The removed count
+   *  is shown only when there is one: "0 removed" invites a search for a list
+   *  that is not there. */
+  valuesSummary(n, removed) {
+    const values = `${n} value${n === 1 ? "" : "s"}`;
+    return removed ? `${values}, ${removed} removed` : values;
+  },
   valuesKeyWarning: "Shows real values: this is your re-identification key.",
+  placeholderLabel: "The replacement value",
+  placeholderTooltip: "Edit what this value is replaced with. It takes effect on the next run, not on the text already shown.",
+  removeValue: "Remove, and stop replacing it",
+  /** valueRemoved(v) confirms a removal and says how far it reaches. */
+  valueRemoved(v) {
+    return `${v} will not be replaced any more, in this run or the next.`;
+  },
+  restoreValue: "Restore",
+  valueRestored: "The value is being replaced again, with a new placeholder.",
+  removedTitle: "Removed values",
+  removedHint: "A restored value comes back with a NEW placeholder, because the old one may already be in a document you exported.",
   valuesFilterPlaceholder: "Filter values",
   valuesFilterEmpty: "No replaced value matches this filter.",
   byCategoryTitle: "By category",
@@ -542,16 +566,16 @@ export const ANONYMISE = {
 
   // Something missed?
   missedTitle: "Something missed?",
-  /** missedSummary(n) is the folded card's read-out. */
+  /** missedSummary(n) is the folded card's read-out: how many values the next
+   *  run will look for. */
   missedSummary(n) {
-    return n === 0 ? "add a value" : `${n} waiting`;
+    return n === 0 ? "add a value" : `${n} value${n === 1 ? "" : "s"} to replace`;
   },
   missedHint: "Add the value, then re-run the fast passes. Existing placeholders keep their numbers.",
   missedCategoryLabel: "The type of value",
   missedLabel: "A value the run missed",
   missedPlaceholder: "missed value, e.g. P. Stone",
   addValue: "Add value",
-  removePending: "Remove, and stop replacing it",
   /** missedAlreadyThere(v) explains an add that changed nothing. */
   missedAlreadyThere(v) {
     return `${v} is already on the list of values to replace.`;
@@ -559,8 +583,7 @@ export const ANONYMISE = {
   fastRerun: "Fast re-run",
   /** fastRerunDone(n) reports what the re-run applied. */
   fastRerunDone(n) {
-    if (n === 0) return "Re-ran the fast passes. Existing placeholders kept their numbers.";
-    return `Re-ran the fast passes with ${n} added value${n === 1 ? "" : "s"}. ` +
+    return `Re-ran the fast passes over ${n} value${n === 1 ? "" : "s"}. ` +
       `Existing placeholders kept their numbers.`;
   },
 
@@ -623,7 +646,7 @@ export const ANONYMISE = {
   },
 };
 
-// Export screen copy (BUILD-05 Phase 8).
+// Export screen copy.
 export const EXPORT = {
   /** subtitle(total, docs) is the Export card's read-out. */
   subtitle(total, docs) {
@@ -748,18 +771,18 @@ export const EXPORT = {
   newBatchDone: "Batch cleared. Drop new files on the Import step; your settings were kept.",
 };
 
-// Per-category checkbox labels and one-line examples (BUILD-02 Phase 6b).
+// Per-category checkbox labels and one-line examples.
 // Keys match engine category identifiers.
 //
 // THE DECLARATION SHAPE MATTERS: ../category_parity_test.go matches on
-// "\n  key: [", so every entry must stay a two-element array literal opening on
+// "\n key: [", so every entry must stay a two-element array literal opening on
 // its own line with exactly two spaces of indent. That guard is what catches a
 // recognizer added to the engine and forgotten here.
 //
 // Three of the examples are country-dependent (phone, vat, matricule). They
 // carry a Luxembourg default here and are OVERLAID at render time by
 // countries.js examplesFor(), so the rail shows a French number for a French
-// document (BUILD-05 Phase 5, decision 2). Overlaying rather than storing five
+// document. Overlaying rather than storing five
 // variants keeps this table one row per category and keeps the guard working.
 export const CATEGORY_LABELS = {
   email: ["Email addresses", "For example jean.muller@example.com"],
@@ -768,15 +791,17 @@ export const CATEGORY_LABELS = {
   vat: ["VAT numbers", "For example LU12345678"],
   matricule: ["National identification numbers", "For example the Luxembourg 13 digit number"],
   url: ["Web addresses", "For example https://example.com/report"],
-  entity_names: ["Entity names", "Companies, teams and internal systems you list in the Values step"],
-  project_names: ["Project names", "The project names you list in the Values step"],
+  entity_names: ["Entity names", "Companies, teams and internal systems, for example Alpine Trust S.A."],
+  project_names: ["Project names", "Engagement and workstream names, for example Project Atlas or ATLAS-2024"],
+  product_names: ["Product names", "Named products and platforms, for example Meridian Suite"],
+  brand_names: ["Brand names", "Trade names, found by the AI review or added by you"],
   person_names: ["Person names", "For example Marie Duval, M. Duval or just Marie"],
-  custom_patterns: ["Custom patterns", "The regular expressions you add in the Values step"],
+  identifier_names: ["Reference codes", "Contract, invoice and case codes, for example INV-88213"],
+  other_names: ["Other names", "A name that fits none of the others, found by the AI review or added by you"],
+  custom_patterns: ["Custom patterns", "The regular expressions you add on the Identify step"],
   date: ["Dates", "For example 15 January 2026 or 15/01/2026"],
-  organisation_names: ["Organisation names", "Organisations suggested by the AI review"],
-  location_names: ["Place names", "Cities and places suggested by the AI review"],
   amount: ["Money amounts", "For example EUR 12,500"],
-  // BUILD-04 CR9: the recognizers BUILD-03 built into the engine. They
+  // the recognizers built into the engine. They
   // were detecting all along; these labels are what finally let a user
   // see and switch them.
   credit_card: ["Payment card numbers", "For example 4111 1111 1111 1111, checked against its own check digit"],

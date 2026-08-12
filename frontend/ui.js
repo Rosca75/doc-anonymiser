@@ -1,4 +1,4 @@
-// ui.js, the shared UI toolkit (BUILD-02 Phase 1c).
+// ui.js, the shared UI toolkit.
 //
 // Pure STRING-RENDERING helpers, same pattern as html.js: no DOM access,
 // fully testable under `node --test` (ui.test.js). Views compose these
@@ -40,7 +40,7 @@ export function icon(name) {
  * @param {boolean} [opts.current] marks the button as the current location
  *   (aria-current="page"): used by the permanent top menu to announce the
  *   active screen to assistive technology, since the highlight is a quiet
- *   visual one (BUILD-04 CR4).
+ *   visual one.
  * @param {string} [opts.ariaLabel] accessible name for an icon-only button
  *   (no visible label): the header's Help/Settings icon buttons need one
  *   since they render no text.
@@ -64,21 +64,8 @@ export function button(label, opts = {}) {
   return `<button ${attrs.filter(Boolean).join(" ")}>${iconHTML}${iconHTML && label ? " " : ""}${escapeHTML(label)}</button>`;
 }
 
-// banner() is GONE (BUILD-05 Phase 2). It rendered the per-step explainer
-// strip, a band of prose above every screen that repeated on each visit what
-// the screen's own controls already said, and it cost the vertical space the
-// fixed-height card workspace needs. Its copy is card subtitles now
-// (card() below, and copy.js CARDS).
-
-// panel() and wirePanels() are GONE (BUILD-05 Phase 9). They rendered the
-// collapsible <section class="panel"> that every screen was built from before
-// the relayout. Two things replaced them, and each does one of the two jobs the
-// panel was doing at once: card() is the fixed-height surface with a head that
-// stays put and a body that scrolls, and collapsibleGroup() is the foldable
-// block. Keeping panel() as well would have left three ways to draw a box.
-
 // ===========================================================================
-// The BUILD-05 card kit.
+// The card kit.
 //
 // Everything below emits the markup the style.css "design system" block
 // styles. The rule is the same as above: these are PURE string builders with
@@ -250,7 +237,7 @@ export function statTile(value, label) {
  * body that hides when closed.
  *
  * Unlike panel() above, the open/closed state is passed IN rather than read
- * from a Set: the BUILD-05 screens keep it in view-local state they already
+ * from a Set: the screens keep it in view-local state they already
  * own, and a builder that reaches for a shared mutable Set cannot be tested
  * as a pure function.
  *
@@ -309,8 +296,8 @@ export function wireGroups(container, onToggle) {
  * link on the left, then a readiness hint and the primary "CONTINUE TO Y" on
  * the right.
  *
- * Every wizard screen has one (BUILD-05 section 2): the global Back/Next
- * footer is gone, because a footer that belongs to the shell cannot say what
+ * Every wizard screen has one: the global Back/Next
+ * footer, because a footer that belongs to the shell cannot say what
  * the CURRENT screen still needs before the user can move on. That sentence
  * is `hint`, and it is the whole reason this replaced the global bar.
  *
@@ -354,9 +341,9 @@ export function stepFooter(opts = {}) {
 // three tones are the only ones there are, and each means something
 // different (brand.css, the notice tint pairs):
 //
-//   ok    something was written or saved
-//   info  a statement of fact with nothing to fix
-//   warn  it worked AND the result needs care (a key left the application)
+//   ok something was written or saved
+//   info a statement of fact with nothing to fix
+//   warn it worked AND the result needs care (a key left the application)
 //
 // An unknown tone degrades to info rather than throwing: a notice is how the
 // application tells the user something, and it must still appear even if its
@@ -390,7 +377,7 @@ export function toastHTML(notice, opts = {}) {
 
 /**
  * modalHTML(question) renders the in-app confirm that replaces every native
- * confirm() (BUILD-05 decision 10).
+ * confirm.
  *
  * The two buttons carry fixed ids (modal-confirm / modal-cancel) because
  * modal.js wires them once at shell level; a caller never wires its own.

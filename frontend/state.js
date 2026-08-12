@@ -8,7 +8,7 @@
 //
 // This module is PURE JavaScript with no DOM and no Wails access, so it is
 // unit-testable with `node --test` (state.test.js), the reason views must
-// stay logic-free (BUILD.md Phase 6).
+// stay logic-free.
 
 import {
   COUNTRIES, DEFAULT_COUNTRY, countryIDCategories, COUNTRY_ID_CATEGORIES,
@@ -16,14 +16,14 @@ import {
 
 // WIZARD_STEPS defines the fixed wizard order (CLAUDE.md wizard flow).
 //
-// BUILD-05 cut five steps to four: Configure stopped being a screen and
+//  cut five steps to four: Configure stopped being a screen and
 // became the left rail of Identify, which now owns both the choices
 // (categories, confidence, local AI) and the values those choices produce.
 // The tokens ARE the visible labels this time, capitalised: Import, Identify,
 // Anonymise, Export.
 //
 // There is deliberately no migration table for the old tokens. Session files
-// are read only by the version that wrote them (BUILD-05 decision 1), and an
+// are read only by the version that wrote them, and an
 // unknown persisted token falls back to "import", the one step that is always
 // reachable. A table of every token this application ever used would grow
 // forever to serve files the session loader now refuses anyway.
@@ -37,14 +37,14 @@ export const WIZARD_STEPS = ["import", "identify", "anonymise", "export"];
 const initialState = {
   // Top-level screen: "home" (landing page) or "wizard" (the 5-step
   // flow). Leaving the wizard NEVER clears wizard state, so documents and
-  // values survive navigation (BUILD-02 Phase 2a). Documentation is not a
-  // screen: it opens in its own window (BUILD-04 CR6).
+  // values survive navigation. Documentation is not a
+  // screen: it opens in its own window.
   screen: "home",
 
   // Shell-level error message, or null. Used for failures that belong to
   // the application chrome rather than to any one view, such as the
   // documentation window refusing to open. Rendered as a dismissible
-  // banner above the active view (BUILD-04 CR6).
+  // banner above the active view.
   shellError: null,
 
   // Bridge self-test: null = not yet run, "pong" = OK, anything else =
@@ -73,7 +73,7 @@ const initialState = {
   // Name of the document selected in the preview pane (or null).
   previewDoc: null,
 
-  // The DOCUMENT COUNTRY (BUILD-05 Phase 5, decision 2), an entry code from
+  // The DOCUMENT COUNTRY, an entry code from
   // countries.js. It is frontend-only and does exactly two things: it swaps the
   // example strings beside the phone / VAT / national identification labels,
   // and it switches the three country-specific ID categories. There is no
@@ -83,30 +83,34 @@ const initialState = {
   // Settings mirror (source of truth lives in Go; this copy renders the
   // Configure screen): {level, categories, ollamaPort, model}. level is
   // the LAST CHOSEN PRESET; categories is the granular switch set the
-  // pipeline obeys (BUILD-02 Phase 3). The categories map is filled below
+  // pipeline obeys. The categories map is filled below
   // after presetCategories is defined.
-  // The three DETECTION ROUTES (BUILD-06), each with its own switch, because
+  // The three DETECTION ROUTES, each with its own switch, because
   // they are three separate ways of finding values and the user turns them on
   // and off independently:
-  //   useSmartDetect  the offline heuristic pass. ON by default, and
+  //   useSmartDetect the offline heuristic pass. ON by default, and
   //                   deactivable. Its scope (the categories, the preset, the
   //                   confidence floor) and its tuning are the settings it
   //                   reads, which is why the rail nests them inside it.
-  //   useAI           the local model (Ollama). OFF by default. Detecting
+  //   useAI the local model (Ollama). OFF by default. Detecting
   //                   Ollama ENABLES the switch, it never flips it: turning on
   //                   a route that sends the document to a model, however
   //                   local, is the user's decision to make.
-  //   useCloudAI      not built (BUILD-05 decision 8). Always false, kept here
-  //                   so the rail has something honest to render.
-  // contextSize is the Ollama num_ctx setting (Phase 5b), default 8192.
-  // minConfidence is the detection-confidence floor (BUILD-04 CR9), 0 to
+  //   (there is no useCloudAI. The cloud route is not built,
+  //   and the rail renders a static "not built yet" panel rather
+  //   than reading a flag. The field existed anyway, was pushed to Go on every
+  //   settings change, and Go discarded it: a setting nothing reads and nothing
+  //   can change is a contract the next reader has to disprove. BRIDGE.md said
+  //   it did not exist, and BRIDGE.md was right.)
+  // contextSize is the Ollama num_ctx setting, default 8192.
+  // minConfidence is the detection-confidence floor, 0 to
   // 1 on the engine's scale. 0 is the default and keeps every detection,
   // which is exactly the behaviour before the setting existed.
   settings: {
     level: "medium", categories: null, ollamaPort: 11434, model: "", country: DEFAULT_COUNTRY,
-    contextSize: 8192, useAI: false, useSmartDetect: true, useCloudAI: false,
+    contextSize: 8192, useAI: false, useSmartDetect: true,
     minConfidence: 0,
-    // smartDetect is the BUILD-04 CR13 tuning for the offline Smart
+    // smartDetect is the tuning for the offline Smart
     // detection pass, matching engine.SmartDetectOptions field for field.
     // The defaults are the STRICTER ones (engine
     // DefaultSmartDetectOptions), because over-detection was the reported
@@ -119,7 +123,7 @@ const initialState = {
     },
   },
 
-  // Entity review state (Phase 7): array of
+  // Entity review state: array of
   // {category, canonical, manualVariants, status: "accepted"|"denied"}.
   entities: [],
 
@@ -133,26 +137,34 @@ const initialState = {
   // Ordered simple-replace rules: {find, replace, caseSensitive}.
   simpleRules: [],
 
-  // Pipeline execution state (Phase 8).
+  // Pipeline execution state.
   running: false,
   progress: null, // {stage, docIndex, docCount, docName} or null
   results: null,  // engine.Results mirror or null
 
-  // Values added on the Anonymise screen that a fast re-run has not applied yet
-  // (BUILD-05 Phase 7): [{category, text}]. They are ALSO added to `entities`
-  // straight away, so a re-run picks them up; this list exists only so the user
-  // can see what is waiting and remove one before re-running. Cleared by the
-  // re-run that applies them.
-  pendingValues: [],
+  // The document the Compare pane shows on step 3, by name, or null for the
+  // first one. It is a view choice, but it lives here because the reset table
+  // is what clears it: introduced ad hoc by the view, it survived resetStep and
+  // pointed the pane at a document from a previous run.
+  resultDoc: null,
+
+  // The step 3 Replaced values table, both halves, mirrored from the Go
+  // registry rather than derived from the report text: the registry is what the
+  // renaming and the removals act on, so a row built from anything else could
+  // offer an edit with no entry behind it.
+  //   replacedValues [{original, placeholder, category, count}]
+  //   removedValues  [{original, category, placeholder, variants}]
+  replacedValues: [],
+  removedValues: [],
 
   // Warnings from the last run that the user has dismissed, by id
-  // (BUILD-05 Phase 7). A warning is advice, not an error: once it has been
+  // A warning is advice, not an error: once it has been
   // read it should stop taking up room in the report, but it must come back
   // if a new run raises it again, which is why the reset for the Anonymise
   // step empties this list.
   dismissedWarnings: [],
 
-  // Detection run state (BUILD-06), or null when idle:
+  // Detection run state, or null when idle:
   // {running, phase, phaseIndex, phaseCount, current, total, file,
   //  chunk, chunkCount, fraction, startedAt}.
   //
@@ -162,46 +174,46 @@ const initialState = {
   // It is never recomputed here.
   discovery: null,
 
-  // Unified candidate review list (BUILD-02 Phase 9b): candidates from
+  // Unified candidate review list: candidates from
   // any discovery method wait HERE until explicitly accepted; nothing
   // flows into entities without user confirmation. Each row:
   // {source: "smart"|"local-ai"|"cloud-ai", text, category, count, contexts}.
   candidates: [],
 
   // Placeholder → {original, category} lookup from the last run
-  // (BUILD-02 Phase 10a). MEMORY NOTE: this is the re-identification
+  // MEMORY NOTE: this is the re-identification
   // key; it stays in the app process like the Go registry and is
   // cleared with the results.
   mapping: null,
 
-  // The notice strip (BUILD-05 Phase 1): {text, tone} or null. ONE notice at
+  // The notice strip: {text, tone} or null. ONE notice at
   // a time, deliberately: a stack of them turns into a log nobody reads, and
   // the newest statement is always the one that matters. tone is
   // "ok" | "info" | "warn" (brand.css notice tint pairs).
   notice: null,
 
-  // The in-app confirm's pending question (BUILD-05 decision 10), or null
+  // The in-app confirm's pending question, or null
   // when nothing is being asked: {title, body, confirmLabel, cancelLabel,
   // keyBearing}. The PROMISE that resolves it is module-private below, not
   // stored here, because state must stay clonable (resetState uses
   // structuredClone, which cannot copy a function).
   confirm: null,
 
-  // The destination folder for the batch zip (BUILD-05 Phase 3, decision 4), or
+  // The destination folder for the batch zip, or
   // "" when none has been chosen. It is FRONTEND state, not a Go setting: it is
   // a convenience for one batch and has no business sitting in a session file
   // next to the re-identification key. It drives the zip and nothing else;
   // every other export keeps its own save dialog.
   exportDir: "",
 
-  // Same-format metadata review state per document (BUILD-02 Phase 12):
+  // Same-format metadata review state per document:
   // {docName: {ext, filename, fields: [{part, name, value, proposed,
   // changed, finalValue}]}}. Decisions persist for the session so the
   // review only happens before the FIRST same-format export of a file.
   metaReview: {},
 };
 
-// --- Category presets (BUILD-02 Phase 3, mirrors engine.PresetSelection) ----
+// --- Category presets ----
 
 // Category keys, split by preset tier. Must stay in sync with the Go side
 // (engine/pipeline.go AllPIICategories / AllEntityCategories).
@@ -209,9 +221,9 @@ export const HARD_PII_CATEGORIES = ["email", "url", "iban", "vat", "matricule", 
 // COUNTRIES_BY_CODE is the membership check setDocumentCountry needs: a Set
 // rather than a repeated find(), and built once at module load.
 const COUNTRIES_BY_CODE = new Set(COUNTRIES.map((c) => c.code));
-// The extended recognizers BUILD-03 added to the engine. They are HARD
+// The extended recognizers added to the engine. They are HARD
 // PII exactly like the group above, so every preset switches them on
-// (engine/pipeline.go PresetSelection). BUILD-04 CR9 finally surfaces
+// (engine/pipeline.go PresetSelection).  finally surfaces
 // them in the Configure screen; until then they were detectable but
 // invisible, which is why the list is separate rather than merged: the
 // Configure screen shows them as their own group.
@@ -220,34 +232,44 @@ export const EXTENDED_PII_CATEGORIES = [
   "crypto", "database_uri", "de_steuer_id", "es_nif",
 ];
 export const ADVANCED_PII_CATEGORIES = ["amount", "date"];
-// entity_names (BUILD-06) is the merge of the former client_names and
-// internal_names. Mirrors engine.AllEntityCategories; the pairing is enforced
-// by ../category_parity_test.go.
-export const NAME_CATEGORIES = ["entity_names", "project_names", "person_names"];
-export const ADVANCED_ENTITY_CATEGORIES = ["organisation_names", "location_names"];
+// The categories a DETECTOR or a manual entry can produce, split by the preset
+// tier that first switches them on. Together they mirror
+// engine.AllEntityCategories, enforced by ../category_parity_test.go.
+export const SOFT_NAME_CATEGORIES = ["entity_names", "project_names", "identifier_names"];
+export const MEDIUM_NAME_CATEGORIES = ["person_names", "product_names", "brand_names"];
+export const ADVANCED_NAME_CATEGORIES = ["other_names"];
+export const NAME_CATEGORIES = [
+  ...SOFT_NAME_CATEGORIES, ...MEDIUM_NAME_CATEGORIES, ...ADVANCED_NAME_CATEGORIES,
+];
+// custom_patterns is the user's own regex. It is declarative rather than
+// detected, which is why it sits on its own here and in its own rail group.
+export const DECLARED_CATEGORIES = ["custom_patterns"];
 export const ALL_CATEGORIES = [
   ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES, ...ADVANCED_PII_CATEGORIES,
-  ...NAME_CATEGORIES, "custom_patterns", ...ADVANCED_ENTITY_CATEGORIES,
+  ...NAME_CATEGORIES, ...DECLARED_CATEGORIES,
 ];
 
 /**
- * presetCategories(level) reproduces engine.PresetSelection exactly:
- * soft = hard PII + entity/project names + custom patterns;
- * medium = soft + persons; advanced = everything.
+ * presetCategories(level) mirrors engine.PresetSelection exactly:
+ *
+ *   soft hard and extended PII + entity, project and identifier names
+ *            + custom patterns
+ *   medium soft + person, product and brand names (the default)
+ *   advanced medium + amounts, dates and other names
+ *
+ * @param {string} level "soft", "medium" or "advanced"
+ * @returns {object} every category in ALL_CATEGORIES mapped to on/off
  */
 export function presetCategories(level) {
   const sel = {};
   for (const c of ALL_CATEGORIES) sel[c] = false;
-  for (const c of HARD_PII_CATEGORIES) sel[c] = true;
-  // Extended recognizers are hard PII at every level, matching the Go
-  // PresetSelection exactly (BUILD-04 CR9).
-  for (const c of EXTENDED_PII_CATEGORIES) sel[c] = true;
-  sel.entity_names = sel.project_names = true;
-  sel.custom_patterns = true;
-  if (level === "medium" || level === "advanced") sel.person_names = true;
-  if (level === "advanced") {
-    for (const c of [...ADVANCED_PII_CATEGORIES, ...ADVANCED_ENTITY_CATEGORIES]) sel[c] = true;
-  }
+  const on = [
+    ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES,
+    ...SOFT_NAME_CATEGORIES, ...DECLARED_CATEGORIES,
+  ];
+  if (level === "medium" || level === "advanced") on.push(...MEDIUM_NAME_CATEGORIES);
+  if (level === "advanced") on.push(...ADVANCED_PII_CATEGORIES, ...ADVANCED_NAME_CATEGORIES);
+  for (const c of on) sel[c] = true;
   return sel;
 }
 
@@ -298,7 +320,7 @@ function notify() {
   for (const fn of listeners) fn(state);
 }
 
-// --- Notices and the in-app confirm (BUILD-05 Phase 1) ----------------------
+// --- Notices and the in-app confirm ----------------------
 
 // NOTICE_TONES are the only tones there are. An unknown tone is stored as
 // "info" rather than rejected: a notice is the application telling the user
@@ -338,7 +360,7 @@ let confirmResolve = null;
 
 /**
  * askConfirm(question) shows the in-app confirm and resolves to the user's
- * answer (BUILD-05 decision 10, replacing every native confirm()).
+ * answer).
  *
  * Asking while a question is already open ANSWERS THE OLD ONE "no" and then
  * asks the new one. That is the safe direction: the alternative is either
@@ -390,7 +412,7 @@ export function answerConfirm(answer) {
   return !!resolve;
 }
 
-// --- Category selection reducers (BUILD-02 Phase 3) --------------------------
+// --- Category selection reducers --------------------------
 
 /**
  * applyPreset(level) sets the level AND fills the category switches from
@@ -402,7 +424,7 @@ export function applyPreset(level) {
       ...state.settings,
       level,
       // The preset, then the CURRENT COUNTRY's identifier switches on top of it
-      // (BUILD-05 Phase 5). Every preset switches all three country-specific
+      // Every preset switches all three country-specific
       // identifiers on, because to the engine they are hard PII; re-applying the
       // country here is what stops picking a preset silently re-enabling the
       // German tax identifier on a French document. The country is an
@@ -434,12 +456,12 @@ export function toggleCategory(key, on) {
 
 /**
  * setCategoryGroup(keys, on) flips a whole group of switches in ONE
- * state change (BUILD-04 CR10, the "Select all" / "Deselect all" buttons
+ * state change (, the "Select all" / "Deselect all" buttons
  * on each Configure group).
  *
  * Doing it in one setState rather than looping toggleCategory matters:
  * every setState repaints, so a loop over eight keys would repaint eight
- * times and, before the CR12 fix, scroll the page eight times.
+ * times and, before the fix, scroll the page eight times.
  *
  * Unknown keys are ignored rather than rejected, so a group definition
  * that drifts ahead of ALL_CATEGORIES degrades to flipping what it can.
@@ -466,7 +488,6 @@ export function setCategoryGroup(keys, on) {
 /**
  * setDocumentCountry(code) records the document country and applies its
  * consequence: the three country-specific ID categories are switched to match
- * (BUILD-05 Phase 5, decision 2).
  *
  * Both halves happen in ONE state change, so the country selector repaints once
  * rather than three times, and so the country and the switches can never be
@@ -507,7 +528,7 @@ export function setDocumentCountry(code) {
 
 /**
  * setMinConfidence(value) stores the detection-confidence floor
- * (BUILD-04 CR9). Values outside 0 to 1 are rejected (returns null)
+ * Values outside 0 to 1 are rejected (returns null)
  * rather than clamped, so a bad caller is visible instead of silently
  * changing what gets replaced.
  * @param {number} value the floor, 0 (keep everything) to 1 (strictest)
@@ -524,7 +545,7 @@ export function setMinConfidence(value) {
 // SMART_DETECT_DEFAULTS mirrors engine.DefaultSmartDetectOptions. It is
 // exported so a session loaded from an older file, which has no
 // smartDetect block at all, can be filled with the same defaults a fresh
-// session starts from (BUILD-04 CR13, ground rule 5).
+// session starts from.
 export const SMART_DETECT_DEFAULTS = {
   minLength: 4,
   minOccurrences: 1,
@@ -534,7 +555,7 @@ export const SMART_DETECT_DEFAULTS = {
 
 /**
  * setSmartDetectOptions(patch) merges a partial tuning into the settings
- * (BUILD-04 CR13). Only the four known keys are accepted, and each is
+ * Only the four known keys are accepted, and each is
  * validated: a bad value is IGNORED rather than stored, because these
  * options decide what the user gets to review, and a silently broken one
  * would look like Smart detection being broken.
@@ -564,7 +585,7 @@ export function setSmartDetectOptions(patch) {
 
 /**
  * smartDetectOptions(s) is the tuning to SEND to Go: the stored options
- * with every default filled in, so a session written before CR13 (no
+ * with every default filled in, so a session written before  (no
  * smartDetect block) still produces a complete payload.
  */
 export function smartDetectOptions(s = state) {
@@ -590,7 +611,7 @@ export function selectionPresetName(categories) {
   return "custom";
 }
 
-// --- Local-AI gating (BUILD-02 Phase 6d) --------------------------------------
+// --- Local-AI gating --------------------------------------
 
 /**
  * setUseAI(on) records the user's explicit "Use local AI" choice.
@@ -629,11 +650,11 @@ export function llmEnabled(s = state) {
   return !!(s.settings.useAI && s.ollama?.available);
 }
 
-// --- Screen navigation (BUILD-02 Phase 2a) -----------------------------------
+// --- Screen navigation -----------------------------------
 
 /** SCREENS: the valid top-level screens.
  *
- * "docs" was retired by BUILD-04 CR6: the documentation is no longer an
+ * "docs" was retired by: the documentation is no longer an
  * in-app screen, it opens in a separate window (api.js
  * openDocumentation). goToScreen("docs") therefore returns false now,
  * exactly like any other unknown name. */
@@ -650,17 +671,29 @@ export function goToScreen(name) {
   return true;
 }
 
-// setImportSplit() is GONE (BUILD-05 decision 6). It stored the import screen's
-// draggable pane divider position. The mock-up uses a fixed two-column grid, and
-// a divider that only ever moved between 20% and 80% of the width was three
-// state transitions and a pointer-capture dance to save the user a decision they
-// did not actually have.
-
 // --- Navigation guards ------------------------------------------------------
 
 /**
- * canGoTo(step, s) implements the wizard guards: no step beyond Import
- * without documents, and no Export before a run produced results.
+ * canGoTo(step, s) implements the wizard guards. There are three, and they all
+ * live here rather than in the five places that navigate, so the step bar and
+ * all four screen footers give the same answer (nav.js, frontend/CLAUDE.md).
+ *
+ *   1. no step beyond Import without documents;
+ *   2. no Anonymise while suggestions are still waiting to be reviewed
+ *   3. no Export before a run produced results.
+ *
+ * Rule 2 is the review gate. Detection produces SUGGESTIONS, not decisions, and
+ * an unreviewed suggestion is neither accepted nor rejected: walking past them
+ * into the run silently answers "reject" for the user on values the detector
+ * thought were worth asking about. The gate is never a dead end, because
+ * rejecting is one action away (rejectAllShown, and views/identify.js readyHint
+ * says so in the footer).
+ *
+ * Rule 2 is deliberately NOT applied to Export. Reaching Export at all requires
+ * results, which means a run already happened with the review done; refusing to
+ * show the user the output of a finished run because a later detection pass
+ * added suggestions would strand them on a screen with nothing to do.
+ *
  * @param {string} step target step name
  * @param {object} [s] state (defaults to the live state; injectable for tests)
  * @returns {boolean}
@@ -668,8 +701,9 @@ export function goToScreen(name) {
 export function canGoTo(step, s = state) {
   if (!WIZARD_STEPS.includes(step)) return false;
   const idx = WIZARD_STEPS.indexOf(step);
-  if (idx > 0 && s.documents.length === 0) return false; // nothing imported yet
-  if (step === "export" && !s.results) return false;     // nothing to export yet
+  if (idx > 0 && s.documents.length === 0) return false;      // nothing imported yet
+  if (step === "anonymise" && s.candidates.length > 0) return false; // still unreviewed
+  if (step === "export" && !s.results) return false;          // nothing to export yet
   return true;
 }
 
@@ -684,8 +718,8 @@ export function goTo(step) {
  * knownStep(step) returns a token guaranteed to be in WIZARD_STEPS, falling
  * back to "import" for anything it does not recognise.
  *
- * This replaced BUILD-04's LEGACY_STEP_TOKENS + migrateStep() pair, which
- * translated retired tokens onto current ones. BUILD-05 decision 1 removed
+ * This replaced 's LEGACY_STEP_TOKENS + migrateStep() pair, which
+ * translated retired tokens onto current ones.  removed
  * that machinery rather than extending it: a session file whose schema version
  * this build does not know is refused outright by the loader, so a step token
  * from an older file never reaches here in the first place. What is left is
@@ -699,7 +733,7 @@ export function knownStep(step) {
   return WIZARD_STEPS.includes(step) ? step : "import";
 }
 
-// --- Per-step reset (BUILD-04 CR16) -----------------------------------------
+// --- Per-step reset -----------------------------------------
 
 /**
  * STEP_RESETS says what each wizard step OWNS, and therefore what going
@@ -709,10 +743,10 @@ export function knownStep(step) {
  *
  * Two things are deliberately absent from every entry:
  *
- *   documents  Imported files are step 1 data and survive ALL navigation
- *              (BUILD-04 section 4.2). Re-importing a batch because the
+ *   documents Imported files are step 1 data and survive ALL navigation
+ *              Re-importing a batch because the
  *              user stepped back one screen would be indefensible.
- *   allowlist  The never-anonymise list is shared by the Configure and
+ *   allowlist The never-anonymise list is shared by the Configure and
  *              Values screens and is curated across the whole session, so
  *              it belongs to neither step.
  *
@@ -723,7 +757,7 @@ export function knownStep(step) {
 export const STEP_RESETS = {
   // Import owns only the error strip of the last import action.
   import: () => ({ importErrors: [] }),
-  // Identify owns BOTH halves of its screen (BUILD-05 Phase 2): the rail's
+  // Identify owns BOTH halves of its screen: the rail's
   // choices, which used to belong to a Configure step of its own, and the
   // workspace's values, suggestions and patterns. They are reset together
   // because that is now one screen: resetting half of it would leave a
@@ -759,8 +793,11 @@ export const STEP_RESETS = {
     running: false,
     progress: null,
     results: null,
+    resultDoc: null,
     mapping: null,
     simpleRules: [],
+    replacedValues: [],
+    removedValues: [],
     dismissedWarnings: [],
   }),
   // Export owns the per-document metadata review decisions.
@@ -768,7 +805,7 @@ export const STEP_RESETS = {
 };
 
 /**
- * resetStep(step) clears exactly what that step owns (BUILD-04 CR16).
+ * resetStep(step) clears exactly what that step owns.
  * Unknown steps are rejected rather than silently ignored, so a typo in a
  * caller cannot quietly skip a reset the user confirmed.
  * @param {string} step a token from WIZARD_STEPS
@@ -800,10 +837,10 @@ export function isBackward(from, to) {
  * nextStep() moves one step forward. Forward moves never ask anything, so this
  * is the whole of the operation.
  *
- * There is no prevStep() any more (BUILD-05 Phase 9). It moved one step BACK
+ * There is no prevStep() any more. It moved one step BACK
  * without the reset question, which made it a way around the rule nav.js exists
  * to enforce: an accidental caller would silently skip the confirmation the user
- * is owed. Backward movement goes through nav.js goBack().
+ * is owed. Backward movement goes through nav.js goBack.
  */
 export function nextStep() {
   const idx = WIZARD_STEPS.indexOf(state.step);
@@ -879,7 +916,7 @@ export function cacheDocumentSource(name, source) {
   });
 }
 
-// --- Entity review reducers (Phase 7) ----------------------------------------
+// --- Entity review reducers ----------------------------------------
 //
 // Entities are keyed by (category, canonical), one row per real-world
 // entity. status "accepted" entities feed the pipeline; "denied" ones are
@@ -909,7 +946,7 @@ export function addEntities(items) {
       // variants: null = "not yet expanded" (the view shows a pending
       // placeholder and triggers expansion); [] = "expanded, none found"
       // (explicit empty state). Distinguishing the two is the heart of
-      // the BUILD-02 Phase 7a fix.
+      // the fix.
       variants: item.variants ?? null,
       variantError: null,
       excludedVariants: item.excludedVariants ?? [],
@@ -919,21 +956,6 @@ export function addEntities(items) {
   if (added.length) setState({ entities: [...state.entities, ...added] });
   return added.length;
 }
-
-// setEntityStatus() and editEntity() are GONE (BUILD-05 Phase 9).
-//
-// setEntityStatus flipped a row between "accepted" and "denied". The redesign
-// has no denied state: a suggestion is accepted or rejected in the Suggestions
-// tab, and a value that reaches My values is a value that will be replaced. The
-// `status` field and the filter in acceptedEntities() below survive as the belt
-// to that brace, because a row that somehow arrived denied must still not reach
-// the pipeline.
-//
-// editEntity renamed a value in place, an action the review TABLE offered.
-// The value cards that replaced it do not: a value is keyed by (category,
-// canonical), so a rename is a remove and an add, which is what the card's two
-// controls already do and what the registry needs anyway to keep its
-// placeholder mapping honest.
 
 /** removeEntity(category, canonical) deletes a row outright. */
 export function removeEntity(category, canonical) {
@@ -955,7 +977,7 @@ export function setEntityVariants(category, canonical, variants) {
 }
 
 /** setEntityVariantError records a failed expansion so the row shows the
- *  Go error text instead of a forever-pending placeholder (Phase 7a). */
+ *  Go error text instead of a forever-pending placeholder. */
 export function setEntityVariantError(category, canonical, message) {
   setState({
     entities: state.entities.map((e) =>
@@ -993,7 +1015,7 @@ export function acceptedEntities(s = state) {
     }));
 }
 
-// --- Candidate review reducers (BUILD-02 Phase 9b) ----------------------------
+// --- Candidate review reducers ----------------------------
 //
 // The review gate: discovery methods ADD candidates; only an explicit
 // accept turns a candidate into an entity. Candidates are keyed by
@@ -1050,25 +1072,9 @@ export function rejectCandidate(text) {
   setState({ candidates: state.candidates.filter((c) => candidateKey(c.text) !== key) });
 }
 
-// updateCandidate() is GONE (BUILD-05 Phase 9). It edited a suggestion's text or
-// category in place, before accepting it. The suggestions table is now a review
-// gate with exactly two answers per row, accept or reject: editing a suggestion
-// meant deciding what it should have been, which is what My values is for, and
-// having it in both places meant two ways to create the same value.
-
-// acceptAllInCategory() and denyAllInCategory() are GONE (BUILD-05 Phase 9),
-// along with the bulkSelection() picker they shared.
-//
-// They bulk-acted on ONE category at a time, because the BUILD-04 suggestions
-// table grouped its bulk buttons per category. The BUILD-05 table sorts and
-// filters across every category at once, so "the rows shown" is not a category,
-// and acceptAllShown() / rejectAllShown() below take the visible values directly.
-// Keeping the per-category pair as well would have meant two bulk paths with
-// different notions of what a bulk action covers.
-
 /**
  * acceptAllShown(texts) bulk-accepts the candidates whose values are listed,
- * ACROSS categories (BUILD-05 Phase 6).
+ * ACROSS categories.
  *
  * This is the mock-up's "Accept all shown". It differs from
  * acceptAllInCategory in exactly one way that matters: the suggestions table
@@ -1111,7 +1117,7 @@ export function rejectAllShown(texts) {
   return removed;
 }
 
-// --- Variant regrouping (BUILD-02 Phase 9d) -----------------------------------
+// --- Variant regrouping -----------------------------------
 
 /**
  * moveVariant(fromCategory, fromCanonical, toCategory, toCanonical,
@@ -1170,7 +1176,7 @@ export function moveVariant(fromCategory, fromCanonical, toCategory, toCanonical
   return true;
 }
 
-// --- Reassignment helpers (BUILD-02 Phase 10d) --------------------------------
+// --- Reassignment helpers --------------------------------
 
 /**
  * entityAutocomplete(query, s) filters entity canonicals for the
@@ -1214,63 +1220,24 @@ export function reassignOriginal(original, toCategory, toCanonical) {
   return true;
 }
 
-// --- The Anonymise screen's editing surfaces (BUILD-05 Phase 7) ---------------
+// --- The Anonymise screen's editing surfaces ---------------------------------
 
 /**
- * addPendingValue(category, text) records a value the user added on the
- * Anonymise screen and adds it to the value list in the same breath.
+ * setValueTables(replaced, removed) mirrors the Go registry into the store.
  *
- * The two go together on purpose. The entity is what makes a fast re-run replace
- * the value; the pending chip is what tells the user it will not happen until
- * they press it. Recording only one of the two would either lose the value or
- * lie about when it takes effect.
+ * Both halves land together because they are one picture: a value moves from
+ * one list to the other, and updating them separately shows it in both or in
+ * neither for one repaint.
  *
- * A value that is already pending, or already an accepted value, is rejected:
- * the chip would be a duplicate and the entity would be too, so the honest
- * answer is "nothing happened" rather than a second chip that does nothing.
- *
- * @param {string} category the engine category identifier
- * @param {string} text the missed value
- * @returns {boolean} whether a chip was added
+ * @param {Array} replaced rows from api.js valuePlaceholders()
+ * @param {Array} removed rows from api.js listRemovedValues()
  */
-export function addPendingValue(category, text) {
-  const value = (text ?? "").trim();
-  if (!value) return false;
-  const lower = value.toLowerCase();
-  if (state.pendingValues.some((p) => p.text.toLowerCase() === lower)) return false;
-  if (state.entities.some((e) => e.canonical.toLowerCase() === lower)) return false;
-
-  addEntities([{ category, canonical: value }]);
-  setState({ pendingValues: [...state.pendingValues, { category, text: value }] });
-  return true;
+export function setValueTables(replaced, removed) {
+  setState({ replacedValues: replaced ?? [], removedValues: removed ?? [] });
 }
 
 /**
- * removePendingValue(text) takes a value back off the pending list AND out of
- * the value list, because the chip's ✕ has to undo the whole of what Add did.
- * @param {string} text the value to drop
- */
-export function removePendingValue(text) {
-  const lower = (text ?? "").trim().toLowerCase();
-  const pending = state.pendingValues.find((p) => p.text.toLowerCase() === lower);
-  if (!pending) return;
-  setState({ pendingValues: state.pendingValues.filter((p) => p !== pending) });
-  removeEntity(pending.category, pending.text);
-}
-
-/**
- * clearPendingValues() empties the list, called by the re-run that applies them.
- * The ENTITIES stay: they are what the re-run just used.
- * @returns {number} how many chips were cleared
- */
-export function clearPendingValues() {
-  const cleared = state.pendingValues.length;
-  if (cleared) setState({ pendingValues: [] });
-  return cleared;
-}
-
-/**
- * dismissWarning(id) hides one run warning (BUILD-05 Phase 7).
+ * dismissWarning(id) hides one run warning.
  *
  * The id is the warning's own TEXT. Go sends warnings as plain strings with no
  * identifier, and inventing an index would break the moment a run produced them
@@ -1302,7 +1269,7 @@ export function visibleWarnings(s = state) {
   return (s.results?.report?.warnings ?? []).filter((w) => !dismissed.has(w));
 }
 
-// --- Same-format metadata review (BUILD-02 Phase 12c) --------------------------
+// --- Same-format metadata review --------------------------
 
 /** setMetaReview(docName, review) stores (or replaces) one document's
  *  metadata review state; pass null to clear it. */
@@ -1325,17 +1292,17 @@ export function setExportDir(dir) {
 }
 
 /**
- * startNewBatch() clears THIS batch and keeps the setup (BUILD-05 Phase 8).
+ * startNewBatch() clears THIS batch and keeps the setup.
  *
  * The split is the whole point, so it is spelled out rather than left to a
  * reader of the object literal:
  *
- *   CLEARED   the documents, the run and everything it produced (results, the
+ *   CLEARED the documents, the run and everything it produced (results, the
  *             mapping, the pending values, the dismissed warnings), the values
  *             and suggestions, the custom patterns, the find-and-replace rules,
  *             and the per-document metadata review decisions. All of it is about
  *             the batch that just finished.
- *   KEPT      the settings (categories, confidence, smart-detection tuning, the
+ *   KEPT the settings (categories, confidence, smart-detection tuning, the
  *             Ollama connection), the document country, and the never-anonymise
  *             list. All of it is about HOW this user works, and re-entering it
  *             for every batch is exactly the tedium the button exists to avoid.
@@ -1377,7 +1344,8 @@ export function startNewBatch() {
     results: null,
     mapping: null,
     resultDoc: null,
-    pendingValues: [],
+    replacedValues: [],
+    removedValues: [],
     dismissedWarnings: [],
     metaReview: {},
     exportDir: state.exportDir,
@@ -1399,13 +1367,6 @@ export function removeAllowTerm(term) {
   setState({ allowlist: state.allowlist.filter((x) => x.toLowerCase() !== term.toLowerCase()) });
 }
 
-// clearAllowlist() is GONE (BUILD-05 Phase 9). It emptied the never-anonymise
-// list in one action, from a button in the panel header that the chip layout no
-// longer has, and it was the last thing on that screen behind a native confirm()
-// (decision 10). Removing terms one chip at a time is the ordinary case, and a
-// list of a dozen seeded terms is not one anyone needs to empty in a single
-// press. The engine defaults are still seeded at startup and still removable.
-
 /** addPattern(expr, error) stores a custom regex with its validation state. */
 export function addPattern(expr, error = null) {
   const e = (expr ?? "").trim();
@@ -1422,7 +1383,7 @@ export function validPatterns(s = state) {
   return s.patterns.filter((p) => !p.error).map((p) => ({ expr: p.expr }));
 }
 
-// --- Simple-replace rule reducers (Phase 8) ----------------------------------
+// --- Simple-replace rule reducers ----------------------------------
 //
 // Rules are ORDERED: rule 1 runs before rule 2 and later rules see earlier
 // output (engine/simplereplace.go). Hence the move reducer.

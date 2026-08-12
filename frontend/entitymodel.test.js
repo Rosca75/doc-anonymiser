@@ -1,11 +1,11 @@
-// entitymodel.test.js, the variants regression suite (BUILD-02 Phase 7b,
-// extended by BUILD-04 CR17, trimmed for BUILD-05 Phase 9).
+// entitymodel.test.js, the variants regression suite (,
+// extended by, trimmed for).
 //
-// These pin the DATA-FLOW contract, which the BUILD-05 relayout deliberately did
+// These pin the DATA-FLOW contract, which the relayout deliberately did
 // not change: pending vs empty vs error are three distinct states, only the rows
 // a user just touched re-expand, and two values never interfere with each other.
 //
-// What went with Phase 9 is variantRows() and everything about EXPANDED rows. The
+// What went with is variantRows() and everything about EXPANDED rows. The
 // value cards that replaced the review table always show their variants, so there
 // is no expanded set left to model. The states it encoded are still tested here,
 // read straight off the entity, which is exactly what the cards do.
@@ -38,7 +38,7 @@ function variantState(e) {
 }
 
 test("a new value is PENDING, not empty", () => {
-  // The distinction is the heart of BUILD-02 Phase 7a: "not expanded yet" and
+  // The distinction is the heart of: "not expanded yet" and
   // "expanded and found nothing" look identical if both are [].
   resetState();
   addEntities([{ category: "person_names", canonical: "Marie Duval" }]);

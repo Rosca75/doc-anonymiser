@@ -88,11 +88,11 @@ func PDF(raw []byte) (markdown string, warnings []string, err error) {
 
 // RepairPDFText applies the nb1 spacing-repair heuristic to extracted PDF
 // text, line by line. Exported so the table-driven tests can pin the exact
-// nb1 example cases (BUILD.md Phase 1B).
+// nb1 example cases.
 //
 // Repairs:   "B R IDDING ULES"      → "BIDDING RULES"
 //
-//	"double  spaces here"  → "double spaces here"
+//	"double spaces here"  → "double spaces here"
 //
 // Left alone: lowercase text, single stray capitals ("I", "A" as words),
 //

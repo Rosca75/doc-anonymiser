@@ -1,15 +1,16 @@
-// step_parity_test.go — the wizard-step parity guard (BUILD-05 Phase 0).
+// step_parity_test.go — the wizard-step parity guard.
 //
 // The wizard's step list is declared in FIVE places, in three different
 // files, and nothing used to hold them together:
 //
-//	frontend/state.js   WIZARD_STEPS   the ordered tokens, the source of order
-//	frontend/state.js   STEP_RESETS    what each step owns and therefore clears
-//	frontend/main.js    STEP_LABELS    the visible label on each step-bar circle
-//	frontend/main.js    VIEWS          the renderer for each step
-//	frontend/copy.js    NAV.stepNames  the step name used in prose
+//		frontend/state.js WIZARD_STEPS the ordered tokens, the source of order
+//		frontend/state.js STEP_RESETS what each step owns and therefore clears
+//		frontend/main.js STEP_LABELS the visible label on each step-bar circle
+//		frontend/main.js VIEWS the renderer for each step
+//		frontend/copy.js NAV.stepNames the step name used in prose
 //
-// BUILD-04 CR3 renamed one step and had to touch four of the five. BUILD-05
+//	 renamed one step and had to touch four of the five.
+//
 // removes a step entirely and renames two more. A rename that reaches four of
 // the five places produces a step with no renderer (a blank screen), or a
 // reset that silently stops running, or a confirmation sentence naming a step
@@ -273,7 +274,7 @@ func TestWizardStepTokensAreUniqueAndOrdered(t *testing.T) {
 	}
 
 	// Import is always reachable and is the fallback for an unknown persisted
-	// token (BUILD-05 decision 1), so it has to be first. Export is the last
+	// token, so it has to be first. Export is the last
 	// step by definition: canGoTo() special-cases it as "needs results".
 	if len(steps) == 0 || steps[0] != "import" {
 		t.Errorf("WIZARD_STEPS must start with \"import\": it is the only always-reachable step "+
@@ -286,7 +287,7 @@ func TestWizardStepTokensAreUniqueAndOrdered(t *testing.T) {
 }
 
 func TestNoNativeDialogsInTheFrontend(t *testing.T) {
-	// BUILD-05 decision 10: every native confirm() goes, replaced by the in-app
+	// every native confirm() goes, replaced by the in-app
 	// modal. alert() and prompt() are covered by the same rule; neither was in
 	// use, and this keeps them out.
 	//

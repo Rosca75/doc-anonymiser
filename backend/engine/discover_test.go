@@ -1,4 +1,4 @@
-// engine/discover_test.go — BUILD-02 Phase 8 tests for the Smart
+// engine/discover_test.go —  tests for the Smart
 // detection tier, English AND French fixtures (CLAUDE.md §6).
 package engine
 
@@ -36,7 +36,7 @@ func TestSmartDetectSuffixGazetteer(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := SmartDetect(tc.text, NewEmptyAllowlist())
+			got := SmartDetectWithOptions(tc.text, NewEmptyAllowlist(), SmartDetectOptions{})
 			c := findCandidate(got, tc.want)
 			if c == nil {
 				t.Fatalf("candidate %q missing, got %+v", tc.want, got)
@@ -50,7 +50,7 @@ func TestSmartDetectSuffixGazetteer(t *testing.T) {
 
 func TestSmartDetectSuffixAloneIsNotACandidate(t *testing.T) {
 	// A legal form with no preceding name must not be proposed.
-	got := SmartDetect("The GmbH structure is common. The GmbH form works.", NewEmptyAllowlist())
+	got := SmartDetectWithOptions("The GmbH structure is common. The GmbH form works.", NewEmptyAllowlist(), SmartDetectOptions{})
 	if c := findCandidate(got, "GmbH"); c != nil {
 		t.Errorf("bare suffix must not be a candidate: %+v", c)
 	}
@@ -59,7 +59,7 @@ func TestSmartDetectSuffixAloneIsNotACandidate(t *testing.T) {
 func TestSmartDetectCapitalisedRuns(t *testing.T) {
 	text := "Yesterday we met Jean-Pierre Muller at the office. " +
 		"Later, Anouk van den Berg joined the call with everyone."
-	got := SmartDetect(text, NewEmptyAllowlist())
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), SmartDetectOptions{})
 
 	jp := findCandidate(got, "Jean-Pierre Muller")
 	if jp == nil {
@@ -75,13 +75,13 @@ func TestSmartDetectCapitalisedRuns(t *testing.T) {
 
 func TestSmartDetectSentenceStartRule(t *testing.T) {
 	// "Ensuite" opens a sentence once: sentence-case noise, dropped.
-	once := SmartDetect("Nous avons signé. Ensuite tout le monde est parti.", NewEmptyAllowlist())
+	once := SmartDetectWithOptions("Nous avons signé. Ensuite tout le monde est parti.", NewEmptyAllowlist(), SmartDetectOptions{})
 	if c := findCandidate(once, "Ensuite"); c != nil {
 		t.Errorf("single sentence-start run must be dropped: %+v", c)
 	}
 
 	// "Borealis" opens two sentences: repeated sentence-start is kept.
-	twice := SmartDetect("Borealis grew fast. Borealis hired again.", NewEmptyAllowlist())
+	twice := SmartDetectWithOptions("Borealis grew fast. Borealis hired again.", NewEmptyAllowlist(), SmartDetectOptions{})
 	if findCandidate(twice, "Borealis") == nil {
 		t.Errorf("repeated sentence-start run must be kept: %+v", twice)
 	}
@@ -90,12 +90,12 @@ func TestSmartDetectSentenceStartRule(t *testing.T) {
 func TestSmartDetectSingleWordFrequency(t *testing.T) {
 	// A single-word run appearing once mid-sentence, no suffix, no title:
 	// dropped as noise.
-	got := SmartDetect("The meeting covered Zephyr briefly today.", NewEmptyAllowlist())
+	got := SmartDetectWithOptions("The meeting covered Zephyr briefly today.", NewEmptyAllowlist(), SmartDetectOptions{})
 	if c := findCandidate(got, "Zephyr"); c != nil {
 		t.Errorf("single-occurrence single-word run must be dropped: %+v", c)
 	}
 	// The same word twice qualifies.
-	got = SmartDetect("We value Zephyr highly. Everyone likes working with Zephyr daily.", NewEmptyAllowlist())
+	got = SmartDetectWithOptions("We value Zephyr highly. Everyone likes working with Zephyr daily.", NewEmptyAllowlist(), SmartDetectOptions{})
 	if findCandidate(got, "Zephyr") == nil {
 		t.Errorf("repeated run must qualify: %+v", got)
 	}
@@ -111,7 +111,7 @@ func TestSmartDetectTitleCues(t *testing.T) {
 		{"Selon M. Dupont, tout va bien.", "Dupont"},
 	}
 	for _, tc := range cases {
-		got := SmartDetect(tc.text, NewEmptyAllowlist())
+		got := SmartDetectWithOptions(tc.text, NewEmptyAllowlist(), SmartDetectOptions{})
 		c := findCandidate(got, tc.want)
 		if c == nil {
 			t.Errorf("title-cued name %q missing in %q: %+v", tc.want, tc.text, got)
@@ -126,7 +126,7 @@ func TestSmartDetectTitleCues(t *testing.T) {
 func TestSmartDetectFrequencyAndContexts(t *testing.T) {
 	text := "Alpine Trust leads. We audit Alpine Trust yearly. " +
 		"The Alpine Trust burden grows. Alpine Trust again. Alpine Trust once more."
-	got := SmartDetect(text, NewEmptyAllowlist())
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), SmartDetectOptions{})
 	c := findCandidate(got, "Alpine Trust")
 	if c == nil {
 		t.Fatalf("frequent candidate missing: %+v", got)
@@ -154,7 +154,7 @@ func TestSmartDetectAllowlistWins(t *testing.T) {
 	allow.Add("Luxembourg")
 	text := "The CSSF reviewed our Luxembourg filing. The CSSF asked again. " +
 		"Luxembourg rules apply. Alpine Trust S.A. responded."
-	got := SmartDetect(text, allow)
+	got := SmartDetectWithOptions(text, allow, SmartDetectOptions{})
 	if findCandidate(got, "CSSF") != nil || findCandidate(got, "Luxembourg") != nil {
 		t.Errorf("allowlisted terms must never be emitted: %+v", got)
 	}
@@ -166,7 +166,7 @@ func TestSmartDetectAllowlistWins(t *testing.T) {
 func TestSmartDetectFrenchFixture(t *testing.T) {
 	text := "Réunion avec Mme Amélie Lefèvre et la société Lumière Conseil Sàrl. " +
 		"Le projet Lumière Conseil Sàrl continue à Esch-sur-Alzette avec Amélie Lefèvre."
-	got := SmartDetect(text, NewEmptyAllowlist())
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), SmartDetectOptions{})
 	if c := findCandidate(got, "Amélie Lefèvre"); c == nil || c.Category != "person_names" {
 		t.Errorf("accented person name missing or misrouted: %+v", got)
 	}
@@ -175,32 +175,13 @@ func TestSmartDetectFrenchFixture(t *testing.T) {
 	}
 }
 
-// --- BUILD-04 CR13: SmartDetectOptions ------------------------------------
-
-// TestSmartDetectLegacySignatureIsUnfiltered: the two-argument SmartDetect
-// must behave exactly as it did before the options existed. Every earlier
-// test in this file depends on that, and so does any caller that has
-// nothing to say about tuning.
-func TestSmartDetectLegacySignatureIsUnfiltered(t *testing.T) {
-	const text = "Ltd was mentioned. Marie Duval called. Marie Duval called again.\n"
-	legacy := SmartDetect(text, NewEmptyAllowlist())
-	zero := SmartDetectWithOptions(text, NewEmptyAllowlist(), SmartDetectOptions{})
-	if len(legacy) != len(zero) {
-		t.Fatalf("legacy SmartDetect returned %d candidates, zero options returned %d; they must agree",
-			len(legacy), len(zero))
-	}
-	for i := range legacy {
-		if legacy[i].Text != zero[i].Text || legacy[i].Count != zero[i].Count {
-			t.Errorf("candidate %d differs: %+v vs %+v", i, legacy[i], zero[i])
-		}
-	}
-}
+// --- SmartDetectOptions --------------------------------------------------
 
 // TestSmartDetectCandidatesCarryAScore: every candidate must carry the
 // heuristic score, whether or not filtering is on, because the review UI
 // sorts and filters on it without re-running detection.
 func TestSmartDetectCandidatesCarryAScore(t *testing.T) {
-	got := SmartDetect("Alpine Trust S.A. signed. Marie Duval signed too.\n", NewEmptyAllowlist())
+	got := SmartDetectWithOptions("Alpine Trust S.A. signed. Marie Duval signed too.\n", NewEmptyAllowlist(), SmartDetectOptions{})
 	if len(got) == 0 {
 		t.Fatal("expected candidates")
 	}
@@ -238,7 +219,7 @@ func TestCandidateScoreLadder(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := SmartDetect(tc.text, NewEmptyAllowlist())
+			got := SmartDetectWithOptions(tc.text, NewEmptyAllowlist(), SmartDetectOptions{})
 			scores := map[string]float32{}
 			for _, c := range got {
 				scores[c.Text] = c.Confidence
@@ -377,7 +358,7 @@ func TestAllowlistStillWinsOverTuning(t *testing.T) {
 	}
 }
 
-// --- BUILD-06: the offline pass must scale, and must be interruptible ------
+// --- the offline pass must scale, and must be interruptible --------------
 
 // TestExtractRunsScalesLinearly guards a quadratic hot spot that made
 // detection look like it had hung on a real document.
@@ -391,11 +372,11 @@ func TestAllowlistStillWinsOverTuning(t *testing.T) {
 // The assertion is a RATIO with a generous bound rather than a stopwatch
 // threshold, so it fails on a return to quadratic behaviour and not on a busy
 // CI runner.
-func TestExtractRunsScalesLinearly(t *testing.T) {
+func TestExtractRunsContextScalesLinearly(t *testing.T) {
 	measure := func(repeats int) time.Duration {
 		text := strings.Repeat("Alpine Trust S.A. met Marie Duval in Luxembourg. ", repeats)
 		start := time.Now()
-		extractRuns(text)
+		extractRunsContext(context.Background(), text)
 		return time.Since(start)
 	}
 	// Warm the code paths so the first measurement is not the one that pays
@@ -408,12 +389,12 @@ func TestExtractRunsScalesLinearly(t *testing.T) {
 	// 8x leaves generous room for allocator noise while still failing loudly
 	// on a reintroduced O(n^2).
 	if large > 8*small {
-		t.Errorf("extractRuns looks quadratic again: 4x the input took %v after %v (%.1fx)",
+		t.Errorf("extractRunsContext looks quadratic again: 4x the input took %v after %v (%.1fx)",
 			large, small, float64(large)/float64(small))
 	}
 }
 
-// TestSmartDetectContextIsInterruptible: before BUILD-06 the offline pass took
+// TestSmartDetectContextIsInterruptible: before the offline pass took
 // no context, so Cancel could only land BETWEEN documents and one large file
 // ran to completion whatever the user pressed.
 func TestSmartDetectContextIsInterruptible(t *testing.T) {
@@ -451,5 +432,83 @@ func TestSmartDetectContextMatchesTheLegacyCall(t *testing.T) {
 		if got[i].Text != want[i].Text || got[i].Category != want[i].Category {
 			t.Errorf("candidate %d differs: %+v vs %+v", i, got[i], want[i])
 		}
+	}
+}
+
+// --- Product signals -----------------------------------------------------
+
+func TestProductDetection(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want string // the candidate text expected under product_names
+	}{
+		{
+			name: "a trademark mark is the high-precision signal",
+			text: "We deployed Meridian Suite™ across the group. Meridian Suite™ is live.\n",
+			want: "Meridian Suite",
+		},
+		{
+			name: "a registered mark counts too",
+			text: "Helios Core® shipped in March. Helios Core® shipped again.\n",
+			want: "Helios Core",
+		},
+		{
+			name: "a head noun inside the run is the weaker signal",
+			text: "The Borealis Platform went live. The Borealis Platform scaled well.\n",
+			want: "Borealis Platform",
+		},
+		{
+			name: "a head noun beside the run counts as well",
+			text: "The Borealis platform went live. The Borealis platform scaled well.\n",
+			want: "Borealis",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SmartDetectWithOptions(tc.text, NewEmptyAllowlist(), SmartDetectOptions{})
+			for _, c := range got {
+				if c.Text == tc.want {
+					if c.Category != CatProductNames {
+						t.Fatalf("%q was filed as %s, want %s", c.Text, c.Category, CatProductNames)
+					}
+					return
+				}
+			}
+			t.Fatalf("no candidate %q in %+v", tc.want, got)
+		})
+	}
+}
+
+func TestALegalFormBeatsAProductNoun(t *testing.T) {
+	// A company that happens to sell a platform is still a company. The cue
+	// ladder is ordered on purpose and this is its one ambiguous rung.
+	got := SmartDetectWithOptions("Alpine Trust S.A. platform is live.\n",
+		NewEmptyAllowlist(), SmartDetectOptions{})
+	if len(got) == 0 || got[0].Text != "Alpine Trust S.A." {
+		t.Fatalf("want the suffixed name first, got %+v", got)
+	}
+	if got[0].Category != CatEntityNames {
+		t.Errorf("category = %s, want %s", got[0].Category, CatEntityNames)
+	}
+}
+
+func TestCodesReachTheOfflineRoute(t *testing.T) {
+	// The code detector is a second scanner, folded into the offline route so
+	// every caller gets it. A detector nothing calls is a detector that does not
+	// exist, which is what the retired organisation_names category was.
+	got := SmartDetectWithOptions("Ref. INV-88213 covers the projet ATLAS-2024.\n",
+		NewEmptyAllowlist(), DefaultSmartDetectOptions())
+
+	byText := map[string]Candidate{}
+	for _, c := range got {
+		byText[c.Text] = c
+	}
+	if c, ok := byText["INV-88213"]; !ok || c.Category != CatIdentifierNames {
+		t.Errorf("want INV-88213 as an identifier, got %+v", got)
+	}
+	if c, ok := byText["ATLAS-2024"]; !ok || c.Category != CatProjectNames {
+		t.Errorf("want ATLAS-2024 as a project, got %+v", got)
 	}
 }

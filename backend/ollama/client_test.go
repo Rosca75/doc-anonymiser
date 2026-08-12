@@ -1,5 +1,5 @@
-// ollama/client_test.go — Phase 5 tests, all against httptest.Server mocks:
-// ZERO real network calls (BUILD.md Phase 5 definition of done). The mock
+// ollama/client_test.go — tests all against httptest.Server mocks:
+// ZERO real network calls. The mock
 // listens on 127.0.0.1, which is loopback, so even the local-only guarantee
 // holds during tests.
 package ollama
@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -237,7 +238,7 @@ func TestPipelineWithOllamaClient(t *testing.T) {
 	}
 }
 
-// --- BUILD-02 Phase 5: error mapping, num_ctx, chunking ---------------------
+// --- error mapping, num_ctx, chunking ------------------------------------
 
 // TestChat400ContextOverflow: an HTTP 400 with a context-window error body
 // must surface the context problem and must NOT claim the model is not
@@ -469,7 +470,7 @@ func TestDiscoverCancelBetweenChunks(t *testing.T) {
 	}
 }
 
-// --- BUILD-02 Phase 8b: candidate span classification ------------------------
+// --- candidate span classification ---------------------------------------
 
 // TestClassifyCandidates: categories come back per candidate; a name the
 // server "invents" (not among the inputs) is dropped by the verbatim
@@ -551,5 +552,63 @@ func TestClassifyCandidatesBatching(t *testing.T) {
 	}
 	if calls.Load() < 2 {
 		t.Errorf("200 padded candidates must need several batches, got %d call(s)", calls.Load())
+	}
+}
+
+// TestPromptsAndParserAgreeOnTheCategoryKeys is the parity guard for this file.
+//
+// Three lists have to name the same categories: the keys each prompt demands,
+// the keys parseEntityJSON reads back, and the engine's own category set. A key
+// in a prompt that parseEntityJSON does not know is dropped on parse; a key here
+// that no prompt requests is a category the model is never asked to fill.
+// Either way the category is dead and every test still passes, which is exactly
+// how organisation_names survived for three phases.
+func TestPromptsAndParserAgreeOnTheCategoryKeys(t *testing.T) {
+	prompts := map[string]string{
+		"discover":  discoverSystemPrompt,
+		"deep scan": deepScanSystemPromptPrefix,
+		"classify":  classifySystemPrompt,
+	}
+
+	for _, category := range engine.AllEntityCategories {
+		// custom_patterns is the user's own regex; a model has nothing to say
+		// about it, so it is deliberately outside this contract.
+		if category == engine.CatCustomPatterns {
+			continue
+		}
+		if !slices.Contains(entityCategories, category) {
+			t.Errorf("the engine category %q is not in entityCategories, so the parser drops it", category)
+		}
+		for name, prompt := range prompts {
+			if !strings.Contains(prompt, `"`+category+`"`) {
+				t.Errorf("the %s prompt never asks for %q, so the model cannot fill it", name, category)
+			}
+		}
+	}
+
+	for _, category := range entityCategories {
+		if !slices.Contains(engine.AllEntityCategories, category) {
+			t.Errorf("entityCategories names %q, which the engine does not have", category)
+		}
+	}
+}
+
+func TestParseEntityJSONAcceptsEveryKeyAndIgnoresUnknownOnes(t *testing.T) {
+	reply := `{"entity_names":["Alpine Trust"],"project_names":["Atlas"],
+	  "product_names":["Meridian Suite"],"brand_names":["Helios"],
+	  "person_names":["Marie Duval"],"identifier_names":["INV-88213"],
+	  "other_names":["Borealis"],"planet_names":["Mars"]}`
+
+	got, err := parseEntityJSON(reply)
+	if err != nil {
+		t.Fatalf("parseEntityJSON: %v", err)
+	}
+	if len(got) != 7 {
+		t.Fatalf("want one proposal per known key, got %d: %+v", len(got), got)
+	}
+	for _, p := range got {
+		if p.Text == "Mars" {
+			t.Error("an unknown key must be ignored, not passed through")
+		}
 	}
 }

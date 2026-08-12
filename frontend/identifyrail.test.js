@@ -1,12 +1,11 @@
 // identifyrail.test.js, tests for the Identify rail's category grouping and
-// confidence read-out (BUILD-04 Phase 4 as configure.test.js; renamed with the
-// module by BUILD-05 Phase 2).
+// confidence read-out.
 //
 // views/identifyrail.js imports api.js, which only touches `window` inside
 // its functions, so the module imports cleanly here. Only the PURE exports are
-// exercised: the group table (CR9/CR10), the tab set and preset table
-// (BUILD-05 Phase 5), and the sentence that explains the confidence slider
-// (CR9, rewritten by decision 3). Everything else in the view is wiring and
+// exercised: the group table, the tab set and preset table
+// and the sentence that explains the confidence slider
+// Everything else in the view is wiring and
 // belongs to the manual pass.
 
 import { test } from "node:test";
@@ -16,11 +15,13 @@ import {
   CATEGORY_GROUPS, RAIL_SECTIONS, PRESETS, confidenceEffect, llmGateTooltip,
   llmDisabledTooltip, railBody,
 } from "./views/identifyrail.js";
-import { CONFIGURE, RAIL } from "./copy.js";
-import { ALL_CATEGORIES, resetState, getState, setState, setUseAI } from "./state.js";
+import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
+import {
+  ALL_CATEGORIES, NAME_CATEGORIES, resetState, getState, setState, setUseAI,
+} from "./state.js";
 import { textOf, all, one, exists } from "./testhtml.js";
 
-// --- CR9: every category is reachable from some group ---------------------
+// --- every category is reachable from some group -------------------------
 
 test("every category the store knows belongs to exactly one group", () => {
   const seen = new Map();
@@ -63,7 +64,7 @@ test("every group has a title and at least one category (CR10)", () => {
   }
 });
 
-// --- The rail's route sections (BUILD-06) --------------------------------
+// --- The rail's route sections -------------------------------------------
 //
 // The four peer tabs are gone. They said Scope was a thing of its own rather
 // than the scope OF smart detection, and they made Cloud AI, which is not
@@ -96,7 +97,7 @@ test("the presets are the three engine levels, and Custom is not among them", ()
   assert.deepEqual(PRESETS.map(([, label]) => label), ["Soft", "Standard", "Thorough"]);
 });
 
-// --- The AI gate tooltip --------------------------------------------------
+// --- The AI gate tooltip -------------------------------------------------
 
 test("the gate tooltip tells the two reasons apart", () => {
   // Ollama missing and the toggle being off are different problems with
@@ -115,7 +116,7 @@ test("the gate tooltip tells the two reasons apart", () => {
   assert.notEqual(off, missing);
 });
 
-// --- CR9: the confidence read-out, rewritten by decision 3 ---------------
+// --- the confidence read-out, rewritten by -------------------------------
 //
 // The mock-up's copy described a SOURCE-TIERED rule ("values that only the local
 // AI suggested are skipped"), which the engine does not implement. What the
@@ -158,7 +159,7 @@ test("the confidence read-out is a full sentence at every slider stop", () => {
   }
 });
 
-// --- What the rail actually renders (BUILD-06) ---------------------------
+// --- What the rail actually renders --------------------------------------
 
 /** railHTML() renders the rail from a fresh store, optionally patched. */
 function railHTML(patch = {}) {
@@ -233,4 +234,35 @@ test("the Local AI fields are disabled while the route is off", () => {
   // The port is never gated: it is how a user FIXES a connection, so locking
   // it would lock them out of fixing the thing the gate complains about.
   assert.ok(!("disabled" in one(off, "#ollama-port").attrs));
+});
+
+// --- The trigger grouping ------------------------------------------------
+
+test("the detected group holds exactly what a detector can emit", () => {
+  // The group is named "Auto detected values", so its membership is a claim.
+  // custom_patterns is a regex the user WROTE, which is declarative: leaving it
+  // here is the mislabelling the rename exists to fix.
+  const detected = CATEGORY_GROUPS.find(([title]) => title === CONFIGURE.groupDetected);
+  assert.ok(detected, "there must be a detected-values group");
+  assert.deepEqual(detected[1], NAME_CATEGORIES);
+  assert.ok(!detected[1].includes("custom_patterns"),
+    "a regex the user wrote is declared, not detected");
+});
+
+test("the user's own patterns are a group of their own", () => {
+  const declared = CATEGORY_GROUPS.find(([title]) => title === CONFIGURE.groupDeclared);
+  assert.ok(declared, "custom_patterns needs a group that says what it is");
+  assert.deepEqual(declared[1], ["custom_patterns"]);
+});
+
+test("a category only a detection route or manual entry can produce says so", () => {
+  // The switch is NEVER disabled for these: a category gates manually typed
+  // values too, so disabling brand_names with Ollama absent would silently stop
+  // replacing a brand the user typed by hand. The honest signal is the label's
+  // second element, and this turns that comment into something enforced.
+  for (const category of ["brand_names", "other_names"]) {
+    const [, description] = CATEGORY_LABELS[category];
+    assert.match(description, /AI|add(ed)? by you/i,
+      `${category} cannot be found offline, so its description must say where it comes from`);
+  }
 });

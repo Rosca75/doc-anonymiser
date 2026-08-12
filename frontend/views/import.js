@@ -1,18 +1,18 @@
 // views/import.js, wizard step 1: import documents (relaid out to match
-// Import.dc.html by BUILD-05 Phase 4).
+// Import.dc.html by).
 //
 // Two cards side by side, both fixed-height:
 //
-//   Documents  the file count, an ADD FILES primary, the drop zone, and one
+//   Documents the file count, an ADD FILES primary, the drop zone, and one
 //              row per imported document carrying its format badge, size, unit
 //              count, EXPERIMENTAL badge, warning count and remove button. The
 //              selected row wears an orange bar down its left edge.
-//   Preview    the selected document's WORKING FORM, which is the markdown
+//   Preview the selected document's WORKING FORM, which is the markdown
 //              every pipeline pass actually operates on. Grid documents (CSV,
 //              flat xlsx sheet) render as a table; everything else as
 //              monospaced markdown.
 //
-// Two things the BUILD-02 layout had are gone (BUILD-05 decision 6): the
+// Two things this layout deliberately does not have: the
 // draggable pane divider and the importSplit state behind it. The mock-up uses
 // a fixed two-column grid, and a divider that only ever moved between 20% and
 // 80% was three state transitions and a pointer-capture dance to save the user
@@ -100,7 +100,7 @@ function documentRow(d, selected) {
     `<span class="doc-size">${escapeHTML(fmtSize(d.sizeBytes))}</span>`,
   ];
 
-  // The unit count (BUILD-05 Phase 3): "6 pages", "12 slides", "48 rows".
+  // The unit count: "6 pages", "12 slides", "48 rows".
   // Go sends the unit SINGULAR, because only the side printing the number knows
   // which form it needs.
   if (d.unitCount > 0 && d.unit) {
@@ -198,7 +198,7 @@ function previewCard(doc) {
  */
 export function previewBody(doc) {
   // Very large documents preview truncated (first 5 000 lines); the pipeline
-  // still processes the FULL content (Phase 10 hardening).
+  // still processes the FULL content.
   const notice = doc.previewTruncated
     ? `<div class="banner warn">${escapeHTML(IMPORT.previewTruncated)}</div>`
     : "";

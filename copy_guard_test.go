@@ -1,6 +1,6 @@
-// copy_guard_test.go — the Go-side copy-style guard (BUILD-02 Phase 1f).
+// copy_guard_test.go — the Go-side copy-style guard.
 //
-// UI copy rule (BUILD-02 ground rule 4): no em dashes (U+2014) in any
+// UI copy rule: no em dashes (U+2014) in any
 // user-visible string. Go user-visible strings are error messages, report
 // text and prompt/status strings, all of which live in string LITERALS in
 // backend/app*.go, backend/engine/ and backend/ollama/. This test parses

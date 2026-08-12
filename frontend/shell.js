@@ -1,15 +1,14 @@
 // shell.js, the PURE markup builders for the application shell
-// (BUILD-04 Phase 2).
 //
 // main.js used to assemble the header inline, which made two shell rules
 // impossible to test and easy to break:
 //
-//   CR4: the top menu must be IDENTICAL on every screen. The button set
+//   the top menu must be IDENTICAL on every screen. The button set
 //        never changes; only a quiet highlight moves.
-//   CR7: the wizard step indicators must NOT live in the header. They belong
+//   the wizard step indicators must NOT live in the header. They belong
 //        to a separate bar rendered under the menu, and only while the wizard
-//        is on screen. BUILD-05 Phase 2 relaid that bar out as numbered
-//        circles with a back link (stepbarHTML below); the rule is unchanged.
+//        is on screen. It renders numbered circles with a back link
+//        (stepbarHTML below).
 //
 // Both are string-rendering functions with no DOM access, in the same
 // spirit as ui.js and html.js, so shell.test.js can assert them under
@@ -17,7 +16,7 @@
 // functions keep the markup.
 //
 // The file also owns the one SHELL-LEVEL action, showDocumentation
-// (CR6). It lives here rather than in main.js because both the top menu
+// It lives here rather than in main.js because both the top menu
 // and the Home page button need it, and home.js importing main.js would
 // make the module graph circular.
 
@@ -30,13 +29,12 @@ import { setState } from "./state.js";
 
 /**
  * TOPNAV_ITEMS is THE definition of the permanent top menu. It is a
- * constant, not a function of state, which is exactly what CR4 asks for:
- * there is no code path that can add, remove or reorder an entry for a
- * particular screen.
+ * constant, not a function of state: there is no code path that can add,
+ * remove or reorder an entry for a particular screen.
  *
  * `screen` is the value goToScreen() receives for the first two entries.
  * Documentation has no screen: it opens a separate application window
- * (CR6, wired in main.js), so its screen is null and it is never marked
+ * so its screen is null and it is never marked
  * as the current location.
  */
 export const TOPNAV_ITEMS = [
@@ -48,7 +46,7 @@ export const TOPNAV_ITEMS = [
 /**
  * topnavHTML(screen) renders the permanent top menu.
  *
- * Every entry is a plain text link on every screen (BUILD-05 CR3, from the
+ * Every entry is a plain text link on every screen (, from the
  * Claude Design mockup): no icon, no button chrome, just the label. The
  * active one gets the quiet `topnav-active` underline and aria-current
  * ="page". No orange: the one loud element per view belongs to the view,
@@ -94,7 +92,7 @@ export function headerActionsHTML(badgesHTML) {
 
 /**
  * appFooterHTML() renders the permanent footer strip shown under every
- * screen (BUILD-05 CR2): the app version and the local-processing
+ * screen: the app version and the local-processing
  * reassurance with its status dot. Pure markup, no state.
  * @returns {string} safe HTML
  */
@@ -109,12 +107,12 @@ export function appFooterHTML() {
 /**
  * stepbarHTML(steps, activeStep, labels, isEnabled) renders the wizard step
  * bar: a "back to the flow" link, a divider, then the numbered step circles
- * (BUILD-04 CR7, relaid out for BUILD-05 Phase 2 to match the mock-ups).
+ * .
  *
  * It replaced workflowBannerHTML. Three things changed, and each one is
  * carrying its weight:
  *
- *   - The visible "Anonymisation workflow" title is gone. It named the bar
+ *   - There is no visible "Anonymisation workflow" title. It named the bar
  *     it was already obviously part of; the slot now holds the back link,
  *     which does something. The string survives as the bar's accessible
  *     name, where naming the region is the point.
@@ -173,7 +171,7 @@ export function stepbarHTML(steps, activeStep, labels, isEnabled) {
 
 /**
  * showDocumentation() opens the bundled documentation in its own window
- * (CR6) and records a refusal in state.shellError, which main.js renders
+ *  and records a refusal in state.shellError, which main.js renders
  * as a dismissible banner above the active view.
  *
  * Failing to open the documentation must never break the screen the user

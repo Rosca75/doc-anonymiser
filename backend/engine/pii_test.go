@@ -1,12 +1,12 @@
-// engine/pii_test.go — table-driven tests for pass 1 (BUILD.md Phase 2):
+// engine/pii_test.go — table-driven tests for pass 1:
 // per-category positives and negatives, IBAN checksum, level awareness,
 // overlap resolution, registry stability, and the CSV budget measurement.
 //
-// Budget measurements (BUILD.md performance table), recorded 2026-07-23 on
+// Budget measurements, recorded 2026-07-23 on
 // the CI-class Linux container:
 //   - CSV import → markdown render, 10 000 rows × 20 cols: ~36 ms
 //     (budget ≤ 2 s) — see TestCSVImportBudget.
-//   - The 50-document pipeline budget is measured in Phase 4
+//   - The 50-document pipeline budget is measured in
 //     (pipeline_test.go), where the full pass chain exists.
 package engine
 
@@ -18,7 +18,7 @@ import (
 )
 
 // TestDetectPIICategories runs one positive and one negative case per
-// category (BUILD.md Phase 2 unit-test requirements).
+// category.
 func TestDetectPIICategories(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -28,42 +28,42 @@ func TestDetectPIICategories(t *testing.T) {
 		category string
 		want     string // expected matched text ("" = expect NO match of category)
 	}{
-		// --- email ---
+		// --- email -------------------------------------------------------------
 		{"email positive", "contact marie.duval@example.com today", LevelSoft, CountryLU, CatEmail, "marie.duval@example.com"},
 		{"email negative: no TLD", "user@localhost is not external", LevelSoft, CountryLU, CatEmail, ""},
-		// --- url ---
+		// --- url ---------------------------------------------------------------
 		{"url positive", "see https://intra.example.com/report?id=1 now", LevelSoft, CountryLU, CatURL, "https://intra.example.com/report?id=1"},
 		{"url with credentials", "wget https://svc:tok123@host.example.com/f", LevelSoft, CountryLU, CatURL, "https://svc:tok123@host.example.com/f"},
 		{"url negative: bare domain", "visit example.com sometime", LevelSoft, CountryLU, CatURL, ""},
-		// --- iban ---
+		// --- iban --------------------------------------------------------------
 		{"iban positive spaced", "account LU28 0019 4006 4475 0000 please", LevelSoft, CountryLU, CatIBAN, "LU28 0019 4006 4475 0000"},
 		{"iban positive compact", "send to DE89370400440532013000 now", LevelSoft, CountryLU, CatIBAN, "DE89370400440532013000"},
 		{"iban negative: mutated digit fails checksum", "account LU28 0019 4006 4475 0001 please", LevelSoft, CountryLU, CatIBAN, ""},
 		{"iban negative: country word", "LUXEMBOURG is not an IBAN", LevelSoft, CountryLU, CatIBAN, ""},
-		// --- vat ---
+		// --- vat ---------------------------------------------------------------
 		{"vat positive LU", "VAT number LU12345678 on file", LevelSoft, CountryLU, CatVAT, "LU12345678"},
 		{"vat positive FR", "TVA FR40303265045 enregistr?e", LevelSoft, CountryFR, CatVAT, "FR40303265045"},
 		{"vat negative: too short", "code LU1234 is not a VAT number", LevelSoft, CountryLU, CatVAT, ""},
-		// Country scoping, pattern level (BUILD-06 Phase 1): VAT applies to
+		// Country scoping, pattern level: VAT applies to
 		// every country, but each VAT pattern is ONE national format, so the
 		// French format must stay silent under a Luxembourg selection.
 		{"vat negative: FR format under LU selection", "TVA FR40303265045 enregistree", LevelSoft, CountryLU, CatVAT, ""},
-		// --- matricule ---
+		// --- matricule ---------------------------------------------------------
 		{"matricule positive", "matricule 1893120105732 registered", LevelSoft, CountryLU, CatMatricule, "1893120105732"},
 		// Country scoping, category level: the matricule is a Luxembourg
 		// national ID, so the whole category is off under another country.
 		{"matricule negative: LU number under FR selection", "matricule 1893120105732 registered", LevelSoft, CountryFR, CatMatricule, ""},
 		{"matricule negative: 12 digits", "ref 189312010573 stays", LevelSoft, CountryLU, CatMatricule, ""},
 		{"matricule negative: 14 digits", "ref 18931201057321 stays", LevelSoft, CountryLU, CatMatricule, ""},
-		// --- phone ---
+		// --- phone -------------------------------------------------------------
 		{"phone positive international", "call +352 621 000 111 today", LevelSoft, CountryLU, CatPhone, "+352 621 000 111"},
 		{"phone positive FR mobile", "t?l. 06 12 34 56 78 merci", LevelSoft, CountryFR, CatPhone, "06 12 34 56 78"},
 		{"phone negative: plain year", "the year 2026 report", LevelSoft, CountryLU, CatPhone, ""},
-		// --- amount (advanced only) ---
+		// --- amount (advanced only) --------------------------------------------
 		{"amount positive prefix currency", "fee of EUR 1,500.00 agreed", LevelAdvanced, CountryLU, CatAmount, "EUR 1,500.00"},
 		{"amount positive suffix", "budget 12 500 EUR total", LevelAdvanced, CountryLU, CatAmount, "12 500 EUR"},
 		{"amount negative: bare number", "about 1500 items", LevelAdvanced, CountryLU, CatAmount, ""},
-		// --- date (advanced only) ---
+		// --- date (advanced only) ----------------------------------------------
 		{"date positive iso", "due 2026-07-23 latest", LevelAdvanced, CountryLU, CatDate, "2026-07-23"},
 		{"date positive eu numeric", "signed 23/07/2026 in Luxembourg", LevelAdvanced, CountryLU, CatDate, "23/07/2026"},
 		{"date positive written en", "meeting on 23 July 2026 confirmed", LevelAdvanced, CountryLU, CatDate, "23 July 2026"},

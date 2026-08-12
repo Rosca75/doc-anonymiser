@@ -1,19 +1,17 @@
-// nav.js, the ONE place the wizard moves (BUILD-05 Phase 2).
+// nav.js, the ONE place the wizard moves.
 //
-// This module exists because BUILD-05 gave every screen its own footer. Before
-// that, the shell owned the only Back/Next buttons, so the movement rule could
-// live in main.js next to them. Now the step bar (main.js) and four screen
-// footers (views/*.js) all move the wizard, and if each did it its own way the
-// backward-reset rule would hold in some of them and not others.
+// The step bar (main.js), four screen footers (views/*.js) and two keyboard
+// shortcuts all move the wizard. If each did it its own way the backward-reset
+// rule would hold in some of them and not others, so they all come here.
 //
 // It is a separate file rather than an export of main.js purely to keep the
 // module graph acyclic: main.js imports the views, so a view importing main.js
 // would close a cycle. A cycle would probably work, and it would be a trap.
 //
-// The rule, unchanged from BUILD-04 CR16:
+// The rule, unchanged from:
 //
-//   forward   the guard decides, nothing is cleared, nothing is asked
-//   backward  ask first; on yes, reset the step being LEFT and move; on no,
+//   forward the guard decides, nothing is cleared, nothing is asked
+//   backward ask first; on yes, reset the step being LEFT and move; on no,
 //             do nothing at all, not even the move
 //
 // Cancelling deliberately does NOT navigate. "Go back but keep everything"
@@ -23,7 +21,7 @@
 // (state.js STEP_RESETS).
 
 import {
-  getState, WIZARD_STEPS, canGoTo, goTo, nextStep, isBackward, resetStep,
+  getState, WIZARD_STEPS, canGoTo, goTo, goToScreen, nextStep, isBackward, resetStep,
 } from "./state.js";
 import { askConfirm } from "./modal.js";
 import { stepFooter } from "./ui.js";
@@ -34,7 +32,7 @@ import { NAV } from "./copy.js";
  * going back.
  *
  * The question is the in-app modal, not the native confirm() this used to call
- * (BUILD-05 decision 10), which is why this is async: the answer arrives on a
+ * which is why this is async: the answer arrives on a
  * promise instead of blocking the thread. A caller that ignores the returned
  * promise behaves exactly as it did before.
  *
@@ -82,6 +80,58 @@ export function goBack() {
   const index = WIZARD_STEPS.indexOf(getState().step);
   if (index <= 0) return Promise.resolve(false);
   return navigateTo(WIZARD_STEPS[index - 1]);
+}
+
+// --- Keyboard shortcuts ----------------------------------------------------
+//
+// Ctrl+O opens Import and Ctrl+E opens Export. They live here and not in
+// main.js because they MOVE THE WIZARD, and this module is the one place that
+// does (frontend/CLAUDE.md). main.js called goTo() directly, so Ctrl+O from a
+// later step was a backward move with neither the confirm nor the resetStep
+// that every other backward move gets: the same keystroke did one thing from
+// the step bar and another from the keyboard.
+
+/**
+ * SHORTCUT_STEPS maps the shortcut letter to the step it opens. A table rather
+ * than a switch so the pair can be asserted as data.
+ */
+const SHORTCUT_STEPS = { o: "import", e: "export" };
+
+/**
+ * shortcutStep(ev) names the step a keydown asks for, or null.
+ *
+ * Pure, so the mapping is testable without a DOM. Alt and Shift disqualify the
+ * event: Ctrl+Shift+E is the browser's own, and claiming it would be taking a
+ * key we were not given.
+ *
+ * @param {object} ev a keydown event, or anything with the same three fields
+ * @returns {string|null} a step token, or null when this is not a shortcut
+ */
+export function shortcutStep(ev) {
+  if (!ev || !(ev.ctrlKey || ev.metaKey) || ev.altKey || ev.shiftKey) return null;
+  const key = typeof ev.key === "string" ? ev.key.toLowerCase() : "";
+  return SHORTCUT_STEPS[key] ?? null;
+}
+
+/**
+ * handleShortcut(ev) is main.js's keydown listener: it resolves the shortcut
+ * and navigates through navigateTo, so the guard, the confirm and the backward
+ * reset all apply exactly as they do from the step bar and the footers.
+ *
+ * The browser default is suppressed only for a keystroke we actually claim, so
+ * every other Ctrl combination keeps working.
+ *
+ * @param {object} ev the keydown event
+ * @returns {Promise<boolean>} whether the wizard moved
+ */
+export async function handleShortcut(ev) {
+  const step = shortcutStep(ev);
+  if (!step) return false;
+  ev.preventDefault?.();
+  // The shortcuts address a wizard step, so they imply the wizard screen: from
+  // Home, Ctrl+O means "open the import step", not "do nothing visible".
+  goToScreen("wizard");
+  return navigateTo(step);
 }
 
 /**

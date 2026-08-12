@@ -6,7 +6,7 @@
 // is deliberate: paragraphs mix runs, hyperlinks and drawings in document
 // order, and only a token walk preserves that order faithfully.
 //
-// Mapping implemented (CLAUDE.md §5, BUILD.md Phase 1B):
+// Mapping implemented (CLAUDE.md §5):
 //   - paragraph styles Heading1–6 (and French Titre1–6) → # … ######
 //   - bold/italic run properties → **bold** / *italic*
 //   - numbered/bulleted lists (w:numPr) → "1." / "-" items with indentation

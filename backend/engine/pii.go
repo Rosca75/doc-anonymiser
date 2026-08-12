@@ -1,7 +1,7 @@
 // engine/pii.go — Pass 1 of the pipeline: deterministic regex detection of
 // hard PII (CLAUDE.md §5), mirroring the notebook's deterministic pre-pass.
 //
-// Design (BUILD.md Phase 2):
+// Design:
 //   - Detection returns SPANS (start, end, category, original), it never
 //     mutates text. Replacement is a separate step (ApplySpans) applying
 //     spans longest-first, non-overlapping — this span model is reused by
@@ -42,7 +42,7 @@ type Span struct {
 	// variant shares one placeholder. Empty for PII spans (the matched
 	// text IS the canonical value).
 	Canonical string `json:"canonical,omitempty"`
-	// Confidence in [0.0, 1.0] (BUILD-03 Phase C). Deterministic regex hits
+	// Confidence in [0.0, 1.0]. Deterministic regex hits
 	// default to 1.0; LLM proposals default to ConfidenceLLMDefault; manual
 	// entities to ConfidenceManualDefault. Context-word boosting may nudge a
 	// value up (capped at 1.0). Zero means "not scored" and is treated as
@@ -69,7 +69,7 @@ const (
 	CatURL       = "url"
 	CatAmount    = "amount"
 	CatDate      = "date"
-	// BUILD-03 Phase B — extended recognizers inspired by Presidio's
+	// extended recognizers inspired by Presidio's
 	// deterministic layer. All are hard PII (fire at every level).
 	CatCreditCard  = "credit_card"  // Visa/Mastercard/Amex, Luhn-validated
 	CatNHS         = "uk_nhs"       // UK National Health Service number, mod-11 validated
@@ -97,7 +97,7 @@ type piiPattern struct {
 }
 
 // Which categories fire at which preset level lives in ONE place since
-// BUILD-02 Phase 3: PresetSelection (pipeline.go). The patterns below are
+// PresetSelection (pipeline.go). The patterns below are
 // unconditional; DetectPIISelected gates them by the selection.
 
 // The deterministic PII patterns, compiled once at package init
@@ -225,7 +225,7 @@ var piiPatterns = []piiPattern{
 			`|\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s[0-9]{1,2},?\s[0-9]{4}\b`),
 	},
 
-	// --- BUILD-03 Phase B: extended recognizers -------------------------
+	// --- extended recognizers -------------------------
 
 	{
 		// Credit card numbers (Visa, Mastercard, Amex, Discover). 13–19
@@ -315,8 +315,8 @@ var piiPatterns = []piiPattern{
 }
 
 // DetectPIISelected runs exactly the PII patterns whose category is
-// enabled in the selection (BUILD-02 Phase 3 granular switches) AND whose
-// country scope covers the requested country (BUILD-06 Phase 1).
+// enabled in the selection AND whose
+// country scope covers the requested country.
 // Every returned span carries Confidence = ConfidenceDeterministic (1.0).
 //
 // Two country gates apply, and they are deliberately different things:
@@ -447,7 +447,7 @@ func validUKPhone(s string) bool {
 	return len(digits) >= 10 && len(digits) <= 11 && digits[0] == '0'
 }
 
-// Confidence constants (BUILD-03 Phase C).
+// Confidence constants.
 const (
 	// ConfidenceDeterministic is the baseline for regex matches that
 	// survived any checksum/validate step. Callers may boost above via
@@ -461,15 +461,13 @@ const (
 	ConfidenceLLMDefault float32 = 0.8
 )
 
-// FilterByMinConfidence drops every span scoring below one GLOBAL minimum
-// (BUILD-04 CR9), the shape the Configure screen's confidence control
-// needs. It is the flat sibling of FilterByConfidence, which takes a
-// per-category map.
+// FilterByMinConfidence drops every span scoring below one global minimum,
+// which is the shape the rail's confidence control needs.
 //
-// min <= 0 is a no-op, and that is the documented default: the setting
-// must never quietly remove detections a user did not ask it to remove.
-// A span with Confidence == 0 counts as 1.0, same back-compat rule as
-// everywhere else in this file.
+// min <= 0 is a no-op, and that is the documented default: the setting must
+// never quietly remove detections the user did not ask it to remove. A span
+// with Confidence == 0 counts as 1.0, so a producer that states no confidence
+// is trusted rather than filtered away.
 //
 // Examples with the current scale: min 0.9 drops values the local AI
 // proposed on its own (ConfidenceLLMDefault, 0.8) and keeps both the
@@ -490,7 +488,7 @@ func FilterByMinConfidence(spans []Span, min float32) []Span {
 }
 
 // effectiveConfidence is the score used by comparators: the span's stored
-// Confidence, with 0 (never set) promoted to 1.0 so pre-BUILD-03 spans
+// Confidence, with 0 (never set) promoted to 1.0 so pre- spans
 // order and filter the same way they did before the field existed.
 func effectiveConfidence(s Span) float32 {
 	if s.Confidence == 0 {
@@ -499,19 +497,51 @@ func effectiveConfidence(s Span) float32 {
 	return s.Confidence
 }
 
-// ResolveOverlaps keeps a non-overlapping subset of spans. Priority order
-// (BUILD-03 Phase F, extending the BUILD.md Phase 2 rule):
-//  1. Higher confidence wins — a checksum-verified card beats a raw pattern
-//     hit at the same offset. Zero-valued Confidence (pre-Phase-C spans)
-//     is treated as 1.0 so the ordering degrades to the v1 behaviour when
-//     no confidence data is present.
-//  2. Longer match wins — the classic "email inside a URL" case: the URL
-//     is longer, so the URL wins.
-//  3. Earlier start, then category name — tie-break for fully deterministic
-//     output the tests can pin against.
+// ResolveOverlaps keeps a non-overlapping subset of spans, in the fixed
+// priority order below. The result is sorted by Start.
 //
-// The result is sorted by Start.
+//  1. Higher confidence wins. A checksum-verified card beats a raw pattern hit
+//     at the same offset. A zero Confidence is read as 1.0, so a producer that
+//     states none is trusted rather than ranked last.
+//  2. Longer match wins. This is the "email inside a URL" case: the URL is
+//     longer, so the URL wins.
+//  3. Earlier start, then category name. A tie-break that makes the output
+//     fully deterministic, so the tests can pin it.
+//
+// The order agrees with the registry's precedence rule (pass 1 before pass 2
+// before pass 3, which is also 1.0 before 0.95 before 0.8), so the span
+// resolver and the registry can never disagree about which category owns a
+// string.
 func ResolveOverlaps(spans []Span) []Span {
+	kept, _ := resolveOverlaps(spans, false)
+	return kept
+}
+
+// ResolveOverlapsWithLosers is ResolveOverlaps that also returns what it threw
+// away.
+//
+// The losers are how a run WARNS about an overlap: a declared value covered by
+// a regex match, or a custom pattern covering a declared value. They come from
+// here rather than from a parallel check over the declarations, because a
+// parallel check can disagree with the pipeline, and then the warning describes
+// something that did not happen.
+//
+// Call it only when the losers are actually wanted. Collecting them costs an
+// allocation per discarded span, and a document full of name variants discards
+// several per replacement: paying that on every call cost the deterministic
+// pipeline a third of its time budget.
+//
+// @param spans every detection, from every pass, in any order
+// @return the non-overlapping subset to apply, and the spans a stronger span
+//
+//	covered
+func ResolveOverlapsWithLosers(spans []Span) (kept, dropped []Span) {
+	return resolveOverlaps(spans, true)
+}
+
+// resolveOverlaps is the shared core. `collect` decides whether the discarded
+// spans are gathered or simply skipped.
+func resolveOverlaps(spans []Span, collect bool) (kept, dropped []Span) {
 	ordered := make([]Span, len(spans))
 	copy(ordered, spans)
 	sort.Slice(ordered, func(i, j int) bool {
@@ -529,7 +559,6 @@ func ResolveOverlaps(spans []Span) []Span {
 		return ordered[i].Category < ordered[j].Category
 	})
 
-	var kept []Span
 	for _, s := range ordered {
 		overlaps := false
 		for _, k := range kept {
@@ -538,12 +567,16 @@ func ResolveOverlaps(spans []Span) []Span {
 				break
 			}
 		}
-		if !overlaps {
-			kept = append(kept, s)
+		if overlaps {
+			if collect {
+				dropped = append(dropped, s)
+			}
+			continue
 		}
+		kept = append(kept, s)
 	}
 	sort.Slice(kept, func(i, j int) bool { return kept[i].Start < kept[j].Start })
-	return kept
+	return kept, dropped
 }
 
 // ApplySpans replaces every span in text with the placeholder returned by

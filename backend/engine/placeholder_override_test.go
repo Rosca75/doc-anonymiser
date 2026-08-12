@@ -1,5 +1,4 @@
 // engine/placeholder_override_test.go — the editable placeholder
-// (BUILD-05 Phase 3).
 //
 // The registry is the re-identification key, so the risk in letting a user
 // rename a placeholder is not a bad-looking name: it is AMBIGUITY. Two
@@ -225,7 +224,10 @@ func TestSessionRoundTripsPlaceholderOverrides(t *testing.T) {
 		t.Fatalf("LoadSession: %v", err)
 	}
 
-	restored, failures := NewRegistryFromSession(loaded)
+	restored, failures, err := NewRegistryFromSession(loaded)
+	if err != nil {
+		t.Fatalf("NewRegistryFromSession: %v", err)
+	}
 	if len(failures) != 0 {
 		t.Fatalf("restoring the overrides must not fail: %v", failures)
 	}

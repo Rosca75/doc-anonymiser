@@ -1104,14 +1104,10 @@ input, select {
 .reassign-list .btn:hover { border-color: var(--text); }
 .reassign-list .hint { font-size: 0.75rem; }
 
-/* --- The report: the value list, then the category drill-down ------------ */
+/* --- Replaced values, and the report's category drill-down --------------- */
 
-/* The flat list of everything that was replaced (BUILD-06). It is the first
-   thing in the report card because it is the answer to "what did you
-   replace?", which the category totals never gave. */
-.report-values { display: flex; flex-direction: column; gap: 0.5rem; }
-.report-values-head { display: flex; flex-direction: column; gap: 0.2rem; }
-.report-values-head .hint { margin: 0; font-size: 0.72rem; }
+/* The Replaced values table: every value the run produced, with its editable
+   placeholder and its remove action. */
 .report-filter { width: 100%; padding: 0.35rem 0.5rem; font-size: 0.8rem; }
 /* Its own scroll container: a batch can replace hundreds of values, and the
    card body is not allowed to grow the page (the fixed-height contract). */
@@ -1149,6 +1145,18 @@ input, select {
 }
 .report-detail-head .section-label:last-child { text-align: right; }
 .report-item-value { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+/* A value row carries four things: the value, what it becomes, how often, and
+   the way to remove it. The error, when there is one, spans the whole row
+   underneath, because a refusal that shared a column would be truncated. */
+.value-row, .removed-row {
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+}
+.value-row .ph-input { width: 7rem; }
+.value-error { grid-column: 1 / -1; font-size: 0.72rem; }
+.removed-row { grid-template-columns: 1fr auto; }
+.removed-row .report-original { color: var(--ink-3); text-decoration: line-through; }
+
 .report-original {
   font-size: 0.78rem;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

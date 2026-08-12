@@ -1,4 +1,4 @@
-// export.test.js, tests for the Export screen (BUILD-05 Phase 8).
+// export.test.js, tests for the Export screen.
 //
 // views/export.js imports api.js, which only touches `window` inside its
 // functions, so the module imports cleanly here. Only the PURE export is

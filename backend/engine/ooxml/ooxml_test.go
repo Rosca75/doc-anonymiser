@@ -1,4 +1,4 @@
-// engine/ooxml/ooxml_test.go — the shared OOXML plumbing (BUILD-05 Phase 3).
+// engine/ooxml/ooxml_test.go — the shared OOXML plumbing.
 //
 // The behaviour worth pinning is the ABSENT case. Every docProps part is
 // optional, files written by minimal tooling omit them, and the whole reason

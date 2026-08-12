@@ -1,4 +1,4 @@
-// engine/exportfmt/exportfmt_test.go — BUILD-02 Phase 11 tests: same-format
+// engine/exportfmt/exportfmt_test.go —  tests: same-format
 // export round-trips through the EXISTING import converters, untouched zip
 // entries stay bit-identical, spanning replacements work, xlsx preserves
 // formulas and numbers, and an empty mapping is a no-op.

@@ -1,5 +1,5 @@
 // engine/exportfmt/ooxml.go — the shared OOXML text-run replacement
-// (BUILD-02 Phase 11b), used for docx (w:t inside w:p) and pptx (a:t
+// used for docx (w:t inside w:p) and pptx (a:t
 // inside a:p) parts alike.
 //
 // Algorithm, exactly as specified in the plan:

@@ -1,4 +1,4 @@
-// engine/selection_test.go — BUILD-02 Phase 3 tests: the granular
+// engine/selection_test.go —  tests: the granular
 // CategorySelection drives the pipeline (one row per category), presets
 // reproduce the v1 level behaviour byte for byte, and mixed selections
 // behave.
@@ -16,16 +16,20 @@ const selectionFixture = `Contact info.desk@example.com or +352 621 000 111.
 Site https://example.com/x holds IBAN LU28 0019 4006 4475 0000 and VAT LU12345678.
 Matricule 1893120105732 was billed EUR 12,500 on 2026-01-15.
 Client Alpine Trust S.A. runs Project Borealis with Paul Stone (internal) and Marie Curie.
-Office in Metropolis for Acme Corp. Code PRJ-42 applies.`
+The Meridian Suite platform ships with Helios. Code PRJ-42 applies.
+Reference INV-88213 is open.`
 
-// selectionEntities declares one entity per entity category.
+// selectionEntities declares one entity per DECLARABLE entity category.
+// identifier_names and other_names are absent on purpose: the first is what the
+// code detector emits and the fixture carries INV-88213 for it, and the second
+// is defined by exclusion, so there is nothing characteristic to declare.
 var selectionEntities = []Entity{
 	{Category: CatEntityNames, Canonical: "Alpine Trust S.A."},
 	{Category: CatProjectNames, Canonical: "Project Borealis"},
 	{Category: CatEntityNames, Canonical: "Paul Stone"},
 	{Category: CatPersonNames, Canonical: "Marie Curie"},
-	{Category: CatOrganisationNames, Canonical: "Acme Corp"},
-	{Category: CatLocationNames, Canonical: "Metropolis"},
+	{Category: CatProductNames, Canonical: "Meridian Suite"},
+	{Category: CatBrandNames, Canonical: "Helios"},
 }
 
 var selectionPatterns = []CustomPattern{{Expr: `PRJ-[0-9]+`}}
@@ -68,8 +72,8 @@ func TestSingleCategorySelection(t *testing.T) {
 		{CatProjectNames, "Project Borealis"},
 		{CatEntityNames, "Paul Stone"},
 		{CatPersonNames, "Marie Curie"},
-		{CatOrganisationNames, "Acme Corp"},
-		{CatLocationNames, "Metropolis"},
+		{CatProductNames, "Meridian Suite"},
+		{CatBrandNames, "Helios"},
 		{CatCustomPatterns, "PRJ-42"},
 	}
 	// Known single-category cross-matches, documented, not bugs: a
@@ -139,22 +143,18 @@ func TestPresetEquivalence(t *testing.T) {
 	}
 }
 
-// TestMixedSelection: persons on + emails off leaves emails intact, and
-// the allowlist still wins over any enabled selection.
+// TestMixedSelection: persons on and emails off leaves emails intact, while
+// everything else the selection asks for still happens.
 func TestMixedSelection(t *testing.T) {
 	sel := PresetSelection(LevelMedium)
 	sel[CatEmail] = false
-	sel[CatLocationNames] = true // a custom mix: medium plus locations
-
-	allow := NewEmptyAllowlist()
-	allow.Add("Metropolis") // allowlisted although location_names is on
 
 	res, err := Run(context.Background(), PipelineInput{
 		Documents:  []Document{{Name: "f.txt", Format: FormatTXT, Markdown: selectionFixture}},
 		Entities:   selectionEntities,
 		Patterns:   selectionPatterns,
 		Categories: sel,
-		Allowlist:  allow,
+		Allowlist:  NewEmptyAllowlist(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -164,12 +164,35 @@ func TestMixedSelection(t *testing.T) {
 		t.Errorf("emails off: the address must survive, output: %s", out)
 	}
 	if !strings.Contains(out, "[ENTITY_1]") {
-		t.Errorf("clients on: Alpine Trust must be replaced, output: %s", out)
+		t.Errorf("entities on: Alpine Trust must be replaced, output: %s", out)
 	}
 	if strings.Contains(out, "Marie Curie") {
 		t.Errorf("persons on: Marie Curie must be replaced, output: %s", out)
 	}
-	if !strings.Contains(out, "Metropolis") {
-		t.Errorf("allowlist must win over the enabled location_names selection, output: %s", out)
+}
+
+// TestAllowlistWinsOverAnEnabledCategory: an allowlisted term is never replaced,
+// by any pass, even when the category that would have caught it is switched on.
+//
+// The term here is DETECTED rather than declared. Declaring a value that is also
+// allowlisted is a blocking conflict now (conflicts.go): the allowlist still
+// wins, but a run where the user asked for both is refused rather than silently
+// resolved, because nothing anywhere said why the value survived.
+func TestAllowlistWinsOverAnEnabledCategory(t *testing.T) {
+	allow := NewEmptyAllowlist()
+	allow.Add("info.desk@example.com")
+
+	res, err := Run(context.Background(), PipelineInput{
+		Documents:  []Document{{Name: "f.txt", Format: FormatTXT, Markdown: selectionFixture}},
+		Entities:   selectionEntities,
+		Categories: PresetSelection(LevelMedium),
+		Allowlist:  allow,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := res.Documents[0].Anonymised
+	if !strings.Contains(out, "info.desk@example.com") {
+		t.Errorf("the allowlist must win over the enabled email category, output: %s", out)
 	}
 }

@@ -1,6 +1,6 @@
 //go:build ignore
 
-// scripts/genicon.go — generates the application icon (BUILD-02 Phase 1g,
+// scripts/genicon.go — generates the application icon (,
 // fallback route 2: the Rosca75/pptx-compressor icon pattern was not
 // available in-session, so this stdlib-only generator is the recorded
 // fallback; swap in the real pattern when the owner provides it).

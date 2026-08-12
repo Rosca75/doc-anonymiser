@@ -47,13 +47,56 @@ or above it. `main.go` imports this package and calls `backend.NewApp()`.
   (`GET /api/tags`); the deterministic pipeline must be fully usable without
   it. LLM-dependent controls disable with a tooltip when it is absent.
 
+## The Value model (BUILD-06)
+
+Three files carry it, and each exists because the rule it enforces cannot be
+enforced anywhere else:
+
+- `engine/country.go` — the document country and `CategoryCountries`, the table
+  saying which regex categories apply where, plus `CategoryAppliesTo`. It is
+  the SINGLE source `frontend/countries.js` mirrors. `piiPattern` carries a
+  `countries` field and `DetectPIISelected(text, sel, country)` skips the
+  patterns the country excludes, so a German document is not scanned for French
+  VAT numbers.
+- `engine/conflicts.go` — `ValidateValues`, pure set arithmetic over the
+  declarations that reads no document text, so it is cheap enough to run on
+  every run and every fast re-run. It runs inside `engine.Run` BEFORE pass 1,
+  because the App has two entry points and the engine has one. Blocking
+  conflicts abort before the registry is mutated. `Run`'s preamble is ordered
+  removals, then validation over what is left, then reservations: a removed
+  value stops being a declaration, so validating it as one would refuse every
+  run after a removal. The overlap WARNINGS come from
+  `ResolveOverlapsWithLosers`, the one place the decision is made, because a
+  parallel check can disagree with the pipeline and then describe something
+  that did not happen.
+- `engine/codes.go` — the offline detector for CODE-SHAPED values, a second
+  scanner over the raw text. It is separate from `discover.go` because that
+  file's tokenizer treats a digit as a word boundary, so no code shape can
+  surface through it, and teaching it digits would change what every other
+  detector sees.
+- `engine/removals.go` — `RemovedValue`, `ApplyRemovals` and `FilterRemoved`.
+  Removals are enforced through `Allowlist.Contains`, the single veto every
+  span producer already consults; the App folds them in once, in
+  `App.allowlistFor`, which run, detection and export all go through so a
+  removal cannot be honoured by one and forgotten by another.
+
+`Registry` owns the one-value-one-replacement invariant through its
+`byOriginal` index, and tracks two sets of numbers it will never hand out
+again: `retired` (a `Forget` freed the entry, deliberately not the number) and
+`reserved` (a rule replacement minted outside the registry). Both persist in
+the session file, or a save-and-reload frees exactly the numbers the removal
+refused to free.
+
 ## Pipeline passes (fixed order)
 
 1. Deterministic PII regex pass (`engine/pii.go`). Regexes are compiled once
    at package init and documented with match / deliberately-no-match examples.
 2. Known-entity pass (`engine/entities.go`): discovery + manual entities,
-   expanded into name variants (initials, surname-only, first-name-only,
-   hyphen/space), longest-match-first.
+   expanded into name variants, longest-match-first. Expansion has three
+   classes and a category belongs to exactly one: person-style (initials,
+   surname-only, first-name-only, hyphen/space), organisation-style (a legal
+   suffix stripped, never added), and literal, for the categories with no name
+   structure to expand.
 3. Optional LLM deep-scan pass (`engine/discover.go` + `ollama`): every
    LLM-proposed entity passes a **hallucination filter** (dropped unless the
    exact string occurs in the source text) and respects the allowlist.
@@ -72,7 +115,10 @@ an override took. The renames a user made are recorded rather than inferred
 (`Registry.Overrides`) and persist in the session file; **session files are read
 only by the version that wrote them**, so a file whose `SessionVersion` this
 build does not know is refused with an actionable message instead of
-half-migrated (BUILD-05 decision 1).
+half-migrated (BUILD-05 decision 1). The current version is **4**. A corrupt
+key (two entries claiming one value) is refused the same way, as an ERROR:
+these functions run behind bound methods on a file the user picked, so
+panicking would take the application down on a bad file.
 
 ## Converters (`engine/convert/`) and same-format export (`engine/exportfmt/`)
 
@@ -98,8 +144,9 @@ half-migrated (BUILD-05 decision 1).
 
 - Heavy comments everywhere; each file opens with a purpose header. The owner
   is not a Go expert and orchestrates agents, so explain intent, not just
-  mechanics. Error messages must be actionable: what failed, what was
-  expected, how to fix it.
+  mechanics. Comments never carry change history: no phase numbers, no "this
+  used to", no tombstones for deleted functions (root `CLAUDE.md` §6). Error
+  messages must be actionable: what failed, what was expected, how to fix it.
 - **A change is not finished until its tests move with it** (root `CLAUDE.md`
   section 6). In the same change: update the tests that asserted the old
   behaviour, add a test for the new behaviour, delete the tests for behaviour

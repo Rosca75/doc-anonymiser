@@ -1,4 +1,4 @@
-// highlight.test.js — Phase 8 JS test: the highlight-rendering function
+// highlight.test.js — tests the highlight-rendering function
 // (placeholder → <mark> HTML, with escaping).
 
 import test from "node:test";
@@ -38,7 +38,16 @@ test("markClass covers the three families", () => {
   assert.equal(markClass("FUTURE_LABEL"), "custom");
 });
 
-// --- BUILD-02 Phase 10b: mapping-aware marks ---------------------------------
+test("every entity placeholder label gets the entity tint", () => {
+  // An unknown label falls through to "custom", so a label left out of
+  // ENTITY_LABELS renders in the wrong tint with nothing failing. The list here
+  // is the placeholderLabels table in backend/engine/registry.go, entity half.
+  for (const label of ["ENTITY", "PROJECT", "PRODUCT", "BRAND", "PERSON", "ID", "OTHER"]) {
+    assert.equal(markClass(label), "entity", `${label} must read as an entity`);
+  }
+});
+
+// --- mapping-aware marks -------------------------------------------------
 
 test("mapping adds data attributes and the original in the title", () => {
   const html = renderHighlighted("see [ENTITY_1] here",
@@ -61,7 +70,7 @@ test("hostile originals are inert in the output", () => {
   assert.ok(html.includes("&quot;&gt;&lt;script&gt;"));
 });
 
-// --- BUILD-06: the hover tooltip has to be reachable --------------------
+// --- the hover tooltip has to be reachable -------------------------------
 
 test("a known mark is focusable, so the tooltip is not mouse-only", () => {
   const html = renderHighlighted("see [ENTITY_1] here",

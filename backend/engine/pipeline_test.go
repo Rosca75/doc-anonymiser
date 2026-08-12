@@ -1,8 +1,8 @@
-// engine/pipeline_test.go — Phase 4 tests: two-document consistency via
+// engine/pipeline_test.go — tests two-document consistency via
 // the post-pass, the level matrix goldens, simple-replace ordering, grid
 // consistency, and the 50-document performance budget.
 //
-// Budget measurement (BUILD.md performance table): deterministic pipeline
+// Budget measurement: deterministic pipeline
 // (passes 1+2+4) over 50 documents × 50 KB, budget ≤ 5 s. Measured
 // 2026-07-23 on the CI-class Linux container in TestPipelineBudget:
 // ~1.9 s on an extremely PII-dense synthetic corpus (105 300 replacements —
@@ -134,13 +134,13 @@ func TestHallucinationFilterInPipeline(t *testing.T) {
 }
 
 // TestLevelMatrix: the same fixture at soft/medium/advanced produces the
-// expected differing outputs (BUILD.md Phase 4 golden requirement).
+// expected differing outputs.
 func TestLevelMatrix(t *testing.T) {
-	text := "Marie Duval (marie.duval@example.com) met Alpine Trust in Paris on 2026-07-23 for €5,000."
+	text := "Marie Duval (marie.duval@example.com) met Alpine Trust about Helios on 2026-07-23 for €5,000."
 	entities := []Entity{
 		{Category: CatEntityNames, Canonical: "Alpine Trust"},
 		{Category: CatPersonNames, Canonical: "Marie Duval"},
-		{Category: CatLocationNames, Canonical: "Paris"},
+		{Category: CatOtherNames, Canonical: "Helios"},
 	}
 	run := func(level Level) string {
 		res := runPipeline(t, PipelineInput{
@@ -154,21 +154,21 @@ func TestLevelMatrix(t *testing.T) {
 	}
 
 	soft := run(LevelSoft)
-	// Soft: hard PII + engagement entities; person names, dates,
-	// locations and amounts stay.
-	if soft != "Marie Duval ([EMAIL_1]) met [ENTITY_1] in Paris on 2026-07-23 for €5,000." {
+	// Soft: hard PII + engagement entities; person names, other names, dates
+	// and amounts stay.
+	if soft != "Marie Duval ([EMAIL_1]) met [ENTITY_1] about Helios on 2026-07-23 for €5,000." {
 		t.Errorf("soft output unexpected: %q", soft)
 	}
 
 	medium := run(LevelMedium)
-	// Medium: + person names. Dates and locations kept.
-	if medium != "[PERSON_1] ([EMAIL_1]) met [ENTITY_1] in Paris on 2026-07-23 for €5,000." {
+	// Medium: + person names. Other names, dates and amounts kept.
+	if medium != "[PERSON_1] ([EMAIL_1]) met [ENTITY_1] about Helios on 2026-07-23 for €5,000." {
 		t.Errorf("medium output unexpected: %q", medium)
 	}
 
 	advanced := run(LevelAdvanced)
-	// Advanced: + dates, locations, amounts.
-	if advanced != "[PERSON_1] ([EMAIL_1]) met [ENTITY_1] in [LOCATION_1] on [DATE_1] for [AMOUNT_1]." {
+	// Advanced: + other names, dates, amounts.
+	if advanced != "[PERSON_1] ([EMAIL_1]) met [ENTITY_1] about [OTHER_1] on [DATE_1] for [AMOUNT_1]." {
 		t.Errorf("advanced output unexpected: %q", advanced)
 	}
 }
@@ -276,7 +276,7 @@ func TestReportContents(t *testing.T) {
 }
 
 // TestPipelineCancellation: a cancelled context stops the run between
-// documents and reports the partial progress (Phase 8 relies on this).
+// documents and reports the partial progress.
 func TestPipelineCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancelled before the run even starts
@@ -297,7 +297,7 @@ func TestPipelineCancellation(t *testing.T) {
 	}
 }
 
-// TestPipelineBudget measures the BUILD.md deterministic budget: passes
+// TestPipelineBudget measures the deterministic budget: passes
 // 1+2+4 over 50 documents × 50 KB in ≤ 5 s.
 func TestPipelineBudget(t *testing.T) {
 	// ~50 KB of realistic prose per document, seeded with PII and entity

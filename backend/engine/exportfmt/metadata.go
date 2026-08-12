@@ -1,5 +1,5 @@
 // engine/exportfmt/metadata.go — OOXML document-properties extraction and
-// rewrite (BUILD-02 Phase 12): docProps/core.xml (title, subject,
+// rewrite: docProps/core.xml (title, subject,
 // creator, lastModifiedBy, keywords, description), docProps/app.xml
 // (Company, Manager) and docProps/custom.xml STRING properties.
 //
@@ -52,7 +52,7 @@ var metaParts = []string{"docProps/core.xml", "docProps/app.xml", "docProps/cust
 // (docx/pptx/xlsx alike; they share the docProps layout). Missing parts
 // simply yield no fields.
 func ExtractMetadata(raw []byte) ([]MetaField, error) {
-	// The zip walk lives in engine/ooxml (BUILD-05 Phase 3), because the
+	// The zip walk lives in engine/ooxml, because the
 	// converters need the same "pull a named docProps part out of the archive"
 	// step to read the cached page and slide counts. Reading it in one place
 	// also means an absent part behaves identically for both callers: no entry

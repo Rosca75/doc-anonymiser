@@ -1,5 +1,4 @@
 // nav.test.js, tests for nav.js, THE one module that moves the wizard
-// (BUILD-05 Phase 2).
 //
 // Why this file exists: nav.js had no unit test at all, and
 // ../frontend_tests_test.go said so out loud. It is not a module that deserved
@@ -8,21 +7,27 @@
 // functions underneath (previousStep, followingStep) are what every footer label
 // is derived from.
 //
-// The wiring half is deliberately NOT tested here. navigateTo, advance and
-// goBack ask askConfirm() and then mutate the live store, so testing them would
-// mean stubbing the modal and the store: what they do is covered end to end by
-// wizardflow.test.js on the store side, and by the layer 3 rendering harness on
-// the screen side (docs/UITESTING.md). What IS tested here is everything that
-// takes state as an argument and returns a value, which is the part a footer
-// depends on.
+// Most of the wiring half is still NOT tested here: navigateTo, advance and
+// goBack are covered end to end by wizardflow.test.js on the store side and by
+// the layer 3 rendering harness on the screen side (docs/UITESTING.md). What IS
+// tested here is everything that takes state as an argument and returns a value,
+// which is the part a footer depends on, plus the keyboard shortcuts.
+//
+// The shortcuts are the exception because the bug they fixed was invisible
+// anywhere else: the confirm is state-backed (state.js askConfirm resolves a
+// promise when answerConfirm settles it), so a keystroke that skipped the
+// question is provable here without a DOM, and nothing in wizardflow.test.js
+// would ever have seen it.
 //
 // Run with `node --test "frontend/**/*.test.js"`.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { previousStep, followingStep, stepFooterHTML } from "./nav.js";
-import { WIZARD_STEPS } from "./state.js";
+import {
+  previousStep, followingStep, stepFooterHTML, shortcutStep, handleShortcut,
+} from "./nav.js";
+import { WIZARD_STEPS, getState, setState, resetState, answerConfirm } from "./state.js";
 import { NAV } from "./copy.js";
 import { one, textOf, exists } from "./testhtml.js";
 
@@ -30,13 +35,15 @@ import { one, textOf, exists } from "./testhtml.js";
  * stateOn(step, patch) is a state parked on one wizard step.
  *
  * Only the fields the navigation guard reads are filled in (state.js canGoTo:
- * documents and results), because a fuller fixture would suggest the guard looks
- * at more than it does.
+ * documents, candidates and results), because a fuller fixture would suggest the
+ * guard looks at more than it does. `candidates` joined the list in
+ * when the review gate became the guard's third rule.
  */
 function stateOn(step, patch = {}) {
   return {
     step,
     documents: [{ name: "a.md", markdown: "text" }],
+    candidates: [],
     results: null,
     ...patch,
   };
@@ -47,7 +54,7 @@ const FINISHED_RUN = {
   report: { values: [], byCategory: {}, totalReplacements: 1, documents: [] },
 };
 
-// --- previousStep / followingStep ------------------------------------------
+// --- previousStep / followingStep ----------------------------------------
 //
 // These are derived from WIZARD_STEPS rather than hardcoded, so the tests are
 // derived from it too: a step inserted in the middle must not need this file
@@ -74,7 +81,7 @@ test("the first step has nothing behind it and the last nothing ahead", () => {
 
 test("an unknown step token yields no neighbours rather than throwing", () => {
   // A corrupted persisted token reaches the footer before knownStep() has a say
-  // (state.js, BUILD-05 decision 1). Returning null on both sides renders a
+  // (state.js). Returning null on both sides renders a
   // footer with no navigation, which is recoverable; throwing would leave a blank
   // screen with an exception behind it.
   const s = stateOn("teleport");
@@ -82,7 +89,7 @@ test("an unknown step token yields no neighbours rather than throwing", () => {
   assert.equal(followingStep(s), null);
 });
 
-// --- stepFooterHTML --------------------------------------------------------
+// --- stepFooterHTML ------------------------------------------------------
 
 test("a middle step's footer labels both directions from copy.js", () => {
   // The point of stepFooterHTML: no screen spells "Back to Import" itself, so a
@@ -152,4 +159,96 @@ test("the footer's two buttons carry the ids wireStepFooter looks for", () => {
   const html = stepFooterHTML({}, stateOn("identify"));
   assert.ok(one(html, "#step-back"), "wireStepFooter binds #step-back");
   assert.ok(one(html, "#step-next"), "wireStepFooter binds #step-next");
+});
+
+test("the review gate reaches the footer through the guard, not through the screen", () => {
+  // an unreviewed suggestion shuts the move to Anonymise. The
+  // footer must inherit that from canGoTo rather than growing a condition of its
+  // own, which is the whole reason the guard lives in one place.
+  const waiting = stepFooterHTML({}, stateOn("identify", {
+    candidates: [{ text: "Alpine Trust", category: "entity_names", count: 4 }],
+  }));
+  assert.ok("disabled" in one(waiting, "#step-next").attrs,
+    "a suggestion is still waiting, so CONTINUE TO ANONYMISE must be disabled");
+
+  const reviewed = stepFooterHTML({}, stateOn("identify"));
+  assert.ok(!("disabled" in one(reviewed, "#step-next").attrs),
+    "with the review done the move is open again");
+});
+
+// --- Keyboard shortcuts --------------------------------------------------
+
+test("shortcutStep maps only Ctrl+O and Ctrl+E, in either case", () => {
+  const cases = [
+    [{ ctrlKey: true, key: "o" }, "import"],
+    [{ ctrlKey: true, key: "O" }, "import"],
+    [{ metaKey: true, key: "e" }, "export"],
+    [{ ctrlKey: true, key: "E" }, "export"],
+    // Not ours: no modifier, the wrong letter, or a combination the browser
+    // already owns. Claiming Ctrl+Shift+E would be taking a key we were not
+    // given, and preventDefault() on it is invisible and unexplainable.
+    [{ key: "o" }, null],
+    [{ ctrlKey: true, key: "s" }, null],
+    [{ ctrlKey: true, shiftKey: true, key: "e" }, null],
+    [{ ctrlKey: true, altKey: true, key: "o" }, null],
+    [{ ctrlKey: true }, null],
+    [null, null],
+  ];
+  for (const [ev, want] of cases) {
+    assert.equal(shortcutStep(ev), want, JSON.stringify(ev));
+  }
+});
+
+test("a FORWARD shortcut moves without asking, and only when the guard allows", async () => {
+  resetState();
+  setState({ documents: [{ name: "a.md" }], step: "import" });
+
+  // Ctrl+E with no results: the guard refuses, and nothing on screen changes.
+  assert.equal(await handleShortcut({ ctrlKey: true, key: "e" }), false);
+  assert.equal(getState().step, "import", "no results, so Export stays shut");
+
+  setState({ results: FINISHED_RUN });
+  assert.equal(await handleShortcut({ ctrlKey: true, key: "e" }), true);
+  assert.equal(getState().step, "export");
+  assert.equal(getState().screen, "wizard",
+    "a step shortcut implies the wizard screen, so it switches to it");
+});
+
+test("a BACKWARD shortcut asks first, exactly as the step bar does", async () => {
+  // This is the bug the phase closes. main.js called goTo() straight, so Ctrl+O
+  // from a later step was a backward move with neither the confirm nor the
+  // resetStep that nav.js exists to guarantee: the same movement obeyed the rule
+  // from the step bar and skipped it from the keyboard.
+  resetState();
+  setState({ documents: [{ name: "a.md" }], results: FINISHED_RUN, step: "anonymise" });
+
+  const moving = handleShortcut({ ctrlKey: true, key: "o" });
+  assert.ok(getState().confirm, "the shortcut asked the in-app confirm first");
+
+  answerConfirm(false);
+  assert.equal(await moving, false, "answering no does not move");
+  assert.equal(getState().step, "anonymise");
+  assert.ok(getState().results, "and answering no changes nothing at all, not even the reset");
+
+  // And on yes it moves AND resets the step being LEFT (Anonymise, so the run
+  // goes with it), which is the half a direct goTo() silently skipped.
+  const again = handleShortcut({ ctrlKey: true, key: "o" });
+  answerConfirm(true);
+  assert.equal(await again, true);
+  assert.equal(getState().step, "import");
+  assert.equal(getState().results, null, "leaving Anonymise backwards cleared the run");
+});
+
+test("a shortcut suppresses the browser default only for a key it claims", async () => {
+  resetState();
+  setState({ documents: [{ name: "a.md" }] });
+
+  let prevented = 0;
+  const ev = (patch) => ({ preventDefault: () => { prevented++; }, ...patch });
+
+  await handleShortcut(ev({ ctrlKey: true, key: "o" }));
+  assert.equal(prevented, 1, "Ctrl+O is ours, so the browser's Open dialog must not fire");
+
+  await handleShortcut(ev({ ctrlKey: true, key: "p" }));
+  assert.equal(prevented, 1, "Ctrl+P is not ours and must keep working");
 });

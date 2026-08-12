@@ -84,6 +84,9 @@ doc-anonymiser/
 │   │   ├── convert/           # binary-format → markdown converters (pure Go, one-way)
 │   │   │   ├── docx.go / pptx.go / xlsx.go / pdf.go
 │   │   ├── pii.go             # Pass 1: deterministic regex PII detection
+│   │   ├── country.go         # Document-country model; which regex categories apply where
+│   │   ├── conflicts.go       # ValidateValues: blocking conflicts + warnings, before pass 1
+│   │   ├── removals.go        # Removed values: the session exclusion list
 │   │   ├── entities.go        # Entity model, categories, variant expansion
 │   │   ├── discover.go        # LLM discovery / deep-scan orchestration
 │   │   ├── registry.go        # Placeholder registry (consistent pseudonyms)
@@ -192,12 +195,57 @@ doc-anonymiser/
   2) anonymise, 3) export. CSV imports are converted to a markdown table for
   preview/processing but retain their grid model so they can round-trip back
   to CSV on export.
+- **The Value, the unit everything else is about (BUILD-06):** a Value is a
+  string to be replaced. It has none, one or many VARIANTS (spellings of the
+  same real-world thing), and one Value plus all its variants maps to exactly
+  ONE replacement string, whatever found it. That invariant lives in the
+  registry, not only in validation, because detection is what produces the
+  violation: `Registry.Assign` keeps a `byOriginal` index, so a string already
+  owned under one category is never given a second placeholder under another.
+  Precedence is the fixed pass order (pass 1 before 2 before 3), which makes it
+  deterministic with no extra tie-break rule and agrees with `ResolveOverlaps`
+  preferring the higher-confidence span.
+  A Value reaches the pipeline through one of three TRIGGERS: a regex (native,
+  scoped by country), auto-detection (Smart detection and the local AI), or a
+  declaration the user typed. Triggers must not conflict:
+  `engine.ValidateValues` (`backend/engine/conflicts.go`) runs inside
+  `engine.Run` BEFORE pass 1 and returns blocking conflicts (the same string in
+  two active categories, a variant colliding with another value, a declared
+  value that is also allowlisted, a simple-replace rule that would rewrite
+  anonymised output) and warnings. A blocking conflict aborts before the
+  registry is mutated: a half-run that assigned placeholders for a
+  configuration the user was just told is invalid is unrecoverable without a
+  new session.
+- **Country association (BUILD-06 Phase 1):** the country-specific regex
+  categories are scoped by the DOCUMENT COUNTRY, owned by the engine
+  (`backend/engine/country.go`, `CategoryCountries`, `CategoryAppliesTo`) and
+  mirrored by `frontend/countries.js` exactly as `presetCategories()` mirrors
+  `PresetSelection`. `Settings.Country` and `PipelineInput.Country` carry it;
+  a category outside the selected country renders DISABLED rather than hidden,
+  because an absent switch reads as "unsupported" rather than "not applicable
+  here".
+- **Removing a Value (BUILD-06 Phase 4):** any value can be removed after the
+  run, from the step 3 table. Removal is ONE action with three effects that
+  cannot happen separately: the registry entry is forgotten, the value and its
+  variants are recorded as a SESSION EXCLUSION, and the `Entity` behind it (if
+  any) is dropped. The exclusion is the whole mechanism for a regex-detected
+  value, which has no `Entity` at all. Exclusions live on the App
+  (`App.removed`) and in the session file, deliberately SEPARATE from the
+  allowlist in state, so "undo the removal" is not the same gesture as "delete
+  an allowlist term"; they are ENFORCED through the allowlist
+  (`App.allowlistFor`, `engine.ApplyRemovals`), because `Allowlist.Contains` is
+  the single veto every span producer already consults. Removing a value does
+  NOT free its number: an export, a mapping CSV or a session file in which
+  `[PERSON_4]` means one person may already have left the machine. Restoring a
+  value brings it back with a NEW number, for the same reason.
 - **Anonymisation levels** (mirror the notebook semantics):
   - `soft` — hard PII (emails, phones, IBANs, national IDs, VAT numbers,
-    URLs with credentials) + engagement entities (entity/project names).
-  - `medium` (default) — soft + person names. Dates and locations kept.
-  - `advanced` — medium + dates, locations, organisation names, monetary
-    amounts.
+    URLs with credentials) + engagement entities (entity/project names) +
+    custom patterns.
+  - `medium` (default) — soft + person names. Dates, locations and amounts
+    kept.
+  - `advanced` — medium + dates, amounts, organisation names and location
+    names.
   - Levels are PRESETS over granular per-category switches
     (`engine.CategorySelection`, BUILD-02 Phase 3): the pipeline obeys the
     per-category selection; a level is the UI shorthand that fills it.
@@ -216,19 +264,45 @@ doc-anonymiser/
 - **Placeholders:** stable per session, format `[CATEGORY_N]` (e.g.
   `[ENTITY_1]`, `[PERSON_3]`, `[EMAIL_2]`). The registry maps original →
   placeholder and is exportable as a re-identification key (CSV/JSON).
-- **Allowlist wins:** an allowlisted term is never replaced, by any pass.
-- **Entity categories:** `entity_names`, `project_names`, `person_names`,
-  `custom_patterns` (user regex), plus `organisation_names` and
-  `location_names` (LLM proposals only) and the PII categories emitted by
-  pass 1. The user-visible label for `entity_names` is "Entity names".
-  `entity_names` is the BUILD-06 merge of the former `client_names` and
-  `internal_names`: the pipeline treated the two identically, and the
-  distinction cost the user a decision at every value they added. It covers
-  named organisations, companies, teams and internal systems. A human being
-  is always `person_names`, which is why `entity_names` gets
-  organisation-style variant expansion and NOT the person-style expansion
-  (initials, surname-only) `internal_names` used to get: expanding "Delta
-  Industries" to "Industries" would replace an ordinary noun everywhere.
+- **Allowlist wins:** an allowlisted term is never replaced, by any pass,
+  including `ApplySimpleRules`, which runs last and used to be the one pass
+  that could.
+- **The step 2 to 3 gate (BUILD-06 Phase 7):** the wizard cannot reach
+  Anonymise while a detection suggestion is still unreviewed. Detection
+  produces suggestions, not decisions, and walking past one silently answers
+  "reject" on the user's behalf. The rule lives in `state.js canGoTo` once, so
+  the step bar and all four footers inherit it, and the Identify footer's hint
+  is the refusal itself, naming the bulk "Reject all shown" so the gate is
+  never a dead end.
+- **Entity categories:** eight, listed in `engine.AllEntityCategories` and
+  mirrored by `frontend/state.js`. Every one is reachable by manual entry and
+  by the local AI; three are additionally reachable OFFLINE, by a heuristic
+  detector, and the frontend label of the rest says where they come from,
+  enforced by `identifyrail.test.js`.
+
+  | Identifier | Placeholder | Also found offline by |
+  |---|---|---|
+  | `entity_names` | `ENTITY` | legal-suffix runs |
+  | `project_names` | `PROJECT` | codes beside a project cue |
+  | `product_names` | `PRODUCT` | a trademark mark, or a product head noun |
+  | `brand_names` | `BRAND` | nothing: a brand is world knowledge |
+  | `person_names` | `PERSON` | title cues, multi-word runs |
+  | `identifier_names` | `ID` | reference and contract codes |
+  | `other_names` | `OTHER` | nothing: it is defined by exclusion |
+  | `custom_patterns` | `CUSTOM` | the user's own regexes |
+
+  `entity_names` covers named organisations, companies, teams and internal
+  systems. A human being is always `person_names`, which is why `entity_names`
+  gets organisation-style variant expansion and NOT the person-style expansion
+  (initials, surname-only): expanding "Delta Industries" to "Industries" would
+  replace an ordinary noun everywhere. `identifier_names` and `other_names` are
+  expanded LITERALLY (`engine.literalOnlyCategories`): a code has no name
+  structure, and stripping a token that resembles a legal suffix off one would
+  invent a variant matching a different code.
+  The code detector (`backend/engine/codes.go`) requires a separator between
+  the letters and the digits. That is what keeps it out of pass 1's territory,
+  which owns tax and VAT numbers, and `TestCodeDetectorDoesNotOverlapPassOne`
+  holds the boundary.
 - **Engine identifiers are stable, user-visible labels are not (BUILD-05 Phase 0,
   superseding BUILD-04 CR3):** the wizard has **four** steps, and both their
   tokens and their visible labels are: 1 **Import**, 2 **Identify**,
@@ -236,10 +310,14 @@ doc-anonymiser/
   own: the configure choices are the left rail of Identify, and the values,
   suggestions, allowlist and custom patterns are its workspace. The rail lists
   the DETECTION ROUTES as switchable sections (BUILD-06): Smart detection, on
-  by default and owning the scope controls (preset, the 22 detection
+  by default and owning the scope controls (country, preset, the 24 detection
   categories, the confidence floor) because they are that route's scope; Local
   AI, off by default; Cloud AI, off and not built. Detecting Ollama ENABLES the
-  Local AI switch, it never flips it.
+  Local AI switch, it never flips it. Within the scope controls the categories
+  are grouped by TRIGGER, not by preset tier: contact details, technical
+  identifiers, "Auto detected values" (what a detector can emit) and "Your own
+  patterns" (`custom_patterns`, which is declarative and must never sit under
+  the detected group).
   The engine category identifiers listed above, and the PII category constants
   in `backend/engine/pii.go`, are NEVER renamed to follow a label change: a
   label is a display string, an identifier is a contract. Session files are
@@ -248,12 +326,22 @@ doc-anonymiser/
   half-migrated, so no step-token or field migration table exists
   (BUILD-05 decision 1).
 - **Sensitive state stays in memory** by default. Saving a session (registry
-  + entities + settings) to disk is an explicit user action with a warning
-  that the file contains the re-identification key.
+  + entities + settings + the removal list + the spent placeholder numbers) to
+  disk is an explicit user action with a warning that the file contains the
+  re-identification key. `SessionVersion` is **4** (BUILD-06); a file of any
+  other version is refused, never migrated, and the reasons for each bump are
+  recorded beside the constant in `backend/engine/session.go`.
 
 ## 6. Coding rules
 
 - Heavy comments everywhere; each file starts with a purpose header.
+- **Comments explain intent, never change history.** Say what the code is for
+  and why it is shaped that way. Do NOT write what it used to be, which phase
+  changed it, or which change request asked for it: that is what `git log` and
+  `docs/` are for, and in the code it decays into a story nobody can check. A
+  comment naming a deleted function is a monument, not documentation; if the
+  absence matters, assert it in a test. Where a past mistake explains a rule,
+  state the RULE and the failure it prevents, in the present tense.
 - Go standard library first. No new dependency without adding it to the
   BUILD.md dependency table AND the pinned-versions table below.
 - **A change is not finished until its tests move with it.** This is a hard

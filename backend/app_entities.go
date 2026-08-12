@@ -1,17 +1,16 @@
-// app_entities.go — bound methods for the Entities screen (Phase 7):
+// app_entities.go — bound methods for the Entities screen:
 // LLM discovery over selected files, variant expansion for the review
 // table, and custom-pattern validation/testing. Thin adapters only
 // (CLAUDE.md §3): all logic lives in engine/* and ollama/*.
 package backend
 
 import (
-	"context"
 	"fmt"
+	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"doc-anonymiser/backend/engine"
-	"doc-anonymiser/backend/ollama"
 )
 
 // runtimeEventsEmit is an indirection over the Wails event runtime so unit
@@ -21,325 +20,28 @@ var runtimeEventsEmit = func(a *App, name string, payload interface{}) {
 	runtime.EventsEmit(a.ctx, name, payload)
 }
 
-// DiscoveryResult is what RunDiscovery hands back to the UI: merged
-// proposals plus a human-readable status (BUILD-02 Phase 7d). A cancelled
-// run is NOT an error: the partial proposals are kept and Status explains
-// how far the scan got.
-type DiscoveryResult struct {
-	Proposals []engine.ProposedEntity `json:"proposals"`
-	Status    string                  `json:"status"`
-	Cancelled bool                    `json:"cancelled"`
-}
-
-// DiscoveryEstimate is the pre-run size check for one file (BUILD-02
-// Phase 7e, wrapping Phase 5d EstimateChunks). TooLarge files should be
-// excluded by the UI before the run starts, never fail mid-run.
-type DiscoveryEstimate struct {
-	Name     string `json:"name"`
-	Chunks   int    `json:"chunks"`
-	TooLarge bool   `json:"tooLarge"`
-	Message  string `json:"message,omitempty"`
-}
-
-// EstimateDiscovery reports the chunk count per named file so the UI can
-// warn about (and exclude) oversized documents before a discovery run.
-func (a *App) EstimateDiscovery(fileNames []string) []DiscoveryEstimate {
-	a.mu.Lock()
-	llm := a.llm
-	a.mu.Unlock()
-
-	docs := a.docsByName(fileNames)
-	out := make([]DiscoveryEstimate, 0, len(docs))
-	for _, doc := range docs {
-		est := DiscoveryEstimate{Name: doc.Name, Chunks: llm.EstimateChunks(doc.Markdown)}
-		if est.Chunks > ollama.MaxChunksPerDocument {
-			est.TooLarge = true
-			est.Message = fmt.Sprintf(
-				"%q is very large (%d chunks); it is excluded from AI discovery. Split it into smaller files or run Smart detection instead.",
-				doc.Name, est.Chunks)
-		}
-		out = append(out, est)
-	}
-	return out
-}
-
-// RunDiscovery executes the Phase-A discovery prompt on the named imported
-// files (the user picks representative ones) and returns merged,
-// deduplicated proposals for the review table. allowTerms is the current
-// session allowlist — allowlisted proposals are vetoed inside the client.
-//
-// Progress is emitted per file on the "discovery:progress" event so the UI
-// can show which file is being scanned. The run is cancellable via
-// CancelDiscovery: cancellation between files AND between chunks (the
-// client honours ctx) returns the partial proposals with a
-// "cancelled after N of M files" status instead of an error.
-func (a *App) RunDiscovery(fileNames []string, allowTerms []string) (*DiscoveryResult, error) {
-	docs := a.docsByName(fileNames)
-	if len(docs) == 0 {
-		return nil, fmt.Errorf("no matching imported files to scan, import documents first, then pick at least one for discovery")
-	}
-
-	// Wire the allowlist veto exactly once per call: the same allowlist
-	// the pipeline will use later (allowlist wins in EVERY pass).
-	allow := engine.NewEmptyAllowlist()
-	for _, t := range allowTerms {
-		allow.Add(t)
-	}
-
-	// Hold a cancellable context on the App, exactly like the run
-	// pipeline does (BUILD-02 Phase 7d).
-	ctx, cancel := context.WithCancel(context.Background())
-	a.mu.Lock()
-	if a.cancelDiscovery != nil {
-		a.mu.Unlock()
-		cancel()
-		return nil, fmt.Errorf("a discovery run is already in progress, cancel it or wait for it to finish")
-	}
-	a.cancelDiscovery = cancel
-	llm := a.llm
-	a.mu.Unlock()
-	defer func() {
-		cancel()
-		a.mu.Lock()
-		a.cancelDiscovery = nil
-		a.mu.Unlock()
-	}()
-	llm.Allow = allow.Contains
-
-	var batches [][]engine.ProposedEntity
-	completed := 0
-	for i, doc := range docs {
-		if ctx.Err() != nil {
-			break // cancelled between files
-		}
-		a.emit("discovery:progress", map[string]interface{}{
-			"docIndex": i, "docCount": len(docs), "docName": doc.Name,
-		})
-		proposals, err := llm.Discover(ctx, doc.Markdown)
-		// Partial chunk proposals survive a mid-file cancellation.
-		if len(proposals) > 0 {
-			batches = append(batches, proposals)
-		}
-		if err != nil {
-			if ctx.Err() != nil {
-				break // cancelled mid-file; keep what we have
-			}
-			return nil, fmt.Errorf("discovery failed on %q: %w", doc.Name, err)
-		}
-		completed++
-	}
-
-	res := &DiscoveryResult{Proposals: ollama.MergeProposals(batches...)}
-	if ctx.Err() != nil && completed < len(docs) {
-		res.Cancelled = true
-		res.Status = fmt.Sprintf("cancelled after %d of %d files", completed, len(docs))
-	} else {
-		res.Status = fmt.Sprintf("scanned %d file(s)", completed)
-	}
-	return res, nil
-}
-
-// CancelDiscovery aborts an in-flight discovery run (between files, or
-// mid-chunk via HTTP context cancellation). A no-op when idle. Smart
-// detection runs share the same cancellation slot.
-func (a *App) CancelDiscovery() {
-	a.mu.Lock()
-	cancel := a.cancelDiscovery
-	a.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-}
-
-// SmartDetectionResult is what RunSmartDetection returns: candidates for
-// the review UI (NEVER auto-committed entities, BUILD-02 Phase 9b) plus
-// a status line mirroring DiscoveryResult.
-type SmartDetectionResult struct {
-	Candidates []engine.Candidate `json:"candidates"`
-	Status     string             `json:"status"`
-	Cancelled  bool               `json:"cancelled"`
-}
-
-// RunSmartDetection executes the offline Smart-detection tier over the
-// named files (BUILD-02 Phase 8c), mirroring RunDiscovery: per-file
-// progress events, cancellable, allowlist from the UI state. When
-// classify is true AND the local AI is reachable, candidate categories
-// are refined through ClassifyCandidates (span classification: only
-// candidate texts and snippets travel to the model, never documents).
-// Classification failures degrade to the heuristic categories with a
-// status note; they never fail the run (the deterministic tier is the
-// whole point of Smart detection).
-//
-// opts is the BUILD-04 CR13 tuning the Values screen sends. A zero value
-// means no filtering, so a caller that has nothing to say still gets the
-// pre-BUILD-04 behaviour rather than a surprise.
-func (a *App) RunSmartDetection(fileNames []string, allowTerms []string, classify bool, opts engine.SmartDetectOptions) (*SmartDetectionResult, error) {
-	docs := a.docsByName(fileNames)
-	if len(docs) == 0 {
-		return nil, fmt.Errorf("no matching imported files to scan, import documents first, then pick at least one for smart detection")
-	}
-
-	allow := engine.NewEmptyAllowlist()
-	for _, t := range allowTerms {
-		allow.Add(t)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	a.mu.Lock()
-	if a.cancelDiscovery != nil {
-		a.mu.Unlock()
-		cancel()
-		return nil, fmt.Errorf("a discovery run is already in progress, cancel it or wait for it to finish")
-	}
-	a.cancelDiscovery = cancel
-	llm := a.llm
-	a.mu.Unlock()
-	defer func() {
-		cancel()
-		a.mu.Lock()
-		a.cancelDiscovery = nil
-		a.mu.Unlock()
-	}()
-
-	// Per-file smart detection, merged case-sensitively by text: counts
-	// add up, contexts cap at 3, and a suffix/title-derived category
-	// (client/person) wins over the positional default.
-	merged := map[string]*engine.Candidate{}
-	var order []string
-	completed := 0
-	for i, doc := range docs {
-		if ctx.Err() != nil {
-			break
-		}
-		a.emit("discovery:progress", map[string]interface{}{
-			"docIndex": i, "docCount": len(docs), "docName": doc.Name,
-		})
-		for _, cand := range engine.SmartDetectWithOptions(doc.Markdown, allow, opts) {
-			m, ok := merged[cand.Text]
-			if !ok {
-				copyCand := cand
-				merged[cand.Text] = &copyCand
-				order = append(order, cand.Text)
-				continue
-			}
-			m.Count += cand.Count
-			// The strongest sighting across documents wins: a name that
-			// appears once in one file and next to a legal form in another
-			// is as good as the legal-form sighting (BUILD-04 CR13).
-			if cand.Confidence > m.Confidence {
-				m.Confidence = cand.Confidence
-			}
-			for _, ctxSnippet := range cand.Contexts {
-				if len(m.Contexts) >= 3 {
-					break
-				}
-				m.Contexts = append(m.Contexts, ctxSnippet)
-			}
-		}
-		completed++
-	}
-
-	candidates := make([]engine.Candidate, 0, len(order))
-	for _, key := range order {
-		candidates = append(candidates, *merged[key])
-	}
-
-	res := &SmartDetectionResult{Candidates: candidates}
-	if ctx.Err() != nil && completed < len(docs) {
-		res.Cancelled = true
-		res.Status = fmt.Sprintf("cancelled after %d of %d files", completed, len(docs))
-		return res, nil
-	}
-	res.Status = fmt.Sprintf("scanned %d file(s)", completed)
-
-	// Optional AI category refinement (BUILD-02 Phase 8b).
-	if classify && len(candidates) > 0 {
-		llm.Allow = allow.Contains
-		proposals, err := llm.ClassifyCandidates(ctx, candidates)
-		if err != nil {
-			res.Status += "; AI classification unavailable, heuristic categories kept (" + err.Error() + ")"
-		} else {
-			refined := map[string]string{}
-			for _, p := range proposals {
-				refined[p.Text] = p.Category
-			}
-			for i := range res.Candidates {
-				if cat, ok := refined[res.Candidates[i].Text]; ok {
-					res.Candidates[i].Category = cat
-				}
-			}
-			res.Status += "; categories refined by the local AI"
-		}
-	}
-	return res, nil
-}
-
 // ExpandEntityVariants returns the automatic + manual variants of one
 // entity for the expandable variant list in the review table.
 func (a *App) ExpandEntityVariants(e engine.Entity) []string {
 	return engine.ExpandVariants(e)
 }
 
-// SetEntityPlaceholder renames the placeholder one value gets replaced with
-// (BUILD-05 Phase 3): the editable field on an entity card in the Identify
-// workspace.
+// --- The step 3 value surface -----------------------------------------------
 //
-// It exists because "[CLIENT_1]" is sometimes less useful downstream than a
-// name the reader recognises, and the user is the only one who knows which.
-// The engine validates the shape and refuses a collision (engine.Registry
-// SetPlaceholder); this method only finds the registry and reports back.
+// Every method here is addressed BY PLACEHOLDER, because on step 3 the user is
+// looking at report rows and at marks in the Compare pane and both carry the
+// placeholder. Renaming a value and removing it are the two rules a Value obeys
+// once a run has produced it, and this is the only surface for either.
+
+// SetValuePlaceholder renames what one value is replaced with.
 //
-// The rename takes effect on the NEXT run or fast re-run, not retroactively:
-// the anonymised text already on screen was produced with the old placeholder,
-// and silently rewriting it here would leave the report and the mapping
-// describing text that no longer exists.
+// The rename takes effect on the NEXT run, not retroactively: the text on
+// screen was produced with the old placeholder, and rewriting it here would
+// leave the report and the mapping describing text that no longer exists.
 //
-// @param category the engine category identifier (never a visible label)
-// @param canonical the real-world value whose placeholder is being renamed
-// @param placeholder the new placeholder, in [NAME_N] form
+// @param placeholder the placeholder as it stands, in [NAME_N] form
+// @param newPlaceholder what the user wants instead
 // @return an actionable error the UI shows verbatim, or nil
-func (a *App) SetEntityPlaceholder(category, canonical, placeholder string) error {
-	a.mu.Lock()
-	reg := a.registry
-	a.mu.Unlock()
-
-	if reg == nil {
-		return fmt.Errorf(
-			"there are no placeholders to rename yet: run the anonymisation once, " +
-				"then edit the placeholder of any value it replaced")
-	}
-	return reg.SetPlaceholder(category, canonical, placeholder)
-}
-
-// EntityPlaceholder returns the placeholder currently assigned to one value,
-// or "" when it has not been assigned one yet (BUILD-05 Phase 3).
-//
-// The entity cards render the field read-only-looking-but-empty in that case,
-// which is honest: before a run there is nothing to rename.
-//
-// @param category the engine category identifier
-// @param canonical the real-world value
-// @return the placeholder, or "" when none is assigned
-func (a *App) EntityPlaceholder(category, canonical string) string {
-	a.mu.Lock()
-	reg := a.registry
-	a.mu.Unlock()
-	if reg == nil {
-		return ""
-	}
-	placeholder, _ := reg.Lookup(category, canonical)
-	return placeholder
-}
-
-// --- Phase 5 methods: value management and placeholder editing on step 3 ---
-
-// SetValuePlaceholder renames the placeholder assigned to a value after the
-// anonymisation run (BUILD-06 Phase 5, step 3). The user can customize what
-// each original value becomes (e.g., changing [ENTITY_1] to [CLIENT_ACME]).
-//
-// @param placeholder the existing placeholder (e.g., "[ENTITY_1]")
-// @param newPlaceholder the new placeholder (e.g., "[CLIENT_ACME]")
-// @return an actionable error, or nil on success
 func (a *App) SetValuePlaceholder(placeholder, newPlaceholder string) error {
 	a.mu.Lock()
 	reg := a.registry
@@ -348,182 +50,233 @@ func (a *App) SetValuePlaceholder(placeholder, newPlaceholder string) error {
 	if reg == nil {
 		return fmt.Errorf(
 			"there are no placeholders to edit yet: run the anonymisation once, " +
-				"then edit a placeholder on step 3 (Anonymise)")
+				"then edit any placeholder in the replaced-values list")
 	}
-
-	// Use the registry Rename method to validate and apply the change
 	return reg.Rename(placeholder, newPlaceholder)
 }
 
 // ValuePlaceholders returns all current placeholder assignments:
 // the map of placeholder → {original value, category} for display in step 3.
 //
-// @return map of placeholder to MappingInfo (e.g., {"[ENTITY_1]": {"original": "Acme Corp", "category": "entity_names"}})
-func (a *App) ValuePlaceholders() map[string]MappingInfo {
+// ValuePlaceholders returns one row per value the session has replaced: the
+// source for the step 3 Replaced values table.
+//
+// It reads the REGISTRY rather than deriving rows from report text, because the
+// registry is what the placeholder editing and the removals both act on: a table
+// built from the report could offer a row the registry has no entry for, and the
+// edit behind it would fail with nothing to point at.
+//
+// @return the mapping rows, sorted by category then placeholder number; empty
+//
+//	before the first run, which is not an error, only an empty table
+func (a *App) ValuePlaceholders() []engine.MappingEntry {
 	a.mu.Lock()
 	reg := a.registry
 	a.mu.Unlock()
 
-	out := map[string]MappingInfo{}
 	if reg == nil {
-		return out
+		return []engine.MappingEntry{}
 	}
-
-	for _, e := range reg.Export() {
-		out[e.Placeholder] = MappingInfo{Original: e.Original, Category: e.Category}
-	}
-	return out
+	return reg.Export()
 }
 
-// RemovedValueInfo is the frontend-facing summary of a removed value.
+// RemovedValueInfo is the frontend-facing summary of a removed value: what the
+// collapsed "removed" list shows, and what RestoreValue is addressed by.
 type RemovedValueInfo struct {
 	Original string `json:"original"`
 	Category string `json:"category"`
+	// Placeholder is what the value USED to become. It is the address for
+	// RestoreValue, and the reason the removed list is readable at all: the user
+	// removed a row from a table of placeholders, so that is what they recognise.
+	Placeholder string `json:"placeholder"`
+	// Variants are the spellings the exclusion also covers, so the UI can say
+	// that removing "Marie Duval" also stopped "M. Duval" being replaced.
+	Variants []string `json:"variants,omitempty"`
 }
 
-// ValidationError is a single validation issue (BUILD-06 Phase 3/4).
+// ValidationError is a single validation issue.
 type ValidationError struct {
 	Kind     string `json:"kind"`     // "duplicate", "collision", "conflict"
 	Severity string `json:"severity"` // "block", "warn"
 	Message  string `json:"message"`
 }
 
-// RemoveValue marks a value as removed so it won't be replaced in future runs
-// (BUILD-06 Phase 4/5). The removal uses the registry.Forget mechanism to mark
-// it as retired; the user can potentially restore it with RestoreValue.
+// RemoveValue deletes one value from the session.
 //
-// @param placeholder the placeholder of the value to remove
-// @return actionable error, or nil on success
-func (a *App) RemoveValue(placeholder string) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	reg := a.registry
-	if reg == nil {
-		return fmt.Errorf("no values to remove yet: run the anonymisation first")
-	}
-
-	// Find the original value this placeholder maps to
-	entry, ok := reg.PlaceholderOwner(placeholder)
-	if !ok {
-		return fmt.Errorf("placeholder %q not found in the registry", placeholder)
-	}
-
-	// Use registry.Forget to mark as removed (the entry moves to retired)
-	// This keeps the placeholder reserved so it won't be reused.
-	_, _ = reg.Forget(entry.Category, entry.Original)
-	return nil
-}
-
-// RestoreValue un-marks a value as removed (BUILD-06 Phase 4/5).
-// Currently this is a no-op since removals are not yet persisted in the App.
+// Removal is ONE action with three effects, and they cannot be allowed to
+// happen separately:
 //
-// @param placeholder the placeholder of the value to restore
-// @return actionable error, or nil on success
-func (a *App) RestoreValue(placeholder string) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	reg := a.registry
-	if reg == nil {
-		return fmt.Errorf("no registry yet")
-	}
-
-	// Find the original value
-	entry, ok := reg.PlaceholderOwner(placeholder)
-	if !ok {
-		return fmt.Errorf("placeholder %q not found", placeholder)
-	}
-
-	// TODO Phase 8: implement restoration from retired list
-	// For now, this is a placeholder that will be implemented when session
-	// persistence is added.
-	_ = entry
-	return fmt.Errorf("value restoration will be implemented in Phase 8")
-}
-
-// ListRemovedValues returns all currently removed values so the user can
-// restore them if needed (BUILD-06 Phase 4/5).
+//  1. the registry entry is forgotten, so the re-identification key stops
+//     describing a replacement that no longer happens;
+//  2. the value and its variants are recorded as a session exclusion, which is
+//     what makes the removal stick. A regex-detected value has no Entity to
+//     drop, so the exclusion is the whole mechanism for that trigger kind and
+//     can never be skipped;
+//  3. every later run and every export reads that exclusion through
+//     allowlistFor, so the pipeline's registry post-pass stops re-applying the
+//     value to every document forever (the pipeline.go hole this closes).
 //
-// @return slice of {original, category} for each retired/removed value
-func (a *App) ListRemovedValues() []RemovedValueInfo {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	reg := a.registry
-	if reg == nil {
-		return []RemovedValueInfo{}
-	}
-
-	// Get the list of retired placeholders from the registry
-	retired := reg.Retired()
-	if len(retired) == 0 {
-		return []RemovedValueInfo{}
-	}
-
-	out := make([]RemovedValueInfo, 0, len(retired))
-	for _, placeholder := range retired {
-		entry, ok := reg.PlaceholderOwner(placeholder)
-		if ok {
-			out = append(out, RemovedValueInfo{
-				Original: entry.Original,
-				Category: entry.Category,
-			})
-		}
-	}
-	return out
-}
-
-// NextRulePlaceholder returns the next available placeholder number for
-// simple rules, avoiding collisions with auto-assigned placeholders
-// (BUILD-06 Phase 5). Allows the user to mint new placeholders for
-// find-and-replace rules without accidentally reusing a number.
+// The NUMBER is not freed (Registry.Forget). The user may already hold an
+// exported document, a mapping CSV or a session file in which [PERSON_4] means
+// one person, and handing 4 to somebody else would make two artefacts of one
+// session disagree with nothing able to detect it.
 //
-// @param category the category name (e.g., "email")
-// @return the next placeholder number (e.g., 7 if [EMAIL_1] through [EMAIL_6] are taken)
-func (a *App) NextRulePlaceholder(category string) int {
+// This does NOT re-run the pipeline. RunPipeline holds an in-progress guard and
+// FastRerun is synchronous, so re-running from in here while holding a.mu is a
+// deadlock shape; the caller re-runs, exactly as the reassign flow already does.
+//
+// @param placeholder the placeholder of the value to remove, from the table
+// @return what was removed (so the UI can say so), or an actionable error
+func (a *App) RemoveValue(placeholder string) (*RemovedValueInfo, error) {
 	a.mu.Lock()
 	reg := a.registry
 	a.mu.Unlock()
 
 	if reg == nil {
-		return 1
+		return nil, fmt.Errorf(
+			"there are no replaced values to remove yet: run the anonymisation once, " +
+				"then remove any value it replaced from the list on step 3")
 	}
 
-	// Get all reserved numbers for this category
-	reserved := reg.Reserved()
-	next := 1
-	usedInCategory := make(map[int]bool)
-
-	for _, r := range reserved {
-		// Parse placeholders like "[EMAIL_5]" or "[ENTITY_3]"
-		var cat string
-		var num int
-		if n, _ := fmt.Sscanf(r, "[%[^_]_%d]", &cat, &num); n == 2 && cat == category {
-			usedInCategory[num] = true
-		}
+	entry, ok := reg.PlaceholderOwner(placeholder)
+	if !ok {
+		return nil, fmt.Errorf(
+			"the placeholder %q is not one this session assigned, so there is nothing to remove. "+
+				"Pick a row from the replaced-values list", placeholder)
 	}
 
-	// Also check all current entries in the registry
-	for _, entry := range reg.Entries() {
-		// Extract number from placeholder like [EMAIL_5]
-		var cat string
-		var num int
-		if n, _ := fmt.Sscanf(entry.Placeholder, "[%[^_]_%d]", &cat, &num); n == 2 && cat == category {
-			usedInCategory[num] = true
-		}
+	// The exclusion covers the variants too, or removing "Marie Duval" would
+	// leave "M. Duval" being replaced under a placeholder whose entry is gone.
+	variants := engine.ExpandVariants(engine.Entity{
+		Category:  entry.Category,
+		Canonical: entry.Original,
+	})
+
+	removed := engine.RemovedValue{
+		Category:    entry.Category,
+		Canonical:   strings.ToLower(entry.Original),
+		Variants:    variants,
+		Placeholder: entry.Placeholder,
 	}
 
-	// Find the next available number
-	for {
-		if !usedInCategory[next] {
-			return next
-		}
-		next++
-	}
+	reg.Forget(entry.Category, entry.Original)
+
+	a.mu.Lock()
+	a.removed = append(a.removed, removed)
+	a.mu.Unlock()
+
+	return &RemovedValueInfo{
+		Original:    entry.Original,
+		Category:    entry.Category,
+		Placeholder: entry.Placeholder,
+		Variants:    variants,
+	}, nil
 }
 
-// ValidateValuesRequest is the input for ValidateValues (BUILD-06 Phase 5).
+// RestoreValue undoes a removal.
+//
+// It drops the exclusion and nothing else, deliberately. The value comes back
+// with a NEW number on the next run, because its old one was retired and stays
+// retired: the whole reason RemoveValue did not free the number is that an
+// artefact carrying it may already have left the machine, and a restore is not
+// evidence that it did not.
+//
+// Like RemoveValue, this does not re-run: the caller does.
+//
+// @param placeholder the placeholder the value USED to have, from the removed list
+// @return an actionable error, or nil
+func (a *App) RestoreValue(placeholder string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	for i, r := range a.removed {
+		if r.Placeholder != placeholder {
+			continue
+		}
+		a.removed = append(a.removed[:i], a.removed[i+1:]...)
+		return nil
+	}
+	return fmt.Errorf(
+		"%q is not in the removed list, so there is nothing to restore. "+
+			"Only a value removed in this session can be restored", placeholder)
+}
+
+// ListRemovedValues returns the values removed in this session, for the
+// collapsed "removed" list on step 3.
+//
+// The list is the App's own exclusion record, NOT the registry's retired
+// placeholders. The two are not the same set and reading the wrong one is
+// silently wrong in both directions: a placeholder retired by a rename is not a
+// removed value, and a removed value survives a session reload while the
+// registry entry behind it does not exist any more at all.
+//
+// @return one row per removed value, never nil
+func (a *App) ListRemovedValues() []RemovedValueInfo {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	out := make([]RemovedValueInfo, 0, len(a.removed))
+	for _, r := range a.removed {
+		out = append(out, RemovedValueInfo{
+			Original:    r.Canonical,
+			Category:    r.Category,
+			Placeholder: r.Placeholder,
+			Variants:    r.Variants,
+		})
+	}
+	return out
+}
+
+// NextRulePlaceholder mints and RESERVES the next free [CUSTOM_N] for a
+// simple-replace rule.
+//
+// It replaces the frontend's nextCustomNumber, which counted only the existing
+// rules. CUSTOM is also the automatic label for the custom_patterns category, so
+// a rule and an automatic assignment could already collide on the same number,
+// and the exported key would then have two different values behind one
+// placeholder. Asking the registry is the fix: it is the only thing that knows
+// every number already spent, whether by an entry, an override, a reservation or
+// a retirement.
+//
+// The number is reserved as it is handed out, not when the rule is saved. A
+// number handed to the user and not held is a number the next automatic
+// assignment can take while they are still typing.
+//
+// @return the placeholder to put in the rule, or an actionable error
+func (a *App) NextRulePlaceholder() (string, error) {
+	a.mu.Lock()
+	// The session registry, created here if the user reaches the
+	// select-and-replace flow before the first run: it is the same lazily
+	// created instance the pipeline uses, so a number reserved now is still
+	// reserved when the run starts.
+	if a.registry == nil {
+		a.registry = engine.NewRegistry()
+	}
+	reg := a.registry
+	a.mu.Unlock()
+
+	// Reserve() refuses a placeholder that is taken, so walking upwards until it
+	// accepts one is both the search and the claim, with no second definition of
+	// "free" that could drift from the registry's.
+	label := engine.PlaceholderLabel(engine.CatCustomPatterns)
+	for n := 1; n <= maxRulePlaceholder; n++ {
+		candidate := fmt.Sprintf("[%s_%d]", label, n)
+		if err := reg.Reserve(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf(
+		"every %s placeholder up to %d is already in use, which is far past what a "+
+			"session is expected to need. Remove some find-and-replace rules, or start a new session",
+		label, maxRulePlaceholder)
+}
+
+// maxRulePlaceholder bounds the search above. It is a runaway guard, not a
+// product limit: a session with ten thousand custom rules is a bug somewhere
+// else, and an unbounded loop would hang the UI thread rather than say so.
+const maxRulePlaceholder = 10000
+
+// ValidateValuesRequest is the input for ValidateValues.
 type ValidateValuesRequest struct {
 	Entities   []engine.Entity        `json:"entities"`
 	Patterns   []engine.CustomPattern `json:"patterns"`
@@ -538,7 +291,7 @@ type ValidateValuesResult struct {
 }
 
 // ValidateValues checks the current entities, patterns and rules for conflicts
-// before running the pipeline (BUILD-06 Phase 3/5). Returns blocking errors
+// before running the pipeline. Returns blocking errors
 // (which prevent the run) and warnings (informational only).
 //
 // @param req the validation request with entities, patterns, rules and allowlist
@@ -548,11 +301,9 @@ func (a *App) ValidateValues(req ValidateValuesRequest) (*ValidateValuesResult, 
 	reg := a.registry
 	a.mu.Unlock()
 
-	// Build the allowlist from the request
-	allowlist := engine.NewEmptyAllowlist()
-	for _, t := range req.AllowTerms {
-		allowlist.Add(t)
-	}
+	// The same allowlist the run will use, removals included, so validation
+	// cannot report a conflict the pipeline would not see (or miss one it would).
+	allowlist := a.allowlistFor(req.AllowTerms)
 
 	// Run the engine's validation
 	result := engine.ValidateValues(engine.ValidationInput{
@@ -590,7 +341,7 @@ func (a *App) ValidateValues(req ValidateValuesRequest) (*ValidateValuesResult, 
 	}, nil
 }
 
-// TermMatchInfo is the live manual-entry preview payload (BUILD-02
+// TermMatchInfo is the live manual-entry preview payload
 // Phase 9c): how often a term occurs, and in how many documents.
 type TermMatchInfo struct {
 	Count     int `json:"count"`

@@ -61,7 +61,7 @@ export async function probeOllama() {
   return bridge().ProbeOllama();
 }
 
-// --- Documentation window (BUILD-04 CR6) --------------------------------
+// --- Documentation window --------------------------------
 
 /** documentationURL() resolves to the asset path of the bundled
  *  documentation page, as declared by Go (app.go DocumentationURL). */
@@ -112,11 +112,6 @@ export async function removeDocument(name) {
   return bridge().RemoveDocument(name);
 }
 
-/** listDocuments() returns the current DocumentInfo list. */
-export async function listDocuments() {
-  return bridge().ListDocuments();
-}
-
 /**
  * getDocumentSource(name) resolves to the SOURCE text of one imported
  * document, `{found, markdown, truncated, isGrid}`.
@@ -133,11 +128,6 @@ export async function getDocumentSource(name) {
 
 // --- Settings ----------------------------------------------------------
 
-/** getSettings() resolves to {level, ollamaPort, model}. */
-export async function getSettings() {
-  return bridge().GetSettings();
-}
-
 /** applySettings(settings) stores settings and resolves to the fresh
  *  OllamaStatus (rejects with an actionable message on bad input). */
 export async function applySettings(settings) {
@@ -149,7 +139,7 @@ export async function listOllamaModels() {
   return bridge().ListOllamaModels();
 }
 
-// --- Allowlist (BUILD-02 Phase 4) -----------------------------------------
+// --- Allowlist -----------------------------------------
 
 /** defaultAllowlist() resolves to the seeded never-anonymise terms shown
  *  in the UI at startup (removable like any other term). */
@@ -168,14 +158,14 @@ export async function saveAllowlistTemplate() {
   return bridge().SaveAllowlistTemplate();
 }
 
-// --- Entities screen (Phase 7) ------------------------------------------
+// --- Entities screen ------------------------------------------
 
 /**
  * runDetection(fileNames, allowTerms) runs EVERY enabled detection route in
  * one call and resolves to a DetectionResult
  * {candidates, proposals, phases, skipped, errors, cancelled, status}.
  *
- * This is the UI's detection entry point (BUILD-06). It replaced two separate
+ * This is the UI's detection entry point. It replaced two separate
  * calls whose lifecycles could not be reconciled: one cancellation slot, one
  * monotonic progress stream ("detection:progress") and exactly one terminal
  * event ("detection:done" or "detection:error") now cover the whole run.
@@ -193,48 +183,13 @@ export async function runDetection(fileNames, allowTerms) {
  *  It shares Go's single cancellation slot, so it reaches whichever route is
  *  running, including mid-file. */
 export async function cancelDetection() {
-  return bridge().CancelDiscovery();
-}
-
-/** runDiscovery(fileNames, allowTerms) resolves to a DiscoveryResult
- *  {proposals: [{category, text}], status, cancelled}. A cancelled run
- *  resolves with partial proposals; only real failures reject. */
-export async function runDiscovery(fileNames, allowTerms) {
-  return bridge().RunDiscovery(fileNames, allowTerms);
-}
-
-/** cancelDiscovery() aborts the in-flight discovery run (no-op if idle). */
-export async function cancelDiscovery() {
-  return bridge().CancelDiscovery();
-}
-
-/** estimateDiscovery(fileNames) resolves to per-file size estimates
- *  [{name, chunks, tooLarge, message}] so oversized files can be
- *  excluded BEFORE the run starts. */
-export async function estimateDiscovery(fileNames) {
-  return bridge().EstimateDiscovery(fileNames);
+  return bridge().CancelDetection();
 }
 
 /** expandVariants(entity) resolves to the variant list of one entity
  *  ({category, canonical, manualVariants, excludedVariants}). */
 export async function expandVariants(entity) {
   return bridge().ExpandEntityVariants(entity);
-}
-
-/**
- * runSmartDetection(fileNames, allowTerms, classify, options) resolves to
- * a SmartDetectionResult {candidates, status, cancelled}. Works fully
- * offline; classify=true refines categories via the local AI.
- *
- * options is the BUILD-04 CR13 tuning
- * ({minLength, minOccurrences, excludeCommonWords, minConfidence}),
- * matching engine.SmartDetectOptions field for field. Omitting it sends
- * the zero value, which means "no filtering".
- */
-export async function runSmartDetection(fileNames, allowTerms, classify, options) {
-  return bridge().RunSmartDetection(fileNames, allowTerms, !!classify, options ?? {
-    minLength: 0, minOccurrences: 0, excludeCommonWords: false, minConfidence: 0,
-  });
 }
 
 /** countTermMatches(term) resolves to {count, documents} for the live
@@ -254,26 +209,66 @@ export async function patternMatches(expr) {
   return bridge().PatternMatches(expr);
 }
 
+// --- Values, placeholders and removals (step 3,  Phases 4 and 5) ---
+//
+// These supersede setEntityPlaceholder / entityPlaceholder above, which are
+// addressed by (category, canonical) and live on step 2, where the registry does
+// not exist yet. Everything here is addressed BY PLACEHOLDER, because on step 3
+// the user is looking at report rows and at marks in the Compare pane and both
+// carry the placeholder.
+
+/** valuePlaceholders() resolves to one row per value the session replaced:
+ *  [{original, placeholder, category, count}], sorted by category then number.
+ *  Empty before the first run, which is an empty table and not an error. */
+export async function valuePlaceholders() {
+  return bridge().ValuePlaceholders();
+}
+
 /**
- * setEntityPlaceholder(category, canonical, placeholder) renames the
- * placeholder one value is replaced with (BUILD-05 Phase 3).
+ * setValuePlaceholder(current, next) renames a placeholder.
  *
- * REJECTS with an actionable message when the shape is wrong or the
- * placeholder already belongs to another value; the caller shows that message
- * verbatim. The rename takes effect on the next run or fast re-run, not
- * retroactively.
+ * REJECTS with an actionable message when the shape is wrong, when `current` is
+ * not one this session assigned, or when `next` already belongs to another
+ * value. The rename takes effect on the NEXT run, not retroactively: the text on
+ * screen was produced with the old placeholder.
  */
-export async function setEntityPlaceholder(category, canonical, placeholder) {
-  return bridge().SetEntityPlaceholder(category, canonical, placeholder);
+export async function setValuePlaceholder(current, next) {
+  return bridge().SetValuePlaceholder(current, next);
 }
 
-/** entityPlaceholder(category, canonical) resolves to the placeholder
- *  currently assigned to a value, or "" before the first run. */
-export async function entityPlaceholder(category, canonical) {
-  return bridge().EntityPlaceholder(category, canonical);
+/** removeValue(placeholder) deletes a value from the session and resolves to
+ *  {original, category, placeholder, variants}. It does NOT re-run: the caller
+ *  re-runs, because Go re-running from inside a bound method is a deadlock
+ *  shape (RunPipeline holds an in-progress guard, FastRerun is synchronous). */
+export async function removeValue(placeholder) {
+  return bridge().RemoveValue(placeholder);
 }
 
-// --- Run screen (Phase 8) -------------------------------------------------
+/** restoreValue(placeholder) undoes a removal. The value returns on the next
+ *  run with a NEW number: the old one stays retired. */
+export async function restoreValue(placeholder) {
+  return bridge().RestoreValue(placeholder);
+}
+
+/** listRemovedValues() resolves to the collapsed removed list. */
+export async function listRemovedValues() {
+  return bridge().ListRemovedValues();
+}
+
+/** nextRulePlaceholder() resolves to the next free [CUSTOM_N], reserved as it
+ *  is handed over so an automatic assignment cannot take it while the user is
+ *  still typing the rule. */
+export async function nextRulePlaceholder() {
+  return bridge().NextRulePlaceholder();
+}
+
+/** validateValues(request) resolves to {blocking, warnings}. A blocking
+ *  conflict refuses the run, so a screen calls this to say so beforehand. */
+export async function validateValues(request) {
+  return bridge().ValidateValues(request);
+}
+
+// --- Run screen -------------------------------------------------
 
 /** runPipeline(request) starts the pipeline; resolves immediately (results
  *  arrive on the "pipeline:done" event, progress on "pipeline:progress"). */
@@ -292,18 +287,13 @@ export async function fastRerun(request) {
   return bridge().FastRerun(request);
 }
 
-/** getResults() resolves to the latest Results (or null). */
-export async function getResults() {
-  return bridge().GetResults();
-}
-
 /** getMapping() resolves to the placeholder → {original, category}
  *  lookup for tooltips and reassignment (empty before the first run). */
 export async function getMapping() {
   return bridge().GetMapping();
 }
 
-// --- Export screen (Phase 9) -----------------------------------------------
+// --- Export screen -----------------------------------------------
 
 /** exportDocumentFormats(name) resolves to the offered extensions
  *  (default first) for one result document. */
@@ -318,7 +308,7 @@ export async function saveDocument(name, ext) {
 
 /** getSameFormatMetadata(name, ext) resolves to {fields, filename}: the
  *  document properties with proposed replacements plus the proposed
- *  anonymised filename, for the review panel (BUILD-02 Phase 12). */
+ *  anonymised filename, for the review panel. */
 export async function getSameFormatMetadata(name, ext) {
   return bridge().GetSameFormatMetadata(name, ext);
 }
@@ -329,15 +319,9 @@ export async function saveSameFormat(name, ext, fields, filename) {
   return bridge().SaveSameFormat(name, ext, fields, filename);
 }
 
-/** exportAllZip() saves every anonymised document into one zip, asking for a
- *  location with the native save dialog. */
-export async function exportAllZip() {
-  return bridge().ExportAllZip();
-}
-
 /**
  * chooseExportFolder() opens the native folder picker and resolves to the
- * chosen path, or "" when the user cancelled (BUILD-05 Phase 3).
+ * chosen path, or "" when the user cancelled.
  * Nothing is written; it only picks.
  */
 export async function chooseExportFolder() {
@@ -350,7 +334,7 @@ export async function chooseExportFolder() {
  *
  * This is the only write with no dialog in front of it, and it is allowed
  * because the folder was chosen explicitly and the zip carries no
- * re-identification key (BUILD-05 decision 4). An existing archive is never
+ * re-identification key. An existing archive is never
  * overwritten: the new one is numbered.
  */
 export async function exportAllZipTo(dir) {

@@ -1,34 +1,40 @@
 // views/anonymise.js, wizard step 3: run the pipeline and check the result
-// (Phase 8 as views/run.js; renamed by BUILD-05 Phase 2 and relaid out to match
-// Anonymise.dc.html by BUILD-05 Phase 7).
 //
 // A column of cards on the left, one big Compare card on the right:
 //
-//   Run                  the deep-scan checkbox (LLM-gated), RUN / RUN AGAIN,
+//   Run the deep-scan checkbox (LLM-gated), RUN / RUN AGAIN,
 //                        Cancel, the progress bar and the four stat tiles.
 //   Selected placeholder appears when a mark in the anonymised pane is clicked.
 //                        It REPLACES the floating reassign popover: a popover
 //                        anchored inside a scrolling pane drifted away from the
 //                        mark it belonged to, and it could not be reached by
 //                        keyboard at all.
-//   Report               the per-category drill-down, scoped to all files or
+//   Replaced values one row per value the run replaced, with an editable
+//                        placeholder and a remove action, plus the collapsed
+//                        list of removed values with restore. This is THE
+//                        surface for both rules: a value can be renamed and a
+//                        value can be removed, whatever trigger found it.
+//   Report the per-category drill-down, scoped to all files or
 //                        one, plus the run's dismissible warnings.
 //   Something missed?    add a value, then re-run the fast passes.
-//   Find and replace     the ordered rules that run last.
+//   Find and replace the ordered rules that run last.
 //
 // The Compare card's two panes are the one place the anonymisation is actually
 // checked, which is why they get two thirds of the screen: hovering a mark shows
 // its original, clicking one selects it, and selecting free text offers to
 // replace it with a [CUSTOM_n] rule.
 
-import { runPipeline, cancelPipeline, fastRerun, getMapping, getDocumentSource } from "../api.js";
+import {
+  runPipeline, cancelPipeline, fastRerun, getMapping, getDocumentSource,
+  valuePlaceholders, listRemovedValues, setValuePlaceholder, removeValue,
+  restoreValue, nextRulePlaceholder,
+} from "../api.js";
 import {
   getState, setState, llmEnabled,
   buildRunRequest, documentSource, cacheDocumentSource,
   addSimpleRule, removeSimpleRule, moveSimpleRule,
-  entityAutocomplete, reassignOriginal,
-  addPendingValue, removePendingValue, clearPendingValues,
-  dismissWarning, visibleWarnings,
+  entityAutocomplete, reassignOriginal, addEntities,
+  setValueTables, dismissWarning, visibleWarnings,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { renderHighlighted } from "../highlight.js";
@@ -45,14 +51,21 @@ import { toastHTML } from "../ui.js";
 // Which of the four collapsible cards are folded shut. The Report starts OPEN
 // and the other three closed: the report is what a user wants immediately after
 // a run, the other three are what they reach for when something is wrong.
-const collapsed = new Set(["missed", "rules", "selected"]);
+const collapsed = new Set(["missed", "rules", "selected", "removed"]);
 // Which report categories are expanded, by category key.
 const expandedCategories = new Set();
 // The report's scope: "__all" or one document name.
 let reportScope = "__all";
-// The value list's filter text. View state: it is a way of looking at the
-// result, not part of it.
+// The Replaced values filter text. View state: a way of looking at the result,
+// not part of it.
 let valueFilter = "";
+// Per-row feedback from a refused rename, keyed by placeholder. A refusal
+// belongs ON the row, because it is about that value and the fix is in that
+// field.
+const rowErrors = new Map();
+// The results object the value tables were loaded for, so the load happens once
+// per run rather than on every repaint.
+let tablesLoadedFor = null;
 // The clicked placeholder, or null: {placeholder, original, category}.
 let selectedMark = null;
 // The reassign autocomplete's draft text.
@@ -75,6 +88,7 @@ export function renderAnonymise(container) {
         <div class="card-column">
           ${runCard(s, aiOK)}
           ${selectedMark ? selectedCard(s) : ""}
+          ${s.results ? valuesCard(s) : ""}
           ${s.results ? reportCard(s) : ""}
           ${s.results ? missedCard(s) : ""}
           ${rulesCard(s)}
@@ -232,7 +246,7 @@ function selectedCard(s) {
  *
  * So the VALUES come first now, as a flat, filterable list that is on screen
  * without clicking anything, and the per-category breakdown follows it. Both
- * read report.values from Go (BUILD-06), which is also what the exported report
+ * read report.values from Go, which is also what the exported report
  * contains: the screen and the file can no longer disagree, and the counts are
  * computed once per run instead of on every repaint.
  */
@@ -240,7 +254,6 @@ export function reportCard(s) {
   const scopeDocs = scopedDocuments(s);
   const byCategory = aggregateCategories(scopeDocs);
   const total = Object.values(byCategory).reduce((a, b) => a + b, 0);
-  const values = scopedValues(s);
 
   const options = [{ value: "__all", label: ANONYMISE.scopeAll }]
     .concat((s.results.documents ?? []).map((d) => ({ value: d.name, label: d.name })))
@@ -266,13 +279,12 @@ export function reportCard(s) {
     `<select id="report-scope" class="rail-select" aria-label="${escapeHTML(ANONYMISE.scopeLabel)}">` +
     `${options}</select>` +
     runNote(s) +
-    valueList(values) +
     sectionLabel(ANONYMISE.byCategoryTitle) +
     `<div class="report-rows">${rows}</div>` +
     warnings;
 
   return collapsibleCard("report", ANONYMISE.reportTitle,
-    ANONYMISE.reportSummary(total, values.length), body);
+    ANONYMISE.reportSummary(total, scopedValues(s).length), body);
 }
 
 /**
@@ -291,26 +303,28 @@ function runNote(s) {
 }
 
 /**
- * valueList(values) is the flat list of everything that was replaced, with a
- * filter box. It carries the re-identification warning, because unlike the
- * exported report on the Export screen, this list shows originals in clear.
+ * valuesCard(s) is the Replaced values table: THE surface for the two rules
+ * about a value once a run has produced it.
+ *
+ *   the replacement string is editable, for every trigger. A regex match, a
+ *   detected value and a value typed by hand all appear here, because all three
+ *   end up as one registry entry and the registry is what this reads.
+ *   any value can be removed, and a removed value can be restored. Removal
+ *   prunes the registry entry AND records a session exclusion, so it survives a
+ *   re-run; restoring brings the value back with a NEW number, because the old
+ *   one was retired the moment an export could have carried it.
+ *
+ * It carries the re-identification warning: unlike the exported report, this
+ * list shows originals in clear.
  */
-function valueList(values) {
-  const shown = filterValues(values, valueFilter);
-  const rows = shown.map((v) =>
-    `<div class="report-item" data-value-row="${escapeHTML(v.placeholder)}">` +
-    `<span class="report-item-value">` +
-    `<span class="report-original">${escapeHTML(v.original)}</span>` +
-    `<span class="report-placeholder mono">${escapeHTML(v.placeholder)}</span>` +
-    `</span>` +
-    `<span class="mono report-count">${escapeHTML(String(v.count))}</span>` +
-    `</div>`).join("");
+export function valuesCard(s) {
+  const shown = filterValues(s.replacedValues, valueFilter);
+  const rows = shown.map(valueRow).join("") ||
+    `<span class="hint">${escapeHTML(
+      s.replacedValues.length ? ANONYMISE.valuesFilterEmpty : ANONYMISE.reportEmpty)}</span>`;
 
-  return `<div class="report-values">` +
-    `<div class="report-values-head">` +
-    sectionLabel(ANONYMISE.valuesTitle) +
+  const body =
     `<span class="hint">${escapeHTML(ANONYMISE.valuesKeyWarning)}</span>` +
-    `</div>` +
     `<input id="report-value-filter" class="report-filter" value="${escapeHTML(valueFilter)}"` +
     ` placeholder="${escapeHTML(ANONYMISE.valuesFilterPlaceholder)}"` +
     ` aria-label="${escapeHTML(ANONYMISE.valuesFilterPlaceholder)}"/>` +
@@ -318,10 +332,50 @@ function valueList(values) {
     sectionLabel(ANONYMISE.valuePlaceholder, { mini: true }) +
     sectionLabel(ANONYMISE.occurrences, { mini: true }) +
     `</div>` +
-    `<div class="report-value-rows" id="report-value-rows">` +
-    (rows || `<span class="hint">${escapeHTML(
-      values.length ? ANONYMISE.valuesFilterEmpty : ANONYMISE.reportEmpty)}</span>`) +
-    `</div></div>`;
+    `<div class="report-value-rows" id="report-value-rows">${rows}</div>` +
+    removedList(s);
+
+  return collapsibleCard("values", ANONYMISE.valuesTitle,
+    ANONYMISE.valuesSummary(s.replacedValues.length, s.removedValues.length), body);
+}
+
+/** valueRow(v) is one replaced value: what it was, what it becomes, how often,
+ *  and the action that removes it. */
+function valueRow(v) {
+  const error = rowErrors.get(v.placeholder);
+  return `<div class="report-item value-row" data-placeholder="${escapeHTML(v.placeholder)}">` +
+    `<span class="report-item-value">` +
+    `<span class="report-original">${escapeHTML(v.original)}</span>` +
+    `<span class="hint">${escapeHTML(CATEGORY_LABELS[v.category]?.[0] ?? v.category)}</span>` +
+    `</span>` +
+    `<input class="ph-input mono" value="${escapeHTML(v.placeholder)}"` +
+    ` title="${escapeHTML(ANONYMISE.placeholderTooltip)}"` +
+    ` aria-label="${escapeHTML(ANONYMISE.placeholderLabel)}"/>` +
+    `<span class="mono report-count">${escapeHTML(String(v.count))}</span>` +
+    button("", {
+      kind: "ghost", cls: "value-remove icon-action danger", icon: "close",
+      ariaLabel: `${ANONYMISE.removeValue}: ${v.original}`, title: ANONYMISE.removeValue,
+    }) +
+    (error ? `<span class="hint bad value-error">${escapeHTML(error)}</span>` : "") +
+    `</div>`;
+}
+
+/** removedList(s) is the collapsed half: what was removed, and the way back. */
+function removedList(s) {
+  if (!s.removedValues.length) return "";
+  const rows = s.removedValues.map((v) =>
+    `<div class="report-item removed-row" data-placeholder="${escapeHTML(v.placeholder)}">` +
+    `<span class="report-item-value">` +
+    `<span class="report-original">${escapeHTML(v.original)}</span>` +
+    `<span class="hint">${escapeHTML(CATEGORY_LABELS[v.category]?.[0] ?? v.category)}</span>` +
+    `</span>` +
+    button(ANONYMISE.restoreValue, { kind: "ghost", cls: "value-restore" }) +
+    `</div>`).join("");
+
+  return collapsibleGroup("removed",
+    ANONYMISE.removedTitle,
+    `<p class="hint">${escapeHTML(ANONYMISE.removedHint)}</p>${rows}`,
+    { open: !collapsed.has("removed"), countLabel: String(s.removedValues.length) });
 }
 
 /**
@@ -429,14 +483,6 @@ export function countOccurrences(text, needle) {
 // --- Something missed? card ----------------------------------------------
 
 function missedCard(s) {
-  const chips = s.pendingValues.map((p) =>
-    `<span class="chip-tag pending" data-pending="${escapeHTML(p.text)}">${escapeHTML(p.text)}` +
-    button("", {
-      kind: "ghost", cls: "chip-remove pending-del", icon: "close",
-      ariaLabel: `Remove ${p.text}`, title: ANONYMISE.removePending,
-    }) +
-    `</span>`).join("");
-
   const body =
     `<p class="hint">${escapeHTML(ANONYMISE.missedHint)}</p>` +
     `<div class="add-row">` +
@@ -452,11 +498,10 @@ function missedCard(s) {
     `<div class="run-actions">` +
     button(ANONYMISE.addValue, { kind: "secondary", id: "btn-add-missed" }) +
     button(ANONYMISE.fastRerun, { kind: "secondary", id: "btn-fast-rerun", icon: "refresh" }) +
-    `</div>` +
-    (chips ? `<div class="chip-row">${chips}</div>` : "");
+    `</div>`;
 
   return collapsibleCard("missed", ANONYMISE.missedTitle,
-    ANONYMISE.missedSummary(s.pendingValues.length), body);
+    ANONYMISE.missedSummary(s.entities.length), body);
 }
 
 // --- Find and replace card ----------------------------------------------
@@ -626,6 +671,7 @@ function wire(container, s, doc) {
   });
   if (selectedMark) wireSelected(container);
   if (s.results) {
+    wireValues(container, s);
     wireReport(container);
     wireMissed(container);
   }
@@ -696,26 +742,6 @@ function wireReport(container) {
     reportScope = ev.target.value;
     setState({});
   });
-
-  // The filter repaints the list in place rather than through the store: it is
-  // a way of looking at the result, and routing every keystroke through a full
-  // re-render would move the caret and lose focus.
-  const filter = container.querySelector("#report-value-filter");
-  filter?.addEventListener("input", () => {
-    valueFilter = filter.value;
-    const rows = container.querySelector("#report-value-rows");
-    if (!rows) return;
-    const shown = filterValues(scopedValues(getState()), valueFilter);
-    rows.innerHTML = shown.map((v) =>
-      `<div class="report-item" data-value-row="${escapeHTML(v.placeholder)}">` +
-      `<span class="report-item-value">` +
-      `<span class="report-original">${escapeHTML(v.original)}</span>` +
-      `<span class="report-placeholder mono">${escapeHTML(v.placeholder)}</span>` +
-      `</span>` +
-      `<span class="mono report-count">${escapeHTML(String(v.count))}</span>` +
-      `</div>`).join("") ||
-      `<span class="hint">${escapeHTML(ANONYMISE.valuesFilterEmpty)}</span>`;
-  });
   for (const row of container.querySelectorAll(".report-row")) {
     row.querySelector(".report-toggle")?.addEventListener("click", () => {
       const key = row.dataset.category;
@@ -731,16 +757,111 @@ function wireReport(container) {
   }
 }
 
+/**
+ * wireValues(container, s) attaches the Replaced values table.
+ *
+ * Neither a rename nor a removal re-runs from inside Go: RunPipeline holds an
+ * in-progress guard and FastRerun is synchronous, so re-running from a bound
+ * method would be a deadlock. The caller re-runs, and this is the caller.
+ *
+ * A rename takes effect on the NEXT run and not retroactively, so it refreshes
+ * the table and stops there; a removal changes what the text should say, so it
+ * re-runs.
+ */
+function wireValues(container, s) {
+  // Load once per run. The tables come from the registry, which only Go has.
+  if (s.results && tablesLoadedFor !== s.results) {
+    tablesLoadedFor = s.results;
+    refreshValueTables();
+  }
+
+  // The filter repaints the rows in place rather than through the store:
+  // routing every keystroke through a full re-render moves the caret.
+  const filter = container.querySelector("#report-value-filter");
+  filter?.addEventListener("input", () => {
+    valueFilter = filter.value;
+    const rows = container.querySelector("#report-value-rows");
+    if (!rows) return;
+    rows.innerHTML = filterValues(getState().replacedValues, valueFilter)
+      .map(valueRow).join("") ||
+      `<span class="hint">${escapeHTML(ANONYMISE.valuesFilterEmpty)}</span>`;
+    wireValueRows(container);
+  });
+
+  wireValueRows(container);
+
+  for (const row of container.querySelectorAll(".removed-row")) {
+    row.querySelector(".value-restore")?.addEventListener("click", async () => {
+      try {
+        await restoreValue(row.dataset.placeholder);
+        await refreshValueTables();
+        await runFastRerun(container, ANONYMISE.valueRestored);
+      } catch (err) {
+        notify(String(err?.message ?? err), "warn");
+      }
+    });
+  }
+}
+
+/** wireValueRows(container) binds the rename field and the remove action. It is
+ *  separate because the filter rebuilds those rows without a repaint. */
+function wireValueRows(container) {
+  for (const row of container.querySelectorAll(".value-row")) {
+    const placeholder = row.dataset.placeholder;
+
+    row.querySelector(".ph-input")?.addEventListener("change", async (ev) => {
+      try {
+        await setValuePlaceholder(placeholder, ev.target.value);
+        rowErrors.delete(placeholder);
+        await refreshValueTables();
+      } catch (err) {
+        // A refusal is shown on the row, not as a notice: it is about this
+        // value and the fix is in this field.
+        rowErrors.set(placeholder, String(err?.message ?? err));
+        setState({});
+      }
+    });
+
+    row.querySelector(".value-remove")?.addEventListener("click", async () => {
+      try {
+        const info = await removeValue(placeholder);
+        rowErrors.delete(placeholder);
+        await refreshValueTables();
+        await runFastRerun(container, ANONYMISE.valueRemoved(info?.original ?? placeholder));
+      } catch (err) {
+        notify(String(err?.message ?? err), "warn");
+      }
+    });
+  }
+}
+
+/**
+ * refreshValueTables() mirrors the Go registry into the store.
+ *
+ * A bridge failure leaves the tables as they were rather than emptying them: an
+ * empty Replaced values table reads as "nothing was replaced", which is a
+ * different and much worse statement than "the table could not be refreshed".
+ */
+async function refreshValueTables() {
+  try {
+    const [replaced, removed] = await Promise.all([valuePlaceholders(), listRemovedValues()]);
+    setValueTables(replaced, removed);
+  } catch { /* no bridge (plain browser): keep what is on screen */ }
+}
+
 function wireMissed(container) {
   const category = container.querySelector("#missed-category");
   const value = container.querySelector("#missed-value");
   category?.addEventListener("change", () => { drafts.missedCategory = category.value; });
   value?.addEventListener("input", () => { drafts.missed = value.value; });
 
+  // Adding a value here adds it to the VALUE LIST, and nothing happens to the
+  // text until the fast re-run applies it. The two are separate buttons because
+  // they are separate decisions: several values are usually added at once.
   const add = () => {
     const text = (drafts.missed ?? "").trim();
     if (!text) return;
-    if (!addPendingValue(drafts.missedCategory, text)) {
+    if (!addEntities([{ category: drafts.missedCategory, canonical: text }])) {
       notify(ANONYMISE.missedAlreadyThere(text), "info");
       return;
     }
@@ -751,15 +872,8 @@ function wireMissed(container) {
   value?.addEventListener("keydown", (ev) => { if (ev.key === "Enter") add(); });
 
   container.querySelector("#btn-fast-rerun")?.addEventListener("click", async () => {
-    const applied = getState().pendingValues.length;
-    await runFastRerun(container, ANONYMISE.fastRerunDone(applied));
+    await runFastRerun(container, ANONYMISE.fastRerunDone(getState().entities.length));
   });
-
-  for (const chip of container.querySelectorAll(".chip-tag[data-pending]")) {
-    chip.querySelector(".pending-del")?.addEventListener("click", () => {
-      removePendingValue(chip.dataset.pending);
-    });
-  }
 }
 
 function wireRules(container) {
@@ -951,24 +1065,20 @@ function wireTextSelection(container) {
         x: rect.left + rect.width / 2 - hostRect.left,
         y: rect.top - hostRect.top,
       };
-      // Number the custom rule from the ones that already exist, so two
-      // selections in a row do not both propose [CUSTOM_1].
-      selectionDraft = `[CUSTOM_${nextCustomNumber(getState())}]`;
+      // GO mints the placeholder and reserves it, because only the registry
+      // knows every number already spent. CUSTOM is also the automatic label
+      // for custom_patterns matches, so numbering from the rules alone hands
+      // out one the registry has already given to a pattern match.
+      selectionDraft = "";
       setState({});
+      nextRulePlaceholder()
+        .then((placeholder) => {
+          selectionDraft = placeholder;
+          setState({});
+        })
+        .catch(() => { /* no bridge: the user types their own replacement */ });
     });
   }
-}
-
-/** nextCustomNumber(s) is the next free N for a [CUSTOM_N] rule. It reads the
- *  RULES rather than the registry, because these placeholders are produced by
- *  the find-and-replace pass and never enter the registry. */
-export function nextCustomNumber(s) {
-  let highest = 0;
-  for (const rule of s.simpleRules ?? []) {
-    const m = /^\[CUSTOM_(\d+)\]$/.exec(rule.replace ?? "");
-    if (m) highest = Math.max(highest, parseInt(m[1], 10));
-  }
-  return highest + 1;
 }
 
 function wireSelectionPanel(container) {
@@ -1012,9 +1122,11 @@ function wireSelectionPanel(container) {
 async function runFastRerun(container, message) {
   try {
     const results = await fastRerun(buildRunRequest(false));
-    // The mapping may have grown: new values earned placeholders.
+    // The mapping and the value table may both have grown: new values earned
+    // placeholders, and removed ones lost theirs.
+    tablesLoadedFor = results;
     setState({ results, mapping: await getMapping() });
-    clearPendingValues();
+    await refreshValueTables();
     notify(message, "ok");
   } catch (err) {
     showError(container, err);
