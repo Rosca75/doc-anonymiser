@@ -22,10 +22,10 @@ import (
 // run. Without them the frontend would receive Go's capitalised field names and
 // the report would silently disagree with what the engine produced.
 type ValueRef struct {
-	Kind      string `json:"kind"`               // "regex" | "entity" | "custom_pattern" | "simple_rule"
-	Category  string `json:"category"`           // category the value belongs to
-	Canonical string `json:"canonical"`          // lower-cased value
-	Detail    string `json:"detail,omitempty"`   // extra context (e.g., the regex pattern)
+	Kind      string `json:"kind"`             // "regex" | "entity" | "custom_pattern" | "simple_rule"
+	Category  string `json:"category"`         // category the value belongs to
+	Canonical string `json:"canonical"`        // lower-cased value
+	Detail    string `json:"detail,omitempty"` // extra context (e.g., the regex pattern)
 }
 
 // Conflict is a value that violates an invariant and must be resolved.
