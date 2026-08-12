@@ -34,7 +34,7 @@ import {
   buildRunRequest, documentSource, cacheDocumentSource,
   addSimpleRule, removeSimpleRule, moveSimpleRule,
   entityAutocomplete, reassignOriginal, addEntities,
-  setValueTables, dismissWarning, visibleWarnings,
+  setValueTables, dismissWarning, visibleWarnings, blockingConflicts,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { renderHighlighted } from "../highlight.js";
@@ -81,6 +81,11 @@ export function renderAnonymise(container) {
   const s = getState();
   const aiOK = llmEnabled(s);
   const doc = currentDocument(s);
+  // A refused run carries empty documents and an empty report, so the value,
+  // report and "something missed" cards would show a zero run beside a stale
+  // registry table: the exact mismatch a refused run produces. They are hidden
+  // until the conflict is fixed, and the run card explains why.
+  const blocked = blockingConflicts(s).length > 0;
 
   container.innerHTML = `
     <div class="anonymise-view">
@@ -88,17 +93,17 @@ export function renderAnonymise(container) {
         <div class="card-column">
           ${runCard(s, aiOK)}
           ${selectedMark ? selectedCard(s) : ""}
-          ${s.results ? valuesCard(s) : ""}
-          ${s.results ? reportCard(s) : ""}
-          ${s.results ? missedCard(s) : ""}
+          ${s.results && !blocked ? valuesCard(s) : ""}
+          ${s.results && !blocked ? reportCard(s) : ""}
+          ${s.results && !blocked ? missedCard(s) : ""}
           ${rulesCard(s)}
         </div>
         ${compareCard(s, doc)}
       </div>
       ${stepFooterHTML({
         hint: continueHint(s),
-        nextDisabled: !s.results,
-        nextTitle: s.results ? "" : ANONYMISE.continueNeedsRun,
+        nextDisabled: !s.results || blocked,
+        nextTitle: continueBlockedTitle(s),
         standalone: true,
       }, s)}
       <div id="run-error"></div>
@@ -106,6 +111,14 @@ export function renderAnonymise(container) {
   `;
 
   wire(container, s, doc);
+}
+
+/** continueBlockedTitle(s) is the disabled CONTINUE button's tooltip: it names
+ *  the reason the step cannot be left, so a greyed-out button is never mute. */
+function continueBlockedTitle(s) {
+  if (blockingConflicts(s).length > 0) return ANONYMISE.continueBlocked;
+  if (!s.results) return ANONYMISE.continueNeedsRun;
+  return "";
 }
 
 /** currentDocument(s) is the document the Compare card shows. */
@@ -144,12 +157,41 @@ function runCard(s, aiOK) {
   return card({
     id: "run-card", title: CARDS.run.title, subtitle: runSubtitle(s),
     bodyCls: "stack",
-    bodyHTML: deepScan + actions + progressStrip(s) + statsRow(s),
+    bodyHTML: deepScan + actions + progressStrip(s) + blockedPanel(s) + statsRow(s),
   });
+}
+
+/**
+ * blockedPanel(s) explains a refused run.
+ *
+ * A blocking conflict aborts inside the engine before pass 1, so the results
+ * carry no documents and an empty report: the summary reads 0/0/0 while an
+ * earlier run's registry still fills the value table. Without this panel that
+ * looks like a run that silently did nothing. It lists every conflict's message
+ * and its fix, and it is not dismissible: the conflict, not the user, decides
+ * when it goes away.
+ */
+export function blockedPanel(s) {
+  const conflicts = blockingConflicts(s);
+  if (conflicts.length === 0) return "";
+  const items = conflicts.map((c) => {
+    const fix = c.fix
+      ? `<div class="hint"><strong>${escapeHTML(ANONYMISE.blockedFixLabel)}:</strong> ${escapeHTML(c.fix)}</div>`
+      : "";
+    return `<li>${escapeHTML(c.message)}${fix}</li>`;
+  }).join("");
+  return `<div class="banner error blocked-banner" role="alert">` +
+    `<span class="banner-icon">${icon("warning")}</span>` +
+    `<div class="banner-body">` +
+    `<strong>${escapeHTML(ANONYMISE.blockedTitle)}</strong>` +
+    `<p class="hint">${escapeHTML(ANONYMISE.blockedIntro)}</p>` +
+    `<ul class="blocked-list">${items}</ul>` +
+    `</div></div>`;
 }
 
 function runSubtitle(s) {
   if (s.running) return ANONYMISE.subtitleRunning;
+  if (blockingConflicts(s).length > 0) return ANONYMISE.subtitleBlocked;
   if (s.results) return ANONYMISE.subtitleDone;
   return ANONYMISE.subtitleIdle(s.documents.length);
 }
@@ -170,6 +212,9 @@ function progressStrip(s) {
  *  zeroes would look like a finished run that found nothing. */
 function statsRow(s) {
   if (!s.results || s.running) return "";
+  // A refused run has results but changed nothing: the blocked panel above says
+  // so. Four zeroes here would contradict it by reading as a finished run.
+  if (blockingConflicts(s).length > 0) return "";
   const report = s.results.report ?? {};
   const categories = Object.keys(report.byCategory ?? {}).length;
   const duration = report.durationMs ?? 0;
@@ -607,7 +652,9 @@ export function compareCard(s, doc) {
       `<div class="pane-caption">${escapeHTML(ANONYMISE.paneAnonymised)}</div>` +
       `<pre class="pane-body" id="anonymised-pane">${renderHighlighted(doc.anonymised ?? "", s.mapping)}</pre>` +
       `</div></div>`
-    : `<div class="card-body"><p class="hint">${escapeHTML(ANONYMISE.compareEmpty)}</p></div>`;
+    : `<div class="card-body"><p class="hint">${escapeHTML(
+        blockingConflicts(s).length > 0 ? ANONYMISE.compareBlocked : ANONYMISE.compareEmpty,
+      )}</p></div>`;
 
   return `<section class="card compare-card" id="compare-card">` +
     `<div class="card-head with-controls">` +
@@ -656,6 +703,7 @@ function selectionPanel() {
 /** continueHint(s) says what is ready, or what has to happen first. */
 export function continueHint(s) {
   if (s.running) return ANONYMISE.hintRunning;
+  if (blockingConflicts(s).length > 0) return ANONYMISE.continueBlocked;
   if (!s.results) return ANONYMISE.hintNotRun;
   const n = s.results.report?.totalReplacements ?? 0;
   return ANONYMISE.hintReady(n);

@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 
 import {
   countOccurrences, valuesInCategory, formatDuration, continueHint,
-  compareCard, reportCard, valuesCard, filterValues,
+  compareCard, reportCard, valuesCard, filterValues, blockedPanel,
 } from "./views/anonymise.js";
 import { textOf, all } from "./testhtml.js";
 
@@ -187,6 +187,53 @@ test("formatDuration handles a missing or negative figure", () => {
   for (const bad of [undefined, null, -1, NaN]) {
     assert.equal(formatDuration(bad), "0 ms", JSON.stringify(bad));
   }
+});
+
+// --- The refused run -----------------------------------------------------
+//
+// A blocking validation conflict aborts the engine before pass 1: the results
+// carry empty documents and an empty report, so the summary reads 0/0/0 while an
+// earlier run's registry still fills the value table. These tests pin that the
+// screen now explains the refusal instead of showing that silent mismatch.
+
+/** blockedState() is a state whose last run was refused by a variant collision. */
+function blockedState(patch = {}) {
+  return {
+    running: false,
+    documents: [{ name: "a.pdf", markdown: "source" }],
+    results: {
+      documents: [],
+      report: { totalReplacements: 0, byCategory: {} },
+      validation: {
+        blocking: [{
+          kind: "collision", severity: "block", value: "Mendonça",
+          message: "Two person values both claim the spelling \"Mendonça\".",
+          fix: "Remove one of the two values on the Identify step.",
+        }],
+      },
+    },
+    ...patch,
+  };
+}
+
+test("blockedPanel names the conflict and its fix on a refused run", () => {
+  const html = blockedPanel(blockedState());
+  assert.match(html, /The run was refused/);
+  assert.match(html, /Mendon/);
+  assert.match(html, /Remove one of the two values/);
+  assert.match(html, /How to fix it/);
+});
+
+test("blockedPanel is empty when there is no blocking conflict", () => {
+  assert.equal(blockedPanel({ results: { validation: { blocking: [] } } }), "");
+  assert.equal(blockedPanel({ results: null }), "");
+  assert.equal(blockedPanel({}), "");
+});
+
+test("continueHint refuses to leave the step while a run is blocked", () => {
+  // A refused run has results but changed nothing, so the plain "0 replacements
+  // ready" hint would invite the user to export a run that never happened.
+  assert.match(continueHint(blockedState()), /Resolve the conflict/);
 });
 
 // --- continueHint --------------------------------------------------------

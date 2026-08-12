@@ -518,6 +518,7 @@ export const ANONYMISE = {
   deepScanTooltip: "An extra AI pass that looks for values the deterministic passes left behind.",
   subtitleRunning: "Working through your documents.",
   subtitleDone: "Check the result side by side. Every replacement maps back to its original.",
+  subtitleBlocked: "The run was refused before any text was changed. Fix the conflict, then run again.",
   /** subtitleIdle(n) says what is waiting before the first run. */
   subtitleIdle(n) {
     if (n === 0) return "No documents imported yet.";
@@ -532,6 +533,13 @@ export const ANONYMISE = {
   statDocuments: "DOCUMENTS",
   statCategories: "CATEGORIES",
   statDuration: "DURATION",
+
+  // The refused-run panel. A blocking conflict aborts the run before pass 1, so
+  // nothing was replaced and there is nothing to compare: the panel is the only
+  // thing on the screen that says why, and how to fix it.
+  blockedTitle: "The run was refused",
+  blockedIntro: "Nothing was replaced. Two values would fight over the same text, which would make the re-identification key ambiguous. Fix each conflict below on the Identify step, then run again.",
+  blockedFixLabel: "How to fix it",
 
   // The selected placeholder card.
   selectedTitle: "Selected placeholder",
@@ -647,6 +655,7 @@ export const ANONYMISE = {
   paneOriginal: "ORIGINAL",
   paneAnonymised: "ANONYMISED",
   compareEmpty: "Run the anonymisation to compare the result with the original.",
+  compareBlocked: "The run was refused, so there is nothing to compare. Resolve the conflict on the left, then run again.",
   /** tooltipTimes(n) is the second line of a mark's hover tooltip. */
   tooltipTimes(n) {
     return `replaced ${n} time${n === 1 ? "" : "s"} in this document`;
@@ -674,6 +683,7 @@ export const ANONYMISE = {
 
   // The footer.
   continueNeedsRun: "Run the anonymisation first.",
+  continueBlocked: "Resolve the conflict before you continue.",
   hintRunning: "Running...",
   hintNotRun: "Run the anonymisation first",
   /** hintReady(n) says what is ready to export. */
