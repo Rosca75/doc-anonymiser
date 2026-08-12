@@ -121,6 +121,28 @@ test("addEntities dedupes case-insensitively and defaults to accepted", () => {
   assert.equal(s.entities[0].status, "accepted");
 });
 
+test("adding a value enables its category and flips the preset to custom", () => {
+  // The reported bug: person values accepted from Smart detection under the
+  // Soft preset (person_names off) were listed as "ready to replace" and then
+  // dropped by the pipeline's category filter. Acceptance must switch the
+  // category on, exactly as ticking the box would, so the value survives.
+  resetState();
+  applyPreset("soft");
+  assert.equal(getState().settings.categories.person_names, false, "soft leaves person names off");
+  addEntities([{ category: "person_names", canonical: "Oscar Liber" }]);
+  assert.equal(getState().settings.categories.person_names, true, "the value's category is now on");
+  assert.equal(selectionPresetName(getState().settings.categories), "custom");
+});
+
+test("adding a value already on a preset does not flip the preset", () => {
+  // person_names is on at medium, so accepting one must not read as a manual
+  // divergence: the chip should stay on the named preset.
+  resetState();
+  applyPreset("medium");
+  addEntities([{ category: "person_names", canonical: "Oscar Liber" }]);
+  assert.equal(selectionPresetName(getState().settings.categories), "medium");
+});
+
 test("acceptedEntities filters on status, as the belt to a removed brace", () => {
   // setEntityStatus() is gone: the redesign has no denied
   // state, so nothing can produce one. The filter stays, because a row that

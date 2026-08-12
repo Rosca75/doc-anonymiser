@@ -931,14 +931,30 @@ export function entityKey(category, canonical) {
  * addEntities(items) adds proposals or manual entries, skipping duplicates.
  * items: [{category, canonical, variants?}], variants (from Go expansion)
  * may be attached later via setEntityVariants.
+ *
+ * Adding a value ENABLES its category. A value in "My values" is a value the
+ * user has committed to replacing, but the pipeline drops any value whose
+ * category switch is off (engine.filterEntities), so a person accepted under
+ * the Soft preset, which leaves person_names off, would be listed as "ready to
+ * replace" and then silently survive. Detection finds names by shape without
+ * regard to the switches, so acceptance is the only moment that can reconcile
+ * the two: turning the category on here keeps "My values" and the checkboxes
+ * telling the same story, and flips the preset to Custom (selectionPresetName)
+ * exactly as ticking the box by hand would.
  */
 export function addEntities(items) {
   const existing = new Set(state.entities.map((e) => entityKey(e.category, e.canonical)));
   const added = [];
+  // The categories the added values need switched on. Collected so the whole
+  // batch (accept-all can add across categories) flips in the one setState.
+  const enable = {};
   for (const item of items) {
     const canonical = (item.canonical ?? "").trim();
     if (!canonical || existing.has(entityKey(item.category, canonical))) continue;
     existing.add(entityKey(item.category, canonical));
+    // Only a real engine category is switchable; an unknown key would write a
+    // phantom switch the pipeline never reads.
+    if (ALL_CATEGORIES.includes(item.category)) enable[item.category] = true;
     added.push({
       category: item.category,
       canonical,
@@ -953,7 +969,15 @@ export function addEntities(items) {
       status: "accepted",
     });
   }
-  if (added.length) setState({ entities: [...state.entities, ...added] });
+  if (added.length) {
+    setState({
+      entities: [...state.entities, ...added],
+      settings: {
+        ...state.settings,
+        categories: { ...state.settings.categories, ...enable },
+      },
+    });
+  }
   return added.length;
 }
 
