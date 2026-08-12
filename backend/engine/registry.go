@@ -260,18 +260,17 @@ func (r *Registry) Export() []MappingEntry {
 // across two runs is not recoverable.
 var placeholderShapeRe = regexp.MustCompile(`^\[[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_[1-9][0-9]*\]$`)
 
-// SetPlaceholder overrides the placeholder for one (category, original) pair
-// the user edits the replacement value on an entity card,
+// SetPlaceholder overrides the placeholder for one (category, original) pair,
 // because "[CLIENT_1]" is sometimes less useful downstream than "[BANK_A_1]".
 //
 // Three things are refused, each with a message that says what to do instead:
 //
-//	a malformed placeholder the shape has to survive export and re-import
-//	a collision two originals sharing one placeholder would make
+//	a malformed placeholder   the shape has to survive export and re-import
+//	a collision               two originals sharing one placeholder would make
 //	                          the re-identification key ambiguous, which
 //	                          silently destroys the ability to undo the
 //	                          anonymisation
-//	an unknown pair nothing to override yet
+//	an unknown pair           nothing to override yet
 //
 // The last one is the reason this does not create an entry: an override is an
 // edit to something the registry already assigned, and inventing an entry here

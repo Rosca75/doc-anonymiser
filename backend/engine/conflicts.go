@@ -259,13 +259,22 @@ func checkSimpleRuleConflicts(rules []SimpleRule, registry *Registry) []Conflict
 // is the same mistake as one looking for "[PERSON_1]".
 var placeholderInsideRe = regexp.MustCompile(`\[[A-Z][A-Z0-9_]*_[0-9]+\]`)
 
-// maxOverlapWarnings caps how many overlap warnings one run reports.
+// maxOverlapWarnings caps how many overlap warnings one run reports, and
+// maxOverlapSpansExamined caps how much work finding them may cost.
 //
-// Overlaps are per OCCURRENCE, so a 2 MB document with one recurring collision
-// produces ten thousand identical rows. They are deduplicated by (kind, value)
-// first, and the cap is the backstop for a document that genuinely collides in
-// many different ways: a list nobody can read is not a warning.
-const maxOverlapWarnings = 50
+// Both exist because overlaps are per OCCURRENCE while a warning is about a
+// CONFIGURATION: a 2 MB document with one recurring collision produces the same
+// single warning ten thousand times over. Warnings are deduplicated by
+// (category, value), so the first cap bounds what the user reads; the second
+// bounds what the pipeline pays to tell them, because collecting the discarded
+// spans costs an allocation each on a path that runs over every document.
+//
+// A run that has examined this many overlapping spans has already seen every
+// distinct pairing its documents contain, several thousand times over.
+const (
+	maxOverlapWarnings      = 50
+	maxOverlapSpansExamined = 20000
+)
 
 // overlapWarnings turns the spans overlap resolution discarded into warnings,
 // deduplicated and capped.
@@ -273,12 +282,20 @@ const maxOverlapWarnings = 50
 // It is a type rather than a function because a run collects across every
 // document and every grid cell, and the deduplication has to span all of them.
 type overlapWarnings struct {
-	seen map[string]bool
-	out  []Conflict
+	seen     map[string]bool
+	examined int
+	out      []Conflict
 }
 
 func newOverlapWarnings() *overlapWarnings {
 	return &overlapWarnings{seen: map[string]bool{}}
+}
+
+// wants reports whether there is any point collecting more discarded spans.
+// The caller asks BEFORE resolving, so a run that has said everything it can
+// stops paying to gather losers at all.
+func (w *overlapWarnings) wants() bool {
+	return len(w.out) < maxOverlapWarnings && w.examined < maxOverlapSpansExamined
 }
 
 // add records the spans one anonymiseText call threw away.
@@ -297,9 +314,10 @@ func newOverlapWarnings() *overlapWarnings {
 // the pipeline decided, in the words of the rule that decided it.
 func (w *overlapWarnings) add(dropped []Span) {
 	for _, span := range dropped {
-		if len(w.out) >= maxOverlapWarnings {
+		if !w.wants() {
 			return
 		}
+		w.examined++
 		value := span.CanonicalOrOriginal()
 		key := span.Category + "|" + strings.ToLower(value)
 		if w.seen[key] {

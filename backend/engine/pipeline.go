@@ -307,7 +307,6 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	// Overlap warnings come from the ONE place the decision is made, the span
 	// resolver, and accumulate across every document and grid cell of the run.
 	overlaps := newOverlapWarnings()
-	collectOverlapWarning := overlaps.add
 
 	// --- Passes 1–3, per document. --------------------------------------
 	// llmDurations records per-document deep-scan timing for the report
@@ -357,7 +356,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 			country:       in.Country,
 			allow:         in.Allowlist,
 		}
-		rd, traces := anonymiseDocument(doc, scope, reg, collectOverlapWarning, in.OnTrace != nil)
+		rd, traces := anonymiseDocument(doc, scope, reg, overlaps, in.OnTrace != nil)
 		if in.OnTrace != nil {
 			in.OnTrace(doc.Name, traces)
 		}
@@ -534,13 +533,13 @@ type detectionScope struct {
 // entities) over one document, routing grid documents through per-cell
 // processing.
 //
-// @param onDropped receives the spans overlap resolution discarded, so the run
+// @param overlaps collects the spans overlap resolution discarded, so the run
 //
-//	can warn about them from the ONE place the decision is made
+//	warns about them from the ONE place the decision is made. nil skips it.
 //
 // @param traceEnabled collects the resolved spans for the caller's OnTrace hook
 func anonymiseDocument(doc Document, scope detectionScope, reg *Registry,
-	onDropped func([]Span), traceEnabled bool) (ResultDocument, []SpanTrace) {
+	overlaps *overlapWarnings, traceEnabled bool) (ResultDocument, []SpanTrace) {
 
 	rd := ResultDocument{
 		Name:       doc.Name,
@@ -580,7 +579,7 @@ func anonymiseDocument(doc Document, scope detectionScope, reg *Registry,
 				if traceEnabled {
 					region = fmt.Sprintf("row %d col %d", r, c)
 				}
-				grid[r][c] = anonymiseText(cell, scope, assign, makeTraceFn(region), onDropped)
+				grid[r][c] = anonymiseText(cell, scope, assign, makeTraceFn(region), overlaps)
 			}
 		}
 		rd.Grid = grid
@@ -591,12 +590,12 @@ func anonymiseDocument(doc Document, scope detectionScope, reg *Registry,
 	if doc.Format == FormatXLSXJSON {
 		// Complex sheets: anonymise the raw JSON text, keeping both the JSON
 		// (for the .json export) and the fenced markdown rendering in sync.
-		rd.JSON = anonymiseText(doc.JSON, scope, assign, makeTraceFn("json"), onDropped)
+		rd.JSON = anonymiseText(doc.JSON, scope, assign, makeTraceFn("json"), overlaps)
 		rd.Anonymised = "```json\n" + rd.JSON + "\n```\n"
 		return rd, traces
 	}
 
-	rd.Anonymised = anonymiseText(doc.Markdown, scope, assign, makeTraceFn(""), onDropped)
+	rd.Anonymised = anonymiseText(doc.Markdown, scope, assign, makeTraceFn(""), overlaps)
 	return rd, traces
 }
 
@@ -606,7 +605,7 @@ func anonymiseDocument(doc Document, scope detectionScope, reg *Registry,
 // custom-pattern pass; entity categories were already filtered by the caller
 // (filterEntities).
 func anonymiseText(text string, scope detectionScope, assign func(Span) string,
-	traceFn func([]Span), onDropped func([]Span)) string {
+	traceFn func([]Span), overlaps *overlapWarnings) string {
 
 	spans := FilterAllowed(DetectPIISelected(text, scope.categories, scope.country), scope.allow)
 	spans = append(spans, DetectEntities(text, scope.entities, scope.allow)...)
@@ -618,12 +617,16 @@ func anonymiseText(text string, scope detectionScope, assign func(Span) string,
 	// At the default 0 this is a no-op.
 	spans = FilterByMinConfidence(spans, scope.minConfidence)
 
-	resolved, dropped := ResolveOverlapsWithLosers(spans)
+	// The losers are collected only while the warning collector still wants
+	// them. Gathering them regardless costs an allocation per discarded span on
+	// a path that runs over every document, and a document full of name
+	// variants discards several per replacement.
+	resolved, dropped := resolveOverlaps(spans, overlaps != nil && overlaps.wants())
 	if traceFn != nil {
 		traceFn(resolved)
 	}
-	if onDropped != nil && len(dropped) > 0 {
-		onDropped(dropped)
+	if len(dropped) > 0 {
+		overlaps.add(dropped)
 	}
 	return ApplySpans(text, resolved, assign)
 }

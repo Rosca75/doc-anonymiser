@@ -16,43 +16,18 @@ import (
 	"strconv"
 )
 
-// SessionVersion is bumped on breaking format changes so a file this build does
-// not understand is REFUSED rather than half-read.
+// SessionVersion is the session file format. A file carrying any other version
+// is REFUSED, never migrated.
 //
-//	made that the whole policy: session files are read only
+// That is the whole policy, and it is the strict one on purpose: a session file
+// holds the re-identification key, and a half-migrated one silently reassigns
+// placeholders. The user finds out when two batches of the same engagement no
+// longer agree with each other, which is far past the point of noticing.
 //
-// by the version that wrote them. Version 2 adds PlaceholderOverrides, and
-// rather than write a migration that guesses what a version 1 file meant, the
-// loader refuses it and says so. Half-migrating a file that carries the
-// re-identification key is the one failure mode worth being strict about: a
-// partially-restored registry silently reassigns placeholders, and the user
-// finds out when their two batches no longer agree.
-// Version 3 merges the client_names and internal_names categories
-// into entity_names. A version 2 file names categories this build no longer
-// has, so it is refused rather than loaded with entities the pipeline would
-// silently drop.
-// Version 4 is one bump for the whole value-rules
-// change, made once at the end rather than three times along the way. What a
-// version 3 file cannot express:
-//
-//	Settings.Country the regex categories are now scoped per country
-//	                       A version 3 file has no country, and
-//	                       guessing one decides which national identifiers a
-//	                       reloaded session hunts for.
-//	the category set four detected categories were added and two dead
-//	                       ones retired, so a version 3 file names
-//	                       categories this build does not have, exactly as
-//	                       version 2 did.
-//	RemovedValues the values the user deleted. Absent, they
-//	                       all come back on the next run, which is the one thing
-//	                       a removal is for.
-//	RetiredPlaceholders /  numbers this session has spent but no entry holds
-//	ReservedPlaceholders   (Phases 3 and 4). Absent, they are handed out a
-//	                       second time and the re-identification key stops
-//	                       being reversible.
-//
-// Every one of those is a silent wrong answer rather than a visible failure,
-// which is why the policy is refusal and not a migration.
+// Bump it whenever a change makes a file this build writes unreadable by the
+// previous one, or the other way round: an added field the loader can ignore is
+// not a bump, but a renamed category, a retired category and a new field the
+// pipeline depends on all are.
 const SessionVersion = 4
 
 // SessionSettings mirrors the app settings worth persisting. The engine

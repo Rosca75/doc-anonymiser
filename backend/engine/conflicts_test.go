@@ -4,6 +4,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -274,5 +275,52 @@ func TestResolveOverlapsAndItsLosersAgree(t *testing.T) {
 	}
 	if len(ResolveOverlaps(spans)) != len(kept) {
 		t.Error("the wrapper must keep exactly what the full function keeps")
+	}
+}
+
+func TestOverlapCollectionStopsCostingOnceItHasSaidEverything(t *testing.T) {
+	// Overlaps are per occurrence, and a document full of name variants discards
+	// several spans per replacement. Gathering them all cost the deterministic
+	// pipeline a third of its time budget, so the collector is asked BEFORE the
+	// resolution whether it still wants them.
+	w := newOverlapWarnings()
+	if !w.wants() {
+		t.Fatal("a fresh collector must want the first losers")
+	}
+
+	// One distinct value repeated far past the work budget: the warning cap
+	// alone would never stop it, because there is only ever one warning.
+	span := Span{Category: CatPersonNames, Original: "Marie Duval", Confidence: 0.95}
+	for i := 0; i < maxOverlapSpansExamined+10; i++ {
+		w.add([]Span{span})
+	}
+
+	if len(w.conflicts()) != 1 {
+		t.Errorf("one repeated collision is one warning, got %d", len(w.conflicts()))
+	}
+	if w.wants() {
+		t.Error("the collector must stop asking once it has spent its work budget")
+	}
+	if w.examined > maxOverlapSpansExamined {
+		t.Errorf("examined %d spans, the budget is %d", w.examined, maxOverlapSpansExamined)
+	}
+}
+
+func TestManyDistinctOverlapsStopAtTheWarningCap(t *testing.T) {
+	// The other half of the pair: a document that genuinely collides in many
+	// different ways stops at a list the user can still read.
+	w := newOverlapWarnings()
+	for i := 0; i < maxOverlapWarnings*2; i++ {
+		w.add([]Span{{
+			Category:   CatPersonNames,
+			Original:   fmt.Sprintf("Person %d", i),
+			Confidence: 0.95,
+		}})
+	}
+	if len(w.conflicts()) != maxOverlapWarnings {
+		t.Errorf("want the cap of %d warnings, got %d", maxOverlapWarnings, len(w.conflicts()))
+	}
+	if w.wants() {
+		t.Error("a full list must stop asking for more")
 	}
 }

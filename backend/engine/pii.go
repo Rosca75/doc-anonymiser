@@ -513,24 +513,35 @@ func effectiveConfidence(s Span) float32 {
 // resolver and the registry can never disagree about which category owns a
 // string.
 func ResolveOverlaps(spans []Span) []Span {
-	kept, _ := ResolveOverlapsWithLosers(spans)
+	kept, _ := resolveOverlaps(spans, false)
 	return kept
 }
 
 // ResolveOverlapsWithLosers is ResolveOverlaps that also returns what it threw
 // away.
 //
-// The losers are how the run WARNS about an overlap: a declared value covered
-// by a regex match, or a custom pattern covering a declared value. They come
-// from here rather than from a parallel check over the declarations, because a
+// The losers are how a run WARNS about an overlap: a declared value covered by
+// a regex match, or a custom pattern covering a declared value. They come from
+// here rather than from a parallel check over the declarations, because a
 // parallel check can disagree with the pipeline, and then the warning describes
 // something that did not happen.
+//
+// Call it only when the losers are actually wanted. Collecting them costs an
+// allocation per discarded span, and a document full of name variants discards
+// several per replacement: paying that on every call cost the deterministic
+// pipeline a third of its time budget.
 //
 // @param spans every detection, from every pass, in any order
 // @return the non-overlapping subset to apply, and the spans a stronger span
 //
 //	covered
 func ResolveOverlapsWithLosers(spans []Span) (kept, dropped []Span) {
+	return resolveOverlaps(spans, true)
+}
+
+// resolveOverlaps is the shared core. `collect` decides whether the discarded
+// spans are gathered or simply skipped.
+func resolveOverlaps(spans []Span, collect bool) (kept, dropped []Span) {
 	ordered := make([]Span, len(spans))
 	copy(ordered, spans)
 	sort.Slice(ordered, func(i, j int) bool {
@@ -557,7 +568,9 @@ func ResolveOverlapsWithLosers(spans []Span) (kept, dropped []Span) {
 			}
 		}
 		if overlaps {
-			dropped = append(dropped, s)
+			if collect {
+				dropped = append(dropped, s)
+			}
 			continue
 		}
 		kept = append(kept, s)

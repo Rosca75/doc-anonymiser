@@ -52,9 +52,9 @@ type Entity struct {
 
 // Variant expansion has three classes, and a category belongs to exactly one.
 //
-//	person initials, surname-only, first-name-only, hyphen/space swaps
-//	organisation the name with a legal suffix stripped
-//	literal no expansion at all
+//	person        initials, surname-only, first-name-only, hyphen/space swaps
+//	organisation  the name with a legal suffix stripped
+//	literal       no expansion at all
 //
 // personCategories holds the first. Only person_names is a human being;
 // entity_names in particular is dominated by organisations, and expanding

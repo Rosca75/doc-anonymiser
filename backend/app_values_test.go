@@ -5,11 +5,11 @@
 // This file exists because none of those methods had a test at all, and three
 // of them did not work:
 //
-//	Registry.Rename unlocked an already-unlocked mutex, which Go answers
+//	Registry.Rename        unlocked an already-unlocked mutex, which Go answers
 //	                       with an unrecoverable fatal error, so EVERY rename
 //	                       took the whole application down;
-//	RestoreValue returned "will be implemented in ";
-//	NextRulePlaceholder parsed with a scanf verb Go's fmt does not support,
+//	RestoreValue           returned an error saying it was not implemented;
+//	NextRulePlaceholder    parsed with a scanf verb Go's fmt does not support,
 //	                       so it always answered 1 and every rule collided.
 //
 // All three passed `go test ./...` by never being called. The tests below call
