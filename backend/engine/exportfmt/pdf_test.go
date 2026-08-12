@@ -60,7 +60,7 @@ func TestExportPDFFallbackRoundTrip(t *testing.T) {
 		{Part: "pdf:Info", Name: "Title", Value: "[ENTITY_1] engagement"},
 		{Part: "pdf:Info", Name: "Author", Value: "[PERSON_1]"},
 	}
-	out, err := ExportPDF(anonymised, reviewed, cfg)
+	out, err := ExportPDF(nil, anonymised, reviewed, cfg)
 	if err != nil {
 		t.Fatalf("ExportPDF: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestExportPDFFallbackRoundTrip(t *testing.T) {
 func TestExportPDFRejectsEmptyText(t *testing.T) {
 	// A scanned PDF never yields working text; the export refuses with
 	// the pinned scanned-PDF message.
-	_, err := ExportPDF("   ", nil, testConfig())
+	_, err := ExportPDF(nil, "   ", nil, testConfig())
 	if err == nil || !strings.Contains(err.Error(), "No text layer found") {
 		t.Errorf("empty text must be rejected with the scanned-PDF message, got %v", err)
 	}
@@ -103,7 +103,7 @@ func TestExportPDFSelfCheckBlocksLeaks(t *testing.T) {
 	// the export and no bytes may be returned.
 	cfg := testConfig()
 	cfg.Registry.Assign("entity_names", "Zephyr Capital")
-	out, err := ExportPDF("This text still mentions Zephyr Capital openly.", nil, cfg)
+	out, err := ExportPDF(nil, "This text still mentions Zephyr Capital openly.", nil, cfg)
 	if err == nil || out != nil {
 		t.Fatalf("leaky export must fail, got bytes=%v err=%v", out != nil, err)
 	}

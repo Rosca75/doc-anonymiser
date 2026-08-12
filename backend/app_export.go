@@ -181,11 +181,11 @@ func (a *App) SaveSameFormat(name, ext string, reviewed []exportfmt.MetaField, f
 		if ferr != nil {
 			return ferr
 		}
-		cfg, _, cerr := a.sameFormatConfig(name)
+		cfg, src, cerr := a.sameFormatConfig(name)
 		if cerr != nil {
 			return cerr
 		}
-		data, err = exportfmt.ExportPDF(rd.Anonymised, reviewed, cfg)
+		data, err = exportfmt.ExportPDF(src.Raw, rd.Anonymised, reviewed, cfg)
 	} else {
 		data, err = a.sameFormatBytes(name, ext)
 		if err == nil && len(reviewed) > 0 {
