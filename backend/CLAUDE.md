@@ -136,9 +136,18 @@ panicking would take the application down on a bad file.
   reporting "0 pages".
 - `exportfmt/` writes a NEW anonymised copy in the source format by rewriting
   a copy of the original bytes held in memory. The source file on disk is read
-  once at import and never written, moved or modified. If pure-Go PDF quality
-  is unacceptable, the recorded fallback is a wazero WASM extractor (P3), not
-  CGo.
+  once at import and never written, moved or modified. For docx/pptx/xlsx this
+  is a byte-splice into the original OOXML (`ooxml.go`). For PDF it is true
+  in-place text editing (`pdfinplace.go`): PDFium, driven CGo-free through
+  klippa-app/go-pdfium's wazero WebAssembly backend (the P3 WASM pattern),
+  replaces only the sensitive text objects in a copy of the original and leaves
+  the rest of the page untouched. Replacement runs are drawn in a standard font
+  (Helvetica/Arial) because a PDF's subset CID fonts embed only the glyphs the
+  original text used, so the placeholder characters may not exist in them. The
+  text-edit calls sit behind the `pdfium_experimental` build tag; without it
+  the code still compiles but those calls fail at runtime, so PDF export falls
+  back to `regeneratePDF` (the fpdf simplified-layout regeneration). The shipped
+  binary MUST be built with `-tags pdfium_experimental` (root `CLAUDE.md` §7).
 
 ## Coding rules
 
@@ -165,7 +174,9 @@ panicking would take the application down on a bad file.
 
 Authoritative table is in the root `CLAUDE.md` §7. Key pins: Go 1.26.x,
 Wails v2.13.x (v2 API only, never v3 idioms), `xuri/excelize/v2` v2.9.x,
-`ledongthuc/pdf` (2025-05-11 commit), `go-pdf/fpdf` v0.9.0. Default Ollama
+`ledongthuc/pdf` (2025-05-11 commit), `go-pdf/fpdf` v0.9.0,
+`klippa-app/go-pdfium` v1.19.7 (in-place PDF editing via wazero WASM; needs
+`-tags pdfium_experimental`). Default Ollama
 model `qwen2.5:3b-instruct` (a setting, never hardcoded outside defaults).
 
 ## Where to look next

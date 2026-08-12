@@ -18,6 +18,11 @@ on:
 env:
   # Must match go.mod and ci.yml — see CLAUDE.md §7 (coupled pair).
   WAILS_CLI_VERSION: v2.13.0
+  # Compiles PDFium's experimental text-editing API into the go-pdfium
+  # WebAssembly backend so the shipped binary does true in-place PDF
+  # anonymisation rather than falling back to regeneration. See CLAUDE.md §7
+  # and backend/engine/exportfmt/pdfinplace.go.
+  PDFIUM_TAG: pdfium_experimental
 
 permissions:
   # Needed to create the GitHub Release and upload the zip assets.
@@ -49,7 +54,7 @@ jobs:
           fi
 
       - name: Build Windows executable
-        run: wails build -platform windows/amd64
+        run: wails build -platform windows/amd64 -tags $env:PDFIUM_TAG
 
       - name: Assemble zip (exe + README-FIRST.txt)
         shell: bash
@@ -122,7 +127,7 @@ jobs:
           fi
 
       - name: Build Linux executable
-        run: wails build -platform linux/amd64 -tags webkit2_41
+        run: wails build -platform linux/amd64 -tags "webkit2_41 ${PDFIUM_TAG}"
 
       - name: Assemble zip (binary + README-FIRST.txt)
         run: |
@@ -178,7 +183,7 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_CLI_VERSION}
 
       - name: Build macOS app
-        run: wails build -platform darwin/universal
+        run: wails build -platform darwin/universal -tags "${PDFIUM_TAG}"
 
       - name: Assemble zip (.app + README-FIRST.txt)
         run: |

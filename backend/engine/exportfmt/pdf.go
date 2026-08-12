@@ -63,11 +63,38 @@ func ExtractPDFMetadata(raw []byte) ([]MetaField, error) {
 	return out, nil
 }
 
-// ExportPDF regenerates an anonymised PDF from the working text
-// (ResultDocument.Anonymised) with the reviewed metadata. anonymised
-// must be non-empty: a PDF without a text layer was already rejected at
-// import, and re-checking here keeps the export path honest.
-func ExportPDF(anonymised string, reviewed []MetaField, cfg Config) ([]byte, error) {
+// ExportPDF produces an anonymised PDF. The PRIMARY path edits the ORIGINAL
+// document in place (anonymisePDFInPlace): only the text that must change is
+// touched and the rest of the file, layout, fonts and images are preserved,
+// exactly like the docx/pptx/xlsx same-format exporters. The `original`
+// bytes are the source PDF captured at import.
+//
+// If in-place editing is unavailable or fails for a given file (for example
+// the experimental PDFium API is not compiled in, or a PDF uses a structure
+// the engine cannot edit), it falls back to regeneratePDF, which rebuilds a
+// simplified PDF from the anonymised working text. Either way the returned
+// file passes a leak self-check before it is handed back.
+//
+// anonymised is the working text (ResultDocument.Anonymised); reviewed is
+// the approved metadata; cfg carries the session registry and pipeline
+// inputs (nil-registry cfg forces the regeneration fallback).
+func ExportPDF(original []byte, anonymised string, reviewed []MetaField, cfg Config) ([]byte, error) {
+	if len(original) > 0 && cfg.Registry != nil {
+		if out, err := anonymisePDFInPlace(original, cfg); err == nil {
+			return out, nil
+		}
+		// In-place failed: fall through to regeneration so export still
+		// succeeds. The regenerated file is self-checked below.
+	}
+	return regeneratePDF(anonymised, reviewed, cfg)
+}
+
+// regeneratePDF rebuilds an anonymised PDF from the working text
+// (ResultDocument.Anonymised) with the reviewed metadata. It is the
+// fallback for files in-place editing cannot handle. anonymised must be
+// non-empty: a PDF without a text layer was already rejected at import, and
+// re-checking here keeps the export path honest.
+func regeneratePDF(anonymised string, reviewed []MetaField, cfg Config) ([]byte, error) {
 	if strings.TrimSpace(anonymised) == "" {
 		return nil, fmt.Errorf("No text layer found, this PDF is likely scanned. OCR is not supported; convert it externally first.")
 	}
