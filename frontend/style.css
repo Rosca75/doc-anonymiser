@@ -710,8 +710,16 @@ input, select {
    sections, stacked, each switchable in its own header. */
 
 /* One route section. The whole card body scrolls, so the sections simply
-   stack with a gap between them. */
-.rail-section { margin-bottom: 0.9rem; }
+   stack with a gap between them.
+
+   flex: none matters: the rail's .card-body is a flex column, which makes each
+   section a flex item that would otherwise SHRINK to fit the card rather than
+   overflow it. When Smart detection is expanded its body is taller than the
+   rail, so a shrinking section clips its own content (the .cgroup has
+   overflow: hidden) and squashes the sections below it into slivers, and the
+   card never scrolls. Pinning the sections to their natural height lets the
+   card-body's overflow-y: auto do the scrolling. */
+.rail-section { flex: none; margin-bottom: 0.9rem; }
 .rail-section:last-child { margin-bottom: 0; }
 .rail-section > .cgroup-body { padding: 0.9rem 1.1rem; gap: 0.9rem; }
 /* A route that is off keeps its settings visible but recedes: the user can
