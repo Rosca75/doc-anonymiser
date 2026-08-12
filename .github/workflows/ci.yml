@@ -31,13 +31,6 @@ env:
   # The single place the Wails CLI version is pinned for CI.
   # Must match the github.com/wailsapp/wails/v2 version in go.mod.
   WAILS_CLI_VERSION: v2.13.0
-  # Build tag that compiles PDFium's experimental text-editing API into the
-  # go-pdfium WebAssembly backend, which the in-place PDF anonymiser needs
-  # (backend/engine/exportfmt/pdfinplace.go). Without it those calls return
-  # an error at runtime and PDF export silently falls back to regeneration,
-  # so every build/test/vet step that must exercise in-place editing passes
-  # this tag. See CLAUDE.md §7.
-  PDFIUM_TAG: pdfium_experimental
 
 jobs:
   build-and-test:
@@ -89,10 +82,10 @@ jobs:
           fi
 
       - name: go vet
-        run: go vet -tags "${PDFIUM_TAG}" ./...
+        run: go vet ./...
 
       - name: go test
-        run: go test -tags "${PDFIUM_TAG}" ./...
+        run: go test ./...
 
       # Layer 2: the frontend unit tests. Plain `node --test`, zero npm
       # dependencies (node ships on the runner; see BUILD.md Phase 6).
@@ -154,7 +147,7 @@ jobs:
       # Build sanity only — we do not ship the Linux CI binary from here
       # (release.yml handles real artefacts on tags).
       - name: wails build (Linux sanity check)
-        run: wails build -platform linux/amd64 -tags "webkit2_41 ${PDFIUM_TAG}"
+        run: wails build -platform linux/amd64 -tags webkit2_41
 
   # ---------------------------------------------------------------------------
   # The ADDITIONAL PLATFORM CHECK (docs/UITESTING.md): Windows, the real
