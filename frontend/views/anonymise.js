@@ -650,7 +650,7 @@ export function compareCard(s, doc) {
       `</div>` +
       `<div class="compare-pane">` +
       `<div class="pane-caption">${escapeHTML(ANONYMISE.paneAnonymised)}</div>` +
-      `<pre class="pane-body" id="anonymised-pane">${renderHighlighted(doc.anonymised ?? "", s.mapping)}</pre>` +
+      `<pre class="pane-body" id="anonymised-pane">${renderHighlighted(doc.anonymised ?? "", s.mapping, doc.occurrenceVariants)}</pre>` +
       `</div></div>`
     : `<div class="card-body"><p class="hint">${escapeHTML(
         blockingConflicts(s).length > 0 ? ANONYMISE.compareBlocked : ANONYMISE.compareEmpty,
@@ -1032,9 +1032,14 @@ function wireMarkTooltip(container, doc) {
     if (!original) return; // a mapping miss has nothing to show
     const category = mark.dataset.category;
     const count = doc ? countOccurrences(doc.anonymised ?? "", mark.dataset.ph ?? "") : 0;
+    // When this occurrence replaced a variant spelling, lead with what was
+    // actually on the page and keep the canonical value in brackets:
+    // "Borch (Johannes Borch)". A canonical match shows the value alone.
+    const variant = mark.dataset.variant;
+    const originalDisplay = variant ? `${variant} (${original})` : original;
 
     tip.innerHTML =
-      `<span class="tooltip-original">${escapeHTML(original)}</span>` +
+      `<span class="tooltip-original">${escapeHTML(originalDisplay)}</span>` +
       `<span class="tooltip-meta">${escapeHTML(tooltipMeta(category, count))}</span>`;
     tip.hidden = false;
 

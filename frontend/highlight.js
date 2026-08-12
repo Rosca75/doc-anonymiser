@@ -41,8 +41,10 @@ export function markClass(label) {
  *
  * When the mapping knows a placeholder ("[ENTITY_1]" → {original,
  * category}), the mark carries data-ph, data-original, data-category and a
- * title="Original: <value>". The title is the accessibility fallback; the
- * styled tooltip is positioned in JS against the Compare card (,
+ * title="Original: <value>". When that occurrence replaced a non-canonical
+ * spelling it also carries data-variant, and the title shows
+ * "variant (original)". The title is the accessibility fallback; the styled
+ * tooltip is positioned in JS against the Compare card (,
  * views/anonymise.js), because a CSS ::after inside the pane was CLIPPED by
  * the pane's own overflow and never appeared near the right-hand edge.
  *
@@ -54,21 +56,37 @@ export function markClass(label) {
  *
  * @param {string} text anonymised document text
  * @param {object} [mapping] placeholder → {original, category} lookup
+ * @param {object} [variants] placeholder → ordered array of the spellings each
+ *   occurrence replaced (Go's ResultDocument.occurrenceVariants). Slot i is the
+ *   text the i-th occurrence of that placeholder replaced, "" or absent when it
+ *   was the canonical value. The marks are walked in the same left-to-right
+ *   order Go recorded them, so slot i lines up with occurrence i.
  * @returns {string} safe HTML
  */
-export function renderHighlighted(text, mapping) {
+export function renderHighlighted(text, mapping, variants) {
   let out = "";
   let last = 0;
+  const seen = Object.create(null); // placeholder → occurrences emitted so far
   for (const m of String(text).matchAll(PLACEHOLDER_RE)) {
     out += escapeHTML(text.slice(last, m.index));
     const label = m[1];
     const info = mapping?.[m[0]];
+    const occ = seen[m[0]] ?? 0;
+    seen[m[0]] = occ + 1;
     if (info?.original) {
+      // The spelling this occurrence replaced, shown only when it differs from
+      // the canonical value (case aside): "Borch" for [PERSON_1] whose value is
+      // "Johannes Borch", nothing when the match WAS "Johannes Borch".
+      const variant = variants?.[m[0]]?.[occ];
+      const showVariant =
+        variant && variant.toLowerCase() !== info.original.toLowerCase();
+      const tip = showVariant ? `${variant} (${info.original})` : info.original;
       out += `<mark class="${markClass(label)}" data-ph="${escapeHTML(m[0])}"` +
         ` data-original="${escapeHTML(info.original)}"` +
+        (showVariant ? ` data-variant="${escapeHTML(variant)}"` : "") +
         (info.category ? ` data-category="${escapeHTML(info.category)}"` : "") +
         ` tabindex="0"` +
-        ` title="Original: ${escapeHTML(info.original)}">${escapeHTML(m[0])}</mark>`;
+        ` title="Original: ${escapeHTML(tip)}">${escapeHTML(m[0])}</mark>`;
     } else {
       out += `<mark class="${markClass(label)}" title="${escapeHTML(label.toLowerCase())}">${escapeHTML(m[0])}</mark>`;
     }

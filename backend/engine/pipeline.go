@@ -134,6 +134,20 @@ type ResultDocument struct {
 	// Warnings carries the document's ingestion warnings through to the
 	// results screen and report.
 	Warnings []string `json:"warnings,omitempty"`
+	// OccurrenceVariants records, per placeholder, the ordered spellings that
+	// produced each occurrence of that placeholder in Anonymised. Slot i holds
+	// the text the i-th occurrence of that placeholder replaced ("Borch"), or
+	// "" when that occurrence matched the canonical value itself. It lets the
+	// results view show the exact variant a mark replaced next to the canonical
+	// value ("Borch (Johannes Borch)"). A placeholder absent from this map, or a
+	// "" slot, means "the canonical value" and needs no bracketed original.
+	//
+	// It is deliberately PER DOCUMENT: the Compare view zips this positionally
+	// with the placeholder occurrences it renders for the one document on
+	// screen. Only occurrences that carry a non-canonical spelling are worth the
+	// bytes, so a document whose every hit was the canonical value serialises
+	// nothing here.
+	OccurrenceVariants map[string][]string `json:"occurrenceVariants,omitempty"`
 }
 
 // Results is the full outcome of one pipeline run.
@@ -377,10 +391,21 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	}
 
 	// --- Final pass: ordered simple-replace rules. -----------------------
+	// Per-document, per-rule counts are kept so the report can name what each
+	// rule rewrote instead of a bare "simple_replace" total.
+	simpleCounts := make([][]int, len(res.Documents))
 	if len(in.SimpleRules) > 0 {
 		for i := range res.Documents {
-			applySimpleRulesToResult(&res.Documents[i], in.SimpleRules)
+			simpleCounts[i] = applySimpleRulesToResult(&res.Documents[i], in.SimpleRules)
 		}
+	}
+
+	// Placeholders whose every occurrence matched the canonical value carry no
+	// bracketed original, so their all-"" variant slices are dropped to keep the
+	// per-document payload small. Runs after the simple-replace pass so a rule
+	// that rewrites to a placeholder keeps its recorded find text.
+	for i := range res.Documents {
+		pruneCanonicalOnlyVariants(&res.Documents[i])
 	}
 
 	// --- Report assembly. -------------------------------------------------
@@ -408,9 +433,11 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 			dr.LLMDurationMS = llmDurations[i]
 		}
 		dr.Values = valueReports(entries, []ResultDocument{rd})
+		dr.Values = appendSimpleRuleValues(dr.Values, in.SimpleRules, simpleCounts[i])
 		res.Report.Documents = append(res.Report.Documents, dr)
 	}
 	res.Report.Values = valueReports(entries, res.Documents)
+	res.Report.Values = appendSimpleRuleValues(res.Report.Values, in.SimpleRules, sumRuleCounts(in.SimpleRules, simpleCounts))
 	res.Report.DetectedCategories = detectedCategoriesFromCounts(res.Report.ByCategory)
 	finishReport(res, start, overlaps)
 	return res, nil
@@ -448,13 +475,83 @@ func valueReports(entries []MappingEntry, docs []ResultDocument) []ValueReport {
 			Count:       count,
 		})
 	}
+	sortValueReports(out)
+	return out
+}
+
+// sortValueReports orders value rows most-frequent first, then by placeholder
+// so the report is deterministic (stable golden tests and diffs).
+func sortValueReports(out []ValueReport) {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Count != out[j].Count {
 			return out[i].Count > out[j].Count
 		}
 		return out[i].Placeholder < out[j].Placeholder
 	})
-	return out
+}
+
+// appendSimpleRuleValues folds the manual find-and-replace rules into a value
+// report list and re-sorts the result. Without it the "simple_replace"
+// category shows a total in the by-category breakdown but drills down to
+// nothing, because the rules never touch the registry the other rows come
+// from. A rule that matched nothing, or whose replacement is not a value the
+// user would recognise, is still listed by find text so the drill-down agrees
+// with the total.
+func appendSimpleRuleValues(values []ValueReport, rules []SimpleRule, counts []int) []ValueReport {
+	for i, rule := range rules {
+		if i >= len(counts) || counts[i] == 0 || rule.Find == "" {
+			continue
+		}
+		values = append(values, ValueReport{
+			Original:    rule.Find,
+			Placeholder: rule.Replace,
+			Category:    "simple_replace",
+			Count:       counts[i],
+		})
+	}
+	sortValueReports(values)
+	return values
+}
+
+// sumRuleCounts totals each rule's replacements across every document, so the
+// run-level report aggregates what the per-document reports split.
+func sumRuleCounts(rules []SimpleRule, perDoc [][]int) []int {
+	totals := make([]int, len(rules))
+	for _, counts := range perDoc {
+		for i, c := range counts {
+			if i < len(totals) {
+				totals[i] += c
+			}
+		}
+	}
+	return totals
+}
+
+// pruneCanonicalOnlyVariants drops every placeholder whose recorded
+// occurrences were all the canonical value. Those need no bracketed original
+// (the tooltip falls back to the mapping), so keeping their all-"" slices only
+// grows the payload. A placeholder with even one non-canonical spelling is kept
+// whole, "" slots included, so the frontend can line each occurrence up with
+// the placeholder it renders.
+func pruneCanonicalOnlyVariants(rd *ResultDocument) {
+	if rd.OccurrenceVariants == nil {
+		return
+	}
+	for ph, variants := range rd.OccurrenceVariants {
+		keep := false
+		for _, v := range variants {
+			if v != "" {
+				keep = true
+				break
+			}
+		}
+		if !keep {
+			delete(rd.OccurrenceVariants, ph)
+		}
+	}
+	if len(rd.OccurrenceVariants) == 0 {
+		rd.OccurrenceVariants = nil
+	}
 }
 
 // emit calls the progress callback when one is registered.
@@ -542,15 +639,29 @@ func anonymiseDocument(doc Document, scope detectionScope, reg *Registry,
 	overlaps *overlapWarnings, traceEnabled bool) (ResultDocument, []SpanTrace) {
 
 	rd := ResultDocument{
-		Name:       doc.Name,
-		Format:     doc.Format,
-		ByCategory: map[string]int{},
-		Warnings:   doc.Warnings,
+		Name:               doc.Name,
+		Format:             doc.Format,
+		ByCategory:         map[string]int{},
+		Warnings:           doc.Warnings,
+		OccurrenceVariants: map[string][]string{},
 	}
 
 	assign := func(s Span) string {
 		rd.ByCategory[s.Category]++
-		return reg.Assign(s.Category, s.CanonicalOrOriginal())
+		canonical := s.CanonicalOrOriginal()
+		ph := reg.Assign(s.Category, canonical)
+		// Record the spelling this occurrence actually matched. "" when it was
+		// the canonical value, so the tooltip needs no bracketed original; the
+		// matched text otherwise ("Borch" for canonical "Johannes Borch"). The
+		// closure is ApplySpans' single choke point and it is called in
+		// left-to-right offset order, which is exactly the order the frontend
+		// walks placeholders in, so slot i lines up with occurrence i.
+		variant := ""
+		if !strings.EqualFold(s.Original, canonical) {
+			variant = s.Original
+		}
+		rd.OccurrenceVariants[ph] = append(rd.OccurrenceVariants[ph], variant)
+		return ph
 	}
 
 	// Tracing tags spans by region, so grid and json documents can be walked
@@ -749,15 +860,23 @@ func DetectKnownOriginals(text string, entries []MappingEntry) []Span {
 
 // applySimpleRulesToResult runs the ordered manual rules over every
 // representation of the document and records counts under the
-// "simple_replace" category.
-func applySimpleRulesToResult(rd *ResultDocument, rules []SimpleRule) {
-	total := 0
+// "simple_replace" category. It returns the per-rule replacement counts for
+// this document so the report can name what each rule rewrote.
+func applySimpleRulesToResult(rd *ResultDocument, rules []SimpleRule) []int {
+	perRule := make([]int, len(rules))
+	add := func(counts []int) {
+		for i, c := range counts {
+			if i < len(perRule) {
+				perRule[i] += c
+			}
+		}
+	}
 	if rd.Grid != nil {
 		for r, row := range rd.Grid {
 			for c, cell := range row {
 				out, counts := ApplySimpleRules(cell, rules)
 				rd.Grid[r][c] = out
-				total += sum(counts)
+				add(counts)
 			}
 		}
 		rd.Anonymised = GridToMarkdownTable(rd.Grid)
@@ -765,21 +884,41 @@ func applySimpleRulesToResult(rd *ResultDocument, rules []SimpleRule) {
 		out, counts := ApplySimpleRules(rd.JSON, rules)
 		rd.JSON = out
 		rd.Anonymised = "```json\n" + out + "\n```\n"
-		total += sum(counts)
+		add(counts)
 	} else {
 		out, counts := ApplySimpleRules(rd.Anonymised, rules)
 		rd.Anonymised = out
-		total += sum(counts)
+		add(counts)
+	}
+	total := 0
+	for _, c := range perRule {
+		total += c
 	}
 	if total > 0 {
 		rd.ByCategory["simple_replace"] += total
 	}
+	recordSimpleRuleVariants(rd, rules, perRule)
+	return perRule
 }
 
-func sum(ns []int) int {
-	t := 0
-	for _, n := range ns {
-		t += n
+// recordSimpleRuleVariants notes the find text behind each placeholder a rule
+// produced, so a mark the rule created hovers with the text it replaced
+// ("PwC") rather than only the placeholder's canonical owner. Only a rule
+// whose whole replacement IS a placeholder leaves a mark to hover; a rule that
+// rewrites to plain text produces nothing the tooltip can land on.
+func recordSimpleRuleVariants(rd *ResultDocument, rules []SimpleRule, counts []int) {
+	if rd.OccurrenceVariants == nil {
+		rd.OccurrenceVariants = map[string][]string{}
 	}
-	return t
+	for i, rule := range rules {
+		if i >= len(counts) || counts[i] == 0 {
+			continue
+		}
+		if placeholderRe.FindString(rule.Replace) != rule.Replace {
+			continue
+		}
+		for n := 0; n < counts[i]; n++ {
+			rd.OccurrenceVariants[rule.Replace] = append(rd.OccurrenceVariants[rule.Replace], rule.Find)
+		}
+	}
 }

@@ -207,6 +207,79 @@ func TestSimpleReplaceOrderingAndCase(t *testing.T) {
 	if res.Report.ByCategory["simple_replace"] != 1 {
 		t.Errorf("simple_replace not reported: %+v", res.Report.ByCategory)
 	}
+
+	// The by-category total must drill down to a named value, or the report's
+	// simple_replace row expands to nothing (the reported bug).
+	found := false
+	for _, v := range res.Report.Values {
+		if v.Category == "simple_replace" {
+			found = true
+			if v.Original != "NIGHTJAR" || v.Placeholder != "[CODENAME]" || v.Count != 1 {
+				t.Errorf("simple_replace value row = %+v, want NIGHTJAR/[CODENAME]/1", v)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no simple_replace value in report.Values: %+v", res.Report.Values)
+	}
+	// The per-document report carries the same row so the "All files" and the
+	// single-file scopes agree.
+	foundDoc := false
+	for _, v := range res.Report.Documents[0].Values {
+		if v.Category == "simple_replace" && v.Original == "NIGHTJAR" {
+			foundDoc = true
+		}
+	}
+	if !foundDoc {
+		t.Errorf("simple_replace value missing from the per-document report")
+	}
+}
+
+// TestOccurrenceVariantsRecordVariantSpelling: a placeholder that replaced a
+// variant spelling records that spelling positionally, so the results view can
+// show "Borch (Johannes Borch)" on the mark it actually replaced. A canonical
+// match records "" in the same slot list, keeping occurrence i aligned with
+// the i-th placeholder in the anonymised text.
+func TestOccurrenceVariantsRecordVariantSpelling(t *testing.T) {
+	res := runPipeline(t, PipelineInput{
+		Documents: []Document{{
+			Name:     "n.txt",
+			Format:   FormatTXT,
+			Markdown: "Johannes Borch met Borch",
+		}},
+		Entities:  []Entity{{Category: CatPersonNames, Canonical: "Johannes Borch"}},
+		Level:     LevelMedium,
+		Allowlist: NewEmptyAllowlist(),
+	})
+	rd := res.Documents[0]
+	got := rd.OccurrenceVariants["[PERSON_1]"]
+	want := []string{"", "Borch"}
+	if len(got) != len(want) {
+		t.Fatalf("occurrence variants = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("occurrence variants = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestOccurrenceVariantsPrunedWhenAllCanonical: a document whose every match
+// was the canonical value carries no variant map, so the payload stays lean.
+func TestOccurrenceVariantsPrunedWhenAllCanonical(t *testing.T) {
+	res := runPipeline(t, PipelineInput{
+		Documents: []Document{{
+			Name:     "n.txt",
+			Format:   FormatTXT,
+			Markdown: "Contact marie.duval@example.com now",
+		}},
+		Level:     LevelMedium,
+		Allowlist: NewEmptyAllowlist(),
+	})
+	if res.Documents[0].OccurrenceVariants != nil {
+		t.Errorf("canonical-only document should carry no variant map, got %v",
+			res.Documents[0].OccurrenceVariants)
+	}
 }
 
 // TestGridDocumentConsistency: a CSV document's anonymised markdown is
