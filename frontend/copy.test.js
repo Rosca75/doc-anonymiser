@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { HOME, CARDS, NAV, WORKFLOW, CATEGORY_LABELS } from "./copy.js";
+import { HOME, CARDS, NAV, WORKFLOW, CATEGORY_LABELS, WORKSPACE } from "./copy.js";
 
 const staticDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -181,4 +181,30 @@ test("the retired category labels are gone from the copy", () => {
   assert.ok(!("client_names" in CATEGORY_LABELS), "client_names must be gone");
   assert.ok(!("internal_names" in CATEGORY_LABELS), "internal_names must be gone");
   assert.equal(CATEGORY_LABELS.entity_names[0], "Entity names");
+});
+
+test("the Patterns tab ships eight worked examples that each compile and match their sample", () => {
+  // The feature is "a non-expert can start from an example rather than a blank
+  // box". That only works if there are enough examples to cover the common
+  // shapes, each one actually compiles, each is labelled in plain words, and
+  // each ships one concrete value that really matches, so the example is proven
+  // to work rather than merely asserted to.
+  const ex = WORKSPACE.patternExamples;
+  assert.equal(ex.length, 8, "the enhancement asks for exactly eight examples");
+  const seen = new Set();
+  for (const e of ex) {
+    assert.ok(e.expr && e.label && e.sample, "every example needs an expression, a label and a sample");
+    assert.ok(!seen.has(e.expr), `duplicate example expression: ${e.expr}`);
+    seen.add(e.expr);
+    // Compile the expression. The examples target Go's RE2 engine (the backend
+    // validates them), which supports a leading inline flag like (?i) that JS
+    // RegExp does not, so translate that one construct before compiling here.
+    const m = e.expr.match(/^\(\?([a-z]+)\)(.*)$/s);
+    const [body, flags] = m ? [m[2], m[1]] : [e.expr, ""];
+    let re;
+    assert.doesNotThrow(() => { re = new RegExp(body, flags); }, `example must compile: ${e.expr}`);
+    // The sample must actually be caught by the pattern: an example that does
+    // not match its own sample teaches the wrong thing.
+    assert.match(e.sample, re, `sample ${e.sample} must match ${e.expr}`);
+  }
 });

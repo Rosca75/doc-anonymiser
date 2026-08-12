@@ -467,6 +467,42 @@ export const WORKSPACE = {
     return `Matches ${shown}${more}.`;
   },
   removePattern: "Remove this pattern",
+
+  // Worked examples. A regular expression is a foreign language to most users,
+  // so the Patterns tab ships a short catalogue: eight ready-made expressions
+  // that each teach one building block (a literal prefix, a run of digits, an
+  // optional separator, case-insensitivity, a word boundary, a repeated group).
+  // Clicking one drops it into the add box, where the live feedback then shows
+  // exactly what it catches, so a non-expert can copy the nearest example and
+  // change a letter rather than write an expression from nothing.
+  patternExamplesLabel: "Examples you can start from",
+  patternExamplesHint: "Click an example to drop it in the box above, then tweak it. Each one shows a different building block and one value it matches.",
+  /** patternExamples: the eight starter expressions. Kept RE2-safe (Go's
+   *  regexp engine, no backreferences or lookahead) because the same string is
+   *  compiled by the backend when it is added. Each carries a `sample`: one
+   *  concrete string the expression actually matches, so the user sees a
+   *  working example rather than only a description. The frontend test compiles
+   *  every expr and asserts its sample matches, so a sample can never drift out
+   *  of step with the pattern beside it. */
+  patternExamples: [
+    { expr: "INV-\\d{6}", label: "Invoice numbers", sample: "INV-004321" },
+    { expr: "PO-\\d{4,6}", label: "Purchase orders of four to six digits", sample: "PO-88213" },
+    { expr: "EMP[ -]?\\d+", label: "Employee numbers with an optional space or dash", sample: "EMP-42" },
+    { expr: "(?i)ref[:\\s-]?[a-z0-9]{5,}", label: "Reference codes in any letter case", sample: "REF-8DK21" },
+    { expr: "\\b[A-Z]{2,4}-\\d{2,}\\b", label: "Two to four capitals then a number", sample: "AB-1234" },
+    { expr: "\\d{4}-\\d{2}-\\d{2}", label: "Dates written year-month-day", sample: "2026-08-12" },
+    { expr: "\\b\\d{1,3}(\\.\\d{1,3}){3}\\b", label: "IP addresses", sample: "192.168.0.1" },
+    { expr: "[\\w.+-]+@[\\w-]+\\.[\\w.]+", label: "Email-style addresses", sample: "name@company.com" },
+  ],
+  /** matchesSample(sample) prefixes the concrete match with plain words, so the
+   *  mono string beside a description reads as "here is one it catches". */
+  matchesSample(sample) {
+    return `matches ${sample}`;
+  },
+  /** useExample(expr) is the per-row action label for assistive tech. */
+  useExample(expr) {
+    return `Use the example ${expr}`;
+  },
 };
 
 // Anonymise screen copy.

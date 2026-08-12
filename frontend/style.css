@@ -1066,6 +1066,35 @@ input, select {
 .pattern-row:hover { background: var(--surface-subtle); }
 .pattern-row .spacer { flex: 1; }
 
+/* The worked-example catalogue under the add box: eight clickable starter
+   expressions that teach the syntax to a non-expert. Each row is a full-width
+   button so the whole strip is a target and reachable by keyboard. */
+.pattern-examples { margin-top: 1.4rem; }
+.pattern-examples .section-label { margin-bottom: 0.2rem; }
+.pattern-example-list {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--gray-6); border-radius: 8px; overflow: hidden;
+  margin-top: 0.5rem;
+}
+.pattern-example {
+  display: flex; align-items: baseline; gap: 0.85rem;
+  width: 100%; text-align: left;
+  padding: 0.6rem 0.9rem;
+  border: none; border-top: 1px solid var(--gray-6); background: none;
+  font: inherit; cursor: pointer;
+}
+.pattern-example:first-child { border-top: none; }
+.pattern-example:hover { background: var(--surface-subtle); }
+.pattern-example .mono { flex: none; color: var(--text); }
+.pattern-example-label { color: var(--muted); font-size: 0.8rem; }
+.pattern-example-sample {
+  margin-left: auto; flex: none;
+  font-size: 0.78rem; color: var(--ink-2);
+  background: var(--gray-6); border: 1px solid var(--gray-5);
+  border-radius: 6px; padding: 0.1rem 0.45rem;
+  white-space: nowrap;
+}
+
 /* An inline input that replaces the "add" chip, so adding a variant never opens
    a dialog (decision 10). */
 .variant-input {
