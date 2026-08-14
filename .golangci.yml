@@ -1,0 +1,228 @@
+# .golangci.yml — the machine-readable half of the project's Go coding standards.
+#
+# CLAUDE.md §6 states the human half ("Go standard library first", "heavy
+# comments", "errors must be actionable"). This file states the part a machine
+# can check. When the two disagree, CLAUDE.md wins and this file is the bug.
+#
+# HOW TO RUN IT
+#   task audit:go     full sweep, SARIF into .audit/
+#   task audit:new    only what changed since the merge-base with main
+# There is no `golangci-lint` binary on PATH: it is a tool dependency of the
+# separate `tools/` module and gets built into .audit/bin/ by `task tools`.
+#
+# DESIGN CHOICE: conservative on purpose.
+# Enabling every linter on an existing codebase produces hundreds of findings,
+# which get ignored wholesale and the whole layer becomes decoration. Each
+# linter below is enabled because it catches a class of bug that has a real
+# cost in THIS application, and each one is justified in a comment. Adding a
+# linter is a deliberate act: add it here WITH its reason, run a full sweep,
+# and record the new count in docs/audit-baseline.md.
+
+version: "2"
+
+# ── What gets analysed ────────────────────────────────────────────────────────
+run:
+  # Include files behind build tags. Without this, anything guarded by a
+  # non-default tag is silently unlinted, which is exactly where bugs hide.
+  # The Linux WebView tag matches what CI's `wails build` uses.
+  build-tags:
+    - webkit2_41
+  # A cold run compiles the whole dependency graph (Wails, excelize). The
+  # default 1m is not enough on a laptop; 10m is generous but only ever
+  # reached on the first run of the day, when the build cache is empty.
+  timeout: 10m
+  # Test files ARE analysed. The suites are the deliverable (CLAUDE.md §6),
+  # so a test that ignores an error is as much a defect as production code
+  # that does.
+  tests: true
+
+# ── Linters ───────────────────────────────────────────────────────────────────
+linters:
+  # v2 semantics: `default: none` means "nothing is on unless listed below".
+  # This is what makes the set reproducible; the default set changes between
+  # golangci-lint releases and we do not want a version bump to silently
+  # change what CI reports.
+  default: none
+
+  enable:
+    # errcheck — unchecked error returns.
+    # The single highest-value linter here. This application writes files the
+    # user asked for; an ignored error from an io.Writer is a truncated export
+    # the user believes succeeded, which for an ANONYMISER means a partially
+    # redacted document leaving the machine.
+    - errcheck
+
+    # staticcheck — the SA/S/ST/QF analyser suite. Real bug detection
+    # (impossible conditions, misused stdlib) rather than style opinion.
+    - staticcheck
+
+    # govet — the vet suite. CI already runs `go vet ./...` as a hard gate;
+    # having it here too is deliberate duplication, so that a `printf`
+    # mismatch surfaces as a code scanning alert with history and dismissal
+    # state, not only as a red CI log nobody can triage later.
+    - govet
+
+    # ineffassign — assignments never read. Usually a dropped error or a
+    # variable shadowed in a branch, i.e. logic that does not do what it reads
+    # like it does.
+    - ineffassign
+
+    # unused — unexported identifiers nobody references. The unexported half
+    # of the dead-code question; `deadcode` (Phase 3) covers reachability of
+    # exported functions across the whole program.
+    - unused
+
+    # revive — the configurable style/correctness layer. Configured below to
+    # a small deliberate rule set, NOT its default set: an unconfigured revive
+    # is a documentation-comment enforcer and would bury real findings.
+    - revive
+
+    # unconvert — redundant type conversions. Low severity, but a
+    # `string(x)` that does nothing often marks a place where someone was
+    # unsure of a type, which is worth a second look in the byte/rune-heavy
+    # converter code (backend/engine/convert/*).
+    - unconvert
+
+    # bodyclose — unclosed HTTP response bodies. Narrow but exactly on target:
+    # backend/ollama/client.go is the ONLY file allowed to make HTTP requests
+    # (CLAUDE.md §4), and a leaked body there leaks a connection to a local
+    # daemon the user cannot see or restart from the UI.
+    - bodyclose
+
+    # contextcheck — functions that create a fresh context.Background()
+    # instead of propagating the caller's. Matters because Ollama calls must
+    # be cancellable: the user pressing Cancel on a deep scan has to actually
+    # stop the request, not just stop waiting for it.
+    - contextcheck
+
+    # errorlint — error comparison that breaks under wrapping (== instead of
+    # errors.Is, type assertion instead of errors.As). CLAUDE.md §2 requires
+    # actionable error messages, which means wrapping with %w, which means
+    # every == comparison against a sentinel is a latent silent-mismatch bug.
+    - errorlint
+
+  settings:
+    errcheck:
+      # Report ignored errors in `x, _ := f()` too, not only bare `f()`.
+      # The blank identifier is a claim that the error cannot matter; that
+      # claim should be written as a comment, not as punctuation.
+      check-blank: true
+      # Type assertions: `v := x.(T)` panics on mismatch. Session loading
+      # (backend/engine/session.go) walks decoded JSON, which is precisely
+      # where an unchecked assertion turns a corrupt file into a crash
+      # instead of the actionable refusal CLAUDE.md §5 requires.
+      check-type-assertions: true
+
+    revive:
+      # Only the rules below run. revive's default set is style-heavy
+      # (exported-comment enforcement above all) and this codebase's comment
+      # discipline is a human judgement documented in CLAUDE.md §6, not
+      # something a linter should score.
+      rules:
+        # Error strings: no capital, no trailing punctuation. Keeps wrapped
+        # chains readable, which is the point of the actionable-error rule.
+        - name: error-strings
+        # `err` must be the last return value, named `err`. Convention, but
+        # it is the convention every reader of this code assumes.
+        - name: error-return
+        # Sentinel errors named ErrFoo. Makes errors.Is targets greppable.
+        - name: error-naming
+        # if/else chains that end in a return: flatten them. Deep nesting in
+        # the pipeline passes is where an early-return path gets missed.
+        - name: indent-error-flow
+        # An unreachable `return` after a terminal statement is usually the
+        # residue of an edit that did not finish.
+        - name: unreachable-code
+        # Unused function parameters. In the engine's pass functions this
+        # normally means a pass silently ignores an input the caller
+        # believes it honours (e.g. the allowlist, or the country scope).
+        - name: unused-parameter
+        # Bare returns in a function with named results. The value returned
+        # is invisible at the call site and at the return site both.
+        - name: bare-return
+
+  exclusions:
+    # How generated files are detected and skipped. `strict` trusts only the
+    # canonical "Code generated by ... DO NOT EDIT." header (go.dev/s/generatedcode).
+    # The `lax` default also guesses from looser wording, which can silently
+    # exclude a hand-written file whose header happens to say "generated".
+    generated: strict
+
+    # No preset exclusions. The `comments`/`std-error-handling` presets that
+    # ship with golangci-lint hide a set of errcheck findings by default
+    # (os.Close, fmt.Fprintf and friends). In an application whose failure
+    # mode is a half-written export we want to see those and decide
+    # case by case, not have the linter decide for us.
+    presets: []
+
+    paths:
+      # Generated and vendored code is not ours to fix.
+      - vendor$
+      # Wails regenerates JS/TS bindings here on every build. It is
+      # .gitignored and frontend/api.js calls window.go.backend.App directly,
+      # so nothing here is ever read, but a stale checkout can still have it.
+      - frontend/wailsjs
+      # Build output.
+      - build$
+      # Audit output, including the tool binaries built into .audit/bin.
+      - \.audit$
+
+    rules:
+      # Test files may assert on errors in ways errcheck reads as ignoring
+      # them, and table-driven tests (CLAUDE.md §6) legitimately declare
+      # fields a given case does not use. Correctness linters still run on
+      # tests; only these two noise sources are silenced.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - unused
+
+      # scripts/genicon.go carries //go:build ignore: it is a standalone
+      # program run by hand, not part of any build. golangci-lint cannot
+      # resolve its imports in the module context and reports the whole file
+      # as broken.
+      - path: scripts/genicon\.go
+        linters:
+          - errcheck
+          - staticcheck
+          - unused
+
+# ── Formatters ────────────────────────────────────────────────────────────────
+# These REWRITE files when run with `--fix`; the audit run only reports.
+# CI already has a hard gofmt gate (.github/workflows/ci.yml), so these two are
+# strictly stricter than what already passes.
+formatters:
+  enable:
+    # gofumpt — gofmt plus a set of unambiguous extra rules. Chosen over plain
+    # gofmt because it removes the remaining places where two formattings are
+    # both "correct", and a diff that is purely formatting churn is a diff
+    # nobody reviews properly.
+    - gofumpt
+    # goimports — import grouping and removal of unused imports.
+    - goimports
+
+  settings:
+    goimports:
+      # Module-local imports go in their own final group, separated from
+      # third-party ones. Makes a new external dependency visible in a diff,
+      # which CLAUDE.md §6 requires to be a deliberate, documented act.
+      local-prefixes:
+        - doc-anonymiser
+
+  exclusions:
+    paths:
+      - vendor$
+      - frontend/wailsjs
+      - build$
+      - \.audit$
+
+# ── Output ────────────────────────────────────────────────────────────────────
+# Paths are set on the command line by Taskfile.yml (--output.sarif.path), not
+# here, so the same config serves the local text run and the CI SARIF run.
+output:
+  # Sort findings so two runs over unchanged code produce byte-identical
+  # output. Without this the SARIF diff is noise and partialFingerprints churn.
+  sort-order:
+    - file
+    - linter
+    - severity

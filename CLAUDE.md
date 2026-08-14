@@ -99,8 +99,18 @@ doc-anonymiser/
 │   ├── ollama/
 │   │   └── client.go          # THE ONLY FILE that talks to Ollama (net/http)
 │   └── testdata/              # fixture documents for unit tests (lives with the engine that uses it)
+├── Taskfile.yml               # local entry point for the audit layer (no make: `task audit`)
+├── .golangci.yml              # the machine-readable half of §6's coding rules
+├── tools/                     # SEPARATE Go module holding the audit tool deps.
+│                              #   Separate so tool dependencies cannot take part
+│                              #   in the application module's version resolution
+│                              #   and move what `wails build` compiles.
 ├── scripts/
 │   ├── genicon.go             # standalone icon generator (//go:build ignore)
+│   ├── to_sarif.py            # deadcode/deadexports JSON -> SARIF 2.1.0 (stdlib only)
+│   ├── to_sarif_test.go       # its tests, in Go so `go test ./...` gates them
+│   ├── audit_summary.py       # per-tool finding counts, read from the SARIF
+│   ├── deadexports/           # frontend dead-export scanner (knip's job, no npm)
 │   └── uitest/                # the real-rendering test layer (docs/UITESTING.md)
 │       ├── probes.js          # THE ONE definition of the browser-side probes and
 │       │                      #   the state they seed; BOTH harnesses read it
@@ -112,10 +122,13 @@ doc-anonymiser/
 │                              #   plus a UI Automation smoke test of the
 │                              #   packaged .exe. Never yet executed
 ├── .github/workflows/
+│   ├── audit.yml              # deterministic static analysis -> code scanning
 │   ├── ci.yml                 # build + test on push/PR
 │   └── release.yml            # on tag: build, zip, attach to Release
 └── docs/                      # phased build plans (BUILD.md, BUILD-02..04, CHANGE-01)
     ├── UITESTING.md           # the three test layers and how to run each
+    ├── audit.md               # the audit layer: running it, dismissing, adding a tool
+    ├── audit-baseline.md      # first full run: counts, genuine vs noise
     └── brand/color-palette.json  # vendored brand palette (source for frontend/brand.css)
 ```
 
@@ -389,6 +402,10 @@ doc-anonymiser/
 | github.com/ledongthuc/pdf | v0.0.0-20250511090121-5959a4027728 | pure-Go PDF text extraction (BSD-3); limited by design — see §5 PDF rules. Pinned to the 2025-05-11 commit (go.mod `go 1.24.1`), adopted with the Go 1.26 upgrade: the older 2024-02-01 commit crashes under Go 1.26 (`malformed PDF: cross-reference table not found`), which the 2025 commit fixes |
 | github.com/pdfcpu/pdfcpu | NOT ADDED (evaluated at BUILD-02 Phase 13, 2026-07-24) | in-place PDF rewriting was rejected (subset-font glyph availability), so pdfcpu's metadata role is covered by fpdf (new file's Info dict) + ledongthuc/pdf (reading the original's Info dict). The earlier Go-version incompatibility no longer applies under the Go 1.26 pin, but pdfcpu stays out for the functional reason above |
 | github.com/go-pdf/fpdf | v0.9.0 | pure-Go PDF writer for the regenerated-PDF same-format fallback (BUILD-02 Phase 13); MIT; go.mod requires Go 1.20 (compatible with the Go 1.26 pin) |
+| golangci-lint (audit tool, `tools/go.mod`) | v2.12.2 | v2 config format (`version: "2"`) and v2 output flags (`--output.sarif.path`); the v1 flags do not exist |
+| golang.org/x/tools (audit tool, `tools/go.mod`) | v0.49.0 | supplies `cmd/deadcode` |
+| golang.org/x/vuln (audit tool, `tools/go.mod`) | v1.7.0 | supplies `cmd/govulncheck` |
+| go-task (audit tool, `tools/go.mod`) | v3.52.0 | `Taskfile.yml` runner; `make` is unavailable on the target laptop |
 | Material Symbols SVGs (assets, not a Go module) | snapshot at BUILD-02 Phase 1 | individual SVG files vendored into `frontend/assets/icons/`; Apache-2.0; licence text at `frontend/assets/icons/LICENSE` |
 
 ## 8. Validated constants

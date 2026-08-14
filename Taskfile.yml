@@ -1,0 +1,258 @@
+# Taskfile.yml — the local entry point for the deterministic audit layer.
+#
+# WHY go-task AND NOT make
+#   `make` is not available on the owner's PwC-managed Windows laptop and there
+#   is no way to install it without admin rights. go-task is a single Go binary
+#   built from the tools/ module, so it arrives the same way every other audit
+#   tool does: `task tools` builds it, or `go -C tools run ... task` runs it.
+#
+# BOOTSTRAP (the chicken-and-egg problem)
+#   You cannot run `task tools` before `task` exists. Once, from the repo root:
+#
+#       go -C tools build -o ../.audit/bin/ github.com/go-task/task/v3/cmd/task
+#
+#   PowerShell and bash both accept that line verbatim. Then add .audit/bin to
+#   PATH for the session, or call .audit/bin/task directly.
+#
+# WHERE THE TOOLS LIVE
+#   In tools/go.mod, a module SEPARATE from the application's. Tool dependencies
+#   in the main module would drag ~300 indirect requirements into it and, worse,
+#   pull the application's own golang.org/x/* versions forward through MVS,
+#   changing what `wails build` compiles. The audit layer must not be able to
+#   move the shipped binary. See tools/go.mod.
+#
+# PLATFORM
+#   Every task here runs under both PowerShell and bash. That rules out shell
+#   built-ins, pipelines and `||`: `cmd:` lines are single programs with
+#   arguments, and control flow is expressed with go-task's own keys
+#   (`ignore_error`, `deps`, `status`). The one exception is the summary task,
+#   which shells out to Python — already a dependency of the SARIF conversion.
+#
+# THE ONE YOU WILL USE
+#   `task audit:new`. The full audit is for CI and for deliberate sweeps; day to
+#   day you want the findings your own branch introduced.
+
+version: "3"
+
+vars:
+  # Everything the audit writes goes here. Gitignored: these are the evidence
+  # of ONE run, not artefacts to keep.
+  OUT: .audit
+  BIN: .audit/bin
+
+  # The comparison point for `audit:new`. `origin/main` and not `main`: a
+  # local `main` is only as fresh as the last `git pull`, and a stale one moves
+  # the merge-base backwards, so half the repository counts as "changed" and
+  # the task stops being the short list it exists to be. Run `git fetch` first;
+  # the remote-tracking ref is what CI compares against too.
+  DEFAULT_BRANCH: origin/main
+
+  # Built tool binaries. Named through variables so a rename is one edit.
+  GOLANGCI: .audit/bin/golangci-lint{{exeExt}}
+  DEADCODE: .audit/bin/deadcode{{exeExt}}
+  GOVULNCHECK: .audit/bin/govulncheck{{exeExt}}
+
+  # Python: `python3` on Linux and CI, `py` on the owner's Windows laptop.
+  PY: '{{if eq OS "windows"}}py{{else}}python3{{end}}'
+
+tasks:
+  # ── Default ────────────────────────────────────────────────────────────────
+
+  default:
+    desc: List the available tasks.
+    cmds:
+      - task --list
+    silent: true
+
+  # ── Bootstrap ──────────────────────────────────────────────────────────────
+
+  tools:
+    desc: Build the audit tool binaries from tools/go.mod into .audit/bin.
+    summary: |
+      Builds golangci-lint, deadcode, govulncheck and task itself from the
+      separate tools/ module.
+
+      The FIRST run needs network access to populate the Go module cache and
+      takes a few minutes. Every run after that is served from the build cache
+      and completes offline, which is what makes `task audit` work on a
+      disconnected laptop.
+    cmds:
+      - task: mkdir
+      - cmd: go -C tools build -o ../.audit/bin/ github.com/golangci/golangci-lint/v2/cmd/golangci-lint golang.org/x/tools/cmd/deadcode golang.org/x/vuln/cmd/govulncheck github.com/go-task/task/v3/cmd/task
+    sources:
+      - tools/go.mod
+      - tools/go.sum
+    generates:
+      - "{{.GOLANGCI}}"
+      - "{{.DEADCODE}}"
+      - "{{.GOVULNCHECK}}"
+
+  mkdir:
+    internal: true
+    desc: Create the output directory.
+    cmds:
+      # go-task's own mkdir, so this works identically in PowerShell and bash.
+      - cmd: '{{if eq OS "windows"}}powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path {{.OUT}}, {{.BIN}} | Out-Null"{{else}}mkdir -p {{.OUT}} {{.BIN}}{{end}}'
+
+  # ── The full audit ─────────────────────────────────────────────────────────
+
+  audit:
+    desc: Run every audit tool, write SARIF to .audit/, print a summary.
+    summary: |
+      Runs the Go tools and the frontend scanner, converts what needs
+      converting to SARIF, and prints a per-tool count.
+
+      Never fails fast: every tool runs even when an earlier one found
+      problems, because a run that stops at the first tool tells you about one
+      tool. The task itself exits 0 whatever is found; deciding what blocks is
+      CI's job (.github/workflows/audit.yml), not this file's.
+    cmds:
+      - task: audit:go
+      - task: audit:web
+      - task: audit:summary
+
+  audit:go:
+    desc: Go tools only (golangci-lint, deadcode, govulncheck).
+    cmds:
+      - task: lint
+      - task: deadcode
+      - task: vuln
+
+  audit:web:
+    desc: Frontend tools only (dead-export scan).
+    cmds:
+      - task: deadexports
+
+  # ── The daily one ──────────────────────────────────────────────────────────
+
+  audit:new:
+    desc: Lint only what changed since the merge-base with the default branch.
+    summary: |
+      The task that gets used day to day.
+
+      A full audit over an existing codebase returns a baseline you have
+      already read and triaged (docs/audit-baseline.md). What you want before
+      pushing is the findings YOUR branch introduced, which is what
+      --new-from-merge-base reports.
+
+      Reports issues on CHANGED LINES only. `--whole-files` would add every
+      pre-existing issue in any file you touched, which for a wide change is
+      the full baseline again. The trade is real but one-sided: a finding your
+      change caused on a line you did not edit is missed here and caught by the
+      full `task audit` and by CI.
+
+      Run `git fetch` first. This compares against origin/main, and a stale
+      remote-tracking ref moves the merge-base backwards.
+
+      Text output, not SARIF: this one is for reading in the terminal.
+    deps: [tools]
+    cmds:
+      - cmd: "{{.GOLANGCI}} run --new-from-merge-base {{.DEFAULT_BRANCH}} ./..."
+        # A finding is not a task failure. The exit code would make `task`
+        # report the run as broken when it worked perfectly and found something.
+        ignore_error: true
+
+  # ── Individual tools ───────────────────────────────────────────────────────
+
+  lint:
+    desc: golangci-lint over the whole module, SARIF and text.
+    deps: [tools]
+    cmds:
+      - task: mkdir
+      # SARIF for upload. golangci-lint writes SARIF natively (v2's
+      # --output.sarif.path); do NOT route it through scripts/to_sarif.py.
+      - cmd: "{{.GOLANGCI}} run --output.sarif.path {{.OUT}}/golangci-lint.sarif --output.text.path {{.OUT}}/golangci-lint.txt ./... 2> {{.OUT}}/golangci-lint.err"
+        ignore_error: true
+
+  deadcode:
+    desc: Whole-program unreachable-function analysis, converted to SARIF.
+    summary: |
+      Reports Go functions no main package can reach. This is the check
+      golangci-lint's `unused` linter cannot do: `unused` is per-package and
+      only sees unexported identifiers, while deadcode builds a call graph
+      across the whole program.
+
+      Run WITHOUT -test on purpose. With -test, a function used only by its own
+      test counts as reachable, which is exactly the case worth knowing about.
+    deps: [tools]
+    cmds:
+      - task: mkdir
+      # `deadcode` writes JSON to STDOUT and has no output-file flag; the
+      # redirect is go-task's own shell (mvdan.cc/sh), which behaves the same
+      # on Windows as on Linux. Stderr goes to a .err file that audit:summary
+      # checks, so a tool that fails and writes nothing cannot be reported as
+      # a clean scan.
+      - cmd: "{{.DEADCODE}} -json ./... > {{.OUT}}/deadcode.json 2> {{.OUT}}/deadcode.err"
+        ignore_error: true
+      - cmd: "{{.PY}} scripts/to_sarif.py --tool deadcode --input {{.OUT}}/deadcode.json --output {{.OUT}}/deadcode.sarif"
+
+  vuln:
+    desc: govulncheck against the Go vulnerability database, native SARIF.
+    summary: |
+      Needs network access to fetch the vulnerability database. It is the ONE
+      task in the audit that cannot run offline, which is why it is a separate
+      task rather than folded into `lint`: on a disconnected laptop, run
+      `task lint deadcode deadexports` and leave this one to CI.
+
+      Overlaps Dependabot deliberately. Dependabot reports that a vulnerable
+      version is in go.mod; govulncheck reports whether this code actually
+      reaches the vulnerable symbol, which is a different and more useful fact.
+    deps: [tools]
+    cmds:
+      - task: mkdir
+      - cmd: "{{.GOVULNCHECK}} -format sarif ./... > {{.OUT}}/govulncheck.sarif 2> {{.OUT}}/govulncheck.err"
+        ignore_error: true
+
+  deadexports:
+    desc: Frontend ES-module dead-export scan, converted to SARIF.
+    summary: |
+      knip's job, done without npm. See scripts/deadexports/main.go for why
+      this repository ships its own scanner rather than adding a node_modules
+      tree to a codebase whose charter forbids one.
+
+      Built with `go run` rather than a prebuilt binary: it is a few hundred
+      lines of stdlib Go and compiles faster than the build cache lookup costs.
+    cmds:
+      - task: mkdir
+      - cmd: "go run ./scripts/deadexports -root frontend -o {{.OUT}}/deadexports.json 2> {{.OUT}}/deadexports.err"
+        ignore_error: true
+      - cmd: "{{.PY}} scripts/to_sarif.py --tool deadexports --input {{.OUT}}/deadexports.json --output {{.OUT}}/deadexports.sarif"
+
+  # ── Reporting ──────────────────────────────────────────────────────────────
+
+  audit:summary:
+    desc: Print a per-tool finding count from the SARIF files in .audit/.
+    summary: |
+      Reads the SARIF rather than the tools' own output, so the number printed
+      here is the number that will appear in the Security tab. A count that
+      disagrees with GitHub means the SARIF is wrong, and this is where you
+      would notice.
+    cmds:
+      - cmd: "{{.PY}} scripts/audit_summary.py {{.OUT}}"
+
+  # ── Housekeeping ───────────────────────────────────────────────────────────
+
+  audit:clean:
+    desc: Delete .audit/, including the built tool binaries.
+    cmds:
+      - cmd: '{{if eq OS "windows"}}powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue {{.OUT}}"{{else}}rm -rf {{.OUT}}{{end}}'
+
+  # ── The existing suites, for convenience ───────────────────────────────────
+  # These are NOT part of the audit. They are here so that `task --list` shows
+  # everything a contributor runs, rather than half of it.
+
+  test:
+    desc: Run both gating suites (go test and the frontend node --test suite).
+    cmds:
+      - cmd: go test ./...
+      - cmd: node --test "frontend/**/*.test.js"
+
+  test:go:
+    desc: Run the Go suite.
+    cmds:
+      - cmd: go test ./...
+
+  test:web:
+    desc: Run the frontend suite.
+    cmds:
+      - cmd: node --test "frontend/**/*.test.js"
