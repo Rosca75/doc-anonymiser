@@ -19,7 +19,7 @@ import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
 import {
   ALL_CATEGORIES, NAME_CATEGORIES, resetState, getState, setState, setUseAI,
 } from "./state.js";
-import { textOf, all, one, exists } from "./testhtml.js";
+import { textOf, stripTags, all, one, exists } from "./testhtml.js";
 
 // --- every category is reachable from some group -------------------------
 
@@ -176,7 +176,7 @@ test("the rail renders three sections and nothing else at the top level", () => 
   // The first title in a section is its own; the rest belong to the groups
   // nested inside it (the category groups, the strictness block).
   const titles = sections.map((sec) =>
-    textOf(all(sec.outer, "span.cgroup-title")[0].inner).trim());
+    stripTags(all(sec.outer, "span.cgroup-title")[0].inner).trim());
   assert.deepEqual(titles, [RAIL.tabSmart, RAIL.tabLocalAI, RAIL.tabCloudAI]);
 });
 
