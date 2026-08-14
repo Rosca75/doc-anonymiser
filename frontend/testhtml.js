@@ -126,10 +126,28 @@ export function unescape(text) {
 }
 
 /**
+ * stripTags(html) removes every tag from an HTML fragment, leaving the text.
+ * The `>?` makes the closing bracket optional so a dangling, unterminated
+ * `<script` at the end of a string is stripped too; a plain /<[^>]*>/g would
+ * leave it behind, which CodeQL flags as incomplete tag sanitisation. The loop
+ * runs until the string stops changing so overlapping/multi-character patterns
+ * cannot re-form a dangerous fragment such as "<script" after one pass.
+ */
+export function stripTags(html) {
+  let stripped = String(html);
+  let prev;
+  do {
+    prev = stripped;
+    stripped = stripped.replace(/<[^>]*>?/g, "");
+  } while (stripped !== prev);
+  return stripped;
+}
+
+/**
  * textOf(html, selector) → the visible text of the single match: tags removed,
  * entities decoded. This is what the user reads, which is what the preview
  * tests need to assert.
  */
 export function textOf(html, selector) {
-  return unescape(one(html, selector).inner.replace(/<[^>]*>/g, ""));
+  return unescape(stripTags(one(html, selector).inner));
 }
