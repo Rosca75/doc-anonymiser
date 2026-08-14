@@ -16,7 +16,7 @@ scan has been triaged. Do not duplicate them:
 
 ## Environment constraints — read before installing anything
 
-PwC-managed Windows laptop: no admin rights, no global installers, TLS-inspecting
+Corporate-managed Windows laptop: no admin rights, no global installers, TLS-inspecting
 proxy that intermittently breaks `go mod download` and `npm install`.
 
 - Prefer Go tools as module tool dependencies (`go get -tool`, Go 1.24+).
