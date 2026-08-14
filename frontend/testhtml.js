@@ -134,5 +134,13 @@ export function textOf(html, selector) {
   // The `>?` makes the closing bracket optional so a dangling, unterminated
   // `<script` at the end of a string is stripped too. A plain /<[^>]*>/g would
   // leave it behind, which CodeQL flags as incomplete tag sanitisation.
-  return unescape(one(html, selector).inner.replace(/<[^>]*>?/g, ""));
+  // Apply repeatedly until stable so multi-character/overlapping patterns
+  // cannot re-form dangerous fragments such as "<script" after one pass.
+  let stripped = one(html, selector).inner;
+  let prev;
+  do {
+    prev = stripped;
+    stripped = stripped.replace(/<[^>]*>?/g, "");
+  } while (stripped !== prev);
+  return unescape(stripped);
 }
