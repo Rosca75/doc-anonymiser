@@ -131,5 +131,8 @@ export function unescape(text) {
  * tests need to assert.
  */
 export function textOf(html, selector) {
-  return unescape(one(html, selector).inner.replace(/<[^>]*>/g, ""));
+  // The `>?` makes the closing bracket optional so a dangling, unterminated
+  // `<script` at the end of a string is stripped too. A plain /<[^>]*>/g would
+  // leave it behind, which CodeQL flags as incomplete tag sanitisation.
+  return unescape(one(html, selector).inner.replace(/<[^>]*>?/g, ""));
 }

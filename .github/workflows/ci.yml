@@ -32,6 +32,13 @@ env:
   # Must match the github.com/wailsapp/wails/v2 version in go.mod.
   WAILS_CLI_VERSION: v2.13.0
 
+# Least privilege for the automatically provided GITHUB_TOKEN. This workflow
+# only checks out code and runs build/test steps, so read access to the
+# repository contents is all it needs; nothing here writes to the repo, issues,
+# or packages. Setting this at the top level applies it to every job.
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest

@@ -29,7 +29,7 @@ const LABELS = {
 /** labelsOf(html) extracts the visible text of every top-menu button. */
 function labelsOf(html) {
   return [...html.matchAll(/<button[^>]*>(.*?)<\/button>/gs)]
-    .map((m) => m[1].replace(/<[^>]*>/g, "").trim());
+    .map((m) => m[1].replace(/<[^>]*>?/g, "").trim());
 }
 
 // --- the permanent top menu ----------------------------------------------

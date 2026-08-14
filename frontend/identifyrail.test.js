@@ -176,7 +176,7 @@ test("the rail renders three sections and nothing else at the top level", () => 
   // The first title in a section is its own; the rest belong to the groups
   // nested inside it (the category groups, the strictness block).
   const titles = sections.map((sec) =>
-    all(sec.outer, "span.cgroup-title")[0].inner.replace(/<[^>]*>/g, "").trim());
+    all(sec.outer, "span.cgroup-title")[0].inner.replace(/<[^>]*>?/g, "").trim());
   assert.deepEqual(titles, [RAIL.tabSmart, RAIL.tabLocalAI, RAIL.tabCloudAI]);
 });
 
