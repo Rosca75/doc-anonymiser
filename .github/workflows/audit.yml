@@ -1,0 +1,194 @@
+# audit.yml — the deterministic static analysis layer (docs/audit.md).
+#
+# Every finding this workflow uploads is a fact from a tool, not a judgement
+# from a model. Results go to GitHub code scanning, so triage and dismissal
+# state live in the Security tab rather than in a file in this repository.
+#
+# WHAT THIS WORKFLOW DOES NOT DO
+#   It does not block. Every scan step carries continue-on-error and the whole
+#   workflow is expected to pass with findings outstanding. The baseline in
+#   docs/audit-baseline.md has not been worked through yet, so a blocking gate
+#   would mean either a permanently red branch or a wholesale exclusion list,
+#   and both end with the layer being ignored. Turning a category into a gate
+#   is a later, deliberate decision, taken once its baseline is at zero.
+#
+#   It does not touch ci.yml or release.yml, and it duplicates nothing they do.
+#   CodeQL (default setup), Code Quality and Dependabot are already enabled;
+#   `gosec` is deliberately absent because CodeQL supersedes it and the two
+#   would file the same alerts twice.
+#
+# THE CATEGORY RULE, WHICH IS THE WHOLE TRICK
+#   Every upload-sarif step MUST pass a distinct `category`. Code scanning
+#   treats (ref, category) as the identity of a set of alerts: a second upload
+#   with the same category REPLACES the first, so four tools sharing a category
+#   leave you with whichever one uploaded last and no error message anywhere.
+#   One tool, one category, forever. Renaming a category is not cosmetic — it
+#   orphans the old alerts and their dismissals with them.
+name: Audit
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  # Required to upload SARIF. This is the only elevated permission here.
+  security-events: write
+  contents: read
+
+jobs:
+  audit:
+    name: Deterministic audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          # Full history: golangci-lint's --new-from-merge-base needs both
+          # sides of the comparison, and the default shallow clone has neither.
+          # The full audit does not use it, but a future gate on new findings
+          # would, and a missing history fails there in a confusing way.
+          fetch-depth: 0
+
+      - name: Set up Go 1.26.x
+        uses: actions/setup-go@v5
+        with:
+          # Floating within the pinned major.minor (CLAUDE.md §7). The tools/
+          # module pins its own toolchain in tools/go.mod.
+          go-version: "1.26.x"
+          # Cache the module downloads for the application module. The tools
+          # module has its own cache key below: its dependency set is an order
+          # of magnitude larger and changes on a completely different cadence.
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
+
+      - name: Build the audit tools
+        # Builds golangci-lint, deadcode, govulncheck and task from tools/go.mod
+        # into .audit/bin. This is the same command the Taskfile bootstrap
+        # documents, so a CI failure here reproduces locally verbatim.
+        run: |
+          mkdir -p .audit/bin
+          go -C tools build -o ../.audit/bin/ \
+            github.com/golangci/golangci-lint/v2/cmd/golangci-lint \
+            golang.org/x/tools/cmd/deadcode \
+            golang.org/x/vuln/cmd/govulncheck \
+            github.com/go-task/task/v3/cmd/task
+
+      - name: Verify the tools module has not drifted from the application module
+        # The tools module must not be able to move the shipped binary. If
+        # go.mod or go.sum changed as a side effect of building the tools,
+        # something has reached across the module boundary and the audit layer
+        # is no longer inert.
+        run: |
+          if ! git diff --quiet -- go.mod go.sum; then
+            echo "::error::Building the audit tools modified the application's go.mod or go.sum."
+            echo "The tools/ module exists so audit tooling cannot change what 'wails build' compiles."
+            echo "Run 'git diff go.mod go.sum' locally and move the offending dependency into tools/go.mod."
+            git diff -- go.mod go.sum
+            exit 1
+          fi
+
+      # ── Scans ───────────────────────────────────────────────────────────────
+      # Each writes SARIF into .audit/ and none of them fails the job. The
+      # uploads below are what turn the files into alerts.
+
+      - name: golangci-lint
+        continue-on-error: true
+        run: |
+          .audit/bin/golangci-lint run \
+            --output.sarif.path .audit/golangci-lint.sarif \
+            --output.text.path .audit/golangci-lint.txt \
+            ./...
+
+      - name: deadcode (whole-program unreachable functions)
+        continue-on-error: true
+        run: |
+          .audit/bin/deadcode -json ./... > .audit/deadcode.json 2> .audit/deadcode.err || true
+          python3 scripts/to_sarif.py \
+            --tool deadcode \
+            --input .audit/deadcode.json \
+            --output .audit/deadcode.sarif
+
+      - name: govulncheck
+        continue-on-error: true
+        # Overlaps Dependabot deliberately: Dependabot reports that a vulnerable
+        # version is required, govulncheck reports whether this code actually
+        # reaches the vulnerable symbol. Different facts, both worth having.
+        run: .audit/bin/govulncheck -format sarif ./... > .audit/govulncheck.sarif
+
+      - name: deadexports (frontend dead ES-module exports)
+        continue-on-error: true
+        run: |
+          go run ./scripts/deadexports -root frontend -o .audit/deadexports.json 2> .audit/deadexports.err || true
+          python3 scripts/to_sarif.py \
+            --tool deadexports \
+            --input .audit/deadexports.json \
+            --output .audit/deadexports.sarif
+
+      - name: Summary
+        # Prints the same per-tool counts as the local `task audit`, and warns
+        # when a tool reported nothing while writing to stderr, which is what a
+        # crashed tool looks like.
+        continue-on-error: true
+        run: python3 scripts/audit_summary.py .audit
+
+      # ── Uploads ─────────────────────────────────────────────────────────────
+      # One step per tool, one CATEGORY per tool. See the header: a shared
+      # category silently overwrites. `if: always()` so that a scan step which
+      # failed still has its (possibly empty) SARIF uploaded — an empty run is
+      # what CLOSES the alerts a previous run opened, and skipping the upload
+      # would leave fixed findings showing as open indefinitely.
+
+      - name: Upload golangci-lint SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: .audit/golangci-lint.sarif
+          category: golangci-lint
+
+      - name: Upload deadcode SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: .audit/deadcode.sarif
+          category: deadcode
+
+      - name: Upload govulncheck SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: .audit/govulncheck.sarif
+          category: govulncheck
+
+      - name: Upload deadexports SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: .audit/deadexports.sarif
+          category: deadexports
+
+      - name: Upload raw audit output
+        # The SARIF files plus each tool's stdout and stderr. Kept because a
+        # code scanning alert shows one finding at a time, and a question like
+        # "which of these 33 are in one file" is answered by the text report in
+        # seconds and by the Security tab not at all.
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-output
+          path: |
+            .audit/*.sarif
+            .audit/*.json
+            .audit/*.txt
+            .audit/*.err
+          retention-days: 14
+          if-no-files-found: warn
