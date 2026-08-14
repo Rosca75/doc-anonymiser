@@ -20,8 +20,10 @@ env:
   WAILS_CLI_VERSION: v2.13.0
 
 permissions:
-  # Needed to create the GitHub Release and upload the zip assets.
-  contents: write
+  # Least privilege at the top level: the build jobs only read the repository.
+  # The publish job below overrides this with the write access it needs to
+  # create the Release and upload assets.
+  contents: read
 
 jobs:
   # ---------------------------------------------------------------- Windows
@@ -216,6 +218,10 @@ jobs:
   publish:
     needs: [windows, linux]
     runs-on: ubuntu-latest
+    permissions:
+      # Only this job writes: it creates the GitHub Release and uploads the
+      # zip assets. The other jobs inherit the read-only top-level default.
+      contents: write
     steps:
       - name: Download all zip artifacts
         uses: actions/download-artifact@v4
