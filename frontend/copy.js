@@ -149,6 +149,16 @@ export const IMPORT = {
   // reporting "0 files", which is the difference between a footer that helps
   // and one that states the obvious.
   hintEmpty: "Add at least one document to continue",
+  // "Start over" is the clean-sheet escape hatch. Unlike "start a new batch" on
+  // Export, which keeps your settings and the placeholder registry, this resets
+  // EVERYTHING to defaults, for a completely separate anonymisation on new files
+  // that must not inherit anything from the last one.
+  startOver: "START OVER",
+  startOverTooltip: "Clear everything and reset to defaults",
+  startOverTitle: "Start over from a clean sheet?",
+  startOverBody: "This removes all imported documents, clears every detected value and the placeholder registry, forgets removed values, and resets your settings, document country, patterns and never anonymise list to their defaults. It cannot be undone. Use it only when you want to begin a completely separate anonymisation.",
+  startOverConfirm: "Reset everything",
+  startOverDone: "Everything was reset. Add new files on the Import step to begin a fresh anonymisation.",
 };
 
 // Configure step copy. Plain language: no "PII", no

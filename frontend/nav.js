@@ -11,8 +11,15 @@
 // The rule, unchanged from:
 //
 //   forward the guard decides, nothing is cleared, nothing is asked
-//   backward ask first; on yes, reset the step being LEFT and move; on no,
+//   backward ask first; on yes, reset every step being LEFT BEHIND (all the
+//             steps after the target, up to the current one) and move; on no,
 //             do nothing at all, not even the move
+//
+// Resetting the whole span, not just the current step, is what keeps a jump
+// back to Import from stranding the Identify step's detected values on a screen
+// the user thinks is clean. When Anonymise is among the steps left behind, Go is
+// also told to discard the run (resetRun), because the placeholder registry and
+// the removed-value list live there, not in the frontend store.
 //
 // Cancelling deliberately does NOT navigate. "Go back but keep everything"
 // sounds convenient, but it leaves half-finished state behind that the user
@@ -21,9 +28,11 @@
 // (state.js STEP_RESETS).
 
 import {
-  getState, WIZARD_STEPS, canGoTo, goTo, goToScreen, nextStep, isBackward, resetStep,
+  getState, WIZARD_STEPS, canGoTo, goTo, goToScreen, nextStep, isBackward,
+  resetStepsForBackward,
 } from "./state.js";
 import { askConfirm } from "./modal.js";
+import { resetRun } from "./api.js";
 import { stepFooter } from "./ui.js";
 import { NAV } from "./copy.js";
 
@@ -55,7 +64,23 @@ export async function navigateTo(step) {
     // event from Go (a drop that emptied the document list) could have made
     // the target unreachable.
     if (!canGoTo(step)) return false;
-    resetStep(current);
+    // Reset every step being left behind, not just the current one: a jump back
+    // past a step (Anonymise to Import) must not strand that step's values on
+    // the screen the user thinks is clean.
+    const wasReset = resetStepsForBackward(current, step);
+    // The run's registry and removed list live in Go, so clearing the frontend's
+    // Anonymise state is only half the reset. When Anonymise is among the steps
+    // left behind, tell Go to discard the run too, so a re-run restarts
+    // placeholder numbering from 1 and stops hiding previously removed values.
+    // Best-effort: a missing bridge (tests, the render harness) must not block
+    // the move, and in the real app window the call always reaches Go.
+    if (wasReset.includes("anonymise")) {
+      try {
+        await resetRun();
+      } catch {
+        // no bridge; the frontend state is already reset
+      }
+    }
   }
   return goTo(step);
 }

@@ -819,6 +819,35 @@ export function resetStep(step) {
 }
 
 /**
+ * resetStepsForBackward(current, target) resets every step being LEFT BEHIND by
+ * a backward move: all steps AFTER the target, up to and including the current
+ * one. The target is where the user lands, so its own data survives (you step
+ * back to Identify to review its values, not to lose them); the steps between
+ * the target and the current step are the work being discarded.
+ *
+ * navigateTo used to reset only the current step. A single-step move (Anonymise
+ * back to Identify) was therefore correct, but a multi-step move (Anonymise back
+ * to Import) reset only Anonymise and left the Identify step's detected values
+ * in place, so the "clean" Import screen still carried a previous document's
+ * values. Resetting the whole span is the fix, and it keeps the single-step case
+ * identical.
+ *
+ * @param {string} current the step being left
+ * @param {string} target the step being moved to
+ * @returns {string[]} the step tokens that were reset, in wizard order
+ */
+export function resetStepsForBackward(current, target) {
+  const from = WIZARD_STEPS.indexOf(current);
+  const to = WIZARD_STEPS.indexOf(target);
+  if (from < 0 || to < 0 || to >= from) return [];
+  const reset = [];
+  for (let i = to + 1; i <= from; i++) {
+    if (resetStep(WIZARD_STEPS[i])) reset.push(WIZARD_STEPS[i]);
+  }
+  return reset;
+}
+
+/**
  * isBackward(from, to) reports whether moving from one step to another
  * goes BACK through the wizard. main.js asks before navigating, because
  * only a backward move offers to reset the step being left.

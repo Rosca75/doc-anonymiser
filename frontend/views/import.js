@@ -22,11 +22,13 @@
 // "documents:changed" event (see main.js), so the drop zone is a target for the
 // eye and a click shortcut to the dialog, not a dragover handler.
 
-import { importFiles, removeDocument } from "../api.js";
-import { getState, setState, applyImportResult } from "../state.js";
+import { importFiles, removeDocument, resetSession } from "../api.js";
+import { getState, setState, applyImportResult, resetState, goToScreen } from "../state.js";
 import { escapeHTML, fmtSize } from "../html.js";
 import { button, card, icon, sectionLabel } from "../ui.js";
 import { stepFooterHTML, wireStepFooter } from "../nav.js";
+import { askConfirm } from "../modal.js";
+import { notify } from "../toast.js";
 import { CARDS, IMPORT } from "../copy.js";
 
 export function renderImport(container) {
@@ -65,7 +67,11 @@ function documentsCard(s) {
     id: "import-documents",
     title: CARDS.documents.title,
     subtitle: countLabel,
-    headRightHTML: button(IMPORT.addFiles, { kind: "primary", id: "btn-add", icon: "add" }),
+    headRightHTML:
+      button(IMPORT.startOver, {
+        kind: "ghost", id: "btn-start-over", icon: "refresh", title: IMPORT.startOverTooltip,
+      }) +
+      button(IMPORT.addFiles, { kind: "primary", id: "btn-add", icon: "add" }),
     bodyCls: "stack",
     bodyHTML: errors + dropZone() +
       (count ? `<ul class="doc-list">${rows}</ul>` : ""),
@@ -235,6 +241,31 @@ function wire(container) {
   };
 
   container.querySelector("#btn-add").addEventListener("click", addFiles);
+
+  // Start over: the clean-sheet escape hatch. It resets Go (documents, registry,
+  // removed values, settings) AND the frontend store, so a separate
+  // anonymisation on new files inherits nothing from the previous one.
+  container.querySelector("#btn-start-over")?.addEventListener("click", async () => {
+    const ok = await askConfirm({
+      title: IMPORT.startOverTitle,
+      body: IMPORT.startOverBody,
+      confirmLabel: IMPORT.startOverConfirm,
+    });
+    if (!ok) return;
+    try {
+      await resetSession();
+    } catch (err) {
+      // A run or detection is still in progress, or the bridge is absent: the
+      // Go side refused, so leave the frontend as it is and say why.
+      setState({ importErrors: [String(err?.message ?? err)] });
+      return;
+    }
+    // Go is clean; now the frontend. resetState lands on Home, so step back into
+    // the wizard on Import (its default step) ready for new files.
+    resetState();
+    goToScreen("wizard");
+    notify(IMPORT.startOverDone, "info");
+  });
 
   // The drop zone doubles as a click target for the same dialog, and it is a
   // role="button" span, so Enter and Space have to be wired by hand.

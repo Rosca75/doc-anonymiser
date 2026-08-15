@@ -890,6 +890,57 @@ test("resetStep(import) clears the error strip but nothing else", () => {
   assert.equal(s.documents.length, 2);
 });
 
+// --- resetStepsForBackward -----------------------------------------------
+//
+// The multi-step backward reset. A single-step move must behave exactly like
+// the old resetStep(current); a multi-step move must ALSO clear the steps it
+// jumps over, which is the leak fix: jumping from Anonymise back to Import used
+// to leave the Identify step's detected values on the "clean" Import screen.
+
+import { resetStepsForBackward } from "./state.js";
+
+test("resetStepsForBackward on a single-step back clears only that step", () => {
+  fullSession();
+  const reset = resetStepsForBackward("anonymise", "identify");
+  assert.deepEqual(reset, ["anonymise"]);
+  const s = getState();
+  assert.equal(s.results, null, "the Anonymise step's run was cleared");
+  assert.equal(s.entities.length, 1, "the Identify step it lands on keeps its values");
+});
+
+test("resetStepsForBackward on a multi-step back clears every step left behind", () => {
+  // Anonymise back to Import jumps over Identify. Its detected values, its
+  // suggestions and its patterns are the legacy the user reported seeing on a
+  // screen they thought was clean.
+  fullSession();
+  const reset = resetStepsForBackward("anonymise", "import");
+  assert.deepEqual(reset, ["identify", "anonymise"]);
+  const s = getState();
+  assert.deepEqual(s.entities, [], "the Identify values are gone");
+  assert.deepEqual(s.candidates, [], "the suggestions are gone");
+  assert.deepEqual(s.patterns, [], "the custom patterns are gone");
+  assert.equal(s.results, null, "the run is gone");
+  assert.equal(s.documents.length, 2, "but the imported documents survive, as always");
+});
+
+test("resetStepsForBackward lands the target's own data untouched", () => {
+  // Export back to Anonymise resets only Export; the run the user steps back to
+  // review must still be there.
+  fullSession();
+  setState({ running: false });
+  const reset = resetStepsForBackward("export", "anonymise");
+  assert.deepEqual(reset, ["export"]);
+  assert.ok(getState().results, "the Anonymise results the user stepped back to are kept");
+  assert.deepEqual(getState().metaReview, {}, "only the Export step's own data was cleared");
+});
+
+test("resetStepsForBackward is a no-op for a forward or same-step request", () => {
+  fullSession();
+  assert.deepEqual(resetStepsForBackward("identify", "anonymise"), [], "forward resets nothing");
+  assert.deepEqual(resetStepsForBackward("anonymise", "anonymise"), [], "same step resets nothing");
+  assert.deepEqual(resetStepsForBackward("anonymise", "teleport"), [], "an unknown target resets nothing");
+});
+
 // --- Notices -------------------------------------------------------------
 
 test("setNotice stores the sentence and its tone", () => {

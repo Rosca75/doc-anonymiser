@@ -239,6 +239,34 @@ test("a BACKWARD shortcut asks first, exactly as the step bar does", async () =>
   assert.equal(getState().results, null, "leaving Anonymise backwards cleared the run");
 });
 
+test("a multi-step back clears the steps it jumps over, not just the one it leaves", async () => {
+  // The leak: Anonymise back to Import jumps over Identify, whose detected values
+  // used to survive onto the "clean" Import screen. navigateTo now resets every
+  // step left behind, so the values, the suggestions and the patterns go too.
+  // handleShortcut also asks Go to discard the run; there is no bridge here, so
+  // that call rejects and is swallowed, which must not stop the frontend reset.
+  resetState();
+  setState({
+    documents: [{ name: "a.md" }],
+    results: FINISHED_RUN,
+    entities: [{ category: "person_names", canonical: "Marie Duval", status: "accepted" }],
+    candidates: [{ text: "Alpine Trust", category: "entity_names", count: 2 }],
+    patterns: [{ expr: "PRJ-[0-9]+", error: null }],
+    step: "anonymise",
+  });
+
+  const moving = handleShortcut({ ctrlKey: true, key: "o" });
+  answerConfirm(true);
+  assert.equal(await moving, true);
+  const s = getState();
+  assert.equal(s.step, "import");
+  assert.deepEqual(s.entities, [], "the Identify values did not survive the jump to Import");
+  assert.deepEqual(s.candidates, [], "nor did the suggestions");
+  assert.deepEqual(s.patterns, [], "nor the custom patterns");
+  assert.equal(s.results, null, "and the run is gone");
+  assert.equal(s.documents.length, 1, "but the imported documents are kept");
+});
+
 test("a shortcut suppresses the browser default only for a key it claims", async () => {
   resetState();
   setState({ documents: [{ name: "a.md" }] });
