@@ -22,7 +22,7 @@
 // "documents:changed" event (see main.js), so the drop zone is a target for the
 // eye and a click shortcut to the dialog, not a dragover handler.
 
-import { importFiles, removeDocument, resetSession } from "../api.js";
+import { importFiles, removeDocument, resetSession, defaultAllowlist, probeOllama } from "../api.js";
 import { getState, setState, applyImportResult, resetState, goToScreen } from "../state.js";
 import { escapeHTML, fmtSize } from "../html.js";
 import { button, card, icon, sectionLabel } from "../ui.js";
@@ -265,6 +265,21 @@ function wire(container) {
     resetState();
     goToScreen("wizard");
     notify(IMPORT.startOverDone, "info");
+    // A clean sheet must match a FRESH BOOT, not a blank one: re-seed the engine
+    // default allowlist (resetState emptied it) and re-probe Ollama (resetState
+    // cleared the last probe), exactly as main.js boot() does, so the safety
+    // terms and the Local AI switch are not silently lost by starting over.
+    // Best-effort and after the notice: a probe failure must not undo the reset.
+    defaultAllowlist()
+      .then((terms) => {
+        if (getState().allowlist.length === 0 && terms?.length) {
+          setState({ allowlist: terms });
+        }
+      })
+      .catch(() => { /* bridge missing: keep the empty list */ });
+    probeOllama()
+      .then((status) => setState({ ollama: status }))
+      .catch(() => { /* leave ollama unknown; the badge reads "not detected" */ });
   });
 
   // The drop zone doubles as a click target for the same dialog, and it is a

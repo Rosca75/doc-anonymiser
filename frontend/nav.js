@@ -32,7 +32,7 @@ import {
   resetStepsForBackward,
 } from "./state.js";
 import { askConfirm } from "./modal.js";
-import { resetRun } from "./api.js";
+import { resetRun, applySettings } from "./api.js";
 import { stepFooter } from "./ui.js";
 import { NAV } from "./copy.js";
 
@@ -54,6 +54,13 @@ export async function navigateTo(step) {
   if (!canGoTo(step)) return false;
 
   if (isBackward(current, step)) {
+    // A run in progress owns the Anonymise step's state. Resetting it from under
+    // the running Go goroutine is the one backward move that cannot be made
+    // clean: Go keeps the run (ResetRun no-ops while running), the frontend
+    // drops it, then the pipeline:done event restores it, leaving the two
+    // disagreeing. Refuse until the run is cancelled or finishes; the Anonymise
+    // screen's Cancel button is the way out.
+    if (getState().running) return false;
     const confirmed = await askConfirm({
       title: NAV.backConfirmTitle(current),
       body: NAV.backConfirmBody(current),
@@ -79,6 +86,20 @@ export async function navigateTo(step) {
         await resetRun();
       } catch {
         // no bridge; the frontend state is already reset
+      }
+    }
+    // Resetting the Identify step returns its DETECTION SCOPE settings (country,
+    // categories, confidence floor, smart-detection tuning) to the defaults in
+    // the store, but Go is what reads country, the confidence floor and the
+    // smart-detection tuning at run time. Without this push the next run would
+    // use the previous batch's scope while the rail showed the defaults, which
+    // is the very config leak this reset is meant to prevent. The reset settings
+    // are all defaults, so applySettings accepts them; best-effort, like above.
+    if (wasReset.includes("identify")) {
+      try {
+        await applySettings(getState().settings);
+      } catch {
+        // no bridge, or Go refused; the store already holds the reset settings
       }
     }
   }
@@ -112,7 +133,7 @@ export function goBack() {
 // Ctrl+O opens Import and Ctrl+E opens Export. They live here and not in
 // main.js because they MOVE THE WIZARD, and this module is the one place that
 // does (frontend/CLAUDE.md). main.js called goTo() directly, so Ctrl+O from a
-// later step was a backward move with neither the confirm nor the resetStep
+// later step was a backward move with neither the confirm nor the reset
 // that every other backward move gets: the same keystroke did one thing from
 // the step bar and another from the keyboard.
 

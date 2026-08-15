@@ -239,6 +239,22 @@ test("a BACKWARD shortcut asks first, exactly as the step bar does", async () =>
   assert.equal(getState().results, null, "leaving Anonymise backwards cleared the run");
 });
 
+test("a backward move is refused while a run is in progress", async () => {
+  // Resetting the Anonymise step from under a running goroutine is the one move
+  // that cannot be made clean, so navigateTo refuses it until the run ends. The
+  // user cancels on the Anonymise screen instead.
+  resetState();
+  setState({
+    documents: [{ name: "a.md" }], results: FINISHED_RUN, running: true, step: "anonymise",
+  });
+
+  const moved = await handleShortcut({ ctrlKey: true, key: "o" });
+  assert.equal(moved, false, "the backward shortcut did nothing while the run was live");
+  assert.equal(getState().confirm, null, "and it did not even ask");
+  assert.equal(getState().step, "anonymise", "the user stays on the run screen");
+  assert.ok(getState().results, "nothing was reset");
+});
+
 test("a multi-step back clears the steps it jumps over, not just the one it leaves", async () => {
   // The leak: Anonymise back to Import jumps over Identify, whose detected values
   // used to survive onto the "clean" Import screen. navigateTo now resets every
