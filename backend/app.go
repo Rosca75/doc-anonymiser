@@ -198,25 +198,92 @@ func (a *App) removedValues() []engine.RemovedValue {
 	return out
 }
 
+// defaultSettings is the settings a fresh session starts from. It lives in its
+// own function, rather than inline in NewApp, because ResetSession must rebuild
+// EXACTLY these defaults: two copies of the literal would be a silent way for a
+// "reset to defaults" to reset to something other than the defaults a new app
+// gets.
+func defaultSettings() Settings {
+	return Settings{
+		Level:       string(engine.LevelMedium), // documented default
+		OllamaPort:  11434,
+		Model:       ollama.DefaultModel,
+		ContextSize: ollama.DefaultContextSize,
+		Country:     engine.CountryLU,
+		// The stricter defaults, matching the frontend store: Smart
+		// detection over-detecting was the reported problem.
+		SmartDetect: engine.DefaultSmartDetectOptions(),
+		// Smart detection is on by default (it needs nothing installed);
+		// the AI route is not.
+		UseSmartDetect: true,
+	}
+}
+
 // NewApp constructs the bound struct. Kept trivial on purpose: anything
 // interesting belongs in engine/* so it stays headless-testable.
 func NewApp() *App {
 	return &App{
-		llm: ollama.New(""), // "" = default loopback base URL
-		settings: Settings{
-			Level:       string(engine.LevelMedium), // documented default
-			OllamaPort:  11434,
-			Model:       ollama.DefaultModel,
-			ContextSize: ollama.DefaultContextSize,
-			Country:     engine.CountryLU,
-			// The stricter defaults, matching the frontend store: Smart
-			// detection over-detecting was the reported problem.
-			SmartDetect: engine.DefaultSmartDetectOptions(),
-			// Smart detection is on by default (it needs nothing installed);
-			// the AI route is not.
-			UseSmartDetect: true,
-		},
+		llm:      ollama.New(""), // "" = default loopback base URL
+		settings: defaultSettings(),
 	}
+}
+
+// ResetRun discards everything a pipeline RUN produced, so the next run starts
+// from a clean slate: the placeholder registry (numbering restarts from 1), the
+// latest results, the remembered request the same-format export replays, and the
+// session's removed-value list. The imported documents and the user's settings
+// are deliberately KEPT, because a run reset is what a backward move out of the
+// Anonymise step needs and that move keeps the documents and the configuration.
+//
+// This is the Go half of the leak fix: the frontend's resetStep("anonymise")
+// cleared its OWN mirror of the run, but the registry and the removed list live
+// here, and a re-run that reused old placeholder numbers or kept silently hiding
+// a previously removed value was the "values not cleaned" the user reported.
+//
+// A run in progress owns this state, so the reset is skipped while one is live
+// (a backward move is gated off during a run anyway); the caller still gets a
+// clean state the moment the run finishes and it is called again.
+func (a *App) ResetRun() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.running {
+		return
+	}
+	a.registry = nil
+	a.results = nil
+	a.lastReq = nil
+	a.removed = nil
+}
+
+// ResetSession returns the whole session to the state a freshly launched app is
+// in: no documents, no registry, no results, no removed values, and the default
+// settings (which rebuild the Ollama client on the default loopback port). It is
+// the "start from a clean sheet" action offered on the Import step, for a user
+// beginning a completely separate anonymisation on new files who must not
+// inherit anything from the previous one.
+//
+// It refuses while a run or a detection is in flight rather than pulling the
+// state out from under a running goroutine: the error tells the user to let the
+// current work finish first, which is recoverable, where a mid-run wipe is not.
+func (a *App) ResetSession() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.running {
+		return fmt.Errorf("a run is still in progress, wait for it to finish before starting over")
+	}
+	if a.cancelDetection != nil {
+		return fmt.Errorf("a detection is still in progress, cancel it or wait for it to finish before starting over")
+	}
+	a.docs = nil
+	a.registry = nil
+	a.results = nil
+	a.lastReq = nil
+	a.removed = nil
+	a.settings = defaultSettings()
+	// The client is rebuilt from the default port and model so a session that
+	// changed the port does not leave the next one probing the wrong one.
+	a.llm = ollama.New("")
+	return nil
 }
 
 // Startup is called by Wails once the runtime is ready (see main.go).
