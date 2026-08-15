@@ -37,6 +37,7 @@ import {
   setValueTables, dismissWarning, visibleWarnings, blockingConflicts,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
+import { keepScrollPosition } from "../scroll.js";
 import { renderHighlighted } from "../highlight.js";
 import { button, card, statTile, collapsibleGroup, wireGroups, icon, sectionLabel } from "../ui.js";
 import { llmGateTooltip } from "./identifyrail.js";
@@ -832,10 +833,15 @@ function wireReport(container) {
   });
   for (const row of container.querySelectorAll(".report-row")) {
     row.querySelector(".report-toggle")?.addEventListener("click", () => {
-      const key = row.dataset.category;
-      if (expandedCategories.has(key)) expandedCategories.delete(key);
-      else expandedCategories.add(key);
-      setState({});
+      // keepScrollPosition holds the report where it is: expanding a category
+      // repaints the whole shell, which would otherwise throw the user back to
+      // the top instead of leaving the row they clicked in view.
+      keepScrollPosition(() => {
+        const key = row.dataset.category;
+        if (expandedCategories.has(key)) expandedCategories.delete(key);
+        else expandedCategories.add(key);
+        setState({});
+      });
     });
   }
   for (const strip of container.querySelectorAll(".caution[data-warning]")) {
