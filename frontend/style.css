@@ -614,11 +614,6 @@ main#view.page { overflow-y: auto; }
 
 /* A monospaced read-only value: a placeholder, an occurrence count, a path. */
 .mono { font-family: var(--font-mono); }
-.ph-chip {
-  font-family: var(--font-mono); font-size: 0.78rem;
-  color: var(--text); background: var(--gray-6);
-  border: 1px solid var(--gray-5); padding: 0.15rem 0.5rem; border-radius: 4px;
-}
 
 /* --- Buttons (ui.js kinds) ---------------------------------------------- */
 
@@ -1180,7 +1175,10 @@ input, select {
   font-size: 0.85rem;
 }
 .report-toggle {
-  display: flex; align-items: center; gap: 0.4rem;
+  /* justify-content is forced to flex-start because the shared button rule
+     centres its content; without this the category label reads centred rather
+     than left-aligned under "By category". */
+  display: flex; align-items: center; justify-content: flex-start; gap: 0.4rem;
   padding: 0.4rem 0; border: none; background: none; border-radius: 0;
   font: inherit; text-align: left;
 }

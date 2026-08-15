@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 
 import {
   countOccurrences, valuesInCategory, formatDuration, continueHint,
-  compareCard, reportCard, valuesCard, filterValues, blockedPanel,
+  compareCard, reportCard, valuesCard, filterValues, blockedPanel, selectedCard,
 } from "./views/anonymise.js";
 import { textOf, all } from "./testhtml.js";
 
@@ -134,6 +134,20 @@ test("with nothing removed the list is absent, not empty", () => {
   assert.equal(all(valuesCard(reportState()), "div.removed-row").length, 0);
   assert.ok(!valuesCard(reportState()).includes("Removed values"),
     "a heading over an empty list invites a search for something that is not there");
+});
+
+// --- The Selected placeholder card ---------------------------------------
+
+test("the Selected placeholder card edits the replacement value, like the table", () => {
+  // Clicking a mark opens this card. It must let the placeholder be changed, not
+  // only turned into a variant of another value: the same registry entry sits
+  // behind the mark and behind the Replaced values row, so both edit it.
+  const html = selectedCard(reportState(), { placeholder: "[PERSON_1]", original: "Marie Duval" });
+  assert.equal(all(html, "input#selected-ph-input").length, 1,
+    "the replacement value has to be editable here too, not just in the table");
+  assert.equal(all(html, "input#reassign-input").length, 1,
+    "the 'make it a variant of' field stays: this adds an action, it does not remove one");
+  assert.match(html, /Marie Duval/, "the card still names what the placeholder replaces");
 });
 
 test("the report says what the run did, including a degraded AI pass", () => {
