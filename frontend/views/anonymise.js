@@ -70,6 +70,10 @@ let tablesLoadedFor = null;
 let selectedMark = null;
 // The reassign autocomplete's draft text.
 let reassignDraft = "";
+// Feedback from a refused placeholder rename in the Selected placeholder card.
+// It belongs ON the card, next to the field the fix goes into, for the same
+// reason a refused rename in the Replaced values table lands on its own row.
+let selectedError = "";
 // A live text selection in either pane, or null: {text, x, y}. Coordinates are
 // relative to the Compare card, so the floating panel follows the selection.
 let selection = null;
@@ -243,8 +247,14 @@ export function formatDuration(ms) {
  * from its own mark the moment the pane scrolled, and it could not be reached
  * from the keyboard. A card in the left column stays put, has room for the
  * explanation, and is the same shape as everything else on the screen.
+ *
+ * The placeholder is editable here for the same reason it is editable in the
+ * Replaced values table: both read and write the one registry entry behind the
+ * mark, and a user looking at a single value should be able to change what it
+ * becomes without hunting for it in the full list. Like the table, the rename
+ * takes effect on the NEXT run and not on the text already shown.
  */
-function selectedCard(s) {
+export function selectedCard(s, mark = selectedMark) {
   const matches = reassignDraft.trim()
     ? entityAutocomplete(reassignDraft, s).slice(0, 6)
     : [];
@@ -256,11 +266,16 @@ function selectedCard(s) {
     `</button>`).join("");
 
   const body =
+    `<div class="rail-field-stack">` +
+    `<span class="hint">${escapeHTML(ANONYMISE.placeholderLabel)}</span>` +
     `<div class="selected-pair">` +
-    `<span class="ph-chip">${escapeHTML(selectedMark.placeholder)}</span>` +
+    `<input id="selected-ph-input" class="ph-input mono" value="${escapeHTML(mark.placeholder)}"` +
+    ` title="${escapeHTML(ANONYMISE.placeholderTooltip)}"` +
+    ` aria-label="${escapeHTML(ANONYMISE.placeholderLabel)}"/>` +
     `<span class="hint">${escapeHTML(ANONYMISE.replaces)}</span>` +
-    `<span class="selected-original">${escapeHTML(selectedMark.original)}</span>` +
-    `</div>` +
+    `<span class="selected-original">${escapeHTML(mark.original)}</span>` +
+    `</div></div>` +
+    (selectedError ? `<span class="hint bad value-error">${escapeHTML(selectedError)}</span>` : "") +
     `<label class="rail-field-stack" for="reassign-input">` +
     `<span class="hint">${escapeHTML(ANONYMISE.makeVariantOf)}</span>` +
     `<input id="reassign-input" value="${escapeHTML(reassignDraft)}" autocomplete="off"` +
@@ -752,7 +767,32 @@ function wireSelected(container) {
   container.querySelector("#btn-clear-selection")?.addEventListener("click", () => {
     selectedMark = null;
     reassignDraft = "";
+    selectedError = "";
     setState({});
+  });
+
+  // Editing the placeholder here is the same act as editing it in the Replaced
+  // values table: rename the one registry entry, refresh the tables, and stop.
+  // It does NOT re-run, so the mark in the pane keeps its old number until the
+  // next run, which is what the field's tooltip promises.
+  const phInput = container.querySelector("#selected-ph-input");
+  phInput?.addEventListener("change", async (ev) => {
+    const current = selectedMark?.placeholder;
+    if (!current) return;
+    const next = ev.target.value.trim();
+    try {
+      await setValuePlaceholder(current, next);
+      // Keep the card addressing the value under its NEW placeholder, so a
+      // second edit renames from where the registry now is, not from the old
+      // number the registry no longer knows.
+      selectedMark.placeholder = next;
+      selectedError = "";
+      await refreshValueTables();
+      setState({});
+    } catch (err) {
+      selectedError = String(err?.message ?? err);
+      setState({});
+    }
   });
 
   const input = container.querySelector("#reassign-input");
@@ -995,6 +1035,7 @@ function wireCompare(container, doc) {
       original: mark.dataset.original,
     };
     reassignDraft = "";
+    selectedError = "";
     collapsed.delete("selected");
     setState({});
   });
