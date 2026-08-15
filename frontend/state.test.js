@@ -28,6 +28,9 @@ import {
   dismissWarning, visibleWarnings,
   setExportDir, startNewBatch, setMetaReview,
   askConfirm, answerConfirm,
+  entityKey,
+  renameEntity, renameVariant, changeEntityCategory, changeCandidateCategory,
+  groupEntities, clearAllEntities, entityConflicts, spellingsOf,
 } from "./state.js";
 
 test("setState merges and notifies subscribers", () => {
@@ -1353,8 +1356,7 @@ test("setValueTables mirrors both halves of the registry at once", () => {
   const replaced = [{ original: "Marie Duval", placeholder: "[PERSON_1]", category: "person_names", count: 3 }];
   const removed = [{ original: "Thomas Berger", placeholder: "[PERSON_2]", category: "person_names" }];
 
-  setValueTables(replaced, removed);
-  assert.deepEqual(getState().replacedValues, replaced);
+  setValueTables(replaced, removed);  assert.deepEqual(getState().replacedValues, replaced);
   assert.deepEqual(getState().removedValues, removed);
 });
 
@@ -1388,4 +1390,170 @@ test("resultDoc is declared state and a reset clears it", () => {
   setState({ resultDoc: "a.docx" });
   resetStep("anonymise");
   assert.equal(getState().resultDoc, null);
+});
+
+// --- Value editing (the My values tab) -----------------------------------
+//
+// Detection proposes and the user corrects: these reducers are the correction.
+// Each one that changes what a value MATCHES resets that row's variants to
+// pending (null) so Go re-runs the expansion around the change.
+
+/** seedValue(category, canonical, variants, patch) adds one accepted value with
+ *  a settled variant list, the shape the My values tab actually holds. */
+function seedValue(category, canonical, variants = [], patch = {}) {
+  addEntities([{ category, canonical }]);
+  setEntityVariants(category, canonical, variants);
+  if (Object.keys(patch).length) {
+    setState({
+      entities: getState().entities.map((e) =>
+        entityKey(e.category, e.canonical) === entityKey(category, canonical) ? { ...e, ...patch } : e),
+    });
+  }
+  return getState().entities.find((e) => entityKey(e.category, e.canonical) === entityKey(category, canonical));
+}
+
+test("renameEntity changes the name and re-pends the variants", () => {
+  resetState();
+  seedValue("person_names", "Marie Duvel", ["Marie Duvel", "Marie"]);
+  assert.equal(renameEntity("person_names", "Marie Duvel", "Marie Duval"), "");
+  const e = getState().entities[0];
+  assert.equal(e.canonical, "Marie Duval");
+  assert.equal(e.variants, null, "a rename re-expands the row");
+});
+
+test("renameEntity refuses a name the same type already holds", () => {
+  resetState();
+  seedValue("person_names", "Marie Duval");
+  seedValue("person_names", "Thomas Berger");
+  assert.equal(renameEntity("person_names", "Thomas Berger", "Marie Duval"), "duplicate");
+  // Nothing changed: still two values, both original names.
+  assert.equal(getState().entities.length, 2);
+});
+
+test("renameVariant excludes the old spelling and adds the new one", () => {
+  resetState();
+  seedValue("entity_names", "Delta Industries", ["Delta Industries", "Delta"]);
+  assert.equal(renameVariant("entity_names", "Delta Industries", "Delta", "Deltaa"), "");
+  const e = getState().entities[0];
+  assert.ok(e.manualVariants.includes("Deltaa"), "the new spelling is a manual variant");
+  assert.ok((e.excludedVariants ?? []).some((x) => x.toLowerCase() === "delta"),
+    "the old spelling is excluded so the expansion cannot re-add it");
+  assert.equal(e.variants, null);
+});
+
+test("renameVariant on the spelling that IS the name renames the value", () => {
+  resetState();
+  seedValue("entity_names", "Delta Industries", ["Delta Industries", "Delta"]);
+  assert.equal(renameVariant("entity_names", "Delta Industries", "Delta Industries", "Delta Group"), "");
+  assert.equal(getState().entities[0].canonical, "Delta Group");
+});
+
+test("changeEntityCategory moves the value and switches the new type on", () => {
+  resetState();
+  toggleCategory("person_names", false);
+  seedValue("entity_names", "Meridian");
+  assert.equal(changeEntityCategory("entity_names", "Meridian", "person_names"), "");
+  const e = getState().entities[0];
+  assert.equal(e.category, "person_names");
+  assert.equal(e.variants, null);
+  assert.equal(getState().settings.categories.person_names, true,
+    "moving a value into a type is the same commitment as accepting one there");
+});
+
+test("changeEntityCategory refuses a type that already holds the name", () => {
+  resetState();
+  seedValue("entity_names", "Acme");
+  seedValue("person_names", "Acme");
+  assert.equal(changeEntityCategory("entity_names", "Acme", "person_names"), "duplicate");
+});
+
+test("changeCandidateCategory retypes a suggestion before it is accepted", () => {
+  resetState();
+  addCandidates([{ text: "Meridian", category: "person_names" }], "smart");
+  assert.equal(changeCandidateCategory("Meridian", "project_names"), true);
+  assert.equal(getState().candidates[0].category, "project_names");
+  // Accepting it now lands it in the corrected type.
+  acceptCandidate("Meridian");
+  assert.equal(getState().entities[0].category, "project_names");
+});
+
+test("groupEntities folds sources into the target and removes them", () => {
+  resetState();
+  seedValue("entity_names", "Meridian Consulting", ["Meridian Consulting"]);
+  seedValue("entity_names", "Meridian", ["Meridian"], { manualVariants: ["Merid"] });
+  const n = groupEntities(
+    { category: "entity_names", canonical: "Meridian Consulting" },
+    [{ category: "entity_names", canonical: "Meridian" }]);
+  assert.equal(n, 1);
+  const list = getState().entities;
+  assert.equal(list.length, 1, "the source value is gone");
+  const kept = list[0];
+  assert.equal(kept.canonical, "Meridian Consulting");
+  assert.ok(kept.manualVariants.includes("Meridian"), "the source name becomes a spelling");
+  assert.ok(kept.manualVariants.includes("Merid"), "the source's own spellings come too");
+  assert.equal(kept.variants, null, "the target re-expands around the merged set");
+});
+
+test("clearAllEntities empties the list and reports the count", () => {
+  resetState();
+  seedValue("entity_names", "Acme");
+  seedValue("person_names", "Marie Duval");
+  assert.equal(clearAllEntities(), 2);
+  assert.equal(getState().entities.length, 0);
+  assert.equal(clearAllEntities(), 0, "an already-empty list clears nothing");
+});
+
+// --- Conflict detection for the My values tab ----------------------------
+
+test("spellingsOf is the name, the variants and the manual ones, minus excluded", () => {
+  const e = {
+    category: "entity_names", canonical: "Delta Industries",
+    variants: ["Delta Industries", "Delta"], manualVariants: ["DI"],
+    excludedVariants: ["Delta"],
+  };
+  const keys = [...spellingsOf(e).keys()];
+  assert.ok(keys.includes("delta industries"));
+  assert.ok(keys.includes("di"));
+  assert.ok(!keys.includes("delta"), "an excluded spelling is not a spelling");
+});
+
+test("entityConflicts flags the same name under two types", () => {
+  resetState();
+  seedValue("entity_names", "Acme", ["Acme"]);
+  seedValue("person_names", "Acme", ["Acme"]);
+  const conflicts = entityConflicts();
+  const a = conflicts.get(entityKey("entity_names", "Acme"));
+  const b = conflicts.get(entityKey("person_names", "Acme"));
+  assert.ok(a && a.nameConflicts.length, "the entity_names card is flagged");
+  assert.ok(b && b.nameConflicts.length, "the person_names card is flagged");
+  assert.ok(a.list.some((c) => c.kind === "ambiguity"));
+});
+
+test("entityConflicts flags a spelling two values both claim", () => {
+  resetState();
+  seedValue("person_names", "Marie Duval", ["Marie Duval", "Marie"]);
+  seedValue("person_names", "Marie Dupont", ["Marie Dupont", "Marie"]);
+  const conflicts = entityConflicts();
+  const a = conflicts.get(entityKey("person_names", "Marie Duval"));
+  assert.ok(a.variantConflicts.has("marie"), "the shared spelling chip is flagged");
+  assert.ok(a.list.some((c) => c.kind === "collision"));
+});
+
+test("entityConflicts flags a value that is also on the never-anonymise list", () => {
+  resetState();
+  seedValue("entity_names", "CSSF", ["CSSF"]);
+  addAllowTerm("CSSF");
+  const conflicts = entityConflicts();
+  const a = conflicts.get(entityKey("entity_names", "CSSF"));
+  assert.ok(a && a.list.some((c) => c.kind === "allowlist"));
+});
+
+test("entityConflicts ignores values whose type is switched off", () => {
+  resetState();
+  seedValue("entity_names", "Acme", ["Acme"]);
+  seedValue("person_names", "Acme", ["Acme"]);
+  // Turn one type off: an off category is never replaced, so it cannot conflict.
+  toggleCategory("person_names", false);
+  const conflicts = entityConflicts();
+  assert.equal(conflicts.size, 0, "with one side off there is no ambiguity to flag");
 });

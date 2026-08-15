@@ -5,11 +5,20 @@
 //   Suggestions the review gate. Everything any detection method proposes
 //                    waits here until the user accepts it: NOTHING reaches the
 //                    value list without an explicit accept. Sortable by value
-//                    and by count, filterable by type and by source.
-//   My values the values that WILL be replaced, one card each, with the
-//                    type badge and the variant chips. Renaming what a value
-//                    BECOMES is a step 3 action, on the Replaced values table:
-//                    there is nothing to rename until a run has assigned one.
+//                    and by count, filterable by type and by source, and each
+//                    row's type is a dropdown so a mis-guessed suggestion is
+//                    retyped before it is accepted.
+//   My values the values that WILL be replaced, one card each. The card
+//                    is the correction surface: the name and each spelling are
+//                    editable in place, the type is a dropdown, "Group with"
+//                    merges values that are the same real-world thing, and a
+//                    value that would BLOCK the run (the same name under two
+//                    types, a spelling two values both claim, a value that is
+//                    also allowlisted) is tinted light red on the exact name or
+//                    chip at fault, with "Solve conflicts" offering the fixes.
+//                    Renaming what a value BECOMES (its placeholder) is still a
+//                    step 3 action: there is nothing to rename until a run has
+//                    assigned one.
 //   Never anonymise the allowlist, which wins over every pass.
 //   Patterns user regular expressions, with a valid / error badge.
 //
@@ -40,6 +49,8 @@ import {
   addCandidates, acceptCandidate, rejectCandidate,
   acceptAllShown, rejectAllShown, moveVariant,
   addPattern, removePattern, NAME_CATEGORIES,
+  renameEntity, renameVariant, changeEntityCategory, changeCandidateCategory,
+  groupEntities, clearAllEntities, entityConflicts, spellingsOf, removeAllowTerm,
 } from "../state.js";
 import { pendingExpansions } from "../entitymodel.js";
 import {
@@ -47,10 +58,11 @@ import {
 } from "../candidatemodel.js";
 import { escapeHTML } from "../html.js";
 import { button, tabbar, icon, toastHTML } from "../ui.js";
+import { askConfirm } from "../modal.js";
 import { llmGateTooltip } from "./identifyrail.js";
 import { renderAllowlistChips, wireAllowlistChips } from "./allowlist.js";
 import { notify, wireNotice } from "../toast.js";
-import { keepScrollPosition } from "../scroll.js";
+import { keepScrollPosition, keepScrollPositionIn } from "../scroll.js";
 import { CARDS, WORKSPACE, VALUES, CATEGORY_LABELS } from "../copy.js";
 
 // The categories a user may ADD a value to by hand, with their display labels.
@@ -63,6 +75,38 @@ import { CARDS, WORKSPACE, VALUES, CATEGORY_LABELS } from "../copy.js";
 // nothing to type into "email addresses" that a regex does not already find.
 export const CATEGORIES = NAME_CATEGORIES.map((c) => [c, CATEGORY_LABELS[c][0]]);
 
+/** categoryLabel(key) is a category's display label, falling back to the key. */
+function categoryLabel(key) {
+  return CATEGORY_LABELS[key]?.[0] ?? key;
+}
+
+/**
+ * categorySelect(selected, opts) is the one dropdown used everywhere a value's
+ * type is chosen or changed: the add row, the suggestion row (retype before
+ * accepting) and the value card (change type). It lists exactly CATEGORIES, so
+ * every place that assigns a type offers the same set.
+ *
+ * @param {string} selected the currently selected category key
+ * @param {object} [opts] {id, cls, title, ariaLabel, data}
+ * @returns {string} safe HTML
+ */
+function categorySelect(selected, opts = {}) {
+  const attrs = [
+    opts.id ? `id="${escapeHTML(opts.id)}"` : "",
+    opts.cls ? `class="${escapeHTML(opts.cls)}"` : "",
+    opts.title ? `title="${escapeHTML(opts.title)}"` : "",
+    opts.ariaLabel ? `aria-label="${escapeHTML(opts.ariaLabel)}"` : "",
+  ];
+  for (const [k, v] of Object.entries(opts.data ?? {})) {
+    attrs.push(`data-${escapeHTML(k)}="${escapeHTML(v)}"`);
+  }
+  return `<select ${attrs.filter(Boolean).join(" ")}>` +
+    CATEGORIES.map(([key, label]) =>
+      `<option value="${escapeHTML(key)}"${key === selected ? " selected" : ""}>` +
+      `${escapeHTML(label)}</option>`).join("") +
+    `</select>`;
+}
+
 // WORKSPACE_TABS is the tab set, in order.
 export const WORKSPACE_TABS = ["suggestions", "values", "allow", "patterns"];
 
@@ -74,6 +118,16 @@ export const WORKSPACE_TABS = ["suggestions", "values", "allow", "patterns"];
 
 let activeTab = "suggestions";
 let candidateFilter = { ...DEFAULT_CANDIDATE_FILTER, source: "" };
+// The My values tab's own filters, kept out of the store for the same reason
+// candidateFilter is: nothing downstream reads them and they must not travel in
+// a session file. `showVariants` folds the spelling rows away so a long list is
+// scannable; `type` narrows to one category; `search` matches a name OR any of
+// its spellings.
+let valuesFilter = { search: "", type: "", showVariants: true };
+// Which value card has an inline panel open, and which panel. Only one is open
+// at a time: a stack of open "group with" pickers down the list would be noise.
+// key is an entityKey; kind is "group" | "solve" | null.
+let openValuePanel = { key: null, kind: null };
 // The draft text of the three add rows, kept across repaints so a state change
 // elsewhere does not empty a half-typed value.
 const drafts = {
@@ -89,6 +143,16 @@ const rowFeedback = new Map();
 // DataTransfer contents, and the drop target has to know where the drag started
 // to refuse a drop onto its own card.
 let dragging = null;
+
+// The value list scrolls inside the workspace card body, not the page, so an
+// action that repaints (removing a spelling, renaming a value) has to restore
+// THAT element's scroll or the list jumps to the first card. keepScrollPosition
+// alone restores main#view, which is not what scrolls here.
+const VALUES_SCROLLER = "#identify-workspace .card-body";
+/** keepValuesScroll(mutate) preserves the value list's scroll across a repaint. */
+function keepValuesScroll(mutate) {
+  return keepScrollPositionIn(VALUES_SCROLLER, mutate);
+}
 
 /**
  * renderIdentifyWorkspace(container, opts) fills the workspace card.
@@ -225,7 +289,7 @@ function tabBody(s, shown) {
 const SUGGESTION_COLUMNS = "minmax(0,1fr) minmax(6.5rem,9.5rem) 5.5rem minmax(5.75rem,8rem) 5.25rem";
 
 /** suggestionsTab(s, shown) is the review gate. */
-function suggestionsTab(s, shown) {
+export function suggestionsTab(s, shown) {
   const bulk =
     `<div class="bulk-actions">` +
     button(WORKSPACE.acceptAllShown, {
@@ -303,12 +367,19 @@ function suggestionHeader(s) {
 }
 
 function suggestionRow(c) {
-  const type = CATEGORY_LABELS[c.category]?.[0] ?? c.category;
   const source = WORKSPACE.sourceLabels[c.source] ?? c.source;
+  // The type is a dropdown, not a label: Smart detection and the local AI guess
+  // which KIND of name a value is from its shape, and are often wrong about it.
+  // Retyping here means the value lands in the right type the moment it is
+  // accepted, rather than being accepted wrong and moved on the next tab.
+  const type = categorySelect(c.category, {
+    cls: "cell-type-select cand-type", title: WORKSPACE.retypeSuggestionTitle,
+    ariaLabel: WORKSPACE.retypeSuggestionTitle, data: { text: c.text },
+  });
   return `<div class="grid-row" style="grid-template-columns:${SUGGESTION_COLUMNS}"` +
     ` data-text="${escapeHTML(c.text)}">` +
     `<span class="cell-value" title="${escapeHTML(c.text)}">${escapeHTML(c.text)}</span>` +
-    `<span class="cell-type" title="${escapeHTML(type)}">${escapeHTML(type)}</span>` +
+    type +
     `<span class="cell-count mono">${escapeHTML(String(c.count ?? 0))}</span>` +
     `<span class="src-badge src-${escapeHTML(c.source)}">${escapeHTML(source)}</span>` +
     `<span class="cell-actions">` +
@@ -330,55 +401,154 @@ function distinct(rows, field) {
 
 // --- My values ------------------------------------------------------------
 
-/** valuesTab(s) is one card per value: name, type,
- *  variant chips and an add-variant control. */
-function valuesTab(s) {
+/**
+ * visibleValues(entities, filter) applies the My values tab's search and type
+ * filter. A search matches a value's NAME or any of its spellings, so a user
+ * who only remembers a variant still finds the card. Pure, and exported for the
+ * render test.
+ */
+export function visibleValues(entities, filter) {
+  const q = (filter.search ?? "").trim().toLowerCase();
+  const type = filter.type ?? "";
+  return (entities ?? []).filter((e) => {
+    if (type && e.category !== type) return false;
+    if (!q) return true;
+    if (e.canonical.toLowerCase().includes(q)) return true;
+    for (const [lower] of spellingsOf(e)) if (lower.includes(q)) return true;
+    return false;
+  });
+}
+
+/** conflictMessage(c) is the user-visible wording for one conflict, built from
+ *  copy.js so no sentence lives in a view. */
+function conflictMessage(c) {
+  switch (c.kind) {
+    case "ambiguity": return WORKSPACE.conflictAmbiguity(c.value, categoryLabel(c.withCategory));
+    case "collision": return WORKSPACE.conflictCollision(c.spelling, c.withValue);
+    case "allowlist": return WORKSPACE.conflictAllowlist(c.value);
+    default: return "";
+  }
+}
+
+/** valuesFilterBar(s) is the toolbar above the value cards: search, a type
+ *  filter, the show/hide spellings toggle and Clear all. */
+function valuesFilterBar(s) {
+  const search =
+    `<label class="search-box values-search">${icon("search")}` +
+    `<input id="values-search" value="${escapeHTML(valuesFilter.search)}"` +
+    ` placeholder="${escapeHTML(WORKSPACE.valuesSearchPlaceholder)}"` +
+    ` aria-label="${escapeHTML(WORKSPACE.valuesSearchLabel)}"/></label>`;
+
+  // The type filter lists only the types actually present, so it never offers a
+  // category the current list cannot show.
+  const typeOptions = distinct(s.entities, "category")
+    .map((key) =>
+      `<option value="${escapeHTML(key)}"${key === valuesFilter.type ? " selected" : ""}>` +
+      `${escapeHTML(categoryLabel(key).toUpperCase())}</option>`).join("");
+  const typeFilter =
+    `<select id="values-type" class="head-select${valuesFilter.type ? " filtered" : ""}"` +
+    ` title="${escapeHTML(WORKSPACE.valuesFilterTypeTitle)}"` +
+    ` aria-label="${escapeHTML(WORKSPACE.valuesFilterTypeTitle)}">` +
+    `<option value="">${escapeHTML(WORKSPACE.valuesAllTypes)}</option>${typeOptions}</select>`;
+
+  const toggle = button(valuesFilter.showVariants ? WORKSPACE.hideVariants : WORKSPACE.showVariants, {
+    kind: "secondary", id: "btn-toggle-variants",
+    icon: valuesFilter.showVariants ? "expand_less" : "expand_more",
+    title: valuesFilter.showVariants ? WORKSPACE.hideVariantsTitle : WORKSPACE.showVariantsTitle,
+  });
+
+  const clear = button(WORKSPACE.clearAll, {
+    kind: "secondary", id: "btn-clear-values", icon: "delete",
+    disabled: s.entities.length === 0, title: WORKSPACE.clearAllTitle,
+  });
+
+  return `<div class="values-toolbar">${search}${typeFilter}${toggle}${clear}</div>`;
+}
+
+/** valuesTab(s) is the filter toolbar, the add row, then one card per value,
+ *  each highlighting the conflicts that would block the run. */
+export function valuesTab(s) {
   const addRow =
     `<div class="add-row">` +
     `<input id="value-draft" class="grow" value="${escapeHTML(drafts.value)}"` +
     ` placeholder="${escapeHTML(WORKSPACE.addValuePlaceholder)}"` +
     ` aria-label="${escapeHTML(WORKSPACE.addValueLabel)}"/>` +
-    `<select id="value-category" aria-label="${escapeHTML(WORKSPACE.addValueCategory)}">` +
-    CATEGORIES.map(([key, label]) =>
-      `<option value="${escapeHTML(key)}"${key === drafts.valueCategory ? " selected" : ""}>` +
-      `${escapeHTML(label)}</option>`).join("") +
-    `</select>` +
+    categorySelect(drafts.valueCategory, {
+      id: "value-category", ariaLabel: WORKSPACE.addValueCategory,
+    }) +
     button(WORKSPACE.addValue, { kind: "secondary", id: "btn-add-value" }) +
     `</div>` +
-    // The live match count. The bridge method for it has existed
-    // since and nothing called it, so a user typing a value had no
-    // way of knowing whether it occurs in their documents at all until after a
-    // run. A value that matches nothing is almost always a typo.
+    // The live match count. A value that matches nothing is almost always a
+    // typo, and saying so before the run is the cheapest correction there is.
     `<p class="hint" id="value-matches">${escapeHTML(drafts.valueMatches)}</p>`;
 
-  const cards = s.entities.map((e) => valueCard(e)).join("") ||
-    `<div class="grid-empty">${escapeHTML(WORKSPACE.noValues)}</div>`;
+  // Conflicts are computed ONCE for the whole list, because a collision is a
+  // relationship BETWEEN two values: each card needs to know about the other.
+  const conflicts = entityConflicts(s);
+  const shown = visibleValues(s.entities, valuesFilter);
+  const cards = s.entities.length === 0
+    ? `<div class="grid-empty">${escapeHTML(WORKSPACE.noValues)}</div>`
+    : (shown.length === 0
+      ? `<div class="grid-empty">${escapeHTML(WORKSPACE.noValuesMatch)}</div>`
+      : shown.map((e) => valueCard(e, conflicts.get(entityKey(e.category, e.canonical)), s)).join(""));
 
-  return addRow + cards;
+  return valuesFilterBar(s) + addRow + cards;
 }
 
-/** valueCard(e) renders one value: its name, its type and its variant chips. */
-function valueCard(e) {
+/**
+ * valueCard(e, conflict, s) renders one value: its editable name, its type
+ * dropdown, the group/solve/remove actions, and its variant chips.
+ *
+ * `conflict` is this value's entry from entityConflicts (or undefined when it is
+ * clean). A conflict tints the card, and the exact name or chip at fault, so a
+ * user can see BEFORE the Anonymise step which values would refuse the run.
+ */
+function valueCard(e, conflict, s) {
   const key = entityKey(e.category, e.canonical);
-  const type = CATEGORY_LABELS[e.category]?.[0] ?? e.category;
   const feedback = rowFeedback.get(key);
+  const nameBad = !!(conflict && conflict.nameConflicts.length);
+  const variantConflicts = conflict ? conflict.variantConflicts : new Map();
 
-  const variants = [...(e.variants ?? []), ...(e.manualVariants ?? [])];
-  // The chips are DRAGGABLE onto another value card, which is how a variant is
-  // regrouped when the expansion attached it to the wrong value
-  // kept through the relayout). The mock-up does not show
-  // this, but the capability is real, tested (state.js moveVariant) and has no
-  // other home: dropping it would mean a mis-grouped spelling could only be
-  // fixed by excluding it here and re-typing it there.
-  const chips = variants.map((v) =>
-    `<span class="chip-tag variant-chip" draggable="true" data-variant="${escapeHTML(v)}"` +
-    ` title="${escapeHTML(WORKSPACE.variantDragHint)}">${escapeHTML(v)}` +
-    button("", {
-      kind: "ghost", cls: "chip-remove variant-del", icon: "close",
-      ariaLabel: `Remove variant ${v}`, title: WORKSPACE.removeVariant,
-      data: { variant: v },
+  // The name is click-to-edit: a button that reads as a heading until clicked,
+  // then reveals an input (revealNameInput). Renaming what a value BECOMES is a
+  // step 3 action; this renames the value ITSELF.
+  const nameBtn =
+    `<button type="button" class="value-name${nameBad ? " bad" : ""}"` +
+    ` title="${escapeHTML(WORKSPACE.editValueTitle)}">${escapeHTML(e.canonical)}</button>`;
+
+  const typeSelect = categorySelect(e.category, {
+    cls: "value-type", title: WORKSPACE.changeTypeLabel, ariaLabel: WORKSPACE.changeTypeLabel,
+  });
+
+  const actions =
+    button(WORKSPACE.groupWith, {
+      kind: "ghost", cls: "value-group", icon: "content_copy", title: WORKSPACE.groupWithTitle,
     }) +
-    `</span>`).join("");
+    (conflict ? button(WORKSPACE.solveConflicts, {
+      kind: "ghost", cls: "value-solve", icon: "warning", title: WORKSPACE.solveConflictsTitle,
+    }) : "") +
+    button("", {
+      kind: "ghost", cls: "value-remove icon-action danger", icon: "close",
+      ariaLabel: `Remove ${e.canonical}`, title: WORKSPACE.removeValue,
+    });
+
+  // The chips are DRAGGABLE onto another value card, which is how a variant is
+  // regrouped when the expansion attached it to the wrong value. The text is a
+  // separate span so a double-click edits only the spelling, not the remove
+  // button beside it.
+  const variants = [...(e.variants ?? []), ...(e.manualVariants ?? [])];
+  const chips = variants.map((v) => {
+    const bad = variantConflicts.has(v.trim().toLowerCase());
+    return `<span class="chip-tag variant-chip${bad ? " bad" : ""}" draggable="true" data-variant="${escapeHTML(v)}"` +
+      ` title="${escapeHTML(WORKSPACE.variantDragHint)}">` +
+      `<span class="variant-text" title="${escapeHTML(WORKSPACE.editVariantTitle)}">${escapeHTML(v)}</span>` +
+      button("", {
+        kind: "ghost", cls: "chip-remove variant-del", icon: "close",
+        ariaLabel: `Remove variant ${v}`, title: WORKSPACE.removeVariant,
+        data: { variant: v },
+      }) +
+      `</span>`;
+  }).join("");
 
   // "pending" is a real state, not an absence: null variants mean an expansion
   // is in flight, [] means it finished and found none.
@@ -388,25 +558,103 @@ function valueCard(e) {
       ? `<span class="hint">${escapeHTML(WORKSPACE.variantsPending)}</span>`
       : (variants.length === 0 ? `<span class="hint">${escapeHTML(WORKSPACE.noVariants)}</span>` : "");
 
-  return `<div class="value-card" data-key="${escapeHTML(key)}"` +
+  const variantRow = valuesFilter.showVariants
+    ? `<div class="chip-row variant-row">` +
+      `<span class="hint">${escapeHTML(WORKSPACE.variants)}</span>${chips}` +
+      button(WORKSPACE.addVariant, { kind: "ghost", cls: "chip-add variant-add", icon: "add" }) +
+      `</div>` +
+      (variantNote ? `<div class="value-note">${variantNote}</div>` : "")
+    : "";
+
+  const conflictNote = conflict
+    ? `<div class="value-note conflict-note">` +
+      [...new Set(conflict.list.map(conflictMessage))]
+        .map((m) => `<span class="hint bad">${icon("warning")}${escapeHTML(m)}</span>`).join("") +
+      `</div>`
+    : "";
+
+  const panel = openValuePanel.key === key
+    ? (openValuePanel.kind === "group" ? groupPanel(e, s)
+      : (openValuePanel.kind === "solve" && conflict ? solvePanel(e, conflict) : ""))
+    : "";
+
+  return `<div class="value-card${conflict ? " conflicted" : ""}" data-key="${escapeHTML(key)}"` +
     ` data-category="${escapeHTML(e.category)}" data-canonical="${escapeHTML(e.canonical)}">` +
     `<div class="row-between">` +
-    `<div class="value-head">` +
-    `<span class="value-name">${escapeHTML(e.canonical)}</span>` +
-    `<span class="fmt-badge">${escapeHTML(type)}</span>` +
+    `<div class="value-head">${nameBtn}${typeSelect}</div>` +
+    `<div class="value-actions">${actions}</div>` +
     `</div>` +
-    button("", {
-      kind: "ghost", cls: "value-remove icon-action danger", icon: "close",
-      ariaLabel: `Remove ${e.canonical}`, title: WORKSPACE.removeValue,
-    }) +
-    `</div>` +
-    `<div class="chip-row variant-row">` +
-    `<span class="hint">${escapeHTML(WORKSPACE.variants)}</span>${chips}` +
-    button(WORKSPACE.addVariant, { kind: "ghost", cls: "chip-add variant-add", icon: "add" }) +
-    `</div>` +
-    (variantNote ? `<div class="value-note">${variantNote}</div>` : "") +
+    conflictNote +
+    variantRow +
     (feedback ? `<div class="value-note"><span class="hint bad">${escapeHTML(feedback)}</span></div>` : "") +
+    panel +
     `</div>`;
+}
+
+/** groupPanel(e, s) is the inline picker for "Group with": the other values,
+ *  each a checkbox, folded into this one on Apply. */
+function groupPanel(e, s) {
+  const selfKey = entityKey(e.category, e.canonical);
+  const others = s.entities.filter((o) => entityKey(o.category, o.canonical) !== selfKey);
+  if (others.length === 0) {
+    return `<div class="value-panel"><p class="hint">${escapeHTML(WORKSPACE.groupNone)}</p>` +
+      `<div class="panel-actions">` +
+      button(WORKSPACE.groupCancel, { kind: "ghost", cls: "panel-cancel" }) +
+      `</div></div>`;
+  }
+  const rows = others.map((o) =>
+    `<label class="group-option">` +
+    `<input type="checkbox" class="group-pick"` +
+    ` data-category="${escapeHTML(o.category)}" data-canonical="${escapeHTML(o.canonical)}"/>` +
+    `<span class="group-option-name">${escapeHTML(o.canonical)}</span>` +
+    `<span class="fmt-badge">${escapeHTML(categoryLabel(o.category))}</span>` +
+    `</label>`).join("");
+  return `<div class="value-panel group-panel">` +
+    `<p class="section-label">${escapeHTML(WORKSPACE.groupWithHeading)}</p>` +
+    `<p class="hint">${escapeHTML(WORKSPACE.groupWithHint)}</p>` +
+    `<div class="group-options">${rows}</div>` +
+    `<div class="panel-actions">` +
+    button(WORKSPACE.groupApply, { kind: "secondary", cls: "group-apply" }) +
+    button(WORKSPACE.groupCancel, { kind: "ghost", cls: "panel-cancel" }) +
+    `</div></div>`;
+}
+
+/** solvePanel(e, conflict) lists each conflict on the card with the concrete
+ *  actions that resolve it. */
+function solvePanel(e, conflict) {
+  const items = conflict.list.map((c) => {
+    let acts = "";
+    if (c.kind === "collision") {
+      acts =
+        button(WORKSPACE.solveDropVariant, {
+          kind: "ghost", cls: "solve-action", data: { act: "drop-variant", spelling: c.spelling },
+        }) +
+        button(WORKSPACE.solveGroupOtherLabel(c.withValue), {
+          kind: "ghost", cls: "solve-action",
+          data: { act: "merge", withcategory: c.withCategory, withvalue: c.withValue },
+        });
+    } else if (c.kind === "ambiguity") {
+      acts = button(WORKSPACE.solveRemoveThis, {
+        kind: "ghost", cls: "solve-action", data: { act: "remove-value" },
+      });
+    } else if (c.kind === "allowlist") {
+      acts =
+        button(WORKSPACE.solveRemoveFromAllowlist, {
+          kind: "ghost", cls: "solve-action", data: { act: "remove-allow" },
+        }) +
+        button(WORKSPACE.solveRemoveThis, {
+          kind: "ghost", cls: "solve-action", data: { act: "remove-value" },
+        });
+    }
+    return `<div class="solve-item">` +
+      `<p class="hint bad">${escapeHTML(conflictMessage(c))}</p>` +
+      `<div class="panel-actions">${acts}</div></div>`;
+  }).join("");
+  return `<div class="value-panel solve-panel">` +
+    `<p class="section-label">${escapeHTML(WORKSPACE.solveHeading)}</p>${items}` +
+    `<div class="panel-actions">` +
+    button(WORKSPACE.solveClose, { kind: "ghost", cls: "panel-cancel" }) +
+    `</div></div>`;
 }
 
 // --- Never anonymise ------------------------------------------------------
@@ -594,6 +842,11 @@ function wireSuggestions(container, shown) {
     row.querySelector(".cand-reject")?.addEventListener("click", () => {
       keepScrollPosition(() => rejectCandidate(text));
     });
+    // Retyping a suggestion before it is accepted. keepScrollPosition holds the
+    // list in place so retyping a row two thirds down does not jump the view.
+    row.querySelector(".cand-type")?.addEventListener("change", (ev) => {
+      keepScrollPosition(() => changeCandidateCategory(text, ev.target.value));
+    });
   }
 
   // The two bulk buttons act on exactly the rows on screen, which is why they
@@ -657,12 +910,38 @@ function wireValues(container) {
   container.querySelector("#btn-add-value")?.addEventListener("click", add);
   draft?.addEventListener("keydown", (ev) => { if (ev.key === "Enter") add(); });
 
+  wireValuesToolbar(container);
+
   for (const cardEl of container.querySelectorAll(".value-card")) {
     const { category: cat, canonical, key } = cardEl.dataset;
 
+    // Renaming the value: click the name to reveal an inline input.
+    cardEl.querySelector(".value-name")?.addEventListener("click", () => {
+      revealNameInput(cardEl, cat, canonical, key);
+    });
+
+    // Changing the type re-expands the row (a person and an organisation expand
+    // differently). The change AND the re-expansion are one keepValuesScroll so
+    // the list stays put across both repaints.
+    cardEl.querySelector(".value-type")?.addEventListener("change", (ev) => {
+      keepValuesScroll(async () => {
+        const reason = changeEntityCategory(cat, canonical, ev.target.value);
+        if (reason === "duplicate") notify(WORKSPACE.typeChangeDuplicate(canonical), "warn");
+        else await refreshVariants();
+      });
+    });
+
+    cardEl.querySelector(".value-group")?.addEventListener("click", () => {
+      togglePanel(key, "group");
+    });
+    cardEl.querySelector(".value-solve")?.addEventListener("click", () => {
+      togglePanel(key, "solve");
+    });
+
     cardEl.querySelector(".value-remove")?.addEventListener("click", () => {
       rowFeedback.delete(key);
-      keepScrollPosition(() => removeEntity(cat, canonical));
+      if (openValuePanel.key === key) openValuePanel = { key: null, kind: null };
+      keepValuesScroll(() => removeEntity(cat, canonical));
     });
 
     // The add-variant control reveals an INLINE input rather than opening a
@@ -672,6 +951,14 @@ function wireValues(container) {
       revealVariantInput(cardEl, cat, canonical, key);
     });
 
+    // Editing a spelling: double-click its text (a single click would fight the
+    // drag handle the chip is).
+    for (const text of cardEl.querySelectorAll(".variant-text")) {
+      text.addEventListener("dblclick", () => {
+        revealVariantEditInput(text, cat, canonical, key);
+      });
+    }
+
     for (const del of cardEl.querySelectorAll(".variant-del")) {
       del.addEventListener("click", (ev) => {
         // The chip itself is a drag handle, so the remove button has to stop the
@@ -679,13 +966,117 @@ function wireValues(container) {
         ev.stopPropagation();
         // Removing a variant is an EXCLUSION, not a deletion: automatic expansion
         // would put it straight back otherwise. moveVariant is for regrouping;
-        // here the variant simply stops applying.
-        keepScrollPosition(() => excludeVariant(cat, canonical, del.dataset.variant));
+        // here the variant simply stops applying. The exclusion AND the
+        // re-expansion it triggers are wrapped in one keepValuesScroll, so the
+        // value list stays put across both repaints instead of jumping to the
+        // top when the async re-expansion lands.
+        keepValuesScroll(async () => {
+          excludeVariant(cat, canonical, del.dataset.variant);
+          await refreshVariants();
+        });
       });
     }
+
+    wireGroupPanel(cardEl, cat, canonical);
+    wireSolvePanel(cardEl, cat, canonical);
   }
 
   wireVariantDrag(container);
+}
+
+/** togglePanel(key, kind) opens the group/solve panel on one card, or closes it
+ *  if it was already the open one, then repaints. */
+function togglePanel(key, kind) {
+  openValuePanel = (openValuePanel.key === key && openValuePanel.kind === kind)
+    ? { key: null, kind: null }
+    : { key, kind };
+  keepValuesScroll(() => setState({}));
+}
+
+/** wireValuesToolbar(container) wires the search, type filter, show/hide
+ *  spellings toggle and Clear all. */
+function wireValuesToolbar(container) {
+  const search = container.querySelector("#values-search");
+  search?.addEventListener("input", () => {
+    const caret = search.selectionStart;
+    valuesFilter = { ...valuesFilter, search: search.value };
+    setState({});
+    const again = container.querySelector("#values-search");
+    if (again) {
+      again.focus();
+      again.setSelectionRange(caret, caret);
+    }
+  });
+
+  container.querySelector("#values-type")?.addEventListener("change", (ev) => {
+    valuesFilter = { ...valuesFilter, type: ev.target.value };
+    setState({});
+  });
+
+  container.querySelector("#btn-toggle-variants")?.addEventListener("click", () => {
+    valuesFilter = { ...valuesFilter, showVariants: !valuesFilter.showVariants };
+    keepValuesScroll(() => setState({}));
+  });
+
+  container.querySelector("#btn-clear-values")?.addEventListener("click", async () => {
+    const n = getState().entities.length;
+    if (n === 0) return;
+    if (!await askConfirm({ title: WORKSPACE.clearAll, body: WORKSPACE.clearAllConfirm(n) })) return;
+    openValuePanel = { key: null, kind: null };
+    const cleared = clearAllEntities();
+    rowFeedback.clear();
+    notify(WORKSPACE.clearedN(cleared), cleared ? "ok" : "info");
+  });
+}
+
+/** wireGroupPanel(cardEl, cat, canonical) wires the Group with picker's Apply
+ *  and Cancel. */
+function wireGroupPanel(cardEl, cat, canonical) {
+  cardEl.querySelector(".group-apply")?.addEventListener("click", () => {
+    const sources = [...cardEl.querySelectorAll(".group-pick:checked")].map((cb) => ({
+      category: cb.dataset.category, canonical: cb.dataset.canonical,
+    }));
+    if (sources.length === 0) return;
+    openValuePanel = { key: null, kind: null };
+    keepValuesScroll(async () => {
+      const n = groupEntities({ category: cat, canonical }, sources);
+      if (n) notify(WORKSPACE.groupedN(n, canonical), "ok");
+      await refreshVariants();
+    });
+  });
+  cardEl.querySelector(".panel-cancel")?.addEventListener("click", () => {
+    openValuePanel = { key: null, kind: null };
+    keepValuesScroll(() => setState({}));
+  });
+}
+
+/** wireSolvePanel(cardEl, cat, canonical) wires each resolve action inside the
+ *  Solve conflicts panel. Each action, plus any re-expansion it triggers, is one
+ *  keepValuesScroll so the list does not jump. */
+function wireSolvePanel(cardEl, cat, canonical) {
+  for (const action of cardEl.querySelectorAll(".solve-action")) {
+    action.addEventListener("click", () => {
+      const { act } = action.dataset;
+      openValuePanel = { key: null, kind: null };
+      if (act === "remove-value") {
+        keepValuesScroll(() => removeEntity(cat, canonical));
+      } else if (act === "remove-allow") {
+        keepValuesScroll(() => removeAllowTerm(canonical));
+      } else if (act === "drop-variant") {
+        keepValuesScroll(async () => {
+          excludeVariant(cat, canonical, action.dataset.spelling);
+          await refreshVariants();
+        });
+      } else if (act === "merge") {
+        keepValuesScroll(async () => {
+          groupEntities(
+            { category: cat, canonical },
+            [{ category: action.dataset.withcategory, canonical: action.dataset.withvalue }]);
+          await refreshVariants();
+        });
+      }
+    });
+  }
 }
 
 /**
@@ -786,6 +1177,98 @@ function revealVariantInput(cardEl, category, canonical, key) {
 }
 
 /**
+ * revealNameInput(cardEl, category, canonical, key) swaps the value name for an
+ * inline input, so a mis-detected value can be corrected in place. It commits
+ * through renameEntity, which re-expands the row.
+ *
+ * Like the variant input, it is transient DOM: no state change reveals it, and
+ * a repaint puts the read-only name back.
+ */
+function revealNameInput(cardEl, category, canonical, key) {
+  const nameEl = cardEl.querySelector(".value-name");
+  if (!nameEl) return;
+
+  const input = cardEl.ownerDocument.createElement("input");
+  input.className = "value-name-input";
+  input.value = canonical;
+  input.placeholder = WORKSPACE.editValuePlaceholder;
+  input.setAttribute("aria-label", WORKSPACE.editValueTitle);
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const commit = async () => {
+    if (done) return;
+    done = true;
+    const value = input.value.trim();
+    if (!value || value === canonical) {
+      setState({}); // repaint puts the name back unchanged
+      return;
+    }
+    await keepValuesScroll(async () => {
+      const reason = renameEntity(category, canonical, value);
+      if (reason === "duplicate") {
+        rowFeedback.set(key, WORKSPACE.valueRenamedDuplicate(value));
+        setState({});
+        return;
+      }
+      rowFeedback.delete(key);
+      await refreshVariants();
+    });
+  };
+
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") commit();
+    else if (ev.key === "Escape") { done = true; setState({}); }
+  });
+  input.addEventListener("blur", commit);
+}
+
+/**
+ * revealVariantEditInput(textEl, category, canonical, key) swaps one spelling's
+ * text for an inline input. It commits through renameVariant, which excludes the
+ * old spelling and adds the new one, then re-expands.
+ */
+function revealVariantEditInput(textEl, category, canonical, key) {
+  const old = textEl.textContent;
+
+  const input = textEl.ownerDocument.createElement("input");
+  input.className = "variant-input";
+  input.value = old;
+  input.placeholder = WORKSPACE.editVariantPlaceholder;
+  input.setAttribute("aria-label", WORKSPACE.editVariantTitle);
+  // Stop the chip's drag machinery from reacting while the field is focused.
+  input.setAttribute("draggable", "false");
+  textEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const commit = async () => {
+    if (done) return;
+    done = true;
+    const value = input.value.trim();
+    if (!value || value === old) {
+      setState({}); // repaint puts the chip back unchanged
+      return;
+    }
+    rowFeedback.delete(key);
+    await keepValuesScroll(async () => {
+      renameVariant(category, canonical, old, value);
+      await refreshVariants();
+    });
+  };
+
+  input.addEventListener("keydown", (ev) => {
+    ev.stopPropagation();
+    if (ev.key === "Enter") commit();
+    else if (ev.key === "Escape") { done = true; setState({}); }
+  });
+  input.addEventListener("blur", commit);
+}
+
+/**
  * excludeVariant(category, canonical, variant) stops one spelling applying to a
  * value.
  *
@@ -793,6 +1276,12 @@ function revealVariantInput(cardEl, category, canonical, key) {
  * regenerate an automatic variant on the next expansion, so deleting it would
  * look like the button did nothing. Setting variants back to pending re-expands
  * this row only.
+ *
+ * It does NOT trigger the re-expansion itself: the caller wraps this and the
+ * refreshVariants that follows in ONE keepValuesScroll, so the value list's
+ * scroll survives BOTH repaints (the exclusion and the re-expansion). Calling
+ * refreshVariants here, outside that wrapper, is exactly what let the async
+ * re-expansion repaint jump the list back to the top.
  */
 function excludeVariant(category, canonical, variant) {
   const s = getState();
@@ -809,7 +1298,6 @@ function excludeVariant(category, canonical, variant) {
       };
     }),
   });
-  void refreshVariants();
 }
 
 /** variantCount(category, canonical) is how many spellings a value carries right

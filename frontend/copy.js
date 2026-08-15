@@ -390,6 +390,7 @@ export const WORKSPACE = {
   allSources: "ALL SOURCES",
   filterTypeTitle: "Filter by type",
   filterSourceTitle: "Filter by what found the value",
+  retypeSuggestionTitle: "Change the type before accepting",
   accept: "Accept",
   reject: "Reject",
   acceptAllShown: "Accept all shown",
@@ -461,6 +462,82 @@ export const WORKSPACE = {
   variantAlreadyThere(v) {
     return `${v} is already one of the spellings.`;
   },
+
+  // My values: filters, editing, grouping, conflicts and clearing.
+  valuesSearchPlaceholder: "search values and spellings",
+  valuesSearchLabel: "Filter values by name or spelling",
+  valuesAllTypes: "All types",
+  valuesFilterTypeTitle: "Show only one type",
+  showVariants: "Show spellings",
+  hideVariants: "Hide spellings",
+  showVariantsTitle: "Show the spellings under each value",
+  hideVariantsTitle: "Hide the spellings to see more values at once",
+  noValuesMatch: "No value matches the current search and type filter.",
+  clearAll: "Clear all",
+  clearAllTitle: "Remove every value from this list",
+  /** clearAllConfirm(n) is the in-app confirm before emptying the list. */
+  clearAllConfirm(n) {
+    return `Remove all ${n} value${n === 1 ? "" : "s"} from the list? Their spellings go with them. This does not touch the never-anonymise list or the suggestions.`;
+  },
+  /** clearedN(n) reports the result of Clear all. */
+  clearedN(n) {
+    return n === 0 ? "The list was already empty." : `${n} value${n === 1 ? "" : "s"} removed.`;
+  },
+  editValueTitle: "Rename this value",
+  editValuePlaceholder: "the value, then Enter",
+  editVariantTitle: "Edit this spelling (double-click)",
+  editVariantPlaceholder: "the spelling, then Enter",
+  changeTypeLabel: "Change the type of this value",
+  /** valueRenamedDuplicate(v) explains a rename refused because the type
+   *  already holds that name. */
+  valueRenamedDuplicate(v) {
+    return `${v} is already a value of this type. Use "Group with" to merge them instead.`;
+  },
+  /** typeChangeDuplicate(v) explains a type change refused for the same reason. */
+  typeChangeDuplicate(v) {
+    return `${v} already exists under that type. Use "Group with" to merge them instead.`;
+  },
+
+  // Group with: fold other values (and their spellings) into this one.
+  groupWith: "Group with",
+  groupWithTitle: "Merge other values into this one",
+  groupWithHeading: "Merge into this value:",
+  groupWithHint: "The values you tick become spellings of this one, and one placeholder then covers them all.",
+  groupApply: "Group selected",
+  groupCancel: "Cancel",
+  groupNone: "There are no other values to group with yet.",
+  /** groupedN(n, target) confirms a merge. */
+  groupedN(n, target) {
+    return `${n} value${n === 1 ? "" : "s"} merged into ${target}.`;
+  },
+
+  // Solve conflicts: the options offered per conflict kind.
+  conflict: "Conflict",
+  solveConflicts: "Solve conflicts",
+  solveConflictsTitle: "Ways to resolve the conflicts on this value",
+  solveHeading: "This value blocks the run. Choose a fix:",
+  solveClose: "Close",
+  /** conflictAmbiguity(value, otherType) is the wording for the same name under
+   *  two types, and conflictCollision / conflictAllowlist their siblings. The
+   *  view passes human type LABELS, not engine keys. */
+  conflictAmbiguity(value, otherType) {
+    return `${value} is also a value under ${otherType}, and one value can only have one replacement.`;
+  },
+  conflictCollision(spelling, otherValue) {
+    return `${spelling} is also a spelling of ${otherValue}, so an occurrence of it belongs to neither.`;
+  },
+  conflictAllowlist(value) {
+    return `${value} is also on the never-anonymise list, which always wins, so it would never be replaced.`;
+  },
+  // The concrete resolve actions, one line each.
+  solveRemoveThis: "Remove this value",
+  solveDropVariant: "Stop replacing this spelling here",
+  solveGroupOther: "Merge the two values into one",
+  /** solveGroupOtherLabel(other) names the other value in the merge action. */
+  solveGroupOtherLabel(other) {
+    return `Merge with ${other}`;
+  },
+  solveRemoveFromAllowlist: "Remove it from the never-anonymise list",
 
   // Patterns.
   patternsHint: "Regular expressions are matched in addition to the categories you selected. A pattern that does not compile is kept but never used.",

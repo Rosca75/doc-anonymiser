@@ -203,8 +203,12 @@ const workspaceJS = fs.readFileSync(path.join(staticDir, "views", "identifyworks
 test("variant chips are rendered draggable", () => {
   // the chips looked disabled and could not be dragged.
   // They are .chip-tag now, and the drag survived the relayout:
-  // regrouping a mis-attached spelling has no other home.
-  assert.match(workspaceJS, /class="chip-tag variant-chip" draggable="true"/);
+  // regrouping a mis-attached spelling has no other home. A conflicting spelling
+  // adds a " bad" class between the base class and the closing quote, so this
+  // asserts the two facts (the chip class, and draggable) rather than one exact
+  // run of characters the interpolation now splits.
+  assert.match(workspaceJS, /class="chip-tag variant-chip/);
+  assert.match(workspaceJS, /draggable="true"/);
 });
 
 test("the remove button inside a chip does not swallow the drag", () => {

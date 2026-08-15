@@ -13,7 +13,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { keepScrollPosition, scrollOwner } from "./scroll.js";
+import { keepScrollPosition, keepScrollPositionIn, scrollOwner } from "./scroll.js";
 
 /**
  * withFakeView(fn) installs a stub `main#view` element and runs fn with
@@ -119,5 +119,32 @@ test("without a scroll owner the mutation still runs", () => {
     assert.equal(out, 7);
   } finally {
     if (previous !== undefined) globalThis.document = previous;
+  }
+});
+
+// --- keepScrollPositionIn: a scroller that is NOT the page body ------------
+//
+// The fixed-height layout scrolls inside a card body, not main#view, so an
+// action that repaints (removing a spelling from a value card) has to restore
+// THAT element's scroll. Restoring main#view leaves the card at the top, which
+// is the reported "deleting a variant jumps to the top" bug.
+
+test("keepScrollPositionIn restores the named scroller, not main#view", () => {
+  const previous = globalThis.document;
+  const body = { scrollTop: 480, scrollLeft: 0 };
+  const view = { scrollTop: 0, scrollLeft: 0 };
+  globalThis.document = {
+    querySelector: (selector) =>
+      (selector === "#identify-workspace .card-body" ? body
+        : (selector === "main#view" ? view : null)),
+  };
+  try {
+    keepScrollPositionIn("#identify-workspace .card-body", () => {
+      body.scrollTop = 0; // what the repaint does
+    });
+    assert.equal(body.scrollTop, 480, "the card body's offset survives the repaint");
+  } finally {
+    if (previous === undefined) delete globalThis.document;
+    else globalThis.document = previous;
   }
 });
