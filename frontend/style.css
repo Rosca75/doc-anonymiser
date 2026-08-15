@@ -1047,6 +1047,66 @@ input, select {
 .variant-chip { cursor: grab; user-select: none; color: var(--text); }
 .variant-chip:active { cursor: grabbing; }
 .variant-chip:hover { background: var(--tint-orange-3); border-color: var(--accent-light); }
+/* The spelling text inside a chip is its own element so a double-click edits it
+   without the remove button beside it reacting. */
+.variant-text { cursor: text; }
+
+/* --- Value editing, filtering and conflicts (My values) ----------------- */
+
+/* The toolbar above the value cards: search, type filter, show/hide spellings
+   and Clear all. It sits with the add row inside the scrolling body. */
+.values-toolbar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.values-search { flex: 1; min-width: 10rem; }
+
+/* The value name reads as a heading until clicked, when it reveals an input.
+   A button, not a span, so it is reachable by keyboard and announces that it
+   edits. */
+.value-name {
+  font-size: 0.95rem; color: var(--text);
+  background: none; border: none; padding: 0.1rem 0.15rem; margin: 0;
+  border-radius: 4px; cursor: text; text-align: left;
+}
+.value-name:hover { background: var(--gray-6); }
+.value-name-input {
+  font-size: 0.95rem; padding: 0.1rem 0.4rem;
+  border: 1px solid var(--text); border-radius: 4px; background: var(--bg);
+}
+/* The per-card type dropdown, and the suggestion row's retype dropdown: quiet
+   until hovered, so a card is not a wall of framed selects. */
+.value-type, .cell-type-select {
+  font-size: 0.78rem; color: var(--ink-2);
+  background: var(--gray-6); border: 1px solid var(--gray-5);
+  padding: 0.2rem 0.4rem; border-radius: 4px; max-width: 100%;
+}
+.cell-type-select { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.value-actions { display: flex; align-items: center; gap: 0.25rem; flex-shrink: 0; }
+
+/* A conflict is a light-red state on the exact thing at fault: the card, and
+   inside it the name or the spelling that would refuse the run. Light fill, dark
+   text, no shouting, because a conflict is a correction to make, not an alarm. */
+.value-card.conflicted { border-color: var(--err); background: var(--invalid-bg); }
+.value-name.bad { color: var(--invalid-fg); }
+.variant-chip.bad {
+  color: var(--invalid-fg); background: var(--invalid-bg); border-color: var(--err);
+}
+.conflict-note { display: flex; flex-direction: column; gap: 0.25rem; }
+.conflict-note .hint.bad { display: flex; align-items: center; gap: 0.35rem; }
+.conflict-note .hint.bad .icon { flex: none; width: 1rem; height: 1rem; }
+
+/* The inline panels a card opens: Group with and Solve conflicts. They live
+   inside the card so the value they act on is right above them. */
+.value-panel {
+  display: flex; flex-direction: column; gap: 0.6rem;
+  padding: 0.7rem 0.8rem; margin-top: 0.2rem;
+  border: 1px solid var(--gray-5); border-radius: var(--card-radius);
+  background: var(--gray-6);
+}
+.group-options { display: flex; flex-direction: column; gap: 0.35rem; max-height: 12rem; overflow-y: auto; }
+.group-option { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
+.group-option-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.solve-item { display: flex; flex-direction: column; gap: 0.4rem; }
+.solve-item + .solve-item { border-top: 1px solid var(--gray-5); padding-top: 0.5rem; }
+.panel-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 
 /* --- The never-anonymise chip box --------------------------------------- */
 

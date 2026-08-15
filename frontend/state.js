@@ -1229,6 +1229,373 @@ export function moveVariant(fromCategory, fromCanonical, toCategory, toCanonical
   return true;
 }
 
+// --- Value editing (the My values tab) -----------------------------------
+//
+// Detection proposes; the user corrects. These reducers are the correction:
+// renaming a value, editing a spelling, moving a value to another type,
+// merging two values, and clearing the whole list. Each one that changes what
+// a value MATCHES resets that row's variants to pending (null), so Go re-runs
+// the expansion and the chips shown always describe the value as it stands.
+
+/**
+ * renameEntity(category, canonical, newCanonical) changes a value's name.
+ *
+ * The expansion depends on the name, so the row goes back to pending and Go
+ * re-derives the spellings. A rename onto a name the same category already
+ * holds is refused rather than silently merged: two values with one name would
+ * be exactly the ambiguity conflict detection exists to prevent, and merging is
+ * a separate, explicit gesture (groupEntities).
+ *
+ * @returns {string} "" on success, or a reason ("empty" | "duplicate" |
+ *   "not found") the caller can turn into feedback
+ */
+export function renameEntity(category, canonical, newCanonical) {
+  const next = (newCanonical ?? "").trim();
+  const key = entityKey(category, canonical);
+  const cur = state.entities.find((e) => entityKey(e.category, e.canonical) === key);
+  if (!cur) return "not found";
+  if (!next) return "empty";
+  if (next === cur.canonical) return ""; // unchanged
+  const newKey = entityKey(category, next);
+  if (newKey !== key && state.entities.some((e) => entityKey(e.category, e.canonical) === newKey)) {
+    return "duplicate";
+  }
+  setState({
+    entities: state.entities.map((e) =>
+      entityKey(e.category, e.canonical) === key
+        ? { ...e, canonical: next, variants: null, variantError: null }
+        : e),
+  });
+  return "";
+}
+
+/**
+ * renameVariant(category, canonical, oldVariant, newVariant) edits one spelling.
+ *
+ * A spelling is either automatic (Go expanded it from the name) or manual (the
+ * user typed it). Editing either one means the SAME two effects: the old
+ * spelling stops applying (it is excluded, so the next expansion cannot bring
+ * an automatic one straight back) and the new spelling is added as a manual
+ * variant. Editing the spelling that IS the name is a rename of the value, so
+ * it routes to renameEntity instead of orphaning the canonical.
+ *
+ * @returns {string} "" on success, or a reason ("empty" | "not found")
+ */
+export function renameVariant(category, canonical, oldVariant, newVariant) {
+  const next = (newVariant ?? "").trim();
+  const old = (oldVariant ?? "").trim();
+  if (!next) return "empty";
+  if (next.toLowerCase() === old.toLowerCase()) return ""; // unchanged
+  if (old.toLowerCase() === (canonical ?? "").trim().toLowerCase()) {
+    return renameEntity(category, canonical, next);
+  }
+  const key = entityKey(category, canonical);
+  const cur = state.entities.find((e) => entityKey(e.category, e.canonical) === key);
+  if (!cur) return "not found";
+
+  const oldLower = old.toLowerCase();
+  const nextLower = next.toLowerCase();
+  setState({
+    entities: state.entities.map((e) => {
+      if (entityKey(e.category, e.canonical) !== key) return e;
+      const manual = (e.manualVariants ?? []).filter((x) => x.toLowerCase() !== oldLower);
+      // Add the new spelling unless the row already carries it.
+      const already = manual.some((x) => x.toLowerCase() === nextLower);
+      return {
+        ...e,
+        manualVariants: already ? manual : [...manual, next],
+        // Exclude the old spelling so an automatic expansion cannot re-add it,
+        // and un-exclude the new one in case it was excluded before.
+        excludedVariants: [
+          ...(e.excludedVariants ?? []).filter((x) => x.toLowerCase() !== nextLower),
+          old,
+        ],
+        variants: null,
+        variantError: null,
+      };
+    }),
+  });
+  return "";
+}
+
+/**
+ * changeEntityCategory(fromCategory, canonical, toCategory) moves a value to a
+ * different type.
+ *
+ * The type decides the expansion (a person expands to initials and surname, an
+ * organisation does not), so the row re-expands. Moving to a type that already
+ * holds this exact name is refused, for the same reason a rename onto a taken
+ * name is: it would be the ambiguity conflict. Adding to a type switches that
+ * type on, exactly as accepting a value into it does (addEntities), so the
+ * pipeline does not drop the value it was just told to replace.
+ *
+ * @returns {string} "" on success, or a reason ("invalid" | "duplicate" |
+ *   "not found")
+ */
+export function changeEntityCategory(fromCategory, canonical, toCategory) {
+  if (!ALL_CATEGORIES.includes(toCategory)) return "invalid";
+  if (fromCategory === toCategory) return "";
+  const fromKey = entityKey(fromCategory, canonical);
+  const cur = state.entities.find((e) => entityKey(e.category, e.canonical) === fromKey);
+  if (!cur) return "not found";
+  const toKey = entityKey(toCategory, canonical);
+  if (state.entities.some((e) => entityKey(e.category, e.canonical) === toKey)) {
+    return "duplicate";
+  }
+  setState({
+    entities: state.entities.map((e) =>
+      entityKey(e.category, e.canonical) === fromKey
+        ? { ...e, category: toCategory, variants: null, variantError: null }
+        : e),
+    settings: {
+      ...state.settings,
+      categories: { ...state.settings.categories, [toCategory]: true },
+    },
+  });
+  return "";
+}
+
+/**
+ * changeCandidateCategory(text, toCategory) retypes a suggestion before it is
+ * accepted.
+ *
+ * Detection guesses a type from a value's shape and is often wrong about which
+ * KIND of name it found ("Meridian" is as plausibly a project as a company).
+ * Fixing it on the suggestion row means the value lands in the right type the
+ * moment it is accepted, rather than being accepted wrong and moved after.
+ *
+ * @returns {boolean} whether a candidate was retyped
+ */
+export function changeCandidateCategory(text, toCategory) {
+  if (!ALL_CATEGORIES.includes(toCategory)) return false;
+  const key = candidateKey(text);
+  let changed = false;
+  const candidates = state.candidates.map((c) => {
+    if (candidateKey(c.text) !== key || c.category === toCategory) return c;
+    changed = true;
+    return { ...c, category: toCategory };
+  });
+  if (changed) setState({ candidates });
+  return changed;
+}
+
+/**
+ * groupEntities(target, sources) merges one or more values into a target value.
+ *
+ * Every spelling the sources carried (their name, their automatic variants and
+ * their manual ones) becomes a manual variant of the target, and the sources
+ * are removed. This is how a user says "these are all the same real-world
+ * thing": afterwards one value, with one placeholder, owns every spelling, which
+ * is the invariant the collision conflict warns is broken when they are left
+ * apart.
+ *
+ * The target re-expands so its own automatic variants regenerate around the
+ * merged set. A source that is the target, or is unknown, is ignored.
+ *
+ * @param {{category, canonical}} target the value to keep
+ * @param {Array<{category, canonical}>} sources the values to fold in
+ * @returns {number} how many source values were merged
+ */
+export function groupEntities(target, sources) {
+  const targetKey = entityKey(target?.category, target?.canonical ?? "");
+  const keep = state.entities.find((e) => entityKey(e.category, e.canonical) === targetKey);
+  if (!keep) return 0;
+
+  const sourceKeys = new Set(
+    (sources ?? [])
+      .map((sc) => entityKey(sc.category, sc.canonical ?? ""))
+      .filter((k) => k !== targetKey));
+  if (sourceKeys.size === 0) return 0;
+
+  const folded = state.entities.filter((e) => sourceKeys.has(entityKey(e.category, e.canonical)));
+  if (folded.length === 0) return 0;
+
+  // Collect every spelling the sources brought, deduplicated and never equal to
+  // the target's own name (that spelling is already the target).
+  const targetLower = keep.canonical.trim().toLowerCase();
+  const gained = new Map(); // lower -> display
+  const take = (v) => {
+    const t = (v ?? "").trim();
+    const k = t.toLowerCase();
+    if (!t || k === targetLower || gained.has(k)) return;
+    gained.set(k, t);
+  };
+  for (const src of folded) {
+    take(src.canonical);
+    for (const v of src.variants ?? []) take(v);
+    for (const v of src.manualVariants ?? []) take(v);
+  }
+
+  const existing = new Set((keep.manualVariants ?? []).map((x) => x.toLowerCase()));
+  const additions = [...gained.entries()]
+    .filter(([lower]) => !existing.has(lower))
+    .map(([, display]) => display);
+
+  setState({
+    entities: state.entities
+      .filter((e) => !sourceKeys.has(entityKey(e.category, e.canonical)))
+      .map((e) => {
+        if (entityKey(e.category, e.canonical) !== targetKey) return e;
+        return {
+          ...e,
+          manualVariants: [...(e.manualVariants ?? []), ...additions],
+          // A folded spelling might have been excluded on the target before;
+          // pulling it in un-excludes it so it actually applies.
+          excludedVariants: (e.excludedVariants ?? [])
+            .filter((x) => !gained.has(x.toLowerCase())),
+          variants: null,
+          variantError: null,
+        };
+      }),
+  });
+  return folded.length;
+}
+
+/** clearAllEntities() empties the value list. Returns how many it removed, so a
+ *  caller can report it and skip the confirm when there is nothing to clear. */
+export function clearAllEntities() {
+  const n = state.entities.length;
+  if (n) setState({ entities: [] });
+  return n;
+}
+
+// --- Conflict detection for the My values tab ----------------------------
+//
+// The engine validates values before a run and refuses to touch any text when
+// two values would claim the same string (backend/engine/conflicts.go). By then
+// the user has left this screen. entityConflicts computes the SAME blocking
+// conflicts here, purely from state, so the values that would refuse the run are
+// highlighted on the card that owns them BEFORE the user walks on to Anonymise.
+//
+// It reproduces three of the engine's blocking checks, the ones about declared
+// values: a name declared under two types (ambiguity), a spelling two values
+// both claim (collision), and a value that is also on the never-anonymise list.
+// The simple-rule checks are the Anonymise screen's, not this tab's.
+
+/**
+ * spellingsOf(e) is every lower-cased spelling a value would match: its name,
+ * its Go-expanded variants and its manual variants, minus the excluded ones.
+ * It mirrors engine.ExpandVariants so the highlight agrees with the run's check.
+ * @returns {Map<string,string>} lower-cased spelling -> a display spelling
+ */
+export function spellingsOf(e) {
+  const excluded = new Set((e.excludedVariants ?? []).map((x) => x.trim().toLowerCase()));
+  const out = new Map();
+  const add = (v) => {
+    const t = (v ?? "").trim();
+    const k = t.toLowerCase();
+    if (!t || excluded.has(k) || out.has(k)) return;
+    out.set(k, t);
+  };
+  add(e.canonical);
+  for (const v of e.variants ?? []) add(v);
+  for (const v of e.manualVariants ?? []) add(v);
+  return out;
+}
+
+/** categoryActive(s, category) reports whether a category's switch is on. A
+ *  value in an off category is never replaced, so it can never conflict. */
+function categoryActive(s, category) {
+  const cats = s.settings?.categories;
+  return cats ? !!cats[category] : true;
+}
+
+/**
+ * entityConflicts(s) is the blocking conflicts among the current values, keyed
+ * by entity so the view can paint the exact card, name or chip at fault.
+ *
+ * Only values whose type is switched on are considered, matching the engine:
+ * an off category is not going to be replaced, so nothing about it is ambiguous.
+ *
+ * It returns STRUCTURE, not sentences: the user-visible wording is the view's
+ * (copy.js is the single home for it). Each conflict is one of three kinds:
+ *   ambiguity  the same name under two types; `withCategory` names the other.
+ *   allowlist  the name is also a never-anonymise term.
+ *   collision  a spelling two values both claim; `withValue` names the other,
+ *              `withKey` is its entityKey (so "group with it" can target it).
+ *
+ * @param {object} [s] state
+ * @returns {Map<string, {nameConflicts: Array, variantConflicts: Map<string,object>, list: Array}>}
+ *   entityKey -> that value's conflicts. `nameConflicts` are the ones that
+ *   fault the NAME, `variantConflicts` maps a lower-cased spelling to the one
+ *   that faults that chip, and `list` is every conflict on the card.
+ */
+export function entityConflicts(s = state) {
+  const active = s.entities.filter((e) => categoryActive(s, e.category));
+  const result = new Map();
+  const ensure = (key) => {
+    if (!result.has(key)) {
+      result.set(key, { nameConflicts: [], variantConflicts: new Map(), list: [] });
+    }
+    return result.get(key);
+  };
+
+  // Ambiguity: the same name declared under two different types.
+  const byName = new Map(); // lower(canonical) -> [entity]
+  for (const e of active) {
+    const k = e.canonical.trim().toLowerCase();
+    if (!byName.has(k)) byName.set(k, []);
+    byName.get(k).push(e);
+  }
+  for (const group of byName.values()) {
+    if (new Set(group.map((e) => e.category)).size < 2) continue;
+    for (const e of group) {
+      const other = group.find((o) => o.category !== e.category);
+      const entry = ensure(entityKey(e.category, e.canonical));
+      const conflict = {
+        kind: "ambiguity", value: e.canonical, spelling: e.canonical,
+        withCategory: other.category,
+      };
+      entry.nameConflicts.push(conflict);
+      entry.list.push(conflict);
+    }
+  }
+
+  // Allowlist collision: a value that is also on the never-anonymise list.
+  const allow = new Set((s.allowlist ?? []).map((t) => t.trim().toLowerCase()));
+  if (allow.size) {
+    for (const e of active) {
+      if (!allow.has(e.canonical.trim().toLowerCase())) continue;
+      const entry = ensure(entityKey(e.category, e.canonical));
+      const conflict = { kind: "allowlist", value: e.canonical, spelling: e.canonical };
+      entry.nameConflicts.push(conflict);
+      entry.list.push(conflict);
+    }
+  }
+
+  // Collision: one spelling claimed by two different values.
+  const owners = new Map(); // lower(spelling) -> [{key, e, display}]
+  for (const e of active) {
+    for (const [lower, display] of spellingsOf(e)) {
+      if (!owners.has(lower)) owners.set(lower, []);
+      owners.get(lower).push({ key: entityKey(e.category, e.canonical), e, display });
+    }
+  }
+  for (const [lower, list] of owners) {
+    if (new Set(list.map((o) => o.key)).size < 2) continue;
+    for (const owner of list) {
+      const other = list.find((o) => o.key !== owner.key);
+      const entry = ensure(owner.key);
+      const isName = owner.e.canonical.trim().toLowerCase() === lower;
+      // When two values share a name outright, the ambiguity check above has
+      // already flagged that name. Reporting the same clash a second time as a
+      // canonical collision would show the user two sentences for one problem,
+      // so it is suppressed on the name (the card stays flagged either way).
+      if (isName && entry.nameConflicts.some((c) => c.kind === "ambiguity")) continue;
+      const conflict = {
+        kind: "collision", value: owner.display, spelling: owner.display,
+        withKey: other.key, withValue: other.e.canonical,
+        withCategory: other.e.category,
+      };
+      if (isName) entry.nameConflicts.push(conflict);
+      else entry.variantConflicts.set(lower, conflict);
+      entry.list.push(conflict);
+    }
+  }
+
+  return result;
+}
+
 // --- Reassignment helpers --------------------------------
 
 /**

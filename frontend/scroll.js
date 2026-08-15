@@ -45,15 +45,42 @@ export function scrollOwner() {
  * @returns {*} whatever mutate returned
  */
 export function keepScrollPosition(mutate) {
-  const owner = scrollOwner();
+  return keepScrollPositionOf(scrollOwner, mutate);
+}
+
+/**
+ * keepScrollPositionIn(selector, mutate) is keepScrollPosition for a scroller
+ * that is NOT the page body.
+ *
+ * The fixed-height layout (CLAUDE.md) scrolls inside a card body, not inside
+ * main#view, so restoring main#view's scroll leaves a card scrolled to the top
+ * anyway. That is the bug where removing a variant two thirds down the value
+ * list threw the list back to the first card. The selector names the actual
+ * scroller (e.g. "#identify-workspace .card-body"), re-queried after the
+ * re-render because the repaint replaces the element.
+ *
+ * @param {string} selector a CSS selector for the scrolling element
+ * @param {Function} mutate the state change to perform
+ * @returns {*} whatever mutate returned
+ */
+export function keepScrollPositionIn(selector, mutate) {
+  const find = () => (typeof document === "undefined" ? null : document.querySelector(selector));
+  return keepScrollPositionOf(find, mutate);
+}
+
+/**
+ * keepScrollPositionOf(find, mutate) is the shared machinery: `find` returns
+ * the element that scrolls, re-queried on every call so a repaint that replaces
+ * it is handled. It is not exported; the two named entry points above are.
+ */
+function keepScrollPositionOf(find, mutate) {
+  const owner = find();
   if (!owner) return mutate();
 
   const top = owner.scrollTop;
   const left = owner.scrollLeft;
   const restore = () => {
-    // Re-query: the re-render replaced the element's contents, and in
-    // principle could replace the element itself.
-    const current = scrollOwner();
+    const current = find();
     if (!current) return;
     current.scrollTop = top;
     current.scrollLeft = left;
