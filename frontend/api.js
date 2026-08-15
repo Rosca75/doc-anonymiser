@@ -113,6 +113,28 @@ export async function removeDocument(name) {
 }
 
 /**
+ * resetRun() discards everything the last pipeline run produced on the Go side:
+ * the placeholder registry (so numbering restarts from 1), the results, the
+ * remembered request and the removed-value list. The documents and the settings
+ * are kept. nav.js calls it when a backward move leaves the Anonymise step, so a
+ * re-run does not inherit the previous run's numbers or its removals.
+ */
+export async function resetRun() {
+  return bridge().ResetRun();
+}
+
+/**
+ * resetSession() returns the Go session to a freshly launched state: no
+ * documents, no registry, no results, no removed values, default settings. The
+ * Import step's "start over" action calls it, paired with the frontend
+ * resetState(), so a user beginning a separate anonymisation inherits nothing.
+ * Rejects if a run or detection is still in progress.
+ */
+export async function resetSession() {
+  return bridge().ResetSession();
+}
+
+/**
  * getDocumentSource(name) resolves to the SOURCE text of one imported
  * document, `{found, markdown, truncated, isGrid}`.
  *

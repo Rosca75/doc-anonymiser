@@ -37,6 +37,8 @@ what shape it comes back in, **without opening any Go**.
 |---|---|---|
 | `importFiles()` | — | `ImportResult {documents, errors}` (native multi-file dialog) |
 | `removeDocument(name)` | `name` | `ImportResult` |
+| `resetRun()` | — | nothing. Discards the Go-side run state (registry, results, last request, removed values); keeps documents and settings. Called by nav.js when a backward move leaves the Anonymise step, so a re-run restarts numbering from 1. |
+| `resetSession()` | — | nothing; rejects with an actionable message while a run or detection is in progress. Returns the whole Go session to a freshly launched state (no documents, no registry, default settings). The Import step's "start over" action, paired with the frontend `resetState()`. |
 | `getDocumentSource(name)` | `name` | `{found, markdown, truncated, isGrid}`, the SOURCE text of one imported document. An unknown name resolves with `found: false`; it never rejects. |
 
 **Original text has exactly one producer.** `DocumentInfo.markdown` and
