@@ -311,6 +311,11 @@ export const VALUES = {
   smartCommonWordsHint: "Ignores month names, weekdays and common sentence openers, which are capitalised without being names.",
   smartMinConfidence: "Minimum certainty",
   smartMinConfidenceHint: "Higher values keep only the strongest suggestions, such as a name followed by a company form or introduced by a title.",
+  smartStrictness: "How much to trust",
+  smartStrictnessHint: "Strict keeps only suggestions with strong evidence, such as a company form, a title or a matching email address. Lenient also shows the weakest guesses, which pairs well with a low minimum certainty. Balanced is the default.",
+  smartStrictnessLenient: "Lenient: show weak guesses too",
+  smartStrictnessBalanced: "Balanced (recommended)",
+  smartStrictnessStrict: "Strict: strong evidence only",
 
   // The suggestions table's search box and its two sort tooltips. The column
   // HEADINGS moved to WORKSPACE, where they are upper-case

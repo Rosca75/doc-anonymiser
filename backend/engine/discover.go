@@ -20,6 +20,18 @@
 //     kept: "Marie Duval" mid-sentence is a strong name signal even once.
 //  4. Title cues (Mr, Mrs, Ms, Dr, Me, M., Mme, ...) route the following
 //     name to person_names (the cue itself is not part of the candidate).
+//  5. Email-derived names: the local-part of an address in the document
+//     ("johannes.borch@pwc.lu") names a person, so a matching capitalised run
+//     is routed to person_names with high confidence. Needs no name list; it
+//     is the strongest offline signal on real correspondence.
+//
+// Precision is governed by a NEGATIVE gazetteer (smartCommonWords): a run
+// whose every significant word is ordinary business/role/document vocabulary
+// ("Revenue Management", "General Terms of Sale") is dropped. Growing that
+// table is the preferred way to cut noise, never loosening a numeric threshold.
+// A run that only ever appears in a postal-address context (a street cue like
+// "rue"/"place" beside or inside it) is likewise dropped as a street or venue
+// name, since there is no location category to route it to (CLAUDE.md §5).
 //
 // The allowlist veto is applied LAST — allowlist wins, as everywhere
 // (CLAUDE.md §5).
@@ -29,6 +41,7 @@ package engine
 
 import (
 	"context"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -81,7 +94,25 @@ type SmartDetectOptions struct {
 	// MinConfidence is the heuristic-score floor, 0.0 to 1.0. 0 disables
 	// the check.
 	MinConfidence float32 `json:"minConfidence"`
+	// Strictness selects HOW MANY detectors a candidate must satisfy, a
+	// lever orthogonal to MinConfidence (which is about how HIGH they must
+	// score). "" and "balanced" are the default behaviour; "strict" emits
+	// only structurally-anchored candidates (a legal suffix, a title cue, a
+	// trademark, a matching email name or a code), trading recall for
+	// precision; "lenient" additionally keeps the rare single-word single-
+	// occurrence runs the frequency rule drops. Unknown values read as
+	// balanced, so an older UI that never sets it is unaffected.
+	Strictness string `json:"strictness,omitempty"`
 }
+
+// Strictness levels for SmartDetectOptions.Strictness. Kept as string
+// constants (not an enum type) so they cross the Wails JSON boundary and a
+// session file unchanged, and an empty string keeps meaning "balanced".
+const (
+	StrictnessLenient  = "lenient"
+	StrictnessBalanced = "balanced"
+	StrictnessStrict   = "strict"
+)
 
 // DefaultSmartDetectOptions are the options the APPLICATION starts with
 // They are deliberately stricter than the legacy
@@ -100,6 +131,7 @@ func DefaultSmartDetectOptions() SmartDetectOptions {
 		MinOccurrences:     1,
 		ExcludeCommonWords: true,
 		MinConfidence:      0.5,
+		Strictness:         StrictnessBalanced,
 	}
 }
 
@@ -144,6 +176,182 @@ var smartCommonWords = map[string]bool{
 	"introduction": true, "conclusion": true, "summary": true, "annex": true,
 	"appendix": true, "annexe": true, "résumé": true, "resume": true,
 	"objet": true, "subject": true, "date": true, "page": true,
+	// Business / consulting process nouns. These are the dominant offline
+	// noise class: a document like an engagement deck is full of Title-Case
+	// phrases ("Revenue Management", "Financial Due Diligence") that read like
+	// names but are ordinary vocabulary. isCommonWordRun drops a run only when
+	// EVERY significant word is here, so a real name that merely CONTAINS one
+	// ("March Consulting") still survives, and this list is safe to grow.
+	// English then French.
+	"development": true, "management": true, "strategy": true, "strategies": true,
+	"assessment": true, "review": true, "transformation": true, "transformations": true,
+	"transaction": true, "advisory": true, "advice": true, "marketing": true,
+	"sales": true, "performance": true, "diagnostic": true, "logistics": true,
+	"pricing": true, "revenue": true, "innovation": true, "capability": true,
+	"valuation": true, "integration": true, "reporting": true, "audit": true,
+	"assurance": true, "safety": true, "feasibility": true, "forecasting": true,
+	"financing": true, "loyalty": true, "governance": true, "restructuring": true,
+	"regulation": true, "economics": true, "stakeholders": true, "roadmap": true,
+	"planning": true, "diligence": true, "contracting": true, "branding": true,
+	"modelling": true, "scenario": true, "analysis": true, "benchmarks": true,
+	"standards": true, "compliance": true, "procurement": true, "finance": true,
+	"financial": true, "commercial": true, "operational": true, "corporate": true,
+	"digital": true, "supply": true, "chain": true, "impact": true,
+	"développement": true, "gestion": true, "stratégie": true, "évaluation": true,
+	"revue": true, "conformité": true, "gouvernance": true, "réglementation": true,
+	"financement": true, "faisabilité": true, "achats": true, "ventes": true,
+	// Role / title nouns. A job title in Title Case ("Senior Manager",
+	// "Director") is not a person's name; the person beside it is.
+	"director": true, "directeur": true, "manager": true, "senior": true,
+	"junior": true, "partner": true, "partners": true, "associate": true,
+	"consultant": true, "analyst": true, "officer": true, "executive": true,
+	"coordinator": true, "coordinateur": true, "administrator": true,
+	"assistant": true, "specialist": true, "spécialiste": true, "supervisor": true,
+	"intern": true, "trainee": true, "head": true, "lead": true, "chief": true,
+	"architecture": true,
+	// Email / letter / invoice furniture. Header labels and sign-offs are
+	// capitalised at the start of a line and otherwise read like names.
+	"from": true, "sent": true, "received": true, "regards": true,
+	"sincerely": true, "best": true, "dear": true, "hello": true,
+	"envoyé": true, "reçu": true, "cordialement": true, "salutations": true,
+	"bonjour": true, "cher": true, "chère": true, "mobile": true,
+	"phone": true, "fax": true, "email": true, "courriel": true,
+	"tel": true, "attn": true, "invoice": true, "facture": true,
+	"order": true, "commande": true, "reminder": true, "control": true,
+	"terms": true, "conditions": true, "sale": true, "general": true,
+	"edition": true, "notice": true, "price": true, "total": true,
+	"amount": true, "quantity": true, "description": true, "name": true,
+	"address": true, "adresse": true, "contact": true, "questions": true,
+	"event": true, "events": true, "liability": true,
+	"fraud": true, "organize": true,
+	// Everyday HR / administrative nouns that appear Title-Cased in internal
+	// mail ("Extra Holiday Buying", "Holiday Savings Account").
+	"holiday": true, "holidays": true, "buying": true, "extra": true,
+	"savings": true, "account": true, "overtime": true, "leave": true,
+	"vacation": true, "request": true, "approval": true, "congé": true,
+}
+
+// smartConnectors are the tiny function words ("of", "the", "and") that can
+// sit INSIDE a common-noun phrase ("General Terms of Sale", "Terms and
+// Conditions"). isCommonWordRun skips them exactly like particles, so a phrase
+// made only of connectors and common nouns still counts as all-common. They
+// are NOT added to smartCommonWords because on their own they are not names
+// either, and keeping them separate documents why they are skipped.
+var smartConnectors = map[string]bool{
+	"of": true, "the": true, "and": true, "for": true, "to": true,
+	"in": true, "on": true, "vs": true, "et": true, "ou": true, "aux": true,
+}
+
+// streetCues are address words that mark a nearby capitalised run as part of a
+// POSTAL ADDRESS rather than a person or company: a street name, a square, a
+// town. Checked as the whole token immediately before a run ("rue Gerhard
+// Mercator") or as a token INSIDE it ("Place de l'Hôtel de Ville"). English
+// then French. Deliberately excludes ambiguous abbreviations (st, av, dr) that
+// collide with "Saint", a title, or an initial. Compared accent-folded and
+// lower-cased.
+var streetCues = map[string]bool{
+	"street": true, "road": true, "avenue": true, "boulevard": true,
+	"lane": true, "square": true, "plaza": true, "place": true,
+	"drive": true, "court": true, "terrace": true, "way": true,
+	"rue": true, "impasse": true, "chemin": true, "route": true,
+	"quai": true, "cours": true, "esplanade": true, "allee": true,
+	"ville": true, "city": true, "town": true, "hotel": true, "hôtel": true,
+}
+
+// orgKeywordsCommon are organisation-indicating words that hold in ANY country,
+// because English is the lingua franca of company naming: "Delta Group",
+// "Helios Holdings", "Meridian Partners". They VOUCH a capitalised run as an
+// entity_names candidate the same way a legal suffix does, but a hair less
+// certainly (a legal form is registered, a keyword is convention), so they
+// score just below one. Compared accent-folded and lower-cased.
+//
+// This is broader than the legalSuffixes gazetteer (entities.go), which lists
+// only registered legal FORMS (Sàrl, GmbH): a keyword names the KIND of
+// organisation, a suffix names its legal shell. Both mark a run as a company.
+var orgKeywordsCommon = map[string]bool{
+	"group": true, "holdings": true, "holding": true, "partners": true,
+	"partnership": true, "ventures": true, "associates": true,
+	"corporation": true, "incorporated": true, "enterprises": true,
+	"enterprise": true, "industries": true, "technologies": true,
+	"laboratories": true, "pharmaceuticals": true, "systems": true,
+	"solutions": true, "consulting": true, "international": true,
+	"worldwide": true, "trust": true, "bank": true, "capital": true,
+}
+
+// orgKeywordsByLanguage adds the organisation words specific to a language, so
+// "PwC Société coopérative" reads as a company when the document country uses
+// French. Keyed by a language tag, mapped to countries by countryLanguages.
+var orgKeywordsByLanguage = map[string]map[string]bool{
+	"fr": {
+		"groupe": true, "société": true, "societe": true, "sociétés": true,
+		"societes": true, "coopérative": true, "cooperative": true,
+		"compagnie": true, "banque": true, "assurances": true, "assurance": true,
+		"conseil": true, "conseils": true, "associés": true, "associes": true,
+		"entreprise": true, "entreprises": true, "établissements": true,
+		"etablissements": true, "mutuelle": true, "fédération": true,
+		"federation": true, "fiduciaire": true,
+	},
+	"de": {
+		"gesellschaft": true, "genossenschaft": true, "handelsgesellschaft": true,
+		"verein": true, "versicherung": true, "versicherungen": true,
+		"stiftung": true, "werke": true, "industrie": true, "beteiligungen": true,
+		"gruppe": true, "unternehmen": true, "bank": true,
+	},
+	"es": {
+		"sociedad": true, "compañía": true, "compania": true, "empresa": true,
+		"banco": true, "seguros": true, "cooperativa": true, "grupo": true,
+		"fundación": true, "fundacion": true, "asociación": true, "asociacion": true,
+	},
+}
+
+// countryLanguages maps a document country to the languages whose organisation
+// keywords apply. Luxembourg is trilingual (French, German, plus English as the
+// common set), which is why a Luxembourg document must recognise both "Société
+// coopérative" and "Gesellschaft". "" (no country chosen) falls back to the
+// common English set only.
+var countryLanguages = map[string][]string{
+	CountryLU: {"fr", "de"},
+	CountryFR: {"fr"},
+	CountryDE: {"de"},
+	CountryES: {"es"},
+	CountryUK: {},
+}
+
+// orgKeywordApplies reports whether a folded, lower-cased word is an
+// organisation keyword for the given document country. The common set always
+// applies; the language sets apply per countryLanguages.
+func orgKeywordApplies(word, country string) bool {
+	if orgKeywordsCommon[word] {
+		return true
+	}
+	for _, lang := range countryLanguages[country] {
+		if orgKeywordsByLanguage[lang][word] {
+			return true
+		}
+	}
+	return false
+}
+
+// runHasOrgKeyword reports whether a capitalised run reads as an organisation:
+// it carries an org keyword AND at least one OTHER significant word (so a bare
+// "Group" or "Société" on its own is not an org, but "Delta Group" and "PwC
+// Société" are). Tokens are split on spaces and hyphens and compared
+// accent-folded.
+func runHasOrgKeyword(runText, country string) bool {
+	hasKeyword := false
+	hasOther := false
+	for _, w := range strings.FieldsFunc(runText, func(r rune) bool { return r == ' ' || r == '-' }) {
+		folded := foldAccentsLower(strings.Trim(w, ".,;:!?()\"'’"))
+		if folded == "" || smartParticles[folded] || smartConnectors[folded] {
+			continue
+		}
+		if orgKeywordApplies(folded, country) {
+			hasKeyword = true
+		} else {
+			hasOther = true
+		}
+	}
+	return hasKeyword && hasOther
 }
 
 // smartParticles are the lowercase name particles tolerated INSIDE a
@@ -162,14 +370,20 @@ var smartTitles = map[string]bool{
 	"M": true, "Mme": true, "Mlle": true, "Prof": true, "Herr": true, "Frau": true,
 }
 
-// smartLeadingStopwords are articles/pronouns that must not OPEN a run:
-// "The CSSF" is the term "CSSF", not an entity called "The CSSF".
-// Table-driven; extend freely.
+// smartLeadingStopwords are articles/pronouns/salutations that must not OPEN a
+// run: "The CSSF" is the term "CSSF", not an entity called "The CSSF", and
+// "Hello Oscar" is the person "Oscar", not "Hello Oscar". Table-driven; extend
+// freely.
 var smartLeadingStopwords = map[string]bool{
 	"The": true, "A": true, "An": true, "This": true, "That": true,
 	"These": true, "Those": true, "Our": true, "We": true, "They": true,
 	"Le": true, "La": true, "Les": true, "Un": true, "Une": true,
 	"Ce": true, "Cette": true, "Ces": true, "Nos": true, "Notre": true,
+	// Salutations and sign-offs, so a greeting never glues onto the name it
+	// addresses ("Hello Oscar", "Cher Thierry", "Best regards Marie").
+	"Hello": true, "Hi": true, "Dear": true, "Hey": true,
+	"Bonjour": true, "Bonsoir": true, "Salut": true, "Cher": true,
+	"Chère": true, "Chers": true, "Best": true, "Regards": true,
 }
 
 // productHeadNouns mark a capitalised run as a PRODUCT rather than a company:
@@ -186,6 +400,161 @@ var productHeadNouns = map[string]bool{
 // highest-precision offline signal in this file and costs one string compare.
 var trademarkMarks = []string{"\u2122", "\u00ae", "\u2120"}
 
+// emailPersonScore is the confidence given to a capitalised run that matches a
+// name derived from an email address in the same document. It sits at the
+// person-title / trademark rung (0.90): a name written next to its own address
+// ("Johannes Borch <johannes.borch@pwc.lu>") is nearly as certain a person as
+// a title cue, and far more certain than a bare multi-word run (0.65).
+const emailPersonScore float32 = 0.90
+
+// emailLocalRe captures the LOCAL-PART of an email address (the text before
+// the @). The address itself is hard PII that pass 1 already removes; what the
+// offline discovery pass wants from it is the person's NAME, which is spelt
+// out in the local-part of a corporate address ("prenom.nom@societe.tld").
+// Deliberately the same address shape as pii.go's email rule, with the
+// local-part captured.
+var emailLocalRe = regexp.MustCompile(`([A-Za-z0-9._%+\-]+)@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
+
+// nonNameMailboxes are functional/role local-parts that are NOT a person's
+// name. A local-part equal to one of these injects no name, so "info@acme.com"
+// and "no-reply@acme.com" do not invent a person called "Info" or "No Reply".
+var nonNameMailboxes = map[string]bool{
+	"info": true, "contact": true, "noreply": true, "no-reply": true,
+	"admin": true, "sales": true, "support": true, "hello": true, "team": true,
+	"office": true, "help": true, "service": true, "services": true,
+	"billing": true, "hr": true, "jobs": true, "marketing": true, "mail": true,
+	"newsletter": true, "postmaster": true, "webmaster": true, "contactus": true,
+}
+
+// deriveEmailNames builds a per-document gazetteer of person names from the
+// local-part of every email address in the text. It needs no name list at all:
+// the name is written next to its own address, which is why this is the single
+// highest-value offline signal on real correspondence.
+//
+//	"johannes.borch@pwc.lu"  ->  "johannes borch", "johannes", "borch"
+//
+// The bare forename/surname are indexed too, so a later mention of just
+// "Borch" is also recognised as a person. A forename that is itself a common
+// word (a month, "May") is NOT indexed alone, so a stray "May" is not turned
+// into a person; the full "May Smith" join still is. Accent-folded and
+// lower-cased so it can match the accented spelling in the body ("José" vs the
+// ASCII "jose" in the address).
+func deriveEmailNames(text string) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range emailLocalRe.FindAllStringSubmatch(text, -1) {
+		local := strings.ToLower(m[1])
+		if nonNameMailboxes[local] {
+			continue
+		}
+		parts := strings.FieldsFunc(local, func(r rune) bool {
+			return r == '.' || r == '_' || r == '-' || r == '+'
+		})
+		var words []string
+		for _, p := range parts {
+			if len([]rune(p)) >= 2 && !isAllDigits(p) && !nonNameMailboxes[p] {
+				words = append(words, foldAccentsLower(p))
+			}
+		}
+		// A single token is a handle ("oscarl"), not a forename+surname; only
+		// a run of two or more reads as a real name.
+		if len(words) < 2 {
+			continue
+		}
+		out[strings.Join(words, " ")] = true
+		if !smartCommonWords[words[0]] {
+			out[words[0]] = true
+		}
+		if last := words[len(words)-1]; !smartCommonWords[last] {
+			out[last] = true
+		}
+	}
+	return out
+}
+
+// emailNameMatch reports whether a capitalised run is (or contains, or is
+// contained by) a name derived from an email address in the same document.
+// Whole-word comparison after accent-folding, so "Liber" matches inside the
+// "oscar liber" gazetteer entry but "end" never matches inside "mendonca".
+func emailNameMatch(set map[string]bool, runText string) bool {
+	if len(set) == 0 {
+		return false
+	}
+	ft := foldAccentsLower(runText)
+	if set[ft] {
+		return true
+	}
+	for key := range set {
+		if wholeWordContains(key, ft) || wholeWordContains(ft, key) {
+			return true
+		}
+	}
+	return false
+}
+
+// wholeWordContains reports whether needle's whole-word token sequence occurs
+// contiguously inside hay's. Both are space-separated, already folded.
+func wholeWordContains(hay, needle string) bool {
+	h, n := strings.Fields(hay), strings.Fields(needle)
+	if len(n) == 0 || len(n) > len(h) {
+		return false
+	}
+	for i := 0; i+len(n) <= len(h); i++ {
+		ok := true
+		for j := range n {
+			if h[i+j] != n[j] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// isAllDigits reports whether the token is only ASCII digits (a numeric
+// local-part fragment such as the "42" in "john42"), which is never a name.
+func isAllDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// foldAccentsLower lower-cases a string and folds the Latin accents that
+// appear in EN/FR/PT names to ASCII, then collapses internal whitespace. A
+// table (not golang.org/x/text) keeps this dependency-free per CLAUDE.md §6;
+// it covers the accented letters that occur in names, which is all the
+// email-name match needs.
+func foldAccentsLower(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range strings.ToLower(s) {
+		switch r {
+		case 'á', 'à', 'â', 'ä', 'ã', 'å', 'ā':
+			b.WriteRune('a')
+		case 'é', 'è', 'ê', 'ë', 'ē':
+			b.WriteRune('e')
+		case 'í', 'ì', 'î', 'ï', 'ī':
+			b.WriteRune('i')
+		case 'ó', 'ò', 'ô', 'ö', 'õ', 'ō':
+			b.WriteRune('o')
+		case 'ú', 'ù', 'û', 'ü', 'ū':
+			b.WriteRune('u')
+		case 'ç':
+			b.WriteRune('c')
+		case 'ñ':
+			b.WriteRune('n')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
 // contextRadius is the snippet half-width around an occurrence (runes).
 const contextRadius = 60
 
@@ -194,14 +563,16 @@ const maxContexts = 3
 
 // smartRun is one occurrence of a capitalised run during extraction.
 type smartRun struct {
-	text          string
-	start, end    int  // byte offsets in the source text
-	sentenceStart bool // the run begins a sentence
-	hasSuffix     bool // a legal suffix follows (and is included)
-	hasTitle      bool // a person-title cue opened the run
-	hasTrademark  bool // a trademark mark follows the run
-	hasProduct    bool // a product head noun is in or beside the run
-	words         int  // significant (non-particle) word count
+	text           string
+	start, end     int  // byte offsets in the source text
+	sentenceStart  bool // the run begins a sentence
+	hasSuffix      bool // a legal suffix follows (and is included)
+	hasTitle       bool // a person-title cue opened the run
+	hasTrademark   bool // a trademark mark follows the run
+	hasProduct     bool // a product head noun is in or beside the run
+	addressContext bool // a street cue sits beside or inside the run (an address)
+	orgKeyword     bool // an organisation keyword vouches the run as a company
+	words          int  // significant (non-particle) word count
 }
 
 // SmartDetectWithOptions is SmartDetect with the tuning
@@ -209,8 +580,18 @@ type smartRun struct {
 // which of their proposals reach the review list, and every candidate
 // carries the heuristic score the filtering used (candidateScore), so the
 // UI can filter further without recomputing anything.
+//
+// It runs country-agnostic (the organisation-keyword signal uses only the
+// common English set); the App layer, which knows the document country, calls
+// SmartDetectContext directly with it.
 func SmartDetectWithOptions(text string, allow *Allowlist, opts SmartDetectOptions) []Candidate {
-	candidates, _ := SmartDetectContext(context.Background(), text, allow, opts)
+	// context.Background() cannot be cancelled, so SmartDetectContext never
+	// returns an error here; the check satisfies the no-blank-error rule and
+	// keeps the wrapper honest if the contract ever changes.
+	candidates, err := SmartDetectContext(context.Background(), text, allow, opts, "")
+	if err != nil {
+		return nil
+	}
 	return candidates
 }
 
@@ -220,14 +601,22 @@ func SmartDetectWithOptions(text string, allow *Allowlist, opts SmartDetectOptio
 // completion whatever the user pressed, which is a large part of why
 // detection "sometimes does not complete" from the outside.
 //
+// country scopes the organisation-keyword signal (countryLanguages); "" leaves
+// only the common English keyword set active.
+//
 // On cancellation it returns the candidates found so far together with
 // ctx.Err(), the same contract the chunked LLM scan already had: partial work
 // is worth keeping, and the caller decides how to describe it.
-func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts SmartDetectOptions) ([]Candidate, error) {
-	runs, err := extractRunsContext(ctx, text)
+func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts SmartDetectOptions, country string) ([]Candidate, error) {
+	runs, err := extractRunsContext(ctx, text, country)
 	if err != nil {
 		return nil, err
 	}
+
+	// Per-document email-name gazetteer (one regex pass). A capitalised run
+	// that matches a name spelt out in an address is a person with high
+	// confidence, whatever the frequency/word-count heuristics would have said.
+	emailNames := deriveEmailNames(text)
 
 	// Group occurrences by candidate text (case-sensitive: "WEBER" and
 	// "Weber" are different spellings the review UI should see as typed;
@@ -240,6 +629,7 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		qualifies    bool
 		contexts     []string
 		sentenceOnly bool
+		addressOnly  bool
 	}
 	groups := map[string]*group{}
 	order := []string{}
@@ -255,7 +645,7 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		}
 		g, ok := groups[r.text]
 		if !ok {
-			g = &group{text: r.text, firstStart: r.start, sentenceOnly: true}
+			g = &group{text: r.text, firstStart: r.start, sentenceOnly: true, addressOnly: true}
 			groups[r.text] = g
 			order = append(order, r.text)
 		}
@@ -263,9 +653,14 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		if !r.sentenceStart {
 			g.sentenceOnly = false
 		}
+		if !r.addressContext {
+			g.addressOnly = false
+		}
 		// Category priority, strongest cue first: a legal form names a
-		// company, a trademark names a product, a title names a person, a
-		// product head noun is the weakest of the four and only fills a gap.
+		// company, a trademark names a product, a title names a person, an
+		// organisation keyword also names a company but a hair less certainly
+		// than a legal form, and a product head noun is the weakest and only
+		// fills a gap.
 		switch {
 		case r.hasSuffix:
 			g.category = CatEntityNames
@@ -273,10 +668,12 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 			g.category = CatProductNames
 		case r.hasTitle && g.category == "":
 			g.category = CatPersonNames
+		case r.orgKeyword && g.category == "":
+			g.category = CatEntityNames
 		case r.hasProduct && g.category == "":
 			g.category = CatProductNames
 		}
-		if r.hasSuffix || r.hasTitle || r.hasTrademark {
+		if r.hasSuffix || r.hasTitle || r.hasTrademark || r.orgKeyword {
 			g.qualifies = true
 		}
 		if len(g.contexts) < maxContexts {
@@ -284,21 +681,42 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		}
 	}
 
+	strictness := opts.Strictness
 	var out []Candidate
 	for _, key := range order {
 		g := groups[key]
 		r := firstRunFor(runs, key)
 
+		// A run is VOUCHED when a structural signal stands behind it: a legal
+		// suffix, a title cue or a trademark (g.qualifies), or a name spelt out
+		// in an address in the same document (emailMatched). Vouched runs bypass
+		// the noise heuristics below, exactly as a legal form always did.
+		emailMatched := emailNameMatch(emailNames, g.text)
+		vouched := g.qualifies || emailMatched
+
 		// Sentence-start rule: a run seen ONLY at sentence starts needs a
 		// second occurrence to qualify (kills "Ensuite", "Yesterday", ...)
-		// unless a suffix or title cue already vouches for it (a company
-		// opening a sentence is still a company).
-		if g.sentenceOnly && g.count < 2 && !g.qualifies {
+		// unless a structural signal already vouches for it (a company opening
+		// a sentence is still a company).
+		if g.sentenceOnly && g.count < 2 && !vouched {
 			continue
 		}
 		// Frequency rule: single-word single-occurrence runs without a
-		// suffix or title cue are dropped.
-		if !g.qualifies && g.count < 2 && r.words < 2 {
+		// structural signal are dropped. Lenient strictness keeps them, for a
+		// reviewer who would rather prune a long list than miss a rare mention;
+		// they still carry a low score, so the confidence floor governs whether
+		// they actually surface.
+		if !vouched && g.count < 2 && r.words < 2 && strictness != StrictnessLenient {
+			continue
+		}
+		// Address suppression: a run that only ever appears in a POSTAL-ADDRESS
+		// context (a street cue like "rue"/"avenue"/"place" beside or inside it)
+		// is a street or venue name, not a person or a company.
+		// "2, rue Gerhard Mercator" must not propose "Gerhard Mercator" as
+		// someone to anonymise. A vouched run overrides this: a real person can
+		// sign above their own address. There is no location category among the
+		// eight (CLAUDE.md §5), so an address value is dropped, not rerouted.
+		if g.addressOnly && !vouched {
 			continue
 		}
 		// Default category for unclassified runs: multi-word runs read as
@@ -318,10 +736,32 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 			continue
 		}
 
-		//  tuning. The score is computed either way, so the
-		// review UI always has it to filter and sort on, even when the
-		// engine-side floor is off.
+		// The score is computed either way, so the review UI always has it to
+		// filter and sort on, even when the engine-side floor is off.
 		score := candidateScore(r, g.count)
+
+		// Email-name signal: a run named by an address is a person. It
+		// overrides the category UNLESS a legal suffix or trademark already
+		// vouched for it (a company whose name appears in an address stays a
+		// company), and it lifts the score so a real person clears the
+		// confidence floor instead of being filtered as a bare multi-word guess.
+		if emailMatched {
+			if !g.qualifies {
+				g.category = CatPersonNames
+			}
+			if score < emailPersonScore {
+				score = emailPersonScore
+			}
+		}
+
+		// Strict strictness: emit ONLY structurally-vouched candidates, so a
+		// bare capitalised run or a lone product head noun is dropped however
+		// it scored. This is the high-precision end of the lever, orthogonal to
+		// the numeric confidence floor: strictness is about WHICH detectors are
+		// trusted, the floor is about how high they must score.
+		if strictness == StrictnessStrict && !vouched {
+			continue
+		}
 		if !keepCandidate(g.text, r, g.count, score, opts) {
 			continue
 		}
@@ -386,7 +826,7 @@ func firstRunFor(runs []smartRun, text string) smartRun {
 // occurrence with its metadata. The token walk is the longest uninterruptible
 // stretch of the offline pass, so it is where cancellation has to be able to
 // land: on a large document nothing else would notice for minutes.
-func extractRunsContext(ctx context.Context, text string) ([]smartRun, error) {
+func extractRunsContext(ctx context.Context, text, country string) ([]smartRun, error) {
 	tokens := tokenize(text)
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -518,6 +958,35 @@ func extractRunsContext(ctx context.Context, text string) ([]smartRun, error) {
 		r.hasTrademark = followedByTrademark(text, r.end)
 		r.hasProduct = r.hasTrademark || hasProductHeadNoun(text, r)
 
+		// Address context: a street cue immediately before the run
+		// ("rue Gerhard Mercator") or as a token inside it ("Place de la
+		// Gare"). Marks the run as part of a postal address so it is not
+		// proposed as a person or company (unless a stronger cue vouches).
+		r.addressContext = runHasStreetCue(r.text)
+		if !r.addressContext && i > 0 {
+			prev := foldAccentsLower(strings.Trim(tokens[i-1].text, ".,;:"))
+			if streetCues[prev] {
+				r.addressContext = true
+			}
+		}
+
+		// Organisation keyword (country-scoped): a capitalised word inside the
+		// run names the KIND of organisation ("Delta Group", "PwC Société"),
+		// vouching it as a company. A legal suffix already covers registered
+		// forms, so this only fires when there was no suffix. When the run is an
+		// organisation, a single lowercase org keyword immediately after it is
+		// absorbed to complete the name boundary ("PwC Société" + "coopérative"
+		// → "PwC Société coopérative"); the address heuristic is deliberately
+		// skipped for a company (a company legitimately sits at an address).
+		if !r.hasSuffix && runHasOrgKeyword(r.text, country) {
+			r.orgKeyword = true
+			r.addressContext = false
+			if trailing := trailingOrgKeyword(text, r.end, country); trailing > 0 {
+				r.end = trailing
+				r.text = text[r.start:r.end]
+			}
+		}
+
 		// Very short candidates are noise ("Al", "Le"), and a run that IS
 		// a bare legal form ("GmbH" discussed as a concept) is not a name.
 		if len([]rune(r.text)) >= 3 && !isBareSuffix(r.text) {
@@ -527,15 +996,16 @@ func extractRunsContext(ctx context.Context, text string) ([]smartRun, error) {
 			// onto a real name ("Later Marie Duval called"). Emit the
 			// sub-run without the first word too, so "Marie Duval" still
 			// counts; the frequency and sentence rules weed out whichever
-			// grouping is noise. Suffix runs are already whole company
-			// names and produce no sub-run.
-			if r.sentenceStart && !r.hasSuffix && !r.hasTitle && last > i {
+			// grouping is noise. Suffix and organisation runs are already whole
+			// company names and produce no sub-run.
+			if r.sentenceStart && !r.hasSuffix && !r.hasTitle && !r.orgKeyword && last > i {
 				sub := smartRun{
-					text:          text[tokens[i+1].start:r.end],
-					start:         tokens[i+1].start,
-					end:           r.end,
-					sentenceStart: false,
-					words:         significantWords(text[tokens[i+1].start:r.end]),
+					text:           text[tokens[i+1].start:r.end],
+					start:          tokens[i+1].start,
+					end:            r.end,
+					sentenceStart:  false,
+					addressContext: r.addressContext,
+					words:          significantWords(text[tokens[i+1].start:r.end]),
 				}
 				if len([]rune(sub.text)) >= 3 && !isBareSuffix(sub.text) {
 					runs = append(runs, sub)
@@ -545,6 +1015,56 @@ func extractRunsContext(ctx context.Context, text string) ([]smartRun, error) {
 		i = j
 	}
 	return runs, nil
+}
+
+// runHasStreetCue reports whether any whole token of the run is a street cue
+// ("Place de la Gare" contains "Place"). Tokens are split on spaces, hyphens
+// and apostrophes so "l'Hôtel" contributes "hotel", and compared accent-folded.
+func runHasStreetCue(runText string) bool {
+	for _, w := range strings.FieldsFunc(runText, func(r rune) bool {
+		return r == ' ' || r == '-' || r == '\'' || r == '\u2019'
+	}) {
+		if streetCues[foldAccentsLower(w)] {
+			return true
+		}
+	}
+	return false
+}
+
+// trailingOrgKeyword reports the byte offset just past a single LOWERCASE
+// organisation keyword sitting immediately after a run ("PwC Société " +
+// "coopérative"), or 0 if there is none. It completes an organisation name
+// whose legal-ish tail is not capitalised, mirroring how the legal-suffix
+// detector absorbs an un-capitalised suffix. Only ONE trailing word is taken,
+// so it cannot swallow the rest of a sentence.
+func trailingOrgKeyword(text string, end int, country string) int {
+	rest := text[end:]
+	trimmed := strings.TrimLeft(rest, " ")
+	pad := len(rest) - len(trimmed)
+	if pad == 0 || trimmed == "" {
+		return 0 // must be separated by a space, and something must follow
+	}
+	// Take the leading run of word runes (letters, apostrophes, hyphens).
+	word := ""
+	for i, r := range trimmed {
+		if unicode.IsLetter(r) || r == '\'' || r == '\u2019' || r == '-' {
+			continue
+		}
+		word = trimmed[:i]
+		break
+	}
+	if word == "" {
+		word = trimmed
+	}
+	// Lowercase only: a capitalised keyword would already be part of the run.
+	first, _ := utf8.DecodeRuneInString(word)
+	if unicode.IsUpper(first) {
+		return 0
+	}
+	if !orgKeywordApplies(foldAccentsLower(word), country) {
+		return 0
+	}
+	return end + pad + len(word)
 }
 
 // isBareSuffix reports whether the whole run text is just a legal form
@@ -691,6 +1211,8 @@ func contextSnippet(text string, start, end int) string {
 //	      certain as a heuristic gets, companies are named this way on purpose
 //	0.90 a trademark mark follows it, or a person title introduced it
 //	      ("Meridian Suite™", "Mme Weber", "Dr Keller")
+//	0.85 an organisation keyword is in the run ("Delta Group", "PwC Société"):
+//	      nearly a legal form, but a keyword is convention not registration
 //	0.60 a product head noun is in or beside the run ("Helios Platform"):
 //	      it reads like a product, which is weaker than being marked as one
 //	0.80 several words, seen more than once: a repeated full name
@@ -700,7 +1222,7 @@ func contextSnippet(text string, start, end int) string {
 //	      and where most of the over-detection lives
 //	0.25 anything else that survived the detectors
 //
-// The default floor (0.5) therefore keeps the first four rungs and drops
+// The default floor (0.5) therefore keeps the first five rungs and drops
 // the last two.
 func candidateScore(r smartRun, count int) float32 {
 	switch {
@@ -708,6 +1230,8 @@ func candidateScore(r smartRun, count int) float32 {
 		return 0.95
 	case r.hasTrademark, r.hasTitle:
 		return 0.90
+	case r.orgKeyword:
+		return 0.85
 	case r.hasProduct:
 		return 0.60
 	case r.words >= 2 && count >= 2:
@@ -754,7 +1278,7 @@ func isCommonWordRun(text string) bool {
 	significant := 0
 	for _, w := range strings.FieldsFunc(text, func(r rune) bool { return r == ' ' || r == '-' }) {
 		lower := strings.ToLower(strings.Trim(w, ".,;:!?()\"\u2019'"))
-		if lower == "" || smartParticles[lower] {
+		if lower == "" || smartParticles[lower] || smartConnectors[lower] {
 			continue
 		}
 		significant++

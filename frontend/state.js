@@ -120,6 +120,7 @@ const initialState = {
       minOccurrences: 1,
       excludeCommonWords: true,
       minConfidence: 0.5,
+      strictness: "balanced",
     },
   },
 
@@ -560,15 +561,21 @@ export const SMART_DETECT_DEFAULTS = {
   minOccurrences: 1,
   excludeCommonWords: true,
   minConfidence: 0.5,
+  strictness: "balanced",
 };
+
+// SMART_STRICTNESS_VALUES are the accepted strictness levels, mirroring the
+// engine's StrictnessLenient/Balanced/Strict constants. A value outside this
+// set is ignored by the setter, exactly like an out-of-range number.
+export const SMART_STRICTNESS_VALUES = ["lenient", "balanced", "strict"];
 
 /**
  * setSmartDetectOptions(patch) merges a partial tuning into the settings
- * Only the four known keys are accepted, and each is
+ * Only the known keys are accepted, and each is
  * validated: a bad value is IGNORED rather than stored, because these
  * options decide what the user gets to review, and a silently broken one
  * would look like Smart detection being broken.
- * @param {object} patch any subset of the four options
+ * @param {object} patch any subset of the options
  * @returns {object} the stored options after the merge
  */
 export function setSmartDetectOptions(patch) {
@@ -587,6 +594,9 @@ export function setSmartDetectOptions(patch) {
   if (typeof p.minConfidence === "number" && !Number.isNaN(p.minConfidence) &&
       p.minConfidence >= 0 && p.minConfidence <= 1) {
     next.minConfidence = p.minConfidence;
+  }
+  if (typeof p.strictness === "string" && SMART_STRICTNESS_VALUES.includes(p.strictness)) {
+    next.strictness = p.strictness;
   }
   setState({ settings: { ...state.settings, smartDetect: next } });
   return next;

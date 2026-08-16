@@ -111,6 +111,7 @@ func PDFWithPages(raw []byte) (markdown string, pages []string, warnings []strin
 // Repairs:   "B R IDDING ULES"      → "BIDDING RULES"
 //
 //	"double spaces here"  → "double spaces here"
+//	"Tymoﬁejewicz"         → "Tymofiejewicz"  (ligature fold)
 //
 // Left alone: lowercase text, single stray capitals ("I", "A" as words),
 //
@@ -118,11 +119,43 @@ func PDFWithPages(raw []byte) (markdown string, pages []string, warnings []strin
 //	shape — a heuristic must never mangle normal text more than the
 //	defect it fixes.
 func RepairPDFText(s string) string {
+	// Ligature fold FIRST, before any tokenisation: PDF fonts routinely
+	// encode "fi", "fl", "ffi" ... as a single presentation-form glyph
+	// (Unicode U+FB00..U+FB06), so "Tymofiejewicz" extracts as
+	// "Tymoﬁejewicz". Left alone, the same real person then reads as TWO
+	// different values (one spelt with the ligature, one without), so the
+	// detector proposes both, the registry gives them two placeholders, and
+	// worst of all the un-folded spelling can survive into the exported copy
+	// UN-anonymised. Folding to ASCII collapses them back to one value.
+	s = foldLigatures(s)
+
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
 		lines[i] = repairLine(line)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// ligatureReplacer maps the Latin presentation-form ligatures a PDF text
+// layer can carry back to their plain ASCII letters. Table-driven (via
+// strings.Replacer) so extending it is a one-line change; these seven are
+// the whole Unicode "Alphabetic Presentation Forms" Latin ligature block
+// (U+FB00..U+FB06). "ﬅ"/"ﬆ" (long-s t / s t) both fold to "st".
+var ligatureReplacer = strings.NewReplacer(
+	"\uFB00", "ff",
+	"\uFB01", "fi",
+	"\uFB02", "fl",
+	"\uFB03", "ffi",
+	"\uFB04", "ffl",
+	"\uFB05", "st",
+	"\uFB06", "st",
+)
+
+// foldLigatures replaces every ligature glyph in the text with its ASCII
+// spelling. Cheap enough to run on every extracted page: one pass, no
+// allocation when the text contains no ligature.
+func foldLigatures(s string) string {
+	return ligatureReplacer.Replace(s)
 }
 
 // repairLine fixes one line: interleaved-capitals first, then whitespace

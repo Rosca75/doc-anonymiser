@@ -201,6 +201,21 @@ func TestRepairPDFText(t *testing.T) {
 			in:   "B R IDDING ULES\nplain line",
 			want: "BIDDING RULES\nplain line",
 		},
+		{
+			name: "fi ligature folds to ascii",
+			in:   "Adam Tymo\uFB01ejewicz",
+			want: "Adam Tymofiejewicz",
+		},
+		{
+			name: "ff fl ffi ligatures fold to ascii",
+			in:   "o\uFB00ice \uFB02exi \uFB03rst",
+			want: "office flexi ffirst",
+		},
+		{
+			name: "text with no ligature is untouched",
+			in:   "ordinary fi fl text",
+			want: "ordinary fi fl text",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

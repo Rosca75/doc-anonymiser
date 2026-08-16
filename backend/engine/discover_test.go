@@ -19,6 +19,16 @@ func findCandidate(cands []Candidate, text string) *Candidate {
 	return nil
 }
 
+// smartDetectCountry is the test-side country-aware wrapper: it runs the
+// offline pass with a document country so the country-scoped org-keyword signal
+// applies. It lives here (not in discover.go) because the only non-test caller
+// that needs a country, the App layer, calls SmartDetectContext directly; a
+// production wrapper would be unreachable from any main package (deadcode).
+func smartDetectCountry(text string, allow *Allowlist, opts SmartDetectOptions, country string) []Candidate {
+	cands, _ := SmartDetectContext(context.Background(), text, allow, opts, country)
+	return cands
+}
+
 func TestSmartDetectSuffixGazetteer(t *testing.T) {
 	cases := []struct {
 		name string
@@ -376,7 +386,7 @@ func TestExtractRunsContextScalesLinearly(t *testing.T) {
 	measure := func(repeats int) time.Duration {
 		text := strings.Repeat("Alpine Trust S.A. met Marie Duval in Luxembourg. ", repeats)
 		start := time.Now()
-		extractRunsContext(context.Background(), text)
+		extractRunsContext(context.Background(), text, "")
 		return time.Since(start)
 	}
 	// Warm the code paths so the first measurement is not the one that pays
@@ -403,7 +413,7 @@ func TestSmartDetectContextIsInterruptible(t *testing.T) {
 	cancel()
 
 	start := time.Now()
-	got, err := SmartDetectContext(ctx, text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	got, err := SmartDetectContext(ctx, text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), "")
 	if err == nil {
 		t.Fatal("a cancelled context must be reported, not ignored")
 	}
@@ -421,7 +431,7 @@ func TestSmartDetectContextMatchesTheLegacyCall(t *testing.T) {
 	text := "Alpine Trust S.A. met Marie Duval. Alpine Trust signed with Borealis Fund GmbH."
 	opts := DefaultSmartDetectOptions()
 	want := SmartDetectWithOptions(text, NewEmptyAllowlist(), opts)
-	got, err := SmartDetectContext(context.Background(), text, NewEmptyAllowlist(), opts)
+	got, err := SmartDetectContext(context.Background(), text, NewEmptyAllowlist(), opts, "")
 	if err != nil {
 		t.Fatalf("an uncancelled scan must not fail: %v", err)
 	}
@@ -510,5 +520,291 @@ func TestCodesReachTheOfflineRoute(t *testing.T) {
 	}
 	if c, ok := byText["ATLAS-2024"]; !ok || c.Category != CatProjectNames {
 		t.Errorf("want ATLAS-2024 as a project, got %+v", got)
+	}
+}
+
+// --- email-derived person names (BUILD benchmark, 2026-08) -----------------
+
+// TestSmartDetectEmailDerivedNameCategorisesAndBoosts: a name spelt out in an
+// address in the same document is a person with high confidence, even where
+// the frequency heuristics alone would have hesitated. This is the single
+// highest-value offline signal on real correspondence.
+func TestSmartDetectEmailDerivedNameCategorisesAndBoosts(t *testing.T) {
+	text := "Please contact Johannes Borch <johannes.borch@pwc.lu> about the file.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	c := findCandidate(got, "Johannes Borch")
+	if c == nil {
+		t.Fatalf("email-named person missing: %+v", got)
+	}
+	if c.Category != CatPersonNames {
+		t.Errorf("category = %s, want %s", c.Category, CatPersonNames)
+	}
+	if c.Confidence < emailPersonScore {
+		t.Errorf("confidence = %.2f, want at least %.2f", c.Confidence, emailPersonScore)
+	}
+}
+
+// TestSmartDetectEmailDerivedSurnameAlone: the bare surname mentioned later in
+// the body is recognised as the same person, because the local-part indexes
+// the individual tokens too.
+func TestSmartDetectEmailDerivedSurnameAlone(t *testing.T) {
+	text := "From: Thierry Kremser <thierry.kremser@pwc.lu>\n" +
+		"Kremser approved the request yesterday.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if c := findCandidate(got, "Kremser"); c == nil || c.Category != CatPersonNames {
+		t.Errorf("bare surname not recognised as its email-named person: %+v", got)
+	}
+}
+
+// TestSmartDetectEmailAccentFold: the body spells the name with accents
+// ("José") while the address is ASCII ("jose"); the fold must bridge them.
+func TestSmartDetectEmailAccentFold(t *testing.T) {
+	text := "Cc: José Teixeira <jose.teixeira@pwc.lu> was copied. " +
+		"José Teixeira replied.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if c := findCandidate(got, "José Teixeira"); c == nil || c.Category != CatPersonNames {
+		t.Errorf("accented name not matched to its ASCII address: %+v", got)
+	}
+}
+
+// TestSmartDetectEmailIgnoresRoleMailbox: a functional mailbox is not a person.
+// "info@acme.com" must not invent someone called "Info", and a single-token
+// handle is not a forename+surname.
+func TestSmartDetectEmailIgnoresRoleMailbox(t *testing.T) {
+	names := deriveEmailNames("Write to info@acme.com or noreply@acme.com or bob@acme.com.\n")
+	if len(names) != 0 {
+		t.Errorf("role/handle mailboxes must inject no names, got %v", names)
+	}
+}
+
+// TestSmartDetectEmailNameDoesNotOverrideLegalSuffix: a run carrying a legal
+// suffix stays an organisation even if its words also appear in an address.
+func TestSmartDetectEmailNameDoesNotOverrideLegalSuffix(t *testing.T) {
+	text := "Alpine Trust S.A. <alpine.trust@example.com> signed the deed.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if c := findCandidate(got, "Alpine Trust S.A."); c == nil || c.Category != CatEntityNames {
+		t.Errorf("a legal-suffix run must stay an organisation: %+v", got)
+	}
+}
+
+// --- negative gazetteer (business/role/document nouns) ----------------------
+
+// TestSmartDetectNegativeGazetteerDropsBusinessPhrases: the dominant offline
+// noise class is Title-Case business vocabulary. Under the shipped defaults it
+// is dropped, while a real multi-word name in the same text survives.
+func TestSmartDetectNegativeGazetteerDropsBusinessPhrases(t *testing.T) {
+	text := "Revenue Management improved. Revenue Management improved again. " +
+		"Extra Holiday Buying was approved. General Terms of Sale apply. " +
+		"The auditor Marie Duval signed the note.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+
+	for _, noise := range []string{"Revenue Management", "Extra Holiday Buying", "General Terms of Sale"} {
+		if c := findCandidate(got, noise); c != nil {
+			t.Errorf("business-noun phrase %q must be dropped, got it as %+v", noise, c)
+		}
+	}
+	if findCandidate(got, "Marie Duval") == nil {
+		t.Errorf("a real name in the same text must survive: %+v", got)
+	}
+}
+
+// --- organisation keyword signal (country-scoped) ---------------------------
+
+// TestSmartDetectOrgKeywordCommon: an English organisation keyword vouches a
+// run as a company in ANY country ("Delta Group"), and it beats the default
+// person guess a bare multi-word run would get.
+func TestSmartDetectOrgKeywordCommon(t *testing.T) {
+	text := "We met Delta Group about the deal. Delta Group agreed.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	c := findCandidate(got, "Delta Group")
+	if c == nil {
+		t.Fatalf("an org-keyword run must be proposed: %+v", got)
+	}
+	if c.Category != CatEntityNames {
+		t.Errorf("category = %s, want %s", c.Category, CatEntityNames)
+	}
+	if c.Confidence < 0.85 {
+		t.Errorf("confidence = %.2f, want at least 0.85", c.Confidence)
+	}
+}
+
+// TestSmartDetectOrgKeywordCountryScoped: a French legal-ish keyword only
+// vouches when the document country uses French. "PwC Société" is a company in
+// Luxembourg (which covers French and German) but not in the UK.
+func TestSmartDetectOrgKeywordCountryScoped(t *testing.T) {
+	text := "Signed by PwC Société on Monday. PwC Société confirmed.\n"
+
+	lu := smartDetectCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryLU)
+	if c := findCandidate(lu, "PwC Société"); c == nil || c.Category != CatEntityNames {
+		t.Errorf("Luxembourg must read \"Société\" as a company: %+v", lu)
+	}
+
+	uk := smartDetectCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryUK)
+	if c := findCandidate(uk, "PwC Société"); c != nil && c.Category == CatEntityNames {
+		t.Errorf("the UK has no French keyword, so \"Société\" must not vouch a company: %+v", c)
+	}
+}
+
+// TestSmartDetectOrgKeywordAbsorbsLowercaseTail: an organisation name whose
+// legal-ish tail is not capitalised is completed, so the VALUE is the whole
+// name ("PwC Société coopérative"), not the capitalised prefix alone.
+func TestSmartDetectOrgKeywordAbsorbsLowercaseTail(t *testing.T) {
+	text := "Issued by PwC Société coopérative today. PwC Société coopérative billed.\n"
+	got := smartDetectCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryLU)
+	if c := findCandidate(got, "PwC Société coopérative"); c == nil || c.Category != CatEntityNames {
+		t.Errorf("the lowercase tail must be absorbed into the company name: %+v", got)
+	}
+}
+
+// TestSmartDetectOrgKeywordGermanForLuxembourg: Luxembourg covers German too,
+// so a German organisation word vouches a company there.
+func TestSmartDetectOrgKeywordGermanForLuxembourg(t *testing.T) {
+	text := "Vertrag mit Alpen Gesellschaft unterschrieben. Alpen Gesellschaft zahlte.\n"
+	got := smartDetectCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryLU)
+	if c := findCandidate(got, "Alpen Gesellschaft"); c == nil || c.Category != CatEntityNames {
+		t.Errorf("a German org word must vouch a company in Luxembourg: %+v", got)
+	}
+}
+
+// TestSmartDetectOrgKeywordSurvivesStrict: an org-keyword run is structurally
+// vouched, so strict strictness keeps it (unlike a bare capitalised run).
+func TestSmartDetectOrgKeywordSurvivesStrict(t *testing.T) {
+	text := "We met Delta Group once.\n"
+	strict := DefaultSmartDetectOptions()
+	strict.Strictness = StrictnessStrict
+	got := smartDetectCountry(text, NewEmptyAllowlist(), strict, CountryUK)
+	if findCandidate(got, "Delta Group") == nil {
+		t.Errorf("strict must keep an org-keyword company: %+v", got)
+	}
+}
+
+// TestSmartDetectOrgKeywordNeedsMoreThanTheKeyword: a bare keyword on its own
+// is not a company ("Group" discussed as a concept), only a keyword next to
+// another word is.
+func TestSmartDetectOrgKeywordNeedsMoreThanTheKeyword(t *testing.T) {
+	if runHasOrgKeyword("Group", "") {
+		t.Errorf("a bare keyword must not read as an organisation")
+	}
+	if !runHasOrgKeyword("Delta Group", "") {
+		t.Errorf("a keyword beside another word must read as an organisation")
+	}
+}
+
+// --- strictness lever -------------------------------------------------------
+
+// TestSmartDetectStrictRequiresAnAnchor: strict strictness emits only
+// structurally-vouched candidates. A bare multi-word run (no suffix, title or
+// email name) is dropped however it scored; a legal-suffix company survives.
+func TestSmartDetectStrictRequiresAnAnchor(t *testing.T) {
+	text := "The auditor Marie Duval reviewed it. Alpine Trust S.A. billed us.\n"
+
+	strict := DefaultSmartDetectOptions()
+	strict.Strictness = StrictnessStrict
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), strict)
+	if findCandidate(got, "Marie Duval") != nil {
+		t.Errorf("strict must drop a bare multi-word run: %+v", got)
+	}
+	if findCandidate(got, "Alpine Trust S.A.") == nil {
+		t.Errorf("strict must keep a legal-suffix company: %+v", got)
+	}
+
+	// Balanced (the default) keeps the same bare run: strictness is the lever
+	// that changed the outcome, nothing else.
+	bal := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if findCandidate(bal, "Marie Duval") == nil {
+		t.Errorf("balanced must keep the bare multi-word run: %+v", bal)
+	}
+}
+
+// TestSmartDetectStrictKeepsEmailNamedPerson: an email-named person is
+// structurally vouched, so strict keeps it even though it has no legal suffix.
+func TestSmartDetectStrictKeepsEmailNamedPerson(t *testing.T) {
+	text := "Contact Johannes Borch <johannes.borch@pwc.lu> today.\n"
+	strict := DefaultSmartDetectOptions()
+	strict.Strictness = StrictnessStrict
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), strict)
+	if findCandidate(got, "Johannes Borch") == nil {
+		t.Errorf("strict must keep an email-named person: %+v", got)
+	}
+}
+
+// TestSmartDetectLenientKeepsRareSingleWord: lenient strictness keeps the
+// single-word single-occurrence runs the frequency rule drops. They carry a
+// low score, so this only surfaces them once the confidence floor is lowered.
+func TestSmartDetectLenientKeepsRareSingleWord(t *testing.T) {
+	text := "We discussed Zephyr briefly.\n"
+
+	lenient := DefaultSmartDetectOptions()
+	lenient.Strictness = StrictnessLenient
+	lenient.MinConfidence = 0
+	if findCandidate(SmartDetectWithOptions(text, NewEmptyAllowlist(), lenient), "Zephyr") == nil {
+		t.Errorf("lenient with no floor must keep a rare single-word run")
+	}
+
+	bal := DefaultSmartDetectOptions()
+	bal.MinConfidence = 0
+	if findCandidate(SmartDetectWithOptions(text, NewEmptyAllowlist(), bal), "Zephyr") != nil {
+		t.Errorf("balanced must drop a single-word single-occurrence run even with no floor")
+	}
+}
+
+// TestSmartDetectSuppressesStreetAddress: a name that only ever appears in a
+// postal-address context is a street, not a person. "rue Gerhard Mercator"
+// must not propose "Gerhard Mercator" as someone to anonymise.
+func TestSmartDetectSuppressesStreetAddress(t *testing.T) {
+	text := "Our office is at 2, rue Gerhard Mercator in the capital. " +
+		"Post to 2, rue Gerhard Mercator as well.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if c := findCandidate(got, "Gerhard Mercator"); c != nil {
+		t.Errorf("a street name must not be proposed, got %+v", c)
+	}
+}
+
+// TestSmartDetectAddressCueInsideRun: the cue can be a token INSIDE the run
+// ("Place de la Gare"), not only the word before it.
+func TestSmartDetectAddressCueInsideRun(t *testing.T) {
+	text := "The venue is Place de la Gare downtown. Place de la Gare hosts it.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if c := findCandidate(got, "Place de la Gare"); c != nil {
+		t.Errorf("an address phrase must be suppressed, got %+v", c)
+	}
+}
+
+// TestSmartDetectPersonAboveOwnAddressSurvives: a real person can sign just
+// above their address. The email name overrides the address suppression for
+// the person, while the street on the next line is still dropped.
+func TestSmartDetectPersonAboveOwnAddressSurvives(t *testing.T) {
+	text := "Best regards, Oscar Liber <oscar.liber@pwc.lu>\n" +
+		"2, rue Gerhard Mercator, Luxembourg.\n" +
+		"Oscar Liber signed.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if findCandidate(got, "Oscar Liber") == nil {
+		t.Errorf("the signer named by an address must survive: %+v", got)
+	}
+	if c := findCandidate(got, "Gerhard Mercator"); c != nil {
+		t.Errorf("the street on the address line must be dropped, got %+v", c)
+	}
+}
+
+// TestSmartDetectStreetCueDoesNotSuppressSuffixedCompany: a legal suffix
+// overrides address suppression, so a company at its own address survives.
+func TestSmartDetectStreetCueDoesNotSuppressSuffixedCompany(t *testing.T) {
+	text := "rue Alpine Trust S.A. is a coincidence. Alpine Trust S.A. billed us.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if findCandidate(got, "Alpine Trust S.A.") == nil {
+		t.Errorf("a legal-suffix company must survive an address cue: %+v", got)
+	}
+}
+
+// TestSmartDetectConnectorsInsideCommonPhrase: "Terms of Sale" is all-common
+// only if the connector "of" is skipped like a particle; without that skip the
+// phrase would leak through as a candidate.
+func TestSmartDetectConnectorsInsideCommonPhrase(t *testing.T) {
+	if !isCommonWordRun("General Terms of Sale") {
+		t.Errorf("a phrase of common nouns joined by a connector must read as all-common")
+	}
+	// A real name joined by a connector is NOT all-common: one token is a name.
+	if isCommonWordRun("Bank of Marie") {
+		t.Errorf("a run containing a genuine name token must not read as all-common")
 	}
 }

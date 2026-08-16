@@ -217,6 +217,26 @@ test("the scope controls live inside the Smart detection section", () => {
   assert.ok(exists(smart, "#smart-min-length"), "and the strictness fields");
 });
 
+test("the strictness lever is a select of the three levels, balanced by default", () => {
+  const smart = all(railHTML(), "section.rail-section")[0].outer;
+  const select = one(smart, "#smart-strictness");
+  const values = all(select.outer, "option").map((o) => o.attrs.value);
+  assert.deepEqual(values, ["lenient", "balanced", "strict"],
+    "the three engine strictness levels, in order");
+  const selected = all(select.outer, "option").find((o) => "selected" in o.attrs);
+  assert.equal(selected.attrs.value, "balanced", "balanced is the default selection");
+});
+
+test("the strictness select reflects a non-default stored value", () => {
+  resetState();
+  setState({ settings: { ...getState().settings,
+    smartDetect: { ...getState().settings.smartDetect, strictness: "strict" } } });
+  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
+  const selected = all(one(smart, "#smart-strictness").outer, "option")
+    .find((o) => "selected" in o.attrs);
+  assert.equal(selected.attrs.value, "strict");
+});
+
 test("every category checkbox is reachable without switching anything", () => {
   // With tabs, three quarters of the rail was one click away and invisible.
   // Every category is now rendered ONCE, in the Smart detection section: one
