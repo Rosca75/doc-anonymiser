@@ -30,16 +30,41 @@ import (
 // Docx converts raw .docx bytes to markdown. Returned warnings are
 // human-readable notes for the import UI (e.g. how many images were
 // dropped); they never block the conversion.
+//
+// It is the thin wrapper kept for callers that only need the joined markdown;
+// DocxWithPages does the work and additionally returns the per-page texts.
 func Docx(raw []byte) (markdown string, warnings []string, err error) {
+	markdown, _, warnings, err = DocxWithPages(raw)
+	return markdown, warnings, err
+}
+
+// docxPageBreak is the private sentinel the parser writes where Word recorded
+// a page break, so the finished markdown can be split back into pages for the
+// page-scoped local-AI scan (CLAUDE.md §5). It is a form feed (U+000C), the
+// ASCII page-break control: it never occurs in real document text, and it is
+// stripped out of the markdown the rest of the app sees, so nothing downstream
+// (pipeline, export, preview) is affected by its presence.
+const docxPageBreak = "\f"
+
+// DocxWithPages is Docx plus the per-page text slice, in document order.
+//
+// Word does not store rendered pages in document.xml — pagination is a
+// layout-time computation — but it DOES cache the break positions it last
+// rendered as <w:lastRenderedPageBreak/> elements, and authors can insert hard
+// page breaks (<w:br w:type="page"/>). Both are honoured here, which is the
+// closest a pure-Go reader can get to "the pages the user sees". A document
+// with neither marker yields a single page (the whole document): that is
+// honest, not a failure, and the UI falls back to scanning it whole.
+func DocxWithPages(raw []byte) (markdown string, pages []string, warnings []string, err error) {
 	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
-		return "", nil, fmt.Errorf(
+		return "", nil, nil, fmt.Errorf(
 			"the file is not a valid .docx (it is not a zip archive: %v), if it is an old binary .doc file, open it in Word and save it as .docx first", err)
 	}
 
 	docXML, err := readZipEntry(zr, "word/document.xml")
 	if err != nil {
-		return "", nil, fmt.Errorf(
+		return "", nil, nil, fmt.Errorf(
 			"the file is not a valid .docx (missing word/document.xml), if it is an old binary .doc file, open it in Word and save it as .docx first")
 	}
 
@@ -53,14 +78,34 @@ func Docx(raw []byte) (markdown string, warnings []string, err error) {
 
 	p := &docxParser{rels: rels, numFmts: numFmts}
 	if err := p.parseBody(docXML); err != nil {
-		return "", nil, fmt.Errorf("could not parse word/document.xml: %w, the file may be corrupted; try re-saving it in Word", err)
+		return "", nil, nil, fmt.Errorf("could not parse word/document.xml: %w, the file may be corrupted; try re-saving it in Word", err)
 	}
 
 	if p.imagesDropped > 0 {
 		warnings = append(warnings, fmt.Sprintf(
 			"%d image(s) were dropped and replaced by an *[image omitted]* placeholder, images cannot be anonymised as text", p.imagesDropped))
 	}
-	return p.out.String(), warnings, nil
+
+	// The builder still carries the page-break sentinels: split on them for
+	// the page slice, then strip them from the markdown everything else uses.
+	full := p.out.String()
+	pages = splitDocxPages(full)
+	markdown = strings.ReplaceAll(full, docxPageBreak, "")
+	return markdown, pages, warnings, nil
+}
+
+// splitDocxPages turns the sentinel-bearing builder output into the per-page
+// texts. Empty segments (a break at the very start or two adjacent breaks) are
+// dropped so an accidental leading break does not create a phantom blank page.
+// A document with no break at all is one page.
+func splitDocxPages(full string) []string {
+	var pages []string
+	for _, seg := range strings.Split(full, docxPageBreak) {
+		if trimmed := strings.TrimSpace(seg); trimmed != "" {
+			pages = append(pages, trimmed)
+		}
+	}
+	return pages
 }
 
 // readZipEntry returns the full content of one entry in the archive.
@@ -331,9 +376,21 @@ func (p *docxParser) parseRun(dec *xml.Decoder) string {
 			case "t":
 				inText = true
 			case "br":
-				// Soft line break inside a paragraph → a space, so the
-				// paragraph stays one markdown line.
-				text.WriteString(" ")
+				// A hard page break (<w:br w:type="page"/>) is a page
+				// boundary for the page-scoped scan; every other break
+				// (line, column) stays a space so the paragraph remains one
+				// markdown line.
+				if attrVal(t, "type") == "page" {
+					text.WriteString(docxPageBreak)
+				} else {
+					text.WriteString(" ")
+				}
+			case "lastRenderedPageBreak":
+				// Word's cached "this is where the page broke when I last
+				// rendered" marker. It carries no text of its own; emitting
+				// the sentinel is what lets the page slice match the page
+				// count Word cached in docProps/app.xml.
+				text.WriteString(docxPageBreak)
 			case "drawing", "pict":
 				// Images are dropped with an inline placeholder
 				// (CLAUDE.md §5) — the count feeds the import warning.

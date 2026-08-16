@@ -775,6 +775,15 @@ input, select {
 .rail-status { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 .rail-status .hint { font-size: 0.78rem; }
 
+/* The Local-AI scan-scope From/To inputs sit side by side, so the range reads as
+   one control rather than two stacked fields. Each half keeps the .rail-field
+   grid so its label and box line up with the fields above. */
+.rail-range { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+.rail-range .rail-field { grid-template-columns: auto 1fr; }
+/* A scoped-range caution: it borrows the warn token used by tags and banners so
+   the "this is a lot to scan" note reads as a warning, not body copy. */
+.hint.warn { color: var(--text); border-left: 3px solid var(--warn); padding-left: 0.5rem; }
+
 /* The confidence slider and its read-out sit on one line, so the number and the
    sentence explaining it are read together. */
 .rail-slider { display: flex; align-items: center; gap: 0.75rem; }

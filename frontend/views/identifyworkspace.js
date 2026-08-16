@@ -51,6 +51,7 @@ import {
   addPattern, removePattern, NAME_CATEGORIES,
   renameEntity, renameVariant, changeEntityCategory, changeCandidateCategory,
   groupEntities, clearAllEntities, entityConflicts, spellingsOf, removeAllowTerm,
+  aiScopeArg,
 } from "../state.js";
 import { pendingExpansions } from "../entitymodel.js";
 import {
@@ -781,7 +782,7 @@ function wireDetection(container) {
     });
 
     try {
-      const result = await runDetection(all, getState().allowlist);
+      const result = await runDetection(all, getState().allowlist, aiScopeArg());
       const added =
         addCandidates(result?.candidates ?? [], "smart") +
         addCandidates(

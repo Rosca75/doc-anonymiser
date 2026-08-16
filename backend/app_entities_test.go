@@ -89,7 +89,7 @@ func TestDetectionMergesAndDedupesAcrossFiles(t *testing.T) {
 		{Name: "two.txt", Format: engine.FormatTXT, Markdown: "doc two: ALPINE TRUST with Peter Stone"},
 	}
 
-	res, err := app.RunDetection([]string{"one.txt", "two.txt"}, nil)
+	res, err := app.RunDetection([]string{"one.txt", "two.txt"}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestDetectionRespectsTheAllowlist(t *testing.T) {
 		{Name: "a.txt", Format: engine.FormatTXT, Markdown: "CSSF and Alpine Trust"},
 	}
 
-	res, err := app.RunDetection([]string{"a.txt"}, []string{"CSSF"})
+	res, err := app.RunDetection([]string{"a.txt"}, []string{"CSSF"}, nil)
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestDetectionRespectsTheAllowlist(t *testing.T) {
 }
 
 func TestDetectionOverZeroFilesFailsActionably(t *testing.T) {
-	if _, err := NewApp().RunDetection([]string{"ghost.txt"}, nil); err == nil {
+	if _, err := NewApp().RunDetection([]string{"ghost.txt"}, nil, nil); err == nil {
 		t.Error("detection over zero files must fail rather than report an empty success")
 	}
 }
@@ -138,7 +138,7 @@ func TestDetectionSkipsAFileTooLargeForTheModel(t *testing.T) {
 		{Name: "huge.txt", Format: engine.FormatTXT, Markdown: strings.Repeat("line of text\n", 20000)},
 	}
 
-	res, err := app.RunDetection([]string{"small.txt", "huge.txt"}, nil)
+	res, err := app.RunDetection([]string{"small.txt", "huge.txt"}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestDetectionCancellationKeepsWhatItFound(t *testing.T) {
 	defer func() { runtimeEventsEmit = old }()
 	app.ctx = context.Background() // any non-nil ctx routes emit() to the stub
 
-	res, err := app.RunDetection([]string{"one.txt", "two.txt", "three.txt"}, nil)
+	res, err := app.RunDetection([]string{"one.txt", "two.txt", "three.txt"}, nil, nil)
 	if err != nil {
 		t.Fatalf("a cancelled run must not be an error: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestDetectionReportsProgressPerFile(t *testing.T) {
 	defer func() { runtimeEventsEmit = old }()
 	app.ctx = context.Background()
 
-	if _, err := app.RunDetection([]string{"one.txt", "two.txt"}, nil); err != nil {
+	if _, err := app.RunDetection([]string{"one.txt", "two.txt"}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(named) != 2 || named[0] != "one.txt" || named[1] != "two.txt" {
@@ -309,7 +309,7 @@ func TestOfflineRouteReturnsCandidatesNotEntities(t *testing.T) {
 			Markdown: "Meeting with Marie Duval about Alpine Trust S.A. Later Marie Duval called again."},
 	}
 
-	res, err := app.RunDetection([]string{"a.txt"}, []string{"CSSF"})
+	res, err := app.RunDetection([]string{"a.txt"}, []string{"CSSF"}, nil)
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}

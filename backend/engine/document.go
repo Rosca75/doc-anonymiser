@@ -112,6 +112,17 @@ type Document struct {
 	// is what every format that cannot do better reports.
 	UnitCount int
 	Unit      string
+	// Pages holds the working form pre-split into the document's addressable
+	// sub-units, for the page-scoped local-AI scan (CLAUDE.md §5): the user
+	// picks one document and a page/segment range and only that text is sent
+	// to the model. It is populated ONLY for formats whose boundaries are not
+	// recoverable from Markdown after the fact: PDF pages (a blank line can
+	// sit inside a page too) and DOCX pages (Word's cached break positions).
+	// For every other format the boundaries live in Markdown or the Grid and
+	// are derived on demand (see pagescope.go), so Pages stays nil and is not
+	// a second source of truth. nil or a single entry means "no finer
+	// boundary than the whole document".
+	Pages []string
 }
 
 // The unit names Document.Unit may hold. Constants rather than bare strings so
@@ -197,7 +208,7 @@ func LoadAll(name string, raw []byte) ([]Document, error) {
 		return []Document{doc}, nil
 
 	case ".docx":
-		md, warns, err := convert.Docx(raw)
+		md, pages, warns, err := convert.DocxWithPages(raw)
 		if err != nil {
 			return nil, fmt.Errorf("could not import %q: %w", name, err)
 		}
@@ -206,6 +217,7 @@ func LoadAll(name string, raw []byte) ([]Document, error) {
 			Format:   FormatDOCX,
 			Raw:      raw,
 			Markdown: md,
+			Pages:    pages,
 			Warnings: append(sizeWarnings, warns...),
 		}
 		// A page count is what a Word user recognises, but it can only come
@@ -274,7 +286,7 @@ func LoadAll(name string, raw []byte) ([]Document, error) {
 		return docs, nil
 
 	case ".pdf":
-		md, warns, err := convert.PDF(raw)
+		md, pages, warns, err := convert.PDFWithPages(raw)
 		if err != nil {
 			return nil, fmt.Errorf("could not import %q: %w", name, err)
 		}
@@ -283,6 +295,7 @@ func LoadAll(name string, raw []byte) ([]Document, error) {
 			Format:   FormatPDF,
 			Raw:      raw,
 			Markdown: md,
+			Pages:    pages,
 			Warnings: append(sizeWarnings, warns...),
 		}
 		// The PDF's own page tree, so this figure is exact.

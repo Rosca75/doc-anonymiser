@@ -183,8 +183,8 @@ export async function saveAllowlistTemplate() {
 // --- Entities screen ------------------------------------------
 
 /**
- * runDetection(fileNames, allowTerms) runs EVERY enabled detection route in
- * one call and resolves to a DetectionResult
+ * runDetection(fileNames, allowTerms, aiScope) runs EVERY enabled detection
+ * route in one call and resolves to a DetectionResult
  * {candidates, proposals, phases, skipped, errors, cancelled, status}.
  *
  * This is the UI's detection entry point. It replaced two separate
@@ -193,12 +193,17 @@ export async function saveAllowlistTemplate() {
  * event ("detection:done" or "detection:error") now cover the whole run.
  * Which routes run is decided in Go from the stored switches.
  *
+ * aiScope, when set, restricts the LOCAL AI route to one document and a range
+ * of its own units (page/slide/row/line): {docName, fromPage, toPage}, 1-based
+ * inclusive. null (the default) means every document, whole. It never affects
+ * the Smart detection route, which always reads everything.
+ *
  * A cancelled run RESOLVES with the partial findings and cancelled: true;
  * only a failure to start (no matching documents, a run already in flight)
  * rejects.
  */
-export async function runDetection(fileNames, allowTerms) {
-  return bridge().RunDetection(fileNames, allowTerms);
+export async function runDetection(fileNames, allowTerms, aiScope = null) {
+  return bridge().RunDetection(fileNames, allowTerms, aiScope);
 }
 
 /** cancelDetection() aborts the in-flight detection run (no-op if idle).

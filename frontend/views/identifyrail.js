@@ -34,6 +34,7 @@ import {
   applyPreset, toggleCategory, selectionPresetName, setUseAI, setUseSmartDetect,
   setCategoryGroup, setMinConfidence, setDocumentCountry,
   setSmartDetectOptions, smartDetectOptions,
+  setAIScope,
   ALL_CATEGORIES,
   NAME_CATEGORIES, DECLARED_CATEGORIES,
 } from "../state.js";
@@ -504,6 +505,65 @@ function wireSmart(container) {
 
 // --- Local AI -------------------------------------------------------------
 
+/**
+ * scopeBlock(s, gated) is the "What to scan" control for the Local AI route: a
+ * document picker plus an optional page/slide/row/line range. It exists because
+ * handing a whole document to a small local model is too much (the user's
+ * words); aiming the scan keeps the pass quick and the model focused.
+ *
+ * The picker defaults to "All documents (whole)", the unchanged behaviour. When
+ * one document with more than one addressable unit is chosen, From/To inputs
+ * appear, bounded by that document's unit count (DocumentInfo.pageCount). A
+ * range spanning more than one unit shows a small warning, because a wide range
+ * is exactly the "too much" the feature exists to avoid.
+ */
+function scopeBlock(s, gated) {
+  const scope = s.aiScope ?? { docName: "", fromPage: 1, toPage: 1 };
+  const docs = s.documents ?? [];
+  const options = [
+    `<option value=""${scope.docName ? "" : " selected"}>` +
+      `${escapeHTML(RAIL.scopeAllDocs)}</option>`,
+    ...docs.map((d) => {
+      const count = Math.max(1, d.pageCount || 1);
+      const label = RAIL.scopeDocOption(d.name, count, d.unit);
+      return `<option value="${escapeHTML(d.name)}"` +
+        `${scope.docName === d.name ? " selected" : ""}>${escapeHTML(label)}</option>`;
+    }),
+  ].join("");
+
+  let range = "";
+  const selected = docs.find((d) => d.name === scope.docName);
+  const count = Math.max(1, selected?.pageCount || 1);
+  if (selected && count > 1) {
+    const unit = RAIL.scopeUnitWord(selected.unit);
+    const warn = scope.fromPage !== scope.toPage
+      ? `<p class="hint warn" id="ai-scope-warn">${escapeHTML(RAIL.scopeRangeWarning(unit))}</p>`
+      : "";
+    range =
+      `<div class="rail-range">` +
+      `<label class="rail-field" for="ai-scope-from">` +
+      `<span class="rail-field-label">${escapeHTML(RAIL.scopeFrom)}</span>` +
+      `<input id="ai-scope-from" type="number" min="1" max="${count}" ` +
+        `value="${escapeHTML(String(scope.fromPage))}"${gated}/>` +
+      `</label>` +
+      `<label class="rail-field" for="ai-scope-to">` +
+      `<span class="rail-field-label">${escapeHTML(RAIL.scopeTo)}</span>` +
+      `<input id="ai-scope-to" type="number" min="1" max="${count}" ` +
+        `value="${escapeHTML(String(scope.toPage))}"${gated}/>` +
+      `</label>` +
+      `</div>` + warn;
+  }
+
+  return `<div class="rail-block">` +
+    `<span class="rail-field-label">${escapeHTML(RAIL.scopeHeading)}</span>` +
+    `<p class="hint">${escapeHTML(RAIL.scopeIntro)}</p>` +
+    `<label class="rail-field" for="ai-scope-doc">` +
+    `<span class="rail-field-label">${escapeHTML(RAIL.scopeDoc)}</span>` +
+    `<select id="ai-scope-doc"${gated}>${options}</select>` +
+    `</label>` + range +
+    `</div>`;
+}
+
 function localAISection(s) {
   const ollamaOK = !!s.ollama?.available;
   const aiOn = !!s.settings.useAI;
@@ -539,6 +599,7 @@ function localAISection(s) {
     `<p class="hint">${escapeHTML(CONFIGURE.contextSizeHint)}</p>` +
     button(RAIL.reprobe, { kind: "secondary", id: "btn-reprobe", icon: "refresh" }) +
     `</div>` +
+    scopeBlock(s, gated) +
     // NO second copy of the category checkboxes here. There is ONE category
     // selection in the engine (engine.CategorySelection), so a second set of
     // boxes would be two controls for one setting; worse, this section is folded
@@ -558,6 +619,23 @@ function wireLocalAI(container) {
     await pushSettings(container);
     setState({ ollama: await probeOllama() });
   });
+  // The scan-scope controls write straight to state (no Go round-trip: scope is
+  // a per-run choice, not a saved setting). setAIScope re-renders the rail, so
+  // switching to a multi-unit document reveals the From/To inputs, and a range
+  // reveals the warning. Switching document resets the range to its first unit.
+  container.querySelector("#ai-scope-doc")?.addEventListener("change", (ev) => {
+    setAIScope({ docName: ev.target.value, fromPage: 1, toPage: 1 });
+  });
+  const from = container.querySelector("#ai-scope-from");
+  const to = container.querySelector("#ai-scope-to");
+  if (from && to) {
+    const apply = () => setAIScope({
+      fromPage: parseInt(from.value, 10) || 1,
+      toPage: parseInt(to.value, 10) || 1,
+    });
+    from.addEventListener("change", apply);
+    to.addEventListener("change", apply);
+  }
 }
 
 // --- Cloud AI -------------------------------------------------------------

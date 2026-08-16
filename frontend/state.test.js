@@ -22,6 +22,7 @@ import {
   addCandidates, acceptCandidate, rejectCandidate,
   moveVariant, entityAutocomplete, reassignOriginal,
   applyImportResult,
+  setAIScope, aiScopeArg,
   setNotice, clearNotice, NOTICE_TONES,
   setDocumentCountry,
   setValueTables,
@@ -102,8 +103,59 @@ test("applyImportResult updates documents, errors and preview selection", () => 
   assert.equal(getState().previewDoc, "c.md");
 });
 
-// --- entity review reducers ----------------------------------------------
+// --- local-AI scan scope -------------------------------------------------
 
+test("setAIScope clamps the range to the chosen document", () => {
+  resetState();
+  setState({ documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }] });
+
+  // A valid range is kept as-is.
+  assert.deepEqual(setAIScope({ docName: "a.pdf", fromPage: 2, toPage: 4 }),
+    { docName: "a.pdf", fromPage: 2, toPage: 4 });
+
+  // To past the last unit is pulled back to it; From below one is pushed up.
+  assert.deepEqual(setAIScope({ fromPage: 0, toPage: 99 }),
+    { docName: "a.pdf", fromPage: 1, toPage: 6 });
+
+  // From after To drags To up so the range never inverts.
+  assert.deepEqual(setAIScope({ fromPage: 5, toPage: 2 }),
+    { docName: "a.pdf", fromPage: 5, toPage: 5 });
+});
+
+test("setAIScope resets to all documents for an unknown or empty name", () => {
+  resetState();
+  setState({ documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }] });
+  setAIScope({ docName: "a.pdf", fromPage: 2, toPage: 4 });
+
+  assert.deepEqual(setAIScope({ docName: "gone.pdf" }),
+    { docName: "", fromPage: 1, toPage: 1 }, "a name not in the list clears the scope");
+  assert.equal(aiScopeArg(), null, "and nothing is sent to Go");
+});
+
+test("aiScopeArg is null until a document is chosen", () => {
+  resetState();
+  assert.equal(aiScopeArg(), null, "the default is every document, whole");
+  setState({ documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }] });
+  setAIScope({ docName: "a.pdf", fromPage: 1, toPage: 3 });
+  assert.deepEqual(aiScopeArg(), { docName: "a.pdf", fromPage: 1, toPage: 3 });
+});
+
+test("a new import drops a scope whose document is gone or shrank", () => {
+  resetState();
+  setState({ documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }] });
+  setAIScope({ docName: "a.pdf", fromPage: 3, toPage: 5 });
+
+  // Re-importing the same document with fewer pages invalidates the range.
+  applyImportResult({ documents: [{ name: "a.pdf", unit: "page", pageCount: 2 }] });
+  assert.deepEqual(getState().aiScope, { docName: "", fromPage: 1, toPage: 1 });
+
+  // A scope still inside the re-imported document survives.
+  setAIScope({ docName: "a.pdf", fromPage: 1, toPage: 2 });
+  applyImportResult({ documents: [{ name: "a.pdf", unit: "page", pageCount: 4 }] });
+  assert.deepEqual(getState().aiScope, { docName: "a.pdf", fromPage: 1, toPage: 2 });
+});
+
+// --- entity review reducers ----------------------------------------------
 import {
   addEntities, removeEntity,
   setEntityVariants, addManualVariant, acceptedEntities,

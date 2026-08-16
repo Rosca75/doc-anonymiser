@@ -260,6 +260,35 @@ export const RAIL = {
   noModels: "(no models found)",
   reprobe: "Check again",
 
+  // Local-AI SCAN SCOPE. Handing a whole document to a small local model is too
+  // much, so the user can aim the scan at one document and a range of its own
+  // units (pages, slides, rows or lines). This scope applies to the Local AI
+  // route only; Smart detection always reads everything because it is cheap.
+  scopeHeading: "What to scan",
+  scopeIntro: "The local AI reads only what you point it at. Scanning one document, or a few pages of one, keeps a small model focused and the pass quick.",
+  scopeAllDocs: "All documents (whole)",
+  scopeDoc: "Document",
+  scopeFrom: "From",
+  scopeTo: "To",
+  /** scopeUnitWord(unit) is the singular unit noun for the range labels. */
+  scopeUnitWord(unit) {
+    return unit || "unit";
+  },
+  /** scopeDocOption(name, count, unit) is one entry in the document dropdown. */
+  scopeDocOption(name, count, unit) {
+    const u = unit || "unit";
+    return `${name} (${count} ${u}${count === 1 ? "" : "s"})`;
+  },
+  /**
+   * scopeRangeWarning(unit) warns that a multi-unit range is a lot to hand a
+   * small model. Shown only when From and To differ, so it names the cost of the
+   * choice the user just made rather than nagging about a single unit.
+   */
+  scopeRangeWarning(unit) {
+    const u = unit || "unit";
+    return `Scanning several ${u}s at once is more for the model to read and can be slow. Narrow the range if the pass stalls.`;
+  },
+
   // The Cloud AI placeholder. It commits only to the thing that
   // will not change about the feature: nothing leaves the machine until the user
   // has said in writing what may.
