@@ -29,6 +29,9 @@
 // whose every significant word is ordinary business/role/document vocabulary
 // ("Revenue Management", "General Terms of Sale") is dropped. Growing that
 // table is the preferred way to cut noise, never loosening a numeric threshold.
+// A run that only ever appears in a postal-address context (a street cue like
+// "rue"/"place" beside or inside it) is likewise dropped as a street or venue
+// name, since there is no location category to route it to (CLAUDE.md §5).
 //
 // The allowlist veto is applied LAST — allowlist wins, as everywhere
 // (CLAUDE.md §5).
@@ -218,6 +221,22 @@ var smartCommonWords = map[string]bool{
 var smartConnectors = map[string]bool{
 	"of": true, "the": true, "and": true, "for": true, "to": true,
 	"in": true, "on": true, "vs": true, "et": true, "ou": true, "aux": true,
+}
+
+// streetCues are address words that mark a nearby capitalised run as part of a
+// POSTAL ADDRESS rather than a person or company: a street name, a square, a
+// town. Checked as the whole token immediately before a run ("rue Gerhard
+// Mercator") or as a token INSIDE it ("Place de l'Hôtel de Ville"). English
+// then French. Deliberately excludes ambiguous abbreviations (st, av, dr) that
+// collide with "Saint", a title, or an initial. Compared accent-folded and
+// lower-cased.
+var streetCues = map[string]bool{
+	"street": true, "road": true, "avenue": true, "boulevard": true,
+	"lane": true, "square": true, "plaza": true, "place": true,
+	"drive": true, "court": true, "terrace": true, "way": true,
+	"rue": true, "impasse": true, "chemin": true, "route": true,
+	"quai": true, "cours": true, "esplanade": true, "allee": true,
+	"ville": true, "city": true, "town": true, "hotel": true, "hôtel": true,
 }
 
 // smartParticles are the lowercase name particles tolerated INSIDE a
@@ -423,14 +442,15 @@ const maxContexts = 3
 
 // smartRun is one occurrence of a capitalised run during extraction.
 type smartRun struct {
-	text          string
-	start, end    int  // byte offsets in the source text
-	sentenceStart bool // the run begins a sentence
-	hasSuffix     bool // a legal suffix follows (and is included)
-	hasTitle      bool // a person-title cue opened the run
-	hasTrademark  bool // a trademark mark follows the run
-	hasProduct    bool // a product head noun is in or beside the run
-	words         int  // significant (non-particle) word count
+	text           string
+	start, end     int  // byte offsets in the source text
+	sentenceStart  bool // the run begins a sentence
+	hasSuffix      bool // a legal suffix follows (and is included)
+	hasTitle       bool // a person-title cue opened the run
+	hasTrademark   bool // a trademark mark follows the run
+	hasProduct     bool // a product head noun is in or beside the run
+	addressContext bool // a street cue sits beside or inside the run (an address)
+	words          int  // significant (non-particle) word count
 }
 
 // SmartDetectWithOptions is SmartDetect with the tuning
@@ -474,6 +494,7 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		qualifies    bool
 		contexts     []string
 		sentenceOnly bool
+		addressOnly  bool
 	}
 	groups := map[string]*group{}
 	order := []string{}
@@ -489,13 +510,16 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		}
 		g, ok := groups[r.text]
 		if !ok {
-			g = &group{text: r.text, firstStart: r.start, sentenceOnly: true}
+			g = &group{text: r.text, firstStart: r.start, sentenceOnly: true, addressOnly: true}
 			groups[r.text] = g
 			order = append(order, r.text)
 		}
 		g.count++
 		if !r.sentenceStart {
 			g.sentenceOnly = false
+		}
+		if !r.addressContext {
+			g.addressOnly = false
 		}
 		// Category priority, strongest cue first: a legal form names a
 		// company, a trademark names a product, a title names a person, a
@@ -563,13 +587,26 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		// in an address stays a company), and it lifts the score so a real
 		// person clears the confidence floor instead of being filtered as a
 		// bare multi-word guess.
-		if emailNameMatch(emailNames, g.text) {
+		emailMatched := emailNameMatch(emailNames, g.text)
+		if emailMatched {
 			if !g.qualifies {
 				g.category = CatPersonNames
 			}
 			if score < emailPersonScore {
 				score = emailPersonScore
 			}
+		}
+
+		// Address suppression: a run that only ever appears in a POSTAL-ADDRESS
+		// context (a street cue like "rue"/"avenue"/"place" beside it, or a
+		// postal code on its line) is a street or venue name, not a person or a
+		// company. "2, rue Gerhard Mercator" must not propose "Gerhard Mercator"
+		// as someone to anonymise. A legal suffix, a title cue, a trademark or a
+		// matching email name overrides this: a real person can sign above their
+		// own address. There is no location category among the eight
+		// (CLAUDE.md §5), so an address value is dropped, not rerouted.
+		if g.addressOnly && !g.qualifies && !emailMatched {
+			continue
 		}
 		if !keepCandidate(g.text, r, g.count, score, opts) {
 			continue
@@ -767,6 +804,18 @@ func extractRunsContext(ctx context.Context, text string) ([]smartRun, error) {
 		r.hasTrademark = followedByTrademark(text, r.end)
 		r.hasProduct = r.hasTrademark || hasProductHeadNoun(text, r)
 
+		// Address context: a street cue immediately before the run
+		// ("rue Gerhard Mercator") or as a token inside it ("Place de la
+		// Gare"). Marks the run as part of a postal address so it is not
+		// proposed as a person or company (unless a stronger cue vouches).
+		r.addressContext = runHasStreetCue(r.text)
+		if !r.addressContext && i > 0 {
+			prev := foldAccentsLower(strings.Trim(tokens[i-1].text, ".,;:"))
+			if streetCues[prev] {
+				r.addressContext = true
+			}
+		}
+
 		// Very short candidates are noise ("Al", "Le"), and a run that IS
 		// a bare legal form ("GmbH" discussed as a concept) is not a name.
 		if len([]rune(r.text)) >= 3 && !isBareSuffix(r.text) {
@@ -780,11 +829,12 @@ func extractRunsContext(ctx context.Context, text string) ([]smartRun, error) {
 			// names and produce no sub-run.
 			if r.sentenceStart && !r.hasSuffix && !r.hasTitle && last > i {
 				sub := smartRun{
-					text:          text[tokens[i+1].start:r.end],
-					start:         tokens[i+1].start,
-					end:           r.end,
-					sentenceStart: false,
-					words:         significantWords(text[tokens[i+1].start:r.end]),
+					text:           text[tokens[i+1].start:r.end],
+					start:          tokens[i+1].start,
+					end:            r.end,
+					sentenceStart:  false,
+					addressContext: r.addressContext,
+					words:          significantWords(text[tokens[i+1].start:r.end]),
 				}
 				if len([]rune(sub.text)) >= 3 && !isBareSuffix(sub.text) {
 					runs = append(runs, sub)
@@ -794,6 +844,20 @@ func extractRunsContext(ctx context.Context, text string) ([]smartRun, error) {
 		i = j
 	}
 	return runs, nil
+}
+
+// runHasStreetCue reports whether any whole token of the run is a street cue
+// ("Place de la Gare" contains "Place"). Tokens are split on spaces, hyphens
+// and apostrophes so "l'Hôtel" contributes "hotel", and compared accent-folded.
+func runHasStreetCue(runText string) bool {
+	for _, w := range strings.FieldsFunc(runText, func(r rune) bool {
+		return r == ' ' || r == '-' || r == '\'' || r == '\u2019'
+	}) {
+		if streetCues[foldAccentsLower(w)] {
+			return true
+		}
+	}
+	return false
 }
 
 // isBareSuffix reports whether the whole run text is just a legal form

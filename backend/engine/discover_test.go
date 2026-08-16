@@ -598,6 +598,56 @@ func TestSmartDetectNegativeGazetteerDropsBusinessPhrases(t *testing.T) {
 	}
 }
 
+// --- address / location suppression ----------------------------------------
+
+// TestSmartDetectSuppressesStreetAddress: a name that only ever appears in a
+// postal-address context is a street, not a person. "rue Gerhard Mercator"
+// must not propose "Gerhard Mercator" as someone to anonymise.
+func TestSmartDetectSuppressesStreetAddress(t *testing.T) {
+	text := "Our office is at 2, rue Gerhard Mercator in the capital. " +
+		"Post to 2, rue Gerhard Mercator as well.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if c := findCandidate(got, "Gerhard Mercator"); c != nil {
+		t.Errorf("a street name must not be proposed, got %+v", c)
+	}
+}
+
+// TestSmartDetectAddressCueInsideRun: the cue can be a token INSIDE the run
+// ("Place de la Gare"), not only the word before it.
+func TestSmartDetectAddressCueInsideRun(t *testing.T) {
+	text := "The venue is Place de la Gare downtown. Place de la Gare hosts it.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if c := findCandidate(got, "Place de la Gare"); c != nil {
+		t.Errorf("an address phrase must be suppressed, got %+v", c)
+	}
+}
+
+// TestSmartDetectPersonAboveOwnAddressSurvives: a real person can sign just
+// above their address. The email name overrides the address suppression for
+// the person, while the street on the next line is still dropped.
+func TestSmartDetectPersonAboveOwnAddressSurvives(t *testing.T) {
+	text := "Best regards, Oscar Liber <oscar.liber@pwc.lu>\n" +
+		"2, rue Gerhard Mercator, Luxembourg.\n" +
+		"Oscar Liber signed.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if findCandidate(got, "Oscar Liber") == nil {
+		t.Errorf("the signer named by an address must survive: %+v", got)
+	}
+	if c := findCandidate(got, "Gerhard Mercator"); c != nil {
+		t.Errorf("the street on the address line must be dropped, got %+v", c)
+	}
+}
+
+// TestSmartDetectStreetCueDoesNotSuppressSuffixedCompany: a legal suffix
+// overrides address suppression, so a company at its own address survives.
+func TestSmartDetectStreetCueDoesNotSuppressSuffixedCompany(t *testing.T) {
+	text := "rue Alpine Trust S.A. is a coincidence. Alpine Trust S.A. billed us.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if findCandidate(got, "Alpine Trust S.A.") == nil {
+		t.Errorf("a legal-suffix company must survive an address cue: %+v", got)
+	}
+}
+
 // TestSmartDetectConnectorsInsideCommonPhrase: "Terms of Sale" is all-common
 // only if the connector "of" is skipped like a particle; without that skip the
 // phrase would leak through as a candidate.
