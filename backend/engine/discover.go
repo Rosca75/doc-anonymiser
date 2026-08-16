@@ -580,18 +580,18 @@ type smartRun struct {
 // which of their proposals reach the review list, and every candidate
 // carries the heuristic score the filtering used (candidateScore), so the
 // UI can filter further without recomputing anything.
+//
+// It runs country-agnostic (the organisation-keyword signal uses only the
+// common English set); the App layer, which knows the document country, calls
+// SmartDetectContext directly with it.
 func SmartDetectWithOptions(text string, allow *Allowlist, opts SmartDetectOptions) []Candidate {
-	candidates, _ := SmartDetectContext(context.Background(), text, allow, opts, "")
-	return candidates
-}
-
-// SmartDetectWithOptionsCountry is SmartDetectWithOptions with the document
-// COUNTRY supplied, so the country-scoped organisation-keyword signal applies
-// (a Luxembourg document recognises "Société coopérative" and "Gesellschaft",
-// a UK one does not). "" means "common English keywords only", which is what
-// the country-agnostic SmartDetectWithOptions passes.
-func SmartDetectWithOptionsCountry(text string, allow *Allowlist, opts SmartDetectOptions, country string) []Candidate {
-	candidates, _ := SmartDetectContext(context.Background(), text, allow, opts, country)
+	// context.Background() cannot be cancelled, so SmartDetectContext never
+	// returns an error here; the check satisfies the no-blank-error rule and
+	// keeps the wrapper honest if the contract ever changes.
+	candidates, err := SmartDetectContext(context.Background(), text, allow, opts, "")
+	if err != nil {
+		return nil
+	}
 	return candidates
 }
 

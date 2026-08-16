@@ -19,6 +19,16 @@ func findCandidate(cands []Candidate, text string) *Candidate {
 	return nil
 }
 
+// smartDetectCountry is the test-side country-aware wrapper: it runs the
+// offline pass with a document country so the country-scoped org-keyword signal
+// applies. It lives here (not in discover.go) because the only non-test caller
+// that needs a country, the App layer, calls SmartDetectContext directly; a
+// production wrapper would be unreachable from any main package (deadcode).
+func smartDetectCountry(text string, allow *Allowlist, opts SmartDetectOptions, country string) []Candidate {
+	cands, _ := SmartDetectContext(context.Background(), text, allow, opts, country)
+	return cands
+}
+
 func TestSmartDetectSuffixGazetteer(t *testing.T) {
 	cases := []struct {
 		name string
@@ -624,12 +634,12 @@ func TestSmartDetectOrgKeywordCommon(t *testing.T) {
 func TestSmartDetectOrgKeywordCountryScoped(t *testing.T) {
 	text := "Signed by PwC Société on Monday. PwC Société confirmed.\n"
 
-	lu := SmartDetectWithOptionsCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryLU)
+	lu := smartDetectCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryLU)
 	if c := findCandidate(lu, "PwC Société"); c == nil || c.Category != CatEntityNames {
 		t.Errorf("Luxembourg must read \"Société\" as a company: %+v", lu)
 	}
 
-	uk := SmartDetectWithOptionsCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryUK)
+	uk := smartDetectCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryUK)
 	if c := findCandidate(uk, "PwC Société"); c != nil && c.Category == CatEntityNames {
 		t.Errorf("the UK has no French keyword, so \"Société\" must not vouch a company: %+v", c)
 	}
@@ -640,7 +650,7 @@ func TestSmartDetectOrgKeywordCountryScoped(t *testing.T) {
 // name ("PwC Société coopérative"), not the capitalised prefix alone.
 func TestSmartDetectOrgKeywordAbsorbsLowercaseTail(t *testing.T) {
 	text := "Issued by PwC Société coopérative today. PwC Société coopérative billed.\n"
-	got := SmartDetectWithOptionsCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryLU)
+	got := smartDetectCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryLU)
 	if c := findCandidate(got, "PwC Société coopérative"); c == nil || c.Category != CatEntityNames {
 		t.Errorf("the lowercase tail must be absorbed into the company name: %+v", got)
 	}
@@ -650,7 +660,7 @@ func TestSmartDetectOrgKeywordAbsorbsLowercaseTail(t *testing.T) {
 // so a German organisation word vouches a company there.
 func TestSmartDetectOrgKeywordGermanForLuxembourg(t *testing.T) {
 	text := "Vertrag mit Alpen Gesellschaft unterschrieben. Alpen Gesellschaft zahlte.\n"
-	got := SmartDetectWithOptionsCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryLU)
+	got := smartDetectCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryLU)
 	if c := findCandidate(got, "Alpen Gesellschaft"); c == nil || c.Category != CatEntityNames {
 		t.Errorf("a German org word must vouch a company in Luxembourg: %+v", got)
 	}
@@ -662,7 +672,7 @@ func TestSmartDetectOrgKeywordSurvivesStrict(t *testing.T) {
 	text := "We met Delta Group once.\n"
 	strict := DefaultSmartDetectOptions()
 	strict.Strictness = StrictnessStrict
-	got := SmartDetectWithOptionsCountry(text, NewEmptyAllowlist(), strict, CountryUK)
+	got := smartDetectCountry(text, NewEmptyAllowlist(), strict, CountryUK)
 	if findCandidate(got, "Delta Group") == nil {
 		t.Errorf("strict must keep an org-keyword company: %+v", got)
 	}

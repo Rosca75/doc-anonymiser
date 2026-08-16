@@ -255,8 +255,8 @@ func (a *App) refineCategories(ctx context.Context, llm *ollama.Client, res *Det
 // that is cancelled mid-scan contributes what it found before stopping.
 // country scopes the organisation-keyword signal to the document country.
 func (a *App) runSmartPhase(ctx context.Context, docs []engine.Document, allow *engine.Allowlist,
-	opts engine.SmartDetectOptions, country string, res *DetectionResult, report func(DetectionProgress)) {
-
+	opts engine.SmartDetectOptions, country string, res *DetectionResult, report func(DetectionProgress),
+) {
 	merged := map[string]*engine.Candidate{}
 	var order []string
 	for i, doc := range docs {
