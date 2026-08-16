@@ -598,7 +598,63 @@ func TestSmartDetectNegativeGazetteerDropsBusinessPhrases(t *testing.T) {
 	}
 }
 
-// --- address / location suppression ----------------------------------------
+// --- strictness lever -------------------------------------------------------
+
+// TestSmartDetectStrictRequiresAnAnchor: strict strictness emits only
+// structurally-vouched candidates. A bare multi-word run (no suffix, title or
+// email name) is dropped however it scored; a legal-suffix company survives.
+func TestSmartDetectStrictRequiresAnAnchor(t *testing.T) {
+	text := "The auditor Marie Duval reviewed it. Alpine Trust S.A. billed us.\n"
+
+	strict := DefaultSmartDetectOptions()
+	strict.Strictness = StrictnessStrict
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), strict)
+	if findCandidate(got, "Marie Duval") != nil {
+		t.Errorf("strict must drop a bare multi-word run: %+v", got)
+	}
+	if findCandidate(got, "Alpine Trust S.A.") == nil {
+		t.Errorf("strict must keep a legal-suffix company: %+v", got)
+	}
+
+	// Balanced (the default) keeps the same bare run: strictness is the lever
+	// that changed the outcome, nothing else.
+	bal := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if findCandidate(bal, "Marie Duval") == nil {
+		t.Errorf("balanced must keep the bare multi-word run: %+v", bal)
+	}
+}
+
+// TestSmartDetectStrictKeepsEmailNamedPerson: an email-named person is
+// structurally vouched, so strict keeps it even though it has no legal suffix.
+func TestSmartDetectStrictKeepsEmailNamedPerson(t *testing.T) {
+	text := "Contact Johannes Borch <johannes.borch@pwc.lu> today.\n"
+	strict := DefaultSmartDetectOptions()
+	strict.Strictness = StrictnessStrict
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), strict)
+	if findCandidate(got, "Johannes Borch") == nil {
+		t.Errorf("strict must keep an email-named person: %+v", got)
+	}
+}
+
+// TestSmartDetectLenientKeepsRareSingleWord: lenient strictness keeps the
+// single-word single-occurrence runs the frequency rule drops. They carry a
+// low score, so this only surfaces them once the confidence floor is lowered.
+func TestSmartDetectLenientKeepsRareSingleWord(t *testing.T) {
+	text := "We discussed Zephyr briefly.\n"
+
+	lenient := DefaultSmartDetectOptions()
+	lenient.Strictness = StrictnessLenient
+	lenient.MinConfidence = 0
+	if findCandidate(SmartDetectWithOptions(text, NewEmptyAllowlist(), lenient), "Zephyr") == nil {
+		t.Errorf("lenient with no floor must keep a rare single-word run")
+	}
+
+	bal := DefaultSmartDetectOptions()
+	bal.MinConfidence = 0
+	if findCandidate(SmartDetectWithOptions(text, NewEmptyAllowlist(), bal), "Zephyr") != nil {
+		t.Errorf("balanced must drop a single-word single-occurrence run even with no floor")
+	}
+}
 
 // TestSmartDetectSuppressesStreetAddress: a name that only ever appears in a
 // postal-address context is a street, not a person. "rue Gerhard Mercator"

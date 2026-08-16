@@ -752,10 +752,24 @@ test("setSmartDetectOptions accepts the permissive extreme (CR13)", () => {
   resetState();
   const out = setSmartDetectOptions({
     minLength: 0, minOccurrences: 0, excludeCommonWords: false, minConfidence: 0,
+    strictness: "lenient",
   });
   assert.deepEqual(out, {
     minLength: 0, minOccurrences: 0, excludeCommonWords: false, minConfidence: 0,
+    strictness: "lenient",
   });
+});
+
+test("setSmartDetectOptions accepts every strictness level and ignores junk", () => {
+  resetState();
+  for (const level of ["lenient", "balanced", "strict"]) {
+    assert.equal(setSmartDetectOptions({ strictness: level }).strictness, level);
+  }
+  // A value outside the known set is ignored, like an out-of-range number.
+  const before = getState().settings.smartDetect.strictness;
+  setSmartDetectOptions({ strictness: "aggressive" });
+  assert.equal(getState().settings.smartDetect.strictness, before,
+    "an unknown strictness must not be stored");
 });
 
 test("setSmartDetectOptions ignores invalid values rather than storing them (CR13)", () => {

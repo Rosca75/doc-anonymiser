@@ -463,6 +463,13 @@ function smartTuning(s) {
 
   return `<div class="rail-block">` +
     `<p class="hint">${escapeHTML(VALUES.smartSettingsHint)}</p>` +
+    `<label class="rail-field" for="smart-strictness">` +
+    `<span class="rail-field-label">${escapeHTML(VALUES.smartStrictness)}</span>` +
+    `<select id="smart-strictness">` +
+    strictnessOption("lenient", VALUES.smartStrictnessLenient, opts.strictness) +
+    strictnessOption("balanced", VALUES.smartStrictnessBalanced, opts.strictness) +
+    strictnessOption("strict", VALUES.smartStrictnessStrict, opts.strictness) +
+    `</select></label><p class="hint">${escapeHTML(VALUES.smartStrictnessHint)}</p>` +
     numberRow("smart-min-length", VALUES.smartMinLength, VALUES.smartMinLengthHint,
       opts.minLength, `min="0" max="40" step="1"`) +
     numberRow("smart-min-occurrences", VALUES.smartMinOccurrences, VALUES.smartMinOccurrencesHint,
@@ -475,6 +482,12 @@ function smartTuning(s) {
     `</label>` +
     `<p class="hint">${escapeHTML(VALUES.smartCommonWordsHint)}</p>` +
     `</div>`;
+}
+
+/** strictnessOption renders one <option>, marked selected when it is current. */
+function strictnessOption(value, label, current) {
+  const selected = (current ?? "balanced") === value ? " selected" : "";
+  return `<option value="${value}"${selected}>${escapeHTML(label)}</option>`;
 }
 
 function wireSmart(container) {
@@ -493,6 +506,9 @@ function wireSmart(container) {
       setSmartDetectOptions(toPatch(value));
     });
   }
+  container.querySelector("#smart-strictness")?.addEventListener("change", (ev) => {
+    setSmartDetectOptions({ strictness: ev.target.value });
+  });
   container.querySelector("#smart-common-words")?.addEventListener("change", (ev) => {
     setSmartDetectOptions({ excludeCommonWords: ev.target.checked });
   });

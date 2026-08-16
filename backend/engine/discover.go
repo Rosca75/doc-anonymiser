@@ -94,7 +94,25 @@ type SmartDetectOptions struct {
 	// MinConfidence is the heuristic-score floor, 0.0 to 1.0. 0 disables
 	// the check.
 	MinConfidence float32 `json:"minConfidence"`
+	// Strictness selects HOW MANY detectors a candidate must satisfy, a
+	// lever orthogonal to MinConfidence (which is about how HIGH they must
+	// score). "" and "balanced" are the default behaviour; "strict" emits
+	// only structurally-anchored candidates (a legal suffix, a title cue, a
+	// trademark, a matching email name or a code), trading recall for
+	// precision; "lenient" additionally keeps the rare single-word single-
+	// occurrence runs the frequency rule drops. Unknown values read as
+	// balanced, so an older UI that never sets it is unaffected.
+	Strictness string `json:"strictness,omitempty"`
 }
+
+// Strictness levels for SmartDetectOptions.Strictness. Kept as string
+// constants (not an enum type) so they cross the Wails JSON boundary and a
+// session file unchanged, and an empty string keeps meaning "balanced".
+const (
+	StrictnessLenient  = "lenient"
+	StrictnessBalanced = "balanced"
+	StrictnessStrict   = "strict"
+)
 
 // DefaultSmartDetectOptions are the options the APPLICATION starts with
 // They are deliberately stricter than the legacy
@@ -113,6 +131,7 @@ func DefaultSmartDetectOptions() SmartDetectOptions {
 		MinOccurrences:     1,
 		ExcludeCommonWords: true,
 		MinConfidence:      0.5,
+		Strictness:         StrictnessBalanced,
 	}
 }
 
@@ -255,14 +274,20 @@ var smartTitles = map[string]bool{
 	"M": true, "Mme": true, "Mlle": true, "Prof": true, "Herr": true, "Frau": true,
 }
 
-// smartLeadingStopwords are articles/pronouns that must not OPEN a run:
-// "The CSSF" is the term "CSSF", not an entity called "The CSSF".
-// Table-driven; extend freely.
+// smartLeadingStopwords are articles/pronouns/salutations that must not OPEN a
+// run: "The CSSF" is the term "CSSF", not an entity called "The CSSF", and
+// "Hello Oscar" is the person "Oscar", not "Hello Oscar". Table-driven; extend
+// freely.
 var smartLeadingStopwords = map[string]bool{
 	"The": true, "A": true, "An": true, "This": true, "That": true,
 	"These": true, "Those": true, "Our": true, "We": true, "They": true,
 	"Le": true, "La": true, "Les": true, "Un": true, "Une": true,
 	"Ce": true, "Cette": true, "Ces": true, "Nos": true, "Notre": true,
+	// Salutations and sign-offs, so a greeting never glues onto the name it
+	// addresses ("Hello Oscar", "Cher Thierry", "Best regards Marie").
+	"Hello": true, "Hi": true, "Dear": true, "Hey": true,
+	"Bonjour": true, "Bonsoir": true, "Salut": true, "Cher": true,
+	"Chère": true, "Chers": true, "Best": true, "Regards": true,
 }
 
 // productHeadNouns mark a capitalised run as a PRODUCT rather than a company:
@@ -542,21 +567,42 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		}
 	}
 
+	strictness := opts.Strictness
 	var out []Candidate
 	for _, key := range order {
 		g := groups[key]
 		r := firstRunFor(runs, key)
 
+		// A run is VOUCHED when a structural signal stands behind it: a legal
+		// suffix, a title cue or a trademark (g.qualifies), or a name spelt out
+		// in an address in the same document (emailMatched). Vouched runs bypass
+		// the noise heuristics below, exactly as a legal form always did.
+		emailMatched := emailNameMatch(emailNames, g.text)
+		vouched := g.qualifies || emailMatched
+
 		// Sentence-start rule: a run seen ONLY at sentence starts needs a
 		// second occurrence to qualify (kills "Ensuite", "Yesterday", ...)
-		// unless a suffix or title cue already vouches for it (a company
-		// opening a sentence is still a company).
-		if g.sentenceOnly && g.count < 2 && !g.qualifies {
+		// unless a structural signal already vouches for it (a company opening
+		// a sentence is still a company).
+		if g.sentenceOnly && g.count < 2 && !vouched {
 			continue
 		}
 		// Frequency rule: single-word single-occurrence runs without a
-		// suffix or title cue are dropped.
-		if !g.qualifies && g.count < 2 && r.words < 2 {
+		// structural signal are dropped. Lenient strictness keeps them, for a
+		// reviewer who would rather prune a long list than miss a rare mention;
+		// they still carry a low score, so the confidence floor governs whether
+		// they actually surface.
+		if !vouched && g.count < 2 && r.words < 2 && strictness != StrictnessLenient {
+			continue
+		}
+		// Address suppression: a run that only ever appears in a POSTAL-ADDRESS
+		// context (a street cue like "rue"/"avenue"/"place" beside or inside it)
+		// is a street or venue name, not a person or a company.
+		// "2, rue Gerhard Mercator" must not propose "Gerhard Mercator" as
+		// someone to anonymise. A vouched run overrides this: a real person can
+		// sign above their own address. There is no location category among the
+		// eight (CLAUDE.md §5), so an address value is dropped, not rerouted.
+		if g.addressOnly && !vouched {
 			continue
 		}
 		// Default category for unclassified runs: multi-word runs read as
@@ -576,18 +622,15 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 			continue
 		}
 
-		//  tuning. The score is computed either way, so the
-		// review UI always has it to filter and sort on, even when the
-		// engine-side floor is off.
+		// The score is computed either way, so the review UI always has it to
+		// filter and sort on, even when the engine-side floor is off.
 		score := candidateScore(r, g.count)
 
-		// Email-name signal: a run named by an address in the same document is
-		// a person. It overrides the category UNLESS a legal suffix or title
-		// already vouched for the run (a company whose name happens to appear
-		// in an address stays a company), and it lifts the score so a real
-		// person clears the confidence floor instead of being filtered as a
-		// bare multi-word guess.
-		emailMatched := emailNameMatch(emailNames, g.text)
+		// Email-name signal: a run named by an address is a person. It
+		// overrides the category UNLESS a legal suffix or trademark already
+		// vouched for it (a company whose name appears in an address stays a
+		// company), and it lifts the score so a real person clears the
+		// confidence floor instead of being filtered as a bare multi-word guess.
 		if emailMatched {
 			if !g.qualifies {
 				g.category = CatPersonNames
@@ -597,15 +640,12 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 			}
 		}
 
-		// Address suppression: a run that only ever appears in a POSTAL-ADDRESS
-		// context (a street cue like "rue"/"avenue"/"place" beside it, or a
-		// postal code on its line) is a street or venue name, not a person or a
-		// company. "2, rue Gerhard Mercator" must not propose "Gerhard Mercator"
-		// as someone to anonymise. A legal suffix, a title cue, a trademark or a
-		// matching email name overrides this: a real person can sign above their
-		// own address. There is no location category among the eight
-		// (CLAUDE.md §5), so an address value is dropped, not rerouted.
-		if g.addressOnly && !g.qualifies && !emailMatched {
+		// Strict strictness: emit ONLY structurally-vouched candidates, so a
+		// bare capitalised run or a lone product head noun is dropped however
+		// it scored. This is the high-precision end of the lever, orthogonal to
+		// the numeric confidence floor: strictness is about WHICH detectors are
+		// trusted, the floor is about how high they must score.
+		if strictness == StrictnessStrict && !vouched {
 			continue
 		}
 		if !keepCandidate(g.text, r, g.count, score, opts) {
