@@ -18,6 +18,7 @@ import {
 import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
 import {
   ALL_CATEGORIES, NAME_CATEGORIES, resetState, getState, setState, setUseAI,
+  setAIScope,
 } from "./state.js";
 import { textOf, stripTags, all, one, exists } from "./testhtml.js";
 
@@ -234,6 +235,65 @@ test("the Local AI fields are disabled while the route is off", () => {
   // The port is never gated: it is how a user FIXES a connection, so locking
   // it would lock them out of fixing the thing the gate complains about.
   assert.ok(!("disabled" in one(off, "#ollama-port").attrs));
+});
+
+// --- The Local-AI scan scope ---------------------------------------------
+
+/** localAIHTML renders the Local AI section with documents and an optional
+ *  scope, the route switched on and Ollama present so the fields are live. */
+function localAIHTML({ documents = [], scope = null, useAI = true } = {}) {
+  resetState();
+  setState({ ollama: { available: true, models: ["m"], detail: "" }, documents });
+  if (useAI) setUseAI(true);
+  if (scope) setAIScope(scope);
+  return all(railBody(getState()), "section.rail-section")[1].outer;
+}
+
+test("the scan-scope picker defaults to all documents with no range", () => {
+  const html = localAIHTML({
+    documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
+  });
+  const select = one(html, "#ai-scope-doc");
+  assert.ok(select, "the Local AI section offers a document picker");
+  const selected = all(select.outer, "option").find((o) => "selected" in o.attrs);
+  assert.equal(selected.attrs.value, "", "all documents is the default");
+  assert.ok(!exists(html, "#ai-scope-from"), "no range until a document is chosen");
+});
+
+test("choosing a multi-unit document reveals a bounded range", () => {
+  const html = localAIHTML({
+    documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
+    scope: { docName: "a.pdf", fromPage: 1, toPage: 1 },
+  });
+  const from = one(html, "#ai-scope-from");
+  const to = one(html, "#ai-scope-to");
+  assert.ok(from && to, "From and To inputs appear for a multi-unit document");
+  assert.equal(from.attrs.max, "6", "the range is bounded by the page count");
+  assert.equal(to.attrs.max, "6");
+});
+
+test("a single-unit document offers no range at all", () => {
+  const html = localAIHTML({
+    documents: [{ name: "note.txt", unit: "line", pageCount: 1 }],
+    scope: { docName: "note.txt", fromPage: 1, toPage: 1 },
+  });
+  assert.ok(!exists(html, "#ai-scope-from"),
+    "a document with one addressable unit has nothing to range over");
+});
+
+test("a multi-unit range warns, a single unit does not", () => {
+  const range = localAIHTML({
+    documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
+    scope: { docName: "a.pdf", fromPage: 2, toPage: 4 },
+  });
+  assert.ok(exists(range, "#ai-scope-warn"),
+    "spanning several pages is the 'too much' the feature warns about");
+  const single = localAIHTML({
+    documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
+    scope: { docName: "a.pdf", fromPage: 3, toPage: 3 },
+  });
+  assert.ok(!exists(single, "#ai-scope-warn"),
+    "one page is not a range, so it does not nag");
 });
 
 // --- The trigger grouping ------------------------------------------------

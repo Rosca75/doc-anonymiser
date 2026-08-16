@@ -83,16 +83,41 @@ type DetectionResult struct {
 	Status    string          `json:"status"`
 }
 
+// AIScope narrows the local-AI route to one document and a range of its own
+// sub-units (pages/slides/rows/lines — see engine.Document.PageCount).
+//
+// It exists because handing a whole document to a small local model is "too
+// much" (the reported problem): the scan stalls or the context window
+// overflows. Scoping is deliberately LOCAL-AI ONLY — the offline Smart route is
+// cheap and reads everything — so it lives here rather than in Settings, and it
+// is a per-run choice that is never persisted to a session.
+//
+// A nil *AIScope, or one with an empty DocName, means "every document, whole"
+// — the unchanged behaviour.
+type AIScope struct {
+	DocName  string `json:"docName"`  // "" = every document
+	FromPage int    `json:"fromPage"` // 1-based inclusive
+	ToPage   int    `json:"toPage"`   // 1-based inclusive
+}
+
+// active reports whether this scope actually narrows anything.
+func (s *AIScope) active() bool {
+	return s != nil && s.DocName != ""
+}
+
 // RunDetection runs every enabled detection route over the named files, in
 // order, under ONE cancellation context.
 //
 // Which routes run is decided HERE, from the stored settings, not by the
-// caller: UseSmartDetect and UseAI are the switches on the Configure rail,
-// and the AI route additionally requires Ollama to actually answer. A
-// frontend that asks for a route the user switched off does not get it.
+// caller: UseSmartDetect and UseAI are the switches on the Configure rail, and
+// the AI route additionally requires Ollama to actually answer. A frontend that
+// asks for a route the user switched off does not get it.
+//
+// aiScope narrows the LOCAL-AI route only (Smart detection always reads every
+// file); nil leaves the AI route reading every document whole.
 //
 // It always emits exactly one terminal event before returning.
-func (a *App) RunDetection(fileNames []string, allowTerms []string) (*DetectionResult, error) {
+func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIScope) (*DetectionResult, error) {
 	docs := a.docsByName(fileNames)
 	if len(docs) == 0 {
 		return nil, fmt.Errorf(
@@ -165,7 +190,7 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string) (*DetectionR
 		if phase == PhaseSmart {
 			a.runSmartPhase(ctx, docs, allow, settings.SmartDetect, res, report)
 		} else {
-			a.runAIPhase(ctx, docs, llm, res, report)
+			a.runAIPhase(ctx, docs, llm, aiScope, res, report)
 		}
 		if ctx.Err() != nil {
 			break
@@ -277,21 +302,58 @@ func (a *App) runSmartPhase(ctx context.Context, docs []engine.Document, allow *
 // runAIPhase is the local-model route. Oversized documents are SKIPPED and
 // said so, rather than failing the run: the context window is a fact about
 // the model, not a mistake the user made.
+//
+// When scope is active the route reads ONE document and only the requested
+// page range of it (CLAUDE.md §5), which is the whole point of the feature:
+// keep the text handed to a small local model small. The Smart route is
+// unaffected — it already read everything.
 func (a *App) runAIPhase(ctx context.Context, docs []engine.Document, llm *ollama.Client,
-	res *DetectionResult, report func(DetectionProgress)) {
+	scope *AIScope, res *DetectionResult, report func(DetectionProgress)) {
 
-	var readable []engine.Document
+	// scanUnit pairs a document with the exact text the AI should read for it:
+	// the whole markdown normally, or one page range when scoped.
+	type scanUnit struct {
+		name string
+		text string
+	}
+	var units []scanUnit
+	scopeMatched := false
 	for _, doc := range docs {
-		if chunks := llm.EstimateChunks(doc.Markdown); chunks > ollama.MaxChunksPerDocument {
+		if scope.active() {
+			if doc.Name != scope.DocName {
+				continue
+			}
+			scopeMatched = true
+			text, err := doc.PageRangeMarkdown(scope.FromPage, scope.ToPage)
+			if err != nil {
+				// An out-of-range scope is the user's request, not a file
+				// problem: report it and let the run finish cleanly.
+				res.Errors = append(res.Errors, err.Error())
+				continue
+			}
+			units = append(units, scanUnit{name: doc.Name, text: text})
+			continue
+		}
+		units = append(units, scanUnit{name: doc.Name, text: doc.Markdown})
+	}
+	if scope.active() && !scopeMatched {
+		res.Errors = append(res.Errors, fmt.Sprintf(
+			"the local AI was scoped to %q, which is not among the imported documents; import it or clear the scope",
+			scope.DocName))
+	}
+
+	var readable []scanUnit
+	for _, u := range units {
+		if chunks := llm.EstimateChunks(u.text); chunks > ollama.MaxChunksPerDocument {
 			res.Skipped = append(res.Skipped, DetectionSkip{
-				Name: doc.Name,
+				Name: u.name,
 				Reason: fmt.Sprintf(
-					"too large for the local AI (%d chunks, the limit is %d). Smart detection still read it; to include it here, split it into smaller files.",
+					"too large for the local AI (%d chunks, the limit is %d). Smart detection still read it; to include it here, split it into smaller files or scope the local AI to a page range.",
 					chunks, ollama.MaxChunksPerDocument),
 			})
 			continue
 		}
-		readable = append(readable, doc)
+		readable = append(readable, u)
 	}
 
 	// Partial work is kept whatever ends the loop, which is why the merge is
@@ -300,15 +362,15 @@ func (a *App) runAIPhase(ctx context.Context, docs []engine.Document, llm *ollam
 	var batches [][]engine.ProposedEntity
 	defer func() { res.Proposals = ollama.MergeProposals(batches...) }()
 
-	for i, doc := range readable {
+	for i, u := range readable {
 		if ctx.Err() != nil {
 			return
 		}
-		report(DetectionProgress{DocIndex: i, DocCount: len(readable), DocName: doc.Name})
+		report(DetectionProgress{DocIndex: i, DocCount: len(readable), DocName: u.name})
 
-		proposals, err := llm.DiscoverWithProgress(ctx, doc.Markdown, func(index, total int) {
+		proposals, err := llm.DiscoverWithProgress(ctx, u.text, func(index, total int) {
 			report(DetectionProgress{
-				DocIndex: i, DocCount: len(readable), DocName: doc.Name,
+				DocIndex: i, DocCount: len(readable), DocName: u.name,
 				ChunkIndex: index, ChunkCount: total,
 			})
 		})
@@ -324,7 +386,7 @@ func (a *App) runAIPhase(ctx context.Context, docs []engine.Document, llm *ollam
 			// nine. This is the case that used to abort the whole run with an
 			// error the caller turned into a toast and nothing else.
 			res.Errors = append(res.Errors,
-				fmt.Sprintf("the local AI failed on %q: %v", doc.Name, err))
+				fmt.Sprintf("the local AI failed on %q: %v", u.name, err))
 		}
 	}
 }

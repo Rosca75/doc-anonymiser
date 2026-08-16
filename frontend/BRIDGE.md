@@ -57,6 +57,13 @@ knows which form it needs. `"line"` is the common fallback, not an error: a page
 count can only come from what the writing application cached in
 `docProps/app.xml`, and that part is optional.
 
+`DocumentInfo` also carries `pageCount`: how many units the LOCAL AI scan scope
+can address for this document (`PageRangeMarkdown` is 1-based inclusive over
+them). For PDF and DOCX it counts the explicit per-page texts held at ingestion;
+for a flat CSV/XLSX sheet it is the row count, for PPTX the slide count, for
+TXT/MD the line count; a complex sheet or a single-unit document reports 1. The
+Local AI section sizes its From/To range inputs from it.
+
 ## Settings
 
 | `api.js` wrapper | Args | Resolves to |
@@ -88,7 +95,7 @@ display choice: it decides which country-specific regex categories run.
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
-| `runDetection(fileNames, allowTerms)` | names, allowlist | `DetectionResult {candidates, proposals, phases, skipped, errors, cancelled, status}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). |
+| `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, fromPage, toPage}` (null = every document whole; restricts the LOCAL AI route only, 1-based inclusive over the document's own page/slide/row/line units) | `DetectionResult {candidates, proposals, phases, skipped, errors, cancelled, status}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
 | `cancelDetection()` | — | aborts the in-flight run, reaching whichever route is running, including mid-file |
 | `expandVariants(entity)` | entity | `{category, canonical, manualVariants, excludedVariants}` |
 | `countTermMatches(term)` | term | `{count, documents}`, the live read-out under the manual add-value row (debounced) |

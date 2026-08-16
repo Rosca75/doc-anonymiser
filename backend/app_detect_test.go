@@ -103,7 +103,7 @@ func TestDetectionAlwaysEndsWithATerminalEvent(t *testing.T) {
 	app := detectionApp()
 	rec := withRecorder(t, app)
 
-	if _, err := app.RunDetection([]string{"a.txt", "b.txt", "c.txt"}, nil); err != nil {
+	if _, err := app.RunDetection([]string{"a.txt", "b.txt", "c.txt"}, nil, nil); err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
 	if got := rec.count("detection:done"); got != 1 {
@@ -125,7 +125,7 @@ func TestDetectionWithNoRouteOnStillEnds(t *testing.T) {
 	app.settings.UseAI = false
 	rec := withRecorder(t, app)
 
-	res, err := app.RunDetection([]string{"a.txt"}, nil)
+	res, err := app.RunDetection([]string{"a.txt"}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestDetectionProgressNeverGoesBackwards(t *testing.T) {
 	app.settings.UseAI = true
 	rec := withRecorder(t, app)
 
-	res, err := app.RunDetection([]string{"a.txt", "b.txt", "c.txt"}, nil)
+	res, err := app.RunDetection([]string{"a.txt", "b.txt", "c.txt"}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestDetectionKeepsGoingWhenOneFileFails(t *testing.T) {
 	app.settings.UseAI = true
 	rec := withRecorder(t, app)
 
-	res, err := app.RunDetection([]string{"a.txt", "b.txt", "c.txt"}, nil)
+	res, err := app.RunDetection([]string{"a.txt", "b.txt", "c.txt"}, nil, nil)
 	if err != nil {
 		t.Fatalf("one failing file must not fail the run: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestDetectionCancellationIsHonestAboutIt(t *testing.T) {
 		}
 	}()
 
-	res, err := app.RunDetection([]string{"big.txt", "a.txt", "b.txt", "c.txt"}, nil)
+	res, err := app.RunDetection([]string{"big.txt", "a.txt", "b.txt", "c.txt"}, nil, nil)
 	if err != nil {
 		t.Fatalf("a cancelled run resolves, it does not fail: %v", err)
 	}
@@ -321,10 +321,115 @@ func TestDetectionRefusesAConcurrentRun(t *testing.T) {
 	app.cancelDetection = cancel
 	defer cancel()
 
-	if _, err := app.RunDetection([]string{"a.txt"}, nil); err == nil {
+	if _, err := app.RunDetection([]string{"a.txt"}, nil, nil); err == nil {
 		t.Error("a second run must be refused while one is in flight")
 	} else if !strings.Contains(err.Error(), "already in progress") {
 		t.Errorf("the refusal must say why: %v", err)
+	}
+}
+
+// scopeChatServer is an Ollama stand-in that records the user content of every
+// /api/chat call, so a test can prove exactly which document text the local AI
+// was handed.
+func scopeChatServer(seen *[]string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.Write([]byte(`{"models":[{"name":"m"}]}`))
+		case "/api/chat":
+			var body struct {
+				Messages []struct {
+					Role    string `json:"role"`
+					Content string `json:"content"`
+				} `json:"messages"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			for _, m := range body.Messages {
+				if m.Role == "user" {
+					*seen = append(*seen, m.Content)
+				}
+			}
+			resp, _ := json.Marshal(map[string]interface{}{
+				"message": map[string]string{"role": "assistant",
+					"content": `{"entity_names":[],"project_names":[],"person_names":[]}`},
+			})
+			w.Write(resp)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+// TestDetectionAIScopeLimitsToPageRange is the whole point of the feature: with
+// a scope set, the local AI must see ONLY the chosen document's chosen pages,
+// never the rest, so a small model is not handed "too much".
+func TestDetectionAIScopeLimitsToPageRange(t *testing.T) {
+	var seen []string
+	srv := scopeChatServer(&seen)
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{
+		{Name: "big.txt", Format: engine.FormatTXT, Unit: engine.UnitLine,
+			Markdown: "alpha line one\nbravo line two\ncharlie line three\ndelta line four\n"},
+	}
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseAI = true
+	app.settings.UseSmartDetect = false // isolate the AI route
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"big.txt"}, nil,
+		&AIScope{DocName: "big.txt", FromPage: 2, ToPage: 3})
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	if len(res.Errors) != 0 {
+		t.Fatalf("a valid scope must not error: %v", res.Errors)
+	}
+
+	joined := strings.Join(seen, "\n")
+	if joined == "" {
+		t.Fatal("the local AI was never called")
+	}
+	for _, want := range []string{"bravo", "charlie"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("the scoped scan missed line %q; saw %q", want, joined)
+		}
+	}
+	for _, leak := range []string{"alpha", "delta"} {
+		if strings.Contains(joined, leak) {
+			t.Errorf("the scope leaked out-of-range line %q; saw %q", leak, joined)
+		}
+	}
+}
+
+// TestDetectionAIScopeOutOfRangeReportsButFinishes: a stale or hand-typed range
+// is the user's request, so it is reported, not crashed on, and the run still
+// ends cleanly.
+func TestDetectionAIScopeOutOfRangeReportsButFinishes(t *testing.T) {
+	var seen []string
+	srv := scopeChatServer(&seen)
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{
+		{Name: "small.txt", Format: engine.FormatTXT, Unit: engine.UnitLine, Markdown: "one\ntwo\n"},
+	}
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseAI = true
+	app.settings.UseSmartDetect = false
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"small.txt"}, nil,
+		&AIScope{DocName: "small.txt", FromPage: 5, ToPage: 9})
+	if err != nil {
+		t.Fatalf("an out-of-range scope must not fail the run: %v", err)
+	}
+	if len(res.Errors) == 0 || !strings.Contains(strings.Join(res.Errors, " "), "out of bounds") {
+		t.Errorf("the out-of-range scope must be reported, got %v", res.Errors)
+	}
+	if len(seen) != 0 {
+		t.Errorf("nothing should have been sent to the model for an invalid range, saw %q", seen)
 	}
 }
 
@@ -337,7 +442,7 @@ func TestDetectionRespectsTheRouteSwitches(t *testing.T) {
 	app.settings.UseAI = true
 	withRecorder(t, app)
 
-	res, err := app.RunDetection([]string{"a.txt"}, nil)
+	res, err := app.RunDetection([]string{"a.txt"}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}

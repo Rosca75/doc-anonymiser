@@ -105,6 +105,13 @@ type DocumentInfo struct {
 	// fallback rather than an error case.
 	UnitCount int    `json:"unitCount"`
 	Unit      string `json:"unit"`
+	// PageCount is how many addressable sub-units (pages/slides/rows/lines)
+	// the local AI can be scoped to (CLAUDE.md §5). It can differ from
+	// UnitCount: a DOCX reports its cached page count for the import list but
+	// can only be sliced where Word left break markers, so a document with no
+	// finer boundary than itself reports 1 here. The frontend uses it to size
+	// the page-range control in the Local AI section.
+	PageCount int `json:"pageCount"`
 }
 
 // ImportResult reports one import action: what loaded and what failed.
@@ -497,6 +504,7 @@ func (a *App) documentInfosLocked() []DocumentInfo {
 			PreviewTruncated: truncated,
 			UnitCount:        d.UnitCount,
 			Unit:             d.Unit,
+			PageCount:        d.PageCount(),
 		})
 	}
 	return infos

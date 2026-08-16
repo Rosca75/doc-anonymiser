@@ -123,6 +123,15 @@ const initialState = {
     },
   },
 
+  // Local-AI SCAN SCOPE (CLAUDE.md §5): which ONE document, and which range of
+  // its own units (pages/slides/rows/lines), the local model reads. Handing a
+  // whole document to a small local model is "too much", so the user can aim
+  // the scan. docName "" means "every document, whole", the unchanged
+  // behaviour. It is a transient per-run choice, deliberately NOT part of
+  // settings, so it never travels in a session file and never reaches Go
+  // through applySettings.
+  aiScope: { docName: "", fromPage: 1, toPage: 1 },
+
   // Entity review state: array of
   // {category, canonical, manualVariants, status: "accepted"|"denied"}.
   entities: [],
@@ -620,6 +629,47 @@ export function setUseAI(on) {
   setState({ settings: { ...state.settings, useAI: !!on } });
 }
 
+// --- Local-AI scan scope ----------------------------------
+
+/**
+ * setAIScope(patch) records which document and page range the local AI reads,
+ * clamped to what actually exists. An empty or unknown docName resets the scope
+ * to "every document, whole", so a stale selection (a document that was removed)
+ * can never send an out-of-range request. from is pinned to <= to, and both to
+ * the selected document's addressable unit count (DocumentInfo.pageCount), so
+ * the numbers the user sees are always requestable.
+ * @param {object} patch any subset of {docName, fromPage, toPage}
+ * @returns {object} the stored scope after clamping
+ */
+export function setAIScope(patch) {
+  const next = { ...state.aiScope, ...(patch ?? {}) };
+  const doc = state.documents.find((d) => d.name === next.docName);
+  if (!next.docName || !doc) {
+    const cleared = { docName: "", fromPage: 1, toPage: 1 };
+    setState({ aiScope: cleared });
+    return cleared;
+  }
+  const count = Math.max(1, doc.pageCount || 1);
+  let from = Number.isInteger(next.fromPage) ? next.fromPage : 1;
+  let to = Number.isInteger(next.toPage) ? next.toPage : from;
+  from = Math.min(Math.max(1, from), count);
+  to = Math.min(Math.max(from, to), count);
+  const scope = { docName: next.docName, fromPage: from, toPage: to };
+  setState({ aiScope: scope });
+  return scope;
+}
+
+/**
+ * aiScopeArg(s) is the scope to hand runDetection, or null when the local AI
+ * should read every document whole. Kept out of the settings payload on
+ * purpose: the scope is a per-run choice, not a saved setting.
+ */
+export function aiScopeArg(s = state) {
+  const sc = s.aiScope;
+  if (!sc || !sc.docName) return null;
+  return { docName: sc.docName, fromPage: sc.fromPage, toPage: sc.toPage };
+}
+
 /**
  * setUseSmartDetect(on) turns the offline heuristic route on or off.
  *
@@ -885,10 +935,17 @@ export function nextStep() {
 export function applyImportResult(result) {
   const documents = result.documents ?? [];
   const previewStillValid = documents.some((d) => d.name === state.previewDoc);
+  // A local-AI scope that named a document no longer in the list would send an
+  // out-of-range request, so it resets to "every document" when its target is
+  // gone (or its page count shrank under the stored range).
+  const scopedDoc = documents.find((d) => d.name === state.aiScope?.docName);
+  const scopeStillValid = scopedDoc &&
+    state.aiScope.toPage <= Math.max(1, scopedDoc.pageCount || 1);
   setState({
     documents,
     importErrors: result.errors ?? [],
     previewDoc: previewStillValid ? state.previewDoc : (documents[0]?.name ?? null),
+    aiScope: scopeStillValid ? state.aiScope : { docName: "", fromPage: 1, toPage: 1 },
     // A fresh import list makes every cached source stale (a re-imported file
     // with the same name is a DIFFERENT file). Dropping the cache is cheaper
     // and safer than deciding which entries survived.

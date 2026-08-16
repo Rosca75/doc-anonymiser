@@ -28,15 +28,36 @@ import (
 // text layer. Kept as a variable so the UI test can assert the exact text.
 const ErrScannedPDF = "No text layer found, this PDF is likely scanned. OCR is not supported; convert it externally first."
 
+// pdfPageSeparator joins consecutive PDF pages in the working markdown. It is
+// also the boundary the page-scoped local-AI scan slices on, which is why the
+// exact per-page texts are returned separately by PDFWithPages: a blank line
+// can occur INSIDE a page too, so the markdown alone cannot be split back into
+// pages reliably.
+const pdfPageSeparator = "\n\n"
+
 // PDF converts raw .pdf bytes to repaired plain text (valid markdown by
 // construction — plain paragraphs). Pages are separated by blank lines.
+//
+// It is the thin wrapper kept for callers that only need the joined markdown;
+// PDFWithPages does the work and additionally returns the per-page texts.
 func PDF(raw []byte) (markdown string, warnings []string, err error) {
+	markdown, _, warnings, err = PDFWithPages(raw)
+	return markdown, warnings, err
+}
+
+// PDFWithPages is PDF plus the per-page text slice, in page order.
+//
+// The pages slice is what the page-scoped local-AI scan addresses (CLAUDE.md
+// §5): the user picks "pages 2 to 4" and only those page texts are sent to the
+// model. joining pages with pdfPageSeparator reproduces markdown exactly, so
+// the two returns never drift.
+func PDFWithPages(raw []byte) (markdown string, pages []string, warnings []string, err error) {
 	// ledongthuc/pdf can panic on malformed files (it was written for
 	// well-formed input). A panic must become an actionable error, never
 	// crash the app — hence the recover.
 	defer func() {
 		if r := recover(); r != nil {
-			markdown, warnings = "", nil
+			markdown, pages, warnings = "", nil, nil
 			err = fmt.Errorf(
 				"the PDF could not be parsed (internal reader error: %v), the file may be damaged or use unsupported features; try re-printing it to PDF and importing again", r)
 		}
@@ -44,14 +65,11 @@ func PDF(raw []byte) (markdown string, warnings []string, err error) {
 
 	reader, err := pdflib.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
-		return "", nil, fmt.Errorf(
+		return "", nil, nil, fmt.Errorf(
 			"the file is not a readable PDF (%v), if it is password-protected, remove the password first", err)
 	}
 
-	var (
-		pages    []string
-		repaired bool
-	)
+	var repaired bool
 	for i := 1; i <= reader.NumPage(); i++ {
 		page := reader.Page(i)
 		if page.V.IsNull() {
@@ -76,14 +94,14 @@ func PDF(raw []byte) (markdown string, warnings []string, err error) {
 
 	if len(pages) == 0 {
 		// The exact scanned-PDF message from CLAUDE.md §5.
-		return "", nil, fmt.Errorf("%s", ErrScannedPDF)
+		return "", nil, nil, fmt.Errorf("%s", ErrScannedPDF)
 	}
 
 	warnings = append(warnings, "PDF text extraction is EXPERIMENTAL, always review the converted text before anonymising")
 	if repaired {
 		warnings = append(warnings, "spacing repair was applied to fix kerning artefacts, verify that words were re-joined correctly")
 	}
-	return strings.Join(pages, "\n\n") + "\n", warnings, nil
+	return strings.Join(pages, pdfPageSeparator) + "\n", pages, warnings, nil
 }
 
 // RepairPDFText applies the nb1 spacing-repair heuristic to extracted PDF
