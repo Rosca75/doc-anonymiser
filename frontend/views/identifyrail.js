@@ -42,7 +42,6 @@ import { button, chipRow, sectionLabel, collapsibleGroup, wireGroups } from "../
 import { CARDS, CONFIGURE, RAIL, VALUES, categoryLabels } from "../copy.js";
 import { examplesFor, countryOptions } from "../countries.js";
 import { categoryAppliesTo, CATEGORY_COUNTRIES } from "../countries.js";
-import { keepScrollPosition } from "../scroll.js";
 
 /**
  * llmDisabledTooltip(port) is what every disabled LLM control says when Ollama
@@ -393,10 +392,8 @@ export function confidenceEffect(percent) {
 
 function wireScope(container) {
   container.querySelector("#document-country")?.addEventListener("change", (ev) => {
-    keepScrollPosition(() => {
-      setDocumentCountry(ev.target.value);
-      pushSettings(container);
-    });
+    setDocumentCountry(ev.target.value);
+    pushSettings(container);
   });
 
   for (const chip of container.querySelectorAll("[data-preset]")) {
@@ -408,13 +405,13 @@ function wireScope(container) {
   }
 
   for (const box of container.querySelectorAll(".cat-toggle")) {
-    // keepScrollPosition wraps the state change so the full re-render it
-    // triggers lands with the rail where the user left it (:
-    // ticking a box in a long list used to jump back to the top).
-    box.addEventListener("change", () => keepScrollPosition(() => {
+    // The full re-render this triggers keeps the rail where the user left it:
+    // scroll is preserved centrally by the shell repaint (scroll.js), so ticking
+    // a box in a long list no longer jumps back to the top.
+    box.addEventListener("change", () => {
       toggleCategory(box.dataset.category, box.checked);
       pushSettings(container);
-    }));
+    });
   }
 
   for (const btn of container.querySelectorAll(".cat-group-all")) {
@@ -426,12 +423,10 @@ function wireScope(container) {
       const groupArray = type === "entity" ? ENTITY_GROUPS : REGEX_GROUPS;
       const group = groupArray[Number(btn.dataset.group)];
       if (!group) return;
-      keepScrollPosition(() => {
-        // ONE reducer call flips the whole group, so there is exactly one
-        // repaint rather than one per category.
-        setCategoryGroup(group[1], btn.dataset.on === "1");
-        pushSettings(container);
-      });
+      // ONE reducer call flips the whole group, so there is exactly one repaint
+      // rather than one per category.
+      setCategoryGroup(group[1], btn.dataset.on === "1");
+      pushSettings(container);
     });
   }
 
@@ -447,10 +442,10 @@ function wireScope(container) {
       if (readout) readout.textContent = String(percent);
       if (effect) effect.textContent = confidenceEffect(percent);
     });
-    confidence.addEventListener("change", () => keepScrollPosition(() => {
+    confidence.addEventListener("change", () => {
       setMinConfidence(Number(confidence.value) / 100);
       return pushSettings(container);
-    }));
+    });
   }
 }
 
@@ -494,7 +489,7 @@ function wireSmart(container) {
       // setSmartDetectOptions validates and IGNORES a bad value rather than
       // storing it, so a typo shows as the field snapping back rather than as
       // smart detection quietly finding nothing.
-      keepScrollPosition(() => setSmartDetectOptions(toPatch(value)));
+      setSmartDetectOptions(toPatch(value));
     });
   }
   container.querySelector("#smart-common-words")?.addEventListener("change", (ev) => {

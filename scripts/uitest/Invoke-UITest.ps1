@@ -259,6 +259,7 @@ function Invoke-DevChecks {
                 Test-Layout $cdp
                 Test-ImportPreview $cdp
                 Test-ConfigureRail $cdp
+                Test-ScrollRetention $cdp
                 Test-TooltipVisibility $cdp
                 Save-Screenshot $cdp 'wizard.png'
             } finally {
@@ -394,6 +395,37 @@ function Test-ConfigureRail([CdpSession]$cdp) {
         -Expected 'all of them laid out with a non-zero height' `
         -Actual "$($r.categoriesWithSize) of $($r.categories) have a height" `
         -Hint 'A checkbox inside a folded group is in the DOM but not something the user can tick.'
+}
+
+# A scrolled panel keeps its position across a repaint. This is a visible-only
+# regression: every state change rewrites the whole shell (main.js paint ->
+# root.innerHTML), so a scrolled panel like the Identify rail snapped back to the
+# top on every tick or drill-down. The fix preserves scroll centrally
+# (frontend/scroll.js); this drives a real action through the rail and checks the
+# offset survived.
+function Test-ScrollRetention([CdpSession]$cdp) {
+    Write-Step 'A scrolled panel keeps its position across a repaint'
+    $r = $cdp.Eval('__uiProbes.scrollRetention()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the scroll-retention probe runs' -Condition $false `
+            -Expected '#identify-rail with a scroller and a category toggle' -Actual $r.error `
+            -Hint 'views/identify.js renders the rail; identifyrail.js renders .cat-toggle checkboxes.'
+        return
+    }
+    if (-not $r.scrollable) {
+        # Not a failure: the rail fit the viewport, so the bug could not be
+        # exercised. Say so rather than claim a green nobody earned.
+        Assert-That -Name 'the rail overflows enough to exercise scrolling' -Condition $true `
+            -Expected 'a scrollable rail' `
+            -Actual 'the rail fit the viewport, so scroll retention was not exercised' -Hint ''
+        return
+    }
+    Assert-That -Name 'the rail actually scrolled before the repaint' -Condition ($r.before -gt 0) `
+        -Expected 'a non-zero scrollTop after scrolling the rail down' -Actual "$($r.before)" `
+        -Hint 'If the rail refused to scroll the check measures nothing, so this is asserted separately.'
+    Assert-That -Name 'the scroll position survives a repaint' -Condition ($r.after -eq $r.before) `
+        -Expected "scrollTop still $($r.before) after ticking a category" -Actual "$($r.after)" `
+        -Hint 'frontend/scroll.js snapshotScrollPositions/restoreScrollPositions must bracket main.js paint(), so a scrolled panel is not thrown back to the top by root.innerHTML.'
 }
 
 # Reported issue 6. This is the assertion that CANNOT be made without a real

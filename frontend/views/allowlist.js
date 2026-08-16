@@ -28,7 +28,6 @@ import { escapeHTML } from "../html.js";
 import { button } from "../ui.js";
 import { notify } from "../toast.js";
 import { CONFIGURE, ALLOWLIST } from "../copy.js";
-import { keepScrollPosition } from "../scroll.js";
 
 /**
  * renderAllowlistChips(s, draft) returns the "Never anonymise" tab's markup.
@@ -74,15 +73,15 @@ export function wireAllowlistChips(container, drafts = {}) {
 
   input.addEventListener("input", () => { drafts.allow = input.value; });
 
-  // Every mutation re-renders the whole screen, so each one carries the scroll
-  // position across: this tab can be a long list of chips, and a
-  // jump to the top after removing one is exactly where it hurts.
+  // Every mutation re-renders the whole screen; the scroll position is preserved
+  // centrally by the shell repaint (scroll.js), so this long list of chips does
+  // not jump to the top when a term is added or removed.
   const add = () => {
     const term = (input.value ?? "").trim();
     if (!term) return;
     const before = getState().allowlist.length;
     drafts.allow = "";
-    keepScrollPosition(() => addAllowTerm(term));
+    addAllowTerm(term);
     if (getState().allowlist.length === before) notify(ALLOWLIST.alreadyThere(term), "info");
   };
   container.querySelector("#allow-add")?.addEventListener("click", add);
@@ -90,7 +89,7 @@ export function wireAllowlistChips(container, drafts = {}) {
 
   for (const btn of container.querySelectorAll(".allow-del")) {
     btn.addEventListener("click", () => {
-      keepScrollPosition(() => removeAllowTerm(btn.dataset.term));
+      removeAllowTerm(btn.dataset.term);
     });
   }
 
@@ -99,7 +98,7 @@ export function wireAllowlistChips(container, drafts = {}) {
       const terms = await importAllowlistCSV();
       if (!terms) return; // dialog cancelled: nothing happened, say nothing
       const before = getState().allowlist.length;
-      keepScrollPosition(() => { for (const term of terms) addAllowTerm(term); });
+      for (const term of terms) addAllowTerm(term);
       const added = getState().allowlist.length - before;
       // Both numbers, because "12 read, 3 added" is the answer to the question a
       // user actually has after importing a list they already partly had.

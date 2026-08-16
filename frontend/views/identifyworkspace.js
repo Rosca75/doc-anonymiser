@@ -62,7 +62,6 @@ import { askConfirm } from "../modal.js";
 import { llmGateTooltip } from "./identifyrail.js";
 import { renderAllowlistChips, wireAllowlistChips } from "./allowlist.js";
 import { notify, wireNotice } from "../toast.js";
-import { keepScrollPosition, keepScrollPositionIn } from "../scroll.js";
 import { CARDS, WORKSPACE, VALUES, CATEGORY_LABELS } from "../copy.js";
 
 // The categories a user may ADD a value to by hand, with their display labels.
@@ -144,15 +143,10 @@ const rowFeedback = new Map();
 // to refuse a drop onto its own card.
 let dragging = null;
 
-// The value list scrolls inside the workspace card body, not the page, so an
-// action that repaints (removing a spelling, renaming a value) has to restore
-// THAT element's scroll or the list jumps to the first card. keepScrollPosition
-// alone restores main#view, which is not what scrolls here.
-const VALUES_SCROLLER = "#identify-workspace .card-body";
-/** keepValuesScroll(mutate) preserves the value list's scroll across a repaint. */
-function keepValuesScroll(mutate) {
-  return keepScrollPositionIn(VALUES_SCROLLER, mutate);
-}
+// The value list scrolls inside the workspace card body, not the page. An
+// action that repaints (removing a spelling, renaming a value) keeps its place
+// because scroll offsets are preserved centrally by the shell repaint
+// (scroll.js), so nothing here has to carry them.
 
 /**
  * renderIdentifyWorkspace(container, opts) fills the workspace card.
@@ -836,16 +830,15 @@ function wireSuggestions(container, shown) {
   for (const row of container.querySelectorAll(".grid-row[data-text]")) {
     const text = row.dataset.text;
     row.querySelector(".cand-accept")?.addEventListener("click", async () => {
-      keepScrollPosition(() => acceptCandidate(text));
+      acceptCandidate(text);
       await refreshVariants();
     });
     row.querySelector(".cand-reject")?.addEventListener("click", () => {
-      keepScrollPosition(() => rejectCandidate(text));
+      rejectCandidate(text);
     });
-    // Retyping a suggestion before it is accepted. keepScrollPosition holds the
-    // list in place so retyping a row two thirds down does not jump the view.
+    // Retyping a suggestion before it is accepted.
     row.querySelector(".cand-type")?.addEventListener("change", (ev) => {
-      keepScrollPosition(() => changeCandidateCategory(text, ev.target.value));
+      changeCandidateCategory(text, ev.target.value);
     });
   }
 
@@ -921,14 +914,11 @@ function wireValues(container) {
     });
 
     // Changing the type re-expands the row (a person and an organisation expand
-    // differently). The change AND the re-expansion are one keepValuesScroll so
-    // the list stays put across both repaints.
-    cardEl.querySelector(".value-type")?.addEventListener("change", (ev) => {
-      keepValuesScroll(async () => {
-        const reason = changeEntityCategory(cat, canonical, ev.target.value);
-        if (reason === "duplicate") notify(WORKSPACE.typeChangeDuplicate(canonical), "warn");
-        else await refreshVariants();
-      });
+    // differently).
+    cardEl.querySelector(".value-type")?.addEventListener("change", async (ev) => {
+      const reason = changeEntityCategory(cat, canonical, ev.target.value);
+      if (reason === "duplicate") notify(WORKSPACE.typeChangeDuplicate(canonical), "warn");
+      else await refreshVariants();
     });
 
     cardEl.querySelector(".value-group")?.addEventListener("click", () => {
@@ -941,7 +931,7 @@ function wireValues(container) {
     cardEl.querySelector(".value-remove")?.addEventListener("click", () => {
       rowFeedback.delete(key);
       if (openValuePanel.key === key) openValuePanel = { key: null, kind: null };
-      keepValuesScroll(() => removeEntity(cat, canonical));
+      removeEntity(cat, canonical);
     });
 
     // The add-variant control reveals an INLINE input rather than opening a
@@ -960,20 +950,15 @@ function wireValues(container) {
     }
 
     for (const del of cardEl.querySelectorAll(".variant-del")) {
-      del.addEventListener("click", (ev) => {
+      del.addEventListener("click", async (ev) => {
         // The chip itself is a drag handle, so the remove button has to stop the
         // click reaching it.
         ev.stopPropagation();
         // Removing a variant is an EXCLUSION, not a deletion: automatic expansion
         // would put it straight back otherwise. moveVariant is for regrouping;
-        // here the variant simply stops applying. The exclusion AND the
-        // re-expansion it triggers are wrapped in one keepValuesScroll, so the
-        // value list stays put across both repaints instead of jumping to the
-        // top when the async re-expansion lands.
-        keepValuesScroll(async () => {
-          excludeVariant(cat, canonical, del.dataset.variant);
-          await refreshVariants();
-        });
+        // here the variant simply stops applying.
+        excludeVariant(cat, canonical, del.dataset.variant);
+        await refreshVariants();
       });
     }
 
@@ -990,7 +975,7 @@ function togglePanel(key, kind) {
   openValuePanel = (openValuePanel.key === key && openValuePanel.kind === kind)
     ? { key: null, kind: null }
     : { key, kind };
-  keepValuesScroll(() => setState({}));
+  setState({});
 }
 
 /** wireValuesToolbar(container) wires the search, type filter, show/hide
@@ -1015,7 +1000,7 @@ function wireValuesToolbar(container) {
 
   container.querySelector("#btn-toggle-variants")?.addEventListener("click", () => {
     valuesFilter = { ...valuesFilter, showVariants: !valuesFilter.showVariants };
-    keepValuesScroll(() => setState({}));
+    setState({});
   });
 
   container.querySelector("#btn-clear-values")?.addEventListener("click", async () => {
@@ -1032,48 +1017,41 @@ function wireValuesToolbar(container) {
 /** wireGroupPanel(cardEl, cat, canonical) wires the Group with picker's Apply
  *  and Cancel. */
 function wireGroupPanel(cardEl, cat, canonical) {
-  cardEl.querySelector(".group-apply")?.addEventListener("click", () => {
+  cardEl.querySelector(".group-apply")?.addEventListener("click", async () => {
     const sources = [...cardEl.querySelectorAll(".group-pick:checked")].map((cb) => ({
       category: cb.dataset.category, canonical: cb.dataset.canonical,
     }));
     if (sources.length === 0) return;
     openValuePanel = { key: null, kind: null };
-    keepValuesScroll(async () => {
-      const n = groupEntities({ category: cat, canonical }, sources);
-      if (n) notify(WORKSPACE.groupedN(n, canonical), "ok");
-      await refreshVariants();
-    });
+    const n = groupEntities({ category: cat, canonical }, sources);
+    if (n) notify(WORKSPACE.groupedN(n, canonical), "ok");
+    await refreshVariants();
   });
   cardEl.querySelector(".panel-cancel")?.addEventListener("click", () => {
     openValuePanel = { key: null, kind: null };
-    keepValuesScroll(() => setState({}));
+    setState({});
   });
 }
 
 /** wireSolvePanel(cardEl, cat, canonical) wires each resolve action inside the
- *  Solve conflicts panel. Each action, plus any re-expansion it triggers, is one
- *  keepValuesScroll so the list does not jump. */
+ *  Solve conflicts panel. */
 function wireSolvePanel(cardEl, cat, canonical) {
   for (const action of cardEl.querySelectorAll(".solve-action")) {
-    action.addEventListener("click", () => {
+    action.addEventListener("click", async () => {
       const { act } = action.dataset;
       openValuePanel = { key: null, kind: null };
       if (act === "remove-value") {
-        keepValuesScroll(() => removeEntity(cat, canonical));
+        removeEntity(cat, canonical);
       } else if (act === "remove-allow") {
-        keepValuesScroll(() => removeAllowTerm(canonical));
+        removeAllowTerm(canonical);
       } else if (act === "drop-variant") {
-        keepValuesScroll(async () => {
-          excludeVariant(cat, canonical, action.dataset.spelling);
-          await refreshVariants();
-        });
+        excludeVariant(cat, canonical, action.dataset.spelling);
+        await refreshVariants();
       } else if (act === "merge") {
-        keepValuesScroll(async () => {
-          groupEntities(
-            { category: cat, canonical },
-            [{ category: action.dataset.withcategory, canonical: action.dataset.withvalue }]);
-          await refreshVariants();
-        });
+        groupEntities(
+          { category: cat, canonical },
+          [{ category: action.dataset.withcategory, canonical: action.dataset.withvalue }]);
+        await refreshVariants();
       }
     });
   }
@@ -1206,16 +1184,14 @@ function revealNameInput(cardEl, category, canonical, key) {
       setState({}); // repaint puts the name back unchanged
       return;
     }
-    await keepValuesScroll(async () => {
-      const reason = renameEntity(category, canonical, value);
-      if (reason === "duplicate") {
-        rowFeedback.set(key, WORKSPACE.valueRenamedDuplicate(value));
-        setState({});
-        return;
-      }
-      rowFeedback.delete(key);
-      await refreshVariants();
-    });
+    const reason = renameEntity(category, canonical, value);
+    if (reason === "duplicate") {
+      rowFeedback.set(key, WORKSPACE.valueRenamedDuplicate(value));
+      setState({});
+      return;
+    }
+    rowFeedback.delete(key);
+    await refreshVariants();
   };
 
   input.addEventListener("keydown", (ev) => {
@@ -1254,10 +1230,8 @@ function revealVariantEditInput(textEl, category, canonical, key) {
       return;
     }
     rowFeedback.delete(key);
-    await keepValuesScroll(async () => {
-      renameVariant(category, canonical, old, value);
-      await refreshVariants();
-    });
+    renameVariant(category, canonical, old, value);
+    await refreshVariants();
   };
 
   input.addEventListener("keydown", (ev) => {
@@ -1277,11 +1251,10 @@ function revealVariantEditInput(textEl, category, canonical, key) {
  * look like the button did nothing. Setting variants back to pending re-expands
  * this row only.
  *
- * It does NOT trigger the re-expansion itself: the caller wraps this and the
- * refreshVariants that follows in ONE keepValuesScroll, so the value list's
- * scroll survives BOTH repaints (the exclusion and the re-expansion). Calling
- * refreshVariants here, outside that wrapper, is exactly what let the async
- * re-expansion repaint jump the list back to the top.
+ * It does NOT trigger the re-expansion itself: the caller calls refreshVariants
+ * after it, so the value's own repaint and the re-expansion's repaint stay
+ * separate. The value list's scroll survives both because scroll offsets are
+ * preserved centrally by the shell repaint (scroll.js).
  */
 function excludeVariant(category, canonical, variant) {
   const s = getState();
@@ -1390,7 +1363,7 @@ function wirePatterns(container) {
 
   for (const row of container.querySelectorAll(".pattern-row")) {
     row.querySelector(".pattern-del")?.addEventListener("click", () => {
-      keepScrollPosition(() => removePattern(row.dataset.expr));
+      removePattern(row.dataset.expr);
     });
   }
 
