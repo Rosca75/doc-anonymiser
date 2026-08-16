@@ -188,7 +188,7 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 			a.emit("detection:progress", p)
 		}
 		if phase == PhaseSmart {
-			a.runSmartPhase(ctx, docs, allow, settings.SmartDetect, res, report)
+			a.runSmartPhase(ctx, docs, allow, settings.SmartDetect, settings.Country, res, report)
 		} else {
 			a.runAIPhase(ctx, docs, llm, aiScope, res, report)
 		}
@@ -253,8 +253,9 @@ func (a *App) refineCategories(ctx context.Context, llm *ollama.Client, res *Det
 
 // runSmartPhase is the offline route. Every document is scanned; a document
 // that is cancelled mid-scan contributes what it found before stopping.
+// country scopes the organisation-keyword signal to the document country.
 func (a *App) runSmartPhase(ctx context.Context, docs []engine.Document, allow *engine.Allowlist,
-	opts engine.SmartDetectOptions, res *DetectionResult, report func(DetectionProgress)) {
+	opts engine.SmartDetectOptions, country string, res *DetectionResult, report func(DetectionProgress)) {
 
 	merged := map[string]*engine.Candidate{}
 	var order []string
@@ -264,7 +265,7 @@ func (a *App) runSmartPhase(ctx context.Context, docs []engine.Document, allow *
 		}
 		report(DetectionProgress{DocIndex: i, DocCount: len(docs), DocName: doc.Name})
 
-		found, err := engine.SmartDetectContext(ctx, doc.Markdown, allow, opts)
+		found, err := engine.SmartDetectContext(ctx, doc.Markdown, allow, opts, country)
 		if err != nil && ctx.Err() == nil {
 			// Not a cancellation: record it and carry on with the next file.
 			res.Errors = append(res.Errors, fmt.Sprintf("smart detection failed on %q: %v", doc.Name, err))

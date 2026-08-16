@@ -295,7 +295,7 @@ doc-anonymiser/
 
   | Identifier | Placeholder | Also found offline by |
   |---|---|---|
-  | `entity_names` | `ENTITY` | legal-suffix runs |
+  | `entity_names` | `ENTITY` | legal-suffix runs, country-scoped org keywords |
   | `project_names` | `PROJECT` | codes beside a project cue |
   | `product_names` | `PRODUCT` | a trademark mark, or a product head noun |
   | `brand_names` | `BRAND` | nothing: a brand is world knowledge |

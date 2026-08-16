@@ -258,6 +258,102 @@ var streetCues = map[string]bool{
 	"ville": true, "city": true, "town": true, "hotel": true, "hôtel": true,
 }
 
+// orgKeywordsCommon are organisation-indicating words that hold in ANY country,
+// because English is the lingua franca of company naming: "Delta Group",
+// "Helios Holdings", "Meridian Partners". They VOUCH a capitalised run as an
+// entity_names candidate the same way a legal suffix does, but a hair less
+// certainly (a legal form is registered, a keyword is convention), so they
+// score just below one. Compared accent-folded and lower-cased.
+//
+// This is broader than the legalSuffixes gazetteer (entities.go), which lists
+// only registered legal FORMS (Sàrl, GmbH): a keyword names the KIND of
+// organisation, a suffix names its legal shell. Both mark a run as a company.
+var orgKeywordsCommon = map[string]bool{
+	"group": true, "holdings": true, "holding": true, "partners": true,
+	"partnership": true, "ventures": true, "associates": true,
+	"corporation": true, "incorporated": true, "enterprises": true,
+	"enterprise": true, "industries": true, "technologies": true,
+	"laboratories": true, "pharmaceuticals": true, "systems": true,
+	"solutions": true, "consulting": true, "international": true,
+	"worldwide": true, "trust": true, "bank": true, "capital": true,
+}
+
+// orgKeywordsByLanguage adds the organisation words specific to a language, so
+// "PwC Société coopérative" reads as a company when the document country uses
+// French. Keyed by a language tag, mapped to countries by countryLanguages.
+var orgKeywordsByLanguage = map[string]map[string]bool{
+	"fr": {
+		"groupe": true, "société": true, "societe": true, "sociétés": true,
+		"societes": true, "coopérative": true, "cooperative": true,
+		"compagnie": true, "banque": true, "assurances": true, "assurance": true,
+		"conseil": true, "conseils": true, "associés": true, "associes": true,
+		"entreprise": true, "entreprises": true, "établissements": true,
+		"etablissements": true, "mutuelle": true, "fédération": true,
+		"federation": true, "fiduciaire": true,
+	},
+	"de": {
+		"gesellschaft": true, "genossenschaft": true, "handelsgesellschaft": true,
+		"verein": true, "versicherung": true, "versicherungen": true,
+		"stiftung": true, "werke": true, "industrie": true, "beteiligungen": true,
+		"gruppe": true, "unternehmen": true, "bank": true,
+	},
+	"es": {
+		"sociedad": true, "compañía": true, "compania": true, "empresa": true,
+		"banco": true, "seguros": true, "cooperativa": true, "grupo": true,
+		"fundación": true, "fundacion": true, "asociación": true, "asociacion": true,
+	},
+}
+
+// countryLanguages maps a document country to the languages whose organisation
+// keywords apply. Luxembourg is trilingual (French, German, plus English as the
+// common set), which is why a Luxembourg document must recognise both "Société
+// coopérative" and "Gesellschaft". "" (no country chosen) falls back to the
+// common English set only.
+var countryLanguages = map[string][]string{
+	CountryLU: {"fr", "de"},
+	CountryFR: {"fr"},
+	CountryDE: {"de"},
+	CountryES: {"es"},
+	CountryUK: {},
+}
+
+// orgKeywordApplies reports whether a folded, lower-cased word is an
+// organisation keyword for the given document country. The common set always
+// applies; the language sets apply per countryLanguages.
+func orgKeywordApplies(word, country string) bool {
+	if orgKeywordsCommon[word] {
+		return true
+	}
+	for _, lang := range countryLanguages[country] {
+		if orgKeywordsByLanguage[lang][word] {
+			return true
+		}
+	}
+	return false
+}
+
+// runHasOrgKeyword reports whether a capitalised run reads as an organisation:
+// it carries an org keyword AND at least one OTHER significant word (so a bare
+// "Group" or "Société" on its own is not an org, but "Delta Group" and "PwC
+// Société" are). Tokens are split on spaces and hyphens and compared
+// accent-folded.
+func runHasOrgKeyword(runText, country string) bool {
+	hasKeyword := false
+	hasOther := false
+	for _, w := range strings.FieldsFunc(runText, func(r rune) bool { return r == ' ' || r == '-' }) {
+		folded := foldAccentsLower(strings.Trim(w, ".,;:!?()\"'’"))
+		if folded == "" || smartParticles[folded] || smartConnectors[folded] {
+			continue
+		}
+		if orgKeywordApplies(folded, country) {
+			hasKeyword = true
+		} else {
+			hasOther = true
+		}
+	}
+	return hasKeyword && hasOther
+}
+
 // smartParticles are the lowercase name particles tolerated INSIDE a
 // capitalised run ("Anouk van den Berg"). Table-driven so extending the
 // list is a one-line change.
@@ -475,6 +571,7 @@ type smartRun struct {
 	hasTrademark   bool // a trademark mark follows the run
 	hasProduct     bool // a product head noun is in or beside the run
 	addressContext bool // a street cue sits beside or inside the run (an address)
+	orgKeyword     bool // an organisation keyword vouches the run as a company
 	words          int  // significant (non-particle) word count
 }
 
@@ -484,7 +581,17 @@ type smartRun struct {
 // carries the heuristic score the filtering used (candidateScore), so the
 // UI can filter further without recomputing anything.
 func SmartDetectWithOptions(text string, allow *Allowlist, opts SmartDetectOptions) []Candidate {
-	candidates, _ := SmartDetectContext(context.Background(), text, allow, opts)
+	candidates, _ := SmartDetectContext(context.Background(), text, allow, opts, "")
+	return candidates
+}
+
+// SmartDetectWithOptionsCountry is SmartDetectWithOptions with the document
+// COUNTRY supplied, so the country-scoped organisation-keyword signal applies
+// (a Luxembourg document recognises "Société coopérative" and "Gesellschaft",
+// a UK one does not). "" means "common English keywords only", which is what
+// the country-agnostic SmartDetectWithOptions passes.
+func SmartDetectWithOptionsCountry(text string, allow *Allowlist, opts SmartDetectOptions, country string) []Candidate {
+	candidates, _ := SmartDetectContext(context.Background(), text, allow, opts, country)
 	return candidates
 }
 
@@ -494,11 +601,14 @@ func SmartDetectWithOptions(text string, allow *Allowlist, opts SmartDetectOptio
 // completion whatever the user pressed, which is a large part of why
 // detection "sometimes does not complete" from the outside.
 //
+// country scopes the organisation-keyword signal (countryLanguages); "" leaves
+// only the common English keyword set active.
+//
 // On cancellation it returns the candidates found so far together with
 // ctx.Err(), the same contract the chunked LLM scan already had: partial work
 // is worth keeping, and the caller decides how to describe it.
-func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts SmartDetectOptions) ([]Candidate, error) {
-	runs, err := extractRunsContext(ctx, text)
+func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts SmartDetectOptions, country string) ([]Candidate, error) {
+	runs, err := extractRunsContext(ctx, text, country)
 	if err != nil {
 		return nil, err
 	}
@@ -547,8 +657,10 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 			g.addressOnly = false
 		}
 		// Category priority, strongest cue first: a legal form names a
-		// company, a trademark names a product, a title names a person, a
-		// product head noun is the weakest of the four and only fills a gap.
+		// company, a trademark names a product, a title names a person, an
+		// organisation keyword also names a company but a hair less certainly
+		// than a legal form, and a product head noun is the weakest and only
+		// fills a gap.
 		switch {
 		case r.hasSuffix:
 			g.category = CatEntityNames
@@ -556,10 +668,12 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 			g.category = CatProductNames
 		case r.hasTitle && g.category == "":
 			g.category = CatPersonNames
+		case r.orgKeyword && g.category == "":
+			g.category = CatEntityNames
 		case r.hasProduct && g.category == "":
 			g.category = CatProductNames
 		}
-		if r.hasSuffix || r.hasTitle || r.hasTrademark {
+		if r.hasSuffix || r.hasTitle || r.hasTrademark || r.orgKeyword {
 			g.qualifies = true
 		}
 		if len(g.contexts) < maxContexts {
@@ -712,7 +826,7 @@ func firstRunFor(runs []smartRun, text string) smartRun {
 // occurrence with its metadata. The token walk is the longest uninterruptible
 // stretch of the offline pass, so it is where cancellation has to be able to
 // land: on a large document nothing else would notice for minutes.
-func extractRunsContext(ctx context.Context, text string) ([]smartRun, error) {
+func extractRunsContext(ctx context.Context, text, country string) ([]smartRun, error) {
 	tokens := tokenize(text)
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -856,6 +970,23 @@ func extractRunsContext(ctx context.Context, text string) ([]smartRun, error) {
 			}
 		}
 
+		// Organisation keyword (country-scoped): a capitalised word inside the
+		// run names the KIND of organisation ("Delta Group", "PwC Société"),
+		// vouching it as a company. A legal suffix already covers registered
+		// forms, so this only fires when there was no suffix. When the run is an
+		// organisation, a single lowercase org keyword immediately after it is
+		// absorbed to complete the name boundary ("PwC Société" + "coopérative"
+		// → "PwC Société coopérative"); the address heuristic is deliberately
+		// skipped for a company (a company legitimately sits at an address).
+		if !r.hasSuffix && runHasOrgKeyword(r.text, country) {
+			r.orgKeyword = true
+			r.addressContext = false
+			if trailing := trailingOrgKeyword(text, r.end, country); trailing > 0 {
+				r.end = trailing
+				r.text = text[r.start:r.end]
+			}
+		}
+
 		// Very short candidates are noise ("Al", "Le"), and a run that IS
 		// a bare legal form ("GmbH" discussed as a concept) is not a name.
 		if len([]rune(r.text)) >= 3 && !isBareSuffix(r.text) {
@@ -865,9 +996,9 @@ func extractRunsContext(ctx context.Context, text string) ([]smartRun, error) {
 			// onto a real name ("Later Marie Duval called"). Emit the
 			// sub-run without the first word too, so "Marie Duval" still
 			// counts; the frequency and sentence rules weed out whichever
-			// grouping is noise. Suffix runs are already whole company
-			// names and produce no sub-run.
-			if r.sentenceStart && !r.hasSuffix && !r.hasTitle && last > i {
+			// grouping is noise. Suffix and organisation runs are already whole
+			// company names and produce no sub-run.
+			if r.sentenceStart && !r.hasSuffix && !r.hasTitle && !r.orgKeyword && last > i {
 				sub := smartRun{
 					text:           text[tokens[i+1].start:r.end],
 					start:          tokens[i+1].start,
@@ -898,6 +1029,42 @@ func runHasStreetCue(runText string) bool {
 		}
 	}
 	return false
+}
+
+// trailingOrgKeyword reports the byte offset just past a single LOWERCASE
+// organisation keyword sitting immediately after a run ("PwC Société " +
+// "coopérative"), or 0 if there is none. It completes an organisation name
+// whose legal-ish tail is not capitalised, mirroring how the legal-suffix
+// detector absorbs an un-capitalised suffix. Only ONE trailing word is taken,
+// so it cannot swallow the rest of a sentence.
+func trailingOrgKeyword(text string, end int, country string) int {
+	rest := text[end:]
+	trimmed := strings.TrimLeft(rest, " ")
+	pad := len(rest) - len(trimmed)
+	if pad == 0 || trimmed == "" {
+		return 0 // must be separated by a space, and something must follow
+	}
+	// Take the leading run of word runes (letters, apostrophes, hyphens).
+	word := ""
+	for i, r := range trimmed {
+		if unicode.IsLetter(r) || r == '\'' || r == '\u2019' || r == '-' {
+			continue
+		}
+		word = trimmed[:i]
+		break
+	}
+	if word == "" {
+		word = trimmed
+	}
+	// Lowercase only: a capitalised keyword would already be part of the run.
+	first, _ := utf8.DecodeRuneInString(word)
+	if unicode.IsUpper(first) {
+		return 0
+	}
+	if !orgKeywordApplies(foldAccentsLower(word), country) {
+		return 0
+	}
+	return end + pad + len(word)
 }
 
 // isBareSuffix reports whether the whole run text is just a legal form
@@ -1044,6 +1211,8 @@ func contextSnippet(text string, start, end int) string {
 //	      certain as a heuristic gets, companies are named this way on purpose
 //	0.90 a trademark mark follows it, or a person title introduced it
 //	      ("Meridian Suite™", "Mme Weber", "Dr Keller")
+//	0.85 an organisation keyword is in the run ("Delta Group", "PwC Société"):
+//	      nearly a legal form, but a keyword is convention not registration
 //	0.60 a product head noun is in or beside the run ("Helios Platform"):
 //	      it reads like a product, which is weaker than being marked as one
 //	0.80 several words, seen more than once: a repeated full name
@@ -1053,7 +1222,7 @@ func contextSnippet(text string, start, end int) string {
 //	      and where most of the over-detection lives
 //	0.25 anything else that survived the detectors
 //
-// The default floor (0.5) therefore keeps the first four rungs and drops
+// The default floor (0.5) therefore keeps the first five rungs and drops
 // the last two.
 func candidateScore(r smartRun, count int) float32 {
 	switch {
@@ -1061,6 +1230,8 @@ func candidateScore(r smartRun, count int) float32 {
 		return 0.95
 	case r.hasTrademark, r.hasTitle:
 		return 0.90
+	case r.orgKeyword:
+		return 0.85
 	case r.hasProduct:
 		return 0.60
 	case r.words >= 2 && count >= 2:

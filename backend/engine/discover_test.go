@@ -376,7 +376,7 @@ func TestExtractRunsContextScalesLinearly(t *testing.T) {
 	measure := func(repeats int) time.Duration {
 		text := strings.Repeat("Alpine Trust S.A. met Marie Duval in Luxembourg. ", repeats)
 		start := time.Now()
-		extractRunsContext(context.Background(), text)
+		extractRunsContext(context.Background(), text, "")
 		return time.Since(start)
 	}
 	// Warm the code paths so the first measurement is not the one that pays
@@ -403,7 +403,7 @@ func TestSmartDetectContextIsInterruptible(t *testing.T) {
 	cancel()
 
 	start := time.Now()
-	got, err := SmartDetectContext(ctx, text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	got, err := SmartDetectContext(ctx, text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), "")
 	if err == nil {
 		t.Fatal("a cancelled context must be reported, not ignored")
 	}
@@ -421,7 +421,7 @@ func TestSmartDetectContextMatchesTheLegacyCall(t *testing.T) {
 	text := "Alpine Trust S.A. met Marie Duval. Alpine Trust signed with Borealis Fund GmbH."
 	opts := DefaultSmartDetectOptions()
 	want := SmartDetectWithOptions(text, NewEmptyAllowlist(), opts)
-	got, err := SmartDetectContext(context.Background(), text, NewEmptyAllowlist(), opts)
+	got, err := SmartDetectContext(context.Background(), text, NewEmptyAllowlist(), opts, "")
 	if err != nil {
 		t.Fatalf("an uncancelled scan must not fail: %v", err)
 	}
@@ -595,6 +595,88 @@ func TestSmartDetectNegativeGazetteerDropsBusinessPhrases(t *testing.T) {
 	}
 	if findCandidate(got, "Marie Duval") == nil {
 		t.Errorf("a real name in the same text must survive: %+v", got)
+	}
+}
+
+// --- organisation keyword signal (country-scoped) ---------------------------
+
+// TestSmartDetectOrgKeywordCommon: an English organisation keyword vouches a
+// run as a company in ANY country ("Delta Group"), and it beats the default
+// person guess a bare multi-word run would get.
+func TestSmartDetectOrgKeywordCommon(t *testing.T) {
+	text := "We met Delta Group about the deal. Delta Group agreed.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	c := findCandidate(got, "Delta Group")
+	if c == nil {
+		t.Fatalf("an org-keyword run must be proposed: %+v", got)
+	}
+	if c.Category != CatEntityNames {
+		t.Errorf("category = %s, want %s", c.Category, CatEntityNames)
+	}
+	if c.Confidence < 0.85 {
+		t.Errorf("confidence = %.2f, want at least 0.85", c.Confidence)
+	}
+}
+
+// TestSmartDetectOrgKeywordCountryScoped: a French legal-ish keyword only
+// vouches when the document country uses French. "PwC Société" is a company in
+// Luxembourg (which covers French and German) but not in the UK.
+func TestSmartDetectOrgKeywordCountryScoped(t *testing.T) {
+	text := "Signed by PwC Société on Monday. PwC Société confirmed.\n"
+
+	lu := SmartDetectWithOptionsCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryLU)
+	if c := findCandidate(lu, "PwC Société"); c == nil || c.Category != CatEntityNames {
+		t.Errorf("Luxembourg must read \"Société\" as a company: %+v", lu)
+	}
+
+	uk := SmartDetectWithOptionsCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryUK)
+	if c := findCandidate(uk, "PwC Société"); c != nil && c.Category == CatEntityNames {
+		t.Errorf("the UK has no French keyword, so \"Société\" must not vouch a company: %+v", c)
+	}
+}
+
+// TestSmartDetectOrgKeywordAbsorbsLowercaseTail: an organisation name whose
+// legal-ish tail is not capitalised is completed, so the VALUE is the whole
+// name ("PwC Société coopérative"), not the capitalised prefix alone.
+func TestSmartDetectOrgKeywordAbsorbsLowercaseTail(t *testing.T) {
+	text := "Issued by PwC Société coopérative today. PwC Société coopérative billed.\n"
+	got := SmartDetectWithOptionsCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryLU)
+	if c := findCandidate(got, "PwC Société coopérative"); c == nil || c.Category != CatEntityNames {
+		t.Errorf("the lowercase tail must be absorbed into the company name: %+v", got)
+	}
+}
+
+// TestSmartDetectOrgKeywordGermanForLuxembourg: Luxembourg covers German too,
+// so a German organisation word vouches a company there.
+func TestSmartDetectOrgKeywordGermanForLuxembourg(t *testing.T) {
+	text := "Vertrag mit Alpen Gesellschaft unterschrieben. Alpen Gesellschaft zahlte.\n"
+	got := SmartDetectWithOptionsCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryLU)
+	if c := findCandidate(got, "Alpen Gesellschaft"); c == nil || c.Category != CatEntityNames {
+		t.Errorf("a German org word must vouch a company in Luxembourg: %+v", got)
+	}
+}
+
+// TestSmartDetectOrgKeywordSurvivesStrict: an org-keyword run is structurally
+// vouched, so strict strictness keeps it (unlike a bare capitalised run).
+func TestSmartDetectOrgKeywordSurvivesStrict(t *testing.T) {
+	text := "We met Delta Group once.\n"
+	strict := DefaultSmartDetectOptions()
+	strict.Strictness = StrictnessStrict
+	got := SmartDetectWithOptionsCountry(text, NewEmptyAllowlist(), strict, CountryUK)
+	if findCandidate(got, "Delta Group") == nil {
+		t.Errorf("strict must keep an org-keyword company: %+v", got)
+	}
+}
+
+// TestSmartDetectOrgKeywordNeedsMoreThanTheKeyword: a bare keyword on its own
+// is not a company ("Group" discussed as a concept), only a keyword next to
+// another word is.
+func TestSmartDetectOrgKeywordNeedsMoreThanTheKeyword(t *testing.T) {
+	if runHasOrgKeyword("Group", "") {
+		t.Errorf("a bare keyword must not read as an organisation")
+	}
+	if !runHasOrgKeyword("Delta Group", "") {
+		t.Errorf("a keyword beside another word must read as an organisation")
 	}
 }
 
