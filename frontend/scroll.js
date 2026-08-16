@@ -1,102 +1,120 @@
 // scroll.js, scroll-position preservation across re-renders
 //
 // The problem it solves: every reducer call runs setState, every setState
-// repaints the whole shell, and the repaint rewrites innerHTML. A rewritten
-// element starts at scrollTop 0, so ticking a checkbox two thirds of the way
-// down the Configure screen, or adding a term to the allowlist, threw the
-// user back to the top of the page. With four category groups and a long
-// allowlist that made the screen genuinely hard to use.
+// repaints the WHOLE shell (main.js paint), and the repaint rewrites
+// root.innerHTML. A rewritten element starts at scrollTop 0, so ticking a
+// checkbox two thirds of the way down the Identify rail, drilling into a value,
+// or adding an allowlist term threw the user back to the top of that panel.
 //
-// The fix is deliberately the SMALL one. Re-rendering only the changed
-// control would avoid the problem entirely, but it means every view giving
-// up its "render the whole thing from state" simplicity, which is the
-// discipline the whole frontend is built on (CLAUDE.md section 4). So the
-// render stays whole and the scroll offset is carried across it.
+// The fix is deliberately GENERIC and lives at the ONE place the reset happens,
+// the shell repaint, rather than at each call site. An earlier version made
+// every mutating handler wrap itself in a "keep this scroller" helper, which
+// was easy to get wrong two ways at once: the default helper restored main#view
+// (the page body), but in the fixed-height wizard main#view does not scroll at
+// all, the card bodies do, so most handlers preserved nothing; and any handler
+// that forgot to wrap reset the panel with no warning. Preserving scroll around
+// the repaint itself means a handler cannot get it wrong, because it does not
+// take part.
 //
-// The offset is restored SYNCHRONOUSLY, in the same task as the re-render,
-// so the browser never paints an intermediate frame at the top: there is no
-// visible jump, not even a flicker.
+// The mechanism: snapshot the scroll offset of every currently-scrolled element
+// just before the rewrite, keyed by a selector that survives the rewrite, then
+// restore each after the new DOM (including each view's own render) is in place.
+// Because the DOM is regenerated deterministically from state, the selector
+// re-resolves to the same element. This also handles the async double-repaint
+// for free: a handler that awaits a bridge reply and repaints again snapshots
+// the intermediate DOM, which the previous paint already restored, so the offset
+// is carried across the second paint too.
 //
-// This module is DOM-only and has no state of its own, which is why it is
-// not part of state.js.
+// This module is DOM-only and has no state of its own, which is why it is not
+// part of state.js.
 
 /**
- * scrollOwner() returns the element that actually scrolls the application
- * body: main#view, the shell's single scrolling region. Falls back to null
- * when it is absent (the shell has not painted yet, or a unit test).
- * @returns {HTMLElement|null}
- */
-export function scrollOwner() {
-  return typeof document === "undefined" ? null : document.querySelector("main#view");
-}
-
-/**
- * keepScrollPosition(mutate) runs mutate() and puts the scroll position
- * back where it was.
+ * stableSelector(el) returns a CSS selector that re-resolves to `el` after the
+ * shell rewrites root.innerHTML.
  *
- * mutate is expected to trigger a re-render (directly or through a
- * reducer). Anything it returns is passed through, including a promise:
- * an async mutate has its scroll restored twice, once after the
- * synchronous part (which is where the re-render happens) and once when
- * the promise settles, so a slow bridge round-trip that repaints again
- * cannot undo the restore either.
+ * The rewrite regenerates an identical DOM from the same state, so identity is
+ * preserved by STRUCTURE: an id when the element (or an ancestor) has one, else
+ * a `tag:nth-of-type(n)` step up to the nearest id or the document root. Every
+ * scroll owner in the app is anchored under an id (#identify-rail,
+ * #identify-workspace, #view) or is a single stable instance, so the selector is
+ * short and unambiguous.
  *
- * @param {Function} mutate the state change to perform
- * @returns {*} whatever mutate returned
+ * @param {Element} el
+ * @returns {string} a selector, or "" when one cannot be built
  */
-export function keepScrollPosition(mutate) {
-  return keepScrollPositionOf(scrollOwner, mutate);
-}
-
-/**
- * keepScrollPositionIn(selector, mutate) is keepScrollPosition for a scroller
- * that is NOT the page body.
- *
- * The fixed-height layout (CLAUDE.md) scrolls inside a card body, not inside
- * main#view, so restoring main#view's scroll leaves a card scrolled to the top
- * anyway. That is the bug where removing a variant two thirds down the value
- * list threw the list back to the first card. The selector names the actual
- * scroller (e.g. "#identify-workspace .card-body"), re-queried after the
- * re-render because the repaint replaces the element.
- *
- * @param {string} selector a CSS selector for the scrolling element
- * @param {Function} mutate the state change to perform
- * @returns {*} whatever mutate returned
- */
-export function keepScrollPositionIn(selector, mutate) {
-  const find = () => (typeof document === "undefined" ? null : document.querySelector(selector));
-  return keepScrollPositionOf(find, mutate);
-}
-
-/**
- * keepScrollPositionOf(find, mutate) is the shared machinery: `find` returns
- * the element that scrolls, re-queried on every call so a repaint that replaces
- * it is handled. It is not exported; the two named entry points above are.
- */
-function keepScrollPositionOf(find, mutate) {
-  const owner = find();
-  if (!owner) return mutate();
-
-  const top = owner.scrollTop;
-  const left = owner.scrollLeft;
-  const restore = () => {
-    const current = find();
-    if (!current) return;
-    current.scrollTop = top;
-    current.scrollLeft = left;
-  };
-
-  let result;
-  try {
-    result = mutate();
-  } finally {
-    restore();
+export function stableSelector(el) {
+  if (!el || el.nodeType !== 1) return "";
+  // An id is unique in the document, so it anchors the path and ends the walk.
+  if (el.id) return `#${cssEscape(el.id)}`;
+  const parent = el.parentElement;
+  if (!parent) {
+    // The element is detached or is the root: a bare tag is the best we can do.
+    return el.tagName ? el.tagName.toLowerCase() : "";
   }
-
-  if (result && typeof result.then === "function") {
-    return result.then(
-      (value) => { restore(); return value; },
-      (err) => { restore(); throw err; });
+  const tag = el.tagName.toLowerCase();
+  // Index among same-tag siblings (nth-of-type is 1-based).
+  let index = 1;
+  for (let sib = el.previousElementSibling; sib; sib = sib.previousElementSibling) {
+    if (sib.tagName === el.tagName) index += 1;
   }
-  return result;
+  const step = `${tag}:nth-of-type(${index})`;
+  const prefix = stableSelector(parent);
+  return prefix ? `${prefix} > ${step}` : step;
+}
+
+/**
+ * snapshotScrollPositions() records the scroll offset of every element that is
+ * currently scrolled away from its origin.
+ *
+ * Only scrolled elements are recorded: an element still at 0/0 has nothing to
+ * restore, and skipping them keeps both the snapshot and the restore cheap.
+ * Called BEFORE the repaint, while the current DOM (and its scroll offsets)
+ * still exists.
+ *
+ * @returns {Array<{selector: string, top: number, left: number}>}
+ */
+export function snapshotScrollPositions() {
+  if (typeof document === "undefined") return [];
+  const snapshot = [];
+  for (const el of document.querySelectorAll("*")) {
+    const top = el.scrollTop;
+    const left = el.scrollLeft;
+    if (!top && !left) continue;
+    const selector = stableSelector(el);
+    if (selector) snapshot.push({ selector, top, left });
+  }
+  return snapshot;
+}
+
+/**
+ * restoreScrollPositions(snapshot) puts each recorded offset back.
+ *
+ * Called AFTER the repaint, once the new DOM is in place. Re-queries each
+ * selector so it addresses the freshly-created element; a selector that no
+ * longer resolves (a panel the new state does not render) is skipped rather
+ * than treated as an error.
+ *
+ * @param {Array<{selector: string, top: number, left: number}>} snapshot
+ */
+export function restoreScrollPositions(snapshot) {
+  if (typeof document === "undefined" || !snapshot?.length) return;
+  for (const { selector, top, left } of snapshot) {
+    const el = document.querySelector(selector);
+    if (!el) continue;
+    el.scrollTop = top;
+    el.scrollLeft = left;
+  }
+}
+
+/**
+ * cssEscape(id) escapes an id for use in a selector. Ids in this app are simple
+ * slugs, but CSS.escape is used when present so an id that ever grows a special
+ * character cannot silently produce a broken selector; the manual fallback
+ * covers the non-browser test environment.
+ */
+function cssEscape(id) {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(id);
+  }
+  return String(id).replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`);
 }

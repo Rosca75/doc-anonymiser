@@ -350,6 +350,58 @@
     },
 
     /**
+     * scrollRetention() proves a scrolled panel keeps its position across a
+     * repaint.
+     *
+     * This is a visible-only regression, exactly the kind this layer exists for:
+     * every state change rewrites the whole shell (state.js setState -> main.js
+     * paint -> root.innerHTML), and a freshly written element starts at
+     * scrollTop 0. The reported symptom was the Identify left rail snapping back
+     * to the top on every tick or drill-down. The fix preserves scroll centrally
+     * around the repaint (frontend/scroll.js), so the assertion is simply: scroll
+     * the rail, do a real action that forces a repaint, and the offset survives.
+     *
+     * The action is a genuine change event on a category checkbox, so the view's
+     * own listener runs and drives the same setState a user's click would.
+     */
+    async scrollRetention() {
+      await seed("identify");
+      const rail = document.querySelector("#identify-rail");
+      if (!rail) return { error: "no #identify-rail rendered on the Identify screen" };
+
+      // The rail's scroller named by BEHAVIOUR, not by class: whichever element
+      // inside actually overflows. This keeps the probe honest if the markup is
+      // ever restructured, and it is the same element the fix has to preserve.
+      const overflowing = (root) =>
+        [root, ...root.querySelectorAll("*")].find((el) => el.scrollHeight - el.clientHeight > 8);
+
+      const scroller = overflowing(rail);
+      if (!scroller) {
+        // A rail that fits the viewport cannot demonstrate the bug. Report it
+        // rather than passing vacuously, so the harness can say the check could
+        // not run instead of claiming a green it did not earn.
+        return { scrollable: false, before: 0, after: 0 };
+      }
+
+      const target = Math.min(200, scroller.scrollHeight - scroller.clientHeight);
+      scroller.scrollTop = target;
+      const before = scroller.scrollTop;
+
+      const box = rail.querySelector(".cat-toggle:not([disabled])");
+      if (!box) return { error: "no enabled .cat-toggle to force a repaint with" };
+      box.checked = !box.checked;
+      box.dispatchEvent(new Event("change", { bubbles: true }));
+      await settle();
+
+      // Re-query on the fresh DOM: the element measured above was thrown away by
+      // the repaint. Its replacement is what must carry the offset now.
+      const freshRail = document.querySelector("#identify-rail");
+      const freshScroller = freshRail ? overflowing(freshRail) : null;
+      const after = freshScroller ? freshScroller.scrollTop : -1;
+      return { scrollable: true, before, after };
+    },
+
+    /**
      * tooltipVisibility() hovers a real mark and measures where the tooltip ends
      * up.
      *

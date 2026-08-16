@@ -35,6 +35,7 @@ import { topnavHTML, stepbarHTML, headerActionsHTML, appFooterHTML, showDocument
 import { modalLayerHTML, wireModal } from "./modal.js";
 import { notify } from "./toast.js";
 import { navigateTo, handleShortcut } from "./nav.js";
+import { snapshotScrollPositions, restoreScrollPositions } from "./scroll.js";
 import { renderHome } from "./views/home.js";
 import { renderImport } from "./views/import.js";
 import { renderIdentify } from "./views/identify.js";
@@ -156,6 +157,13 @@ export function boot(root) {
 function paint(root) {
   const s = getState();
 
+  // Preserve every scrolled panel across the rewrite below. The snapshot is
+  // taken while the OLD DOM (and its scroll offsets) still exists; the restore
+  // runs once the new DOM, including the active view's own render, is in place.
+  // This is why no view handler wraps its own mutation: the reset happens here,
+  // so the fix lives here (scroll.js).
+  const scrolls = snapshotScrollPositions();
+
   // The top menu is IDENTICAL on every screen: same three buttons,
   // in the same order, with only a quiet highlight moving. Its markup
   // comes from shell.js, which is what shell.test.js asserts.
@@ -202,6 +210,7 @@ function paint(root) {
   const view = root.querySelector("#view");
   if (s.screen === "home") {
     renderHome(view);
+    restoreScrollPositions(scrolls);
     return;
   }
 
@@ -224,6 +233,10 @@ function paint(root) {
   // throw here and leave a blank screen with an exception behind it. Falling back
   // to Import costs nothing and is always a usable answer.
   VIEWS[knownStep(s.step)](view);
+
+  // The active view has rendered its own markup, so the panels the snapshot
+  // named now exist again: put each back where the user left it.
+  restoreScrollPositions(scrolls);
 }
 
 /** shellErrorBanner(s) renders the dismissible chrome-level error strip. */

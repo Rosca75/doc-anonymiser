@@ -277,6 +277,60 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 			"category groups open by default.")
 }
 
+// --- The scroll-position contract -------------------------------------------
+
+type scrollResult struct {
+	Error      string `json:"error"`
+	Scrollable bool   `json:"scrollable"`
+	Before     int    `json:"before"`
+	After      int    `json:"after"`
+}
+
+// checkScrollRetention asserts a scrolled panel keeps its position across a
+// repaint.
+//
+// This is a visible-only regression a string test cannot see: every state change
+// rewrites the whole shell (main.js paint -> root.innerHTML) and a freshly written
+// element starts at scrollTop 0, so the reported symptom was the Identify rail
+// snapping to the top on every tick or drill-down. The fix preserves scroll
+// centrally around the repaint (frontend/scroll.js); this check drives a real
+// action through the rail and confirms the offset survived.
+func checkScrollRetention(c *cdpClient, r *reporter) {
+	r.step("A scrolled panel keeps its position across a repaint")
+
+	var got scrollResult
+	if err := c.eval("__uiProbes.scrollRetention()", &got); err != nil {
+		r.assert("the scroll-retention probe runs", false,
+			"a rendered Identify rail to scroll", err.Error(),
+			"views/identifyrail.js must render the rail from a seeded Identify state.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the scroll-retention probe runs", false,
+			"#identify-rail with a scroller and a category toggle", got.Error,
+			"views/identify.js renders the rail; identifyrail.js renders .cat-toggle checkboxes.")
+		return
+	}
+	if !got.Scrollable {
+		// Not a failure: at 1440x900 the rail happened to fit, so the bug could
+		// not be exercised. Saying so beats a green nobody earned.
+		r.assert("the rail overflows enough to exercise scrolling", true,
+			"a scrollable rail", "the rail fit the viewport, so scroll retention was not exercised", "")
+		return
+	}
+
+	r.assert("the rail actually scrolled before the repaint", got.Before > 0,
+		"a non-zero scrollTop after scrolling the rail down",
+		fmt.Sprintf("%d", got.Before),
+		"If the rail refused to scroll the check measures nothing, so this is asserted separately.")
+
+	r.assert("the scroll position survives a repaint", got.After == got.Before,
+		fmt.Sprintf("scrollTop still %d after ticking a category", got.Before),
+		fmt.Sprintf("%d", got.After),
+		"frontend/scroll.js snapshotScrollPositions/restoreScrollPositions must bracket main.js paint(), "+
+			"so a scrolled panel is not thrown back to the top by root.innerHTML.")
+}
+
 // --- Reported issue 6: the hover tooltip is VISIBLE -------------------------
 
 type tooltipSample struct {

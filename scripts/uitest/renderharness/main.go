@@ -171,6 +171,7 @@ func run(frontendDir, probesPath, artifactDir string, keepArtifacts bool) error 
 	checkLayout(client, r)
 	checkImportPreview(client, r, fx)
 	checkConfigureRail(client, r, fx)
+	checkScrollRetention(client, r)
 	checkTooltip(client, r, fx)
 	// Last, so it sees everything every other check provoked.
 	checkNoConsoleErrors(client, r)
