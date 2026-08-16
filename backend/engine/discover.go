@@ -20,6 +20,15 @@
 //     kept: "Marie Duval" mid-sentence is a strong name signal even once.
 //  4. Title cues (Mr, Mrs, Ms, Dr, Me, M., Mme, ...) route the following
 //     name to person_names (the cue itself is not part of the candidate).
+//  5. Email-derived names: the local-part of an address in the document
+//     ("johannes.borch@pwc.lu") names a person, so a matching capitalised run
+//     is routed to person_names with high confidence. Needs no name list; it
+//     is the strongest offline signal on real correspondence.
+//
+// Precision is governed by a NEGATIVE gazetteer (smartCommonWords): a run
+// whose every significant word is ordinary business/role/document vocabulary
+// ("Revenue Management", "General Terms of Sale") is dropped. Growing that
+// table is the preferred way to cut noise, never loosening a numeric threshold.
 //
 // The allowlist veto is applied LAST — allowlist wins, as everywhere
 // (CLAUDE.md §5).
@@ -29,6 +38,7 @@ package engine
 
 import (
 	"context"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -144,6 +154,70 @@ var smartCommonWords = map[string]bool{
 	"introduction": true, "conclusion": true, "summary": true, "annex": true,
 	"appendix": true, "annexe": true, "résumé": true, "resume": true,
 	"objet": true, "subject": true, "date": true, "page": true,
+	// Business / consulting process nouns. These are the dominant offline
+	// noise class: a document like an engagement deck is full of Title-Case
+	// phrases ("Revenue Management", "Financial Due Diligence") that read like
+	// names but are ordinary vocabulary. isCommonWordRun drops a run only when
+	// EVERY significant word is here, so a real name that merely CONTAINS one
+	// ("March Consulting") still survives, and this list is safe to grow.
+	// English then French.
+	"development": true, "management": true, "strategy": true, "strategies": true,
+	"assessment": true, "review": true, "transformation": true, "transformations": true,
+	"transaction": true, "advisory": true, "advice": true, "marketing": true,
+	"sales": true, "performance": true, "diagnostic": true, "logistics": true,
+	"pricing": true, "revenue": true, "innovation": true, "capability": true,
+	"valuation": true, "integration": true, "reporting": true, "audit": true,
+	"assurance": true, "safety": true, "feasibility": true, "forecasting": true,
+	"financing": true, "loyalty": true, "governance": true, "restructuring": true,
+	"regulation": true, "economics": true, "stakeholders": true, "roadmap": true,
+	"planning": true, "diligence": true, "contracting": true, "branding": true,
+	"modelling": true, "scenario": true, "analysis": true, "benchmarks": true,
+	"standards": true, "compliance": true, "procurement": true, "finance": true,
+	"financial": true, "commercial": true, "operational": true, "corporate": true,
+	"digital": true, "supply": true, "chain": true, "impact": true,
+	"développement": true, "gestion": true, "stratégie": true, "évaluation": true,
+	"revue": true, "conformité": true, "gouvernance": true, "réglementation": true,
+	"financement": true, "faisabilité": true, "achats": true, "ventes": true,
+	// Role / title nouns. A job title in Title Case ("Senior Manager",
+	// "Director") is not a person's name; the person beside it is.
+	"director": true, "directeur": true, "manager": true, "senior": true,
+	"junior": true, "partner": true, "partners": true, "associate": true,
+	"consultant": true, "analyst": true, "officer": true, "executive": true,
+	"coordinator": true, "coordinateur": true, "administrator": true,
+	"assistant": true, "specialist": true, "spécialiste": true, "supervisor": true,
+	"intern": true, "trainee": true, "head": true, "lead": true, "chief": true,
+	"architecture": true,
+	// Email / letter / invoice furniture. Header labels and sign-offs are
+	// capitalised at the start of a line and otherwise read like names.
+	"from": true, "sent": true, "received": true, "regards": true,
+	"sincerely": true, "best": true, "dear": true, "hello": true,
+	"envoyé": true, "reçu": true, "cordialement": true, "salutations": true,
+	"bonjour": true, "cher": true, "chère": true, "mobile": true,
+	"phone": true, "fax": true, "email": true, "courriel": true,
+	"tel": true, "attn": true, "invoice": true, "facture": true,
+	"order": true, "commande": true, "reminder": true, "control": true,
+	"terms": true, "conditions": true, "sale": true, "general": true,
+	"edition": true, "notice": true, "price": true, "total": true,
+	"amount": true, "quantity": true, "description": true, "name": true,
+	"address": true, "adresse": true, "contact": true, "questions": true,
+	"event": true, "events": true, "liability": true,
+	"fraud": true, "organize": true,
+	// Everyday HR / administrative nouns that appear Title-Cased in internal
+	// mail ("Extra Holiday Buying", "Holiday Savings Account").
+	"holiday": true, "holidays": true, "buying": true, "extra": true,
+	"savings": true, "account": true, "overtime": true, "leave": true,
+	"vacation": true, "request": true, "approval": true, "congé": true,
+}
+
+// smartConnectors are the tiny function words ("of", "the", "and") that can
+// sit INSIDE a common-noun phrase ("General Terms of Sale", "Terms and
+// Conditions"). isCommonWordRun skips them exactly like particles, so a phrase
+// made only of connectors and common nouns still counts as all-common. They
+// are NOT added to smartCommonWords because on their own they are not names
+// either, and keeping them separate documents why they are skipped.
+var smartConnectors = map[string]bool{
+	"of": true, "the": true, "and": true, "for": true, "to": true,
+	"in": true, "on": true, "vs": true, "et": true, "ou": true, "aux": true,
 }
 
 // smartParticles are the lowercase name particles tolerated INSIDE a
@@ -185,6 +259,161 @@ var productHeadNouns = map[string]bool{
 // trademarkMarks follow a product name and almost nothing else. A mark is the
 // highest-precision offline signal in this file and costs one string compare.
 var trademarkMarks = []string{"\u2122", "\u00ae", "\u2120"}
+
+// emailPersonScore is the confidence given to a capitalised run that matches a
+// name derived from an email address in the same document. It sits at the
+// person-title / trademark rung (0.90): a name written next to its own address
+// ("Johannes Borch <johannes.borch@pwc.lu>") is nearly as certain a person as
+// a title cue, and far more certain than a bare multi-word run (0.65).
+const emailPersonScore float32 = 0.90
+
+// emailLocalRe captures the LOCAL-PART of an email address (the text before
+// the @). The address itself is hard PII that pass 1 already removes; what the
+// offline discovery pass wants from it is the person's NAME, which is spelt
+// out in the local-part of a corporate address ("prenom.nom@societe.tld").
+// Deliberately the same address shape as pii.go's email rule, with the
+// local-part captured.
+var emailLocalRe = regexp.MustCompile(`([A-Za-z0-9._%+\-]+)@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
+
+// nonNameMailboxes are functional/role local-parts that are NOT a person's
+// name. A local-part equal to one of these injects no name, so "info@acme.com"
+// and "no-reply@acme.com" do not invent a person called "Info" or "No Reply".
+var nonNameMailboxes = map[string]bool{
+	"info": true, "contact": true, "noreply": true, "no-reply": true,
+	"admin": true, "sales": true, "support": true, "hello": true, "team": true,
+	"office": true, "help": true, "service": true, "services": true,
+	"billing": true, "hr": true, "jobs": true, "marketing": true, "mail": true,
+	"newsletter": true, "postmaster": true, "webmaster": true, "contactus": true,
+}
+
+// deriveEmailNames builds a per-document gazetteer of person names from the
+// local-part of every email address in the text. It needs no name list at all:
+// the name is written next to its own address, which is why this is the single
+// highest-value offline signal on real correspondence.
+//
+//	"johannes.borch@pwc.lu"  ->  "johannes borch", "johannes", "borch"
+//
+// The bare forename/surname are indexed too, so a later mention of just
+// "Borch" is also recognised as a person. A forename that is itself a common
+// word (a month, "May") is NOT indexed alone, so a stray "May" is not turned
+// into a person; the full "May Smith" join still is. Accent-folded and
+// lower-cased so it can match the accented spelling in the body ("José" vs the
+// ASCII "jose" in the address).
+func deriveEmailNames(text string) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range emailLocalRe.FindAllStringSubmatch(text, -1) {
+		local := strings.ToLower(m[1])
+		if nonNameMailboxes[local] {
+			continue
+		}
+		parts := strings.FieldsFunc(local, func(r rune) bool {
+			return r == '.' || r == '_' || r == '-' || r == '+'
+		})
+		var words []string
+		for _, p := range parts {
+			if len([]rune(p)) >= 2 && !isAllDigits(p) && !nonNameMailboxes[p] {
+				words = append(words, foldAccentsLower(p))
+			}
+		}
+		// A single token is a handle ("oscarl"), not a forename+surname; only
+		// a run of two or more reads as a real name.
+		if len(words) < 2 {
+			continue
+		}
+		out[strings.Join(words, " ")] = true
+		if !smartCommonWords[words[0]] {
+			out[words[0]] = true
+		}
+		if last := words[len(words)-1]; !smartCommonWords[last] {
+			out[last] = true
+		}
+	}
+	return out
+}
+
+// emailNameMatch reports whether a capitalised run is (or contains, or is
+// contained by) a name derived from an email address in the same document.
+// Whole-word comparison after accent-folding, so "Liber" matches inside the
+// "oscar liber" gazetteer entry but "end" never matches inside "mendonca".
+func emailNameMatch(set map[string]bool, runText string) bool {
+	if len(set) == 0 {
+		return false
+	}
+	ft := foldAccentsLower(runText)
+	if set[ft] {
+		return true
+	}
+	for key := range set {
+		if wholeWordContains(key, ft) || wholeWordContains(ft, key) {
+			return true
+		}
+	}
+	return false
+}
+
+// wholeWordContains reports whether needle's whole-word token sequence occurs
+// contiguously inside hay's. Both are space-separated, already folded.
+func wholeWordContains(hay, needle string) bool {
+	h, n := strings.Fields(hay), strings.Fields(needle)
+	if len(n) == 0 || len(n) > len(h) {
+		return false
+	}
+	for i := 0; i+len(n) <= len(h); i++ {
+		ok := true
+		for j := range n {
+			if h[i+j] != n[j] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// isAllDigits reports whether the token is only ASCII digits (a numeric
+// local-part fragment such as the "42" in "john42"), which is never a name.
+func isAllDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// foldAccentsLower lower-cases a string and folds the Latin accents that
+// appear in EN/FR/PT names to ASCII, then collapses internal whitespace. A
+// table (not golang.org/x/text) keeps this dependency-free per CLAUDE.md §6;
+// it covers the accented letters that occur in names, which is all the
+// email-name match needs.
+func foldAccentsLower(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range strings.ToLower(s) {
+		switch r {
+		case 'á', 'à', 'â', 'ä', 'ã', 'å', 'ā':
+			b.WriteRune('a')
+		case 'é', 'è', 'ê', 'ë', 'ē':
+			b.WriteRune('e')
+		case 'í', 'ì', 'î', 'ï', 'ī':
+			b.WriteRune('i')
+		case 'ó', 'ò', 'ô', 'ö', 'õ', 'ō':
+			b.WriteRune('o')
+		case 'ú', 'ù', 'û', 'ü', 'ū':
+			b.WriteRune('u')
+		case 'ç':
+			b.WriteRune('c')
+		case 'ñ':
+			b.WriteRune('n')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
 
 // contextRadius is the snippet half-width around an occurrence (runes).
 const contextRadius = 60
@@ -228,6 +457,11 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 	if err != nil {
 		return nil, err
 	}
+
+	// Per-document email-name gazetteer (one regex pass). A capitalised run
+	// that matches a name spelt out in an address is a person with high
+	// confidence, whatever the frequency/word-count heuristics would have said.
+	emailNames := deriveEmailNames(text)
 
 	// Group occurrences by candidate text (case-sensitive: "WEBER" and
 	// "Weber" are different spellings the review UI should see as typed;
@@ -322,6 +556,21 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		// review UI always has it to filter and sort on, even when the
 		// engine-side floor is off.
 		score := candidateScore(r, g.count)
+
+		// Email-name signal: a run named by an address in the same document is
+		// a person. It overrides the category UNLESS a legal suffix or title
+		// already vouched for the run (a company whose name happens to appear
+		// in an address stays a company), and it lifts the score so a real
+		// person clears the confidence floor instead of being filtered as a
+		// bare multi-word guess.
+		if emailNameMatch(emailNames, g.text) {
+			if !g.qualifies {
+				g.category = CatPersonNames
+			}
+			if score < emailPersonScore {
+				score = emailPersonScore
+			}
+		}
 		if !keepCandidate(g.text, r, g.count, score, opts) {
 			continue
 		}
@@ -754,7 +1003,7 @@ func isCommonWordRun(text string) bool {
 	significant := 0
 	for _, w := range strings.FieldsFunc(text, func(r rune) bool { return r == ' ' || r == '-' }) {
 		lower := strings.ToLower(strings.Trim(w, ".,;:!?()\"\u2019'"))
-		if lower == "" || smartParticles[lower] {
+		if lower == "" || smartParticles[lower] || smartConnectors[lower] {
 			continue
 		}
 		significant++

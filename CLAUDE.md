@@ -299,7 +299,7 @@ doc-anonymiser/
   | `project_names` | `PROJECT` | codes beside a project cue |
   | `product_names` | `PRODUCT` | a trademark mark, or a product head noun |
   | `brand_names` | `BRAND` | nothing: a brand is world knowledge |
-  | `person_names` | `PERSON` | title cues, multi-word runs |
+  | `person_names` | `PERSON` | title cues, multi-word runs, email local-parts |
   | `identifier_names` | `ID` | reference and contract codes |
   | `other_names` | `OTHER` | nothing: it is defined by exclusion |
   | `custom_patterns` | `CUSTOM` | the user's own regexes |

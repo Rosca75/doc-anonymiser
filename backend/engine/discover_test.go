@@ -512,3 +512,101 @@ func TestCodesReachTheOfflineRoute(t *testing.T) {
 		t.Errorf("want ATLAS-2024 as a project, got %+v", got)
 	}
 }
+
+// --- email-derived person names (BUILD benchmark, 2026-08) -----------------
+
+// TestSmartDetectEmailDerivedNameCategorisesAndBoosts: a name spelt out in an
+// address in the same document is a person with high confidence, even where
+// the frequency heuristics alone would have hesitated. This is the single
+// highest-value offline signal on real correspondence.
+func TestSmartDetectEmailDerivedNameCategorisesAndBoosts(t *testing.T) {
+	text := "Please contact Johannes Borch <johannes.borch@pwc.lu> about the file.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	c := findCandidate(got, "Johannes Borch")
+	if c == nil {
+		t.Fatalf("email-named person missing: %+v", got)
+	}
+	if c.Category != CatPersonNames {
+		t.Errorf("category = %s, want %s", c.Category, CatPersonNames)
+	}
+	if c.Confidence < emailPersonScore {
+		t.Errorf("confidence = %.2f, want at least %.2f", c.Confidence, emailPersonScore)
+	}
+}
+
+// TestSmartDetectEmailDerivedSurnameAlone: the bare surname mentioned later in
+// the body is recognised as the same person, because the local-part indexes
+// the individual tokens too.
+func TestSmartDetectEmailDerivedSurnameAlone(t *testing.T) {
+	text := "From: Thierry Kremser <thierry.kremser@pwc.lu>\n" +
+		"Kremser approved the request yesterday.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if c := findCandidate(got, "Kremser"); c == nil || c.Category != CatPersonNames {
+		t.Errorf("bare surname not recognised as its email-named person: %+v", got)
+	}
+}
+
+// TestSmartDetectEmailAccentFold: the body spells the name with accents
+// ("José") while the address is ASCII ("jose"); the fold must bridge them.
+func TestSmartDetectEmailAccentFold(t *testing.T) {
+	text := "Cc: José Teixeira <jose.teixeira@pwc.lu> was copied. " +
+		"José Teixeira replied.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if c := findCandidate(got, "José Teixeira"); c == nil || c.Category != CatPersonNames {
+		t.Errorf("accented name not matched to its ASCII address: %+v", got)
+	}
+}
+
+// TestSmartDetectEmailIgnoresRoleMailbox: a functional mailbox is not a person.
+// "info@acme.com" must not invent someone called "Info", and a single-token
+// handle is not a forename+surname.
+func TestSmartDetectEmailIgnoresRoleMailbox(t *testing.T) {
+	names := deriveEmailNames("Write to info@acme.com or noreply@acme.com or bob@acme.com.\n")
+	if len(names) != 0 {
+		t.Errorf("role/handle mailboxes must inject no names, got %v", names)
+	}
+}
+
+// TestSmartDetectEmailNameDoesNotOverrideLegalSuffix: a run carrying a legal
+// suffix stays an organisation even if its words also appear in an address.
+func TestSmartDetectEmailNameDoesNotOverrideLegalSuffix(t *testing.T) {
+	text := "Alpine Trust S.A. <alpine.trust@example.com> signed the deed.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	if c := findCandidate(got, "Alpine Trust S.A."); c == nil || c.Category != CatEntityNames {
+		t.Errorf("a legal-suffix run must stay an organisation: %+v", got)
+	}
+}
+
+// --- negative gazetteer (business/role/document nouns) ----------------------
+
+// TestSmartDetectNegativeGazetteerDropsBusinessPhrases: the dominant offline
+// noise class is Title-Case business vocabulary. Under the shipped defaults it
+// is dropped, while a real multi-word name in the same text survives.
+func TestSmartDetectNegativeGazetteerDropsBusinessPhrases(t *testing.T) {
+	text := "Revenue Management improved. Revenue Management improved again. " +
+		"Extra Holiday Buying was approved. General Terms of Sale apply. " +
+		"The auditor Marie Duval signed the note.\n"
+	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+
+	for _, noise := range []string{"Revenue Management", "Extra Holiday Buying", "General Terms of Sale"} {
+		if c := findCandidate(got, noise); c != nil {
+			t.Errorf("business-noun phrase %q must be dropped, got it as %+v", noise, c)
+		}
+	}
+	if findCandidate(got, "Marie Duval") == nil {
+		t.Errorf("a real name in the same text must survive: %+v", got)
+	}
+}
+
+// TestSmartDetectConnectorsInsideCommonPhrase: "Terms of Sale" is all-common
+// only if the connector "of" is skipped like a particle; without that skip the
+// phrase would leak through as a candidate.
+func TestSmartDetectConnectorsInsideCommonPhrase(t *testing.T) {
+	if !isCommonWordRun("General Terms of Sale") {
+		t.Errorf("a phrase of common nouns joined by a connector must read as all-common")
+	}
+	// A real name joined by a connector is NOT all-common: one token is a name.
+	if isCommonWordRun("Bank of Marie") {
+		t.Errorf("a run containing a genuine name token must not read as all-common")
+	}
+}
