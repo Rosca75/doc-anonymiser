@@ -12,6 +12,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -358,6 +359,34 @@ func TestGridDocumentConsistency(t *testing.T) {
 	}
 }
 
+// TestComplexSheetConsistency: a complex xlsx sheet is one JSON region, and
+// the JSON, the fenced markdown preview and the grid-free result must stay in
+// step through the detect and apply phases. The three representations are
+// assembled in different places, so a split that lost one would show as a
+// preview that disagrees with the .json export.
+func TestComplexSheetConsistency(t *testing.T) {
+	const blob = `{"A1":"Marie Duval","B1":"marie.duval@example.com"}`
+	res := runPipeline(t, PipelineInput{
+		Documents: []Document{{
+			Name: "workbook.xlsx#Sheet1", Format: FormatXLSXJSON, JSON: blob,
+			Markdown: "```json\n" + blob + "\n```\n",
+		}},
+		Entities:  []Entity{{Category: CatPersonNames, Canonical: "Marie Duval"}},
+		Level:     LevelMedium,
+		Allowlist: NewEmptyAllowlist(),
+	})
+	rd := res.Documents[0]
+	if strings.Contains(rd.JSON, "Marie Duval") || strings.Contains(rd.JSON, "marie.duval@") {
+		t.Errorf("the JSON region was not anonymised: %s", rd.JSON)
+	}
+	if rd.Anonymised != "```json\n"+rd.JSON+"\n```\n" {
+		t.Errorf("the preview must be rendered from the anonymised JSON:\n%s", rd.Anonymised)
+	}
+	if rd.Grid != nil {
+		t.Error("a complex sheet has no grid model")
+	}
+}
+
 // TestReportContents sanity-checks totals, categories and the LLM note.
 func TestReportContents(t *testing.T) {
 	res := runPipeline(t, PipelineInput{
@@ -478,5 +507,176 @@ func TestAcceptProposalsStampsTheAIOrigin(t *testing.T) {
 	}
 	if accepted[0].Confidence != ConfidenceLLMDefault {
 		t.Errorf("the score must be unchanged, got %v", accepted[0].Confidence)
+	}
+}
+
+// TestOwnershipIsDecidedByRuleNotByDocumentOrder is the regression the
+// three-phase run exists for.
+//
+// The local AI is asked one document at a time, and it is entirely capable of
+// filing the same name under two different types in two documents. Detecting
+// and replacing in one step meant Registry.Assign's byOriginal index froze
+// whichever claim was ASSIGNED first, and assignment order is byte offset
+// within DOCUMENT order. So the category the value ended up under, and the
+// placeholder text the user reads and exports, depended on the order the files
+// were imported in.
+//
+// Deciding ownership over the whole batch before any placeholder is minted is
+// what makes the answer a rule instead. The table runs both document orders and
+// demands the same one.
+func TestOwnershipIsDecidedByRuleNotByDocumentOrder(t *testing.T) {
+	const value = "Helios"
+	aText := "The " + value + " engagement closed in June.\n"
+	bText := "A separate note about " + value + " and its scope.\n"
+	// The same name, two types, one per document: the shape an LLM produces on
+	// its own without anything being wrong with the run.
+	llm := &fakeLLM{perText: map[string][]ProposedEntity{
+		aText: {{Category: CatOtherNames, Text: value}},
+		bText: {{Category: CatBrandNames, Text: value}},
+	}}
+	docA := Document{Name: "a.txt", Format: FormatTXT, Markdown: aText}
+	docB := Document{Name: "b.txt", Format: FormatTXT, Markdown: bText}
+
+	owners := map[string]string{}
+	for _, tc := range []struct {
+		name string
+		docs []Document
+	}{
+		{"a first", []Document{docA, docB}},
+		{"b first", []Document{docB, docA}},
+	} {
+		reg := NewRegistry()
+		res, err := Run(context.Background(), PipelineInput{
+			Documents: tc.docs,
+			Level:     LevelAdvanced, // both types switched on
+			Allowlist: NewEmptyAllowlist(),
+			Registry:  reg,
+			LLM:       llm,
+		})
+		if err != nil {
+			t.Fatalf("%s: Run: %v", tc.name, err)
+		}
+
+		var owning []MappingEntry
+		for _, e := range reg.Entries() {
+			if strings.EqualFold(e.Original, value) {
+				owning = append(owning, e)
+			}
+		}
+		if len(owning) != 1 {
+			t.Fatalf("%s: one string must have exactly one placeholder, got %+v", tc.name, owning)
+		}
+		owners[tc.name] = owning[0].Category + " " + owning[0].Placeholder
+
+		// Both documents must show the SAME placeholder, or the two halves of
+		// one engagement stop agreeing with each other.
+		for _, d := range res.Documents {
+			if !strings.Contains(d.Anonymised, owning[0].Placeholder) {
+				t.Errorf("%s: %s does not carry %s:\n%s",
+					tc.name, d.Name, owning[0].Placeholder, d.Anonymised)
+			}
+		}
+	}
+
+	if owners["a first"] != owners["b first"] {
+		t.Errorf("the import order decided who owns %q: %q with a first, %q with b first.\n"+
+			"Ownership must be decided by the precedence rule over the whole batch, not by\n"+
+			"whichever claim reached the registry first.", value, owners["a first"], owners["b first"])
+	}
+}
+
+// TestDeclaredBeatsAutoDetected: a custom pattern and an auto-detected value
+// covering the same string resolve to the pattern, because a declaration
+// outranks a guess, and exactly one placeholder exists for the string.
+func TestDeclaredBeatsAutoDetected(t *testing.T) {
+	reg := NewRegistry()
+	res, err := Run(context.Background(), PipelineInput{
+		Documents: []Document{{Name: "a.txt", Format: FormatTXT,
+			Markdown: "Project PRJ-4471 is on track. PRJ-4471 again.\n"}},
+		// The user's own regex...
+		Patterns: []CustomPattern{{Expr: `PRJ-[0-9]+`}},
+		// ...and the same string as something Smart detection turned up.
+		Entities: []Entity{{
+			Category: CatProjectNames, Canonical: "PRJ-4471", Origin: OriginAuto,
+		}},
+		Level:     LevelMedium,
+		Allowlist: NewEmptyAllowlist(),
+		Registry:  reg,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	var owning []MappingEntry
+	for _, e := range reg.Entries() {
+		if strings.EqualFold(e.Original, "PRJ-4471") {
+			owning = append(owning, e)
+		}
+	}
+	if len(owning) != 1 {
+		t.Fatalf("one string, one placeholder, got %+v", owning)
+	}
+	if owning[0].Category != CatCustomPatterns {
+		t.Errorf("a pattern the user wrote must outrank an auto-detected value, got %s",
+			owning[0].Category)
+	}
+	if strings.Contains(res.Documents[0].Anonymised, "PRJ-4471") {
+		t.Errorf("the value must be replaced everywhere:\n%s", res.Documents[0].Anonymised)
+	}
+}
+
+// TestRunIsDeterministic: the same batch run twice, and once with the document
+// slice reversed, yields identical mapping entries. Ownership unification is
+// the reason the reversed order can be demanded to match.
+func TestRunIsDeterministic(t *testing.T) {
+	docs := []Document{
+		{Name: "a.txt", Format: FormatTXT,
+			Markdown: "Alpine Trust S.A. wrote to marie.duval@example.com.\n"},
+		{Name: "b.txt", Format: FormatTXT,
+			Markdown: "Alpine Trust and Meridian appear here, plus marie.duval@example.com.\n"},
+	}
+	input := func(order []Document, reg *Registry) PipelineInput {
+		return PipelineInput{
+			Documents: order,
+			Entities: []Entity{
+				{Category: CatEntityNames, Canonical: "Alpine Trust S.A."},
+				{Category: CatEntityNames, Canonical: "Meridian", Origin: OriginAuto},
+			},
+			Level:     LevelMedium,
+			Allowlist: NewEmptyAllowlist(),
+			Registry:  reg,
+		}
+	}
+	// A mapping fingerprint that ignores the ORDER entries come back in but not
+	// which category owns what, which is the thing under test.
+	fingerprint := func(reg *Registry) string {
+		var rows []string
+		for _, e := range reg.Entries() {
+			rows = append(rows, strings.ToLower(e.Original)+"="+e.Category)
+		}
+		sort.Strings(rows)
+		return strings.Join(rows, ",")
+	}
+
+	first := NewRegistry()
+	if _, err := Run(context.Background(), input(docs, first)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	again := NewRegistry()
+	if _, err := Run(context.Background(), input(docs, again)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reversed := NewRegistry()
+	if _, err := Run(context.Background(),
+		input([]Document{docs[1], docs[0]}, reversed)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if fingerprint(first) != fingerprint(again) {
+		t.Errorf("two identical runs disagreed:\n%s\nvs\n%s", fingerprint(first), fingerprint(again))
+	}
+	if fingerprint(first) != fingerprint(reversed) {
+		t.Errorf("reversing the document order changed who owns what:\n%s\nvs\n%s",
+			fingerprint(first), fingerprint(reversed))
 	}
 }

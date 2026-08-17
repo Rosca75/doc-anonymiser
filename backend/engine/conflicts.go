@@ -342,6 +342,60 @@ func (w *overlapWarnings) add(dropped []Span) {
 	}
 }
 
+// addOwnershipLosses records the claims ownership unification overruled.
+//
+// These are the same KIND of event as an overlap: two routes wanted the same
+// text, and the precedence rule decided. They are reported separately because
+// they carry more, and the difference matters to the reader: an overlap warning
+// says a stronger detection covered the text, while this one can name BOTH
+// routes, so the message explains the decision instead of only announcing it.
+//
+// The same caps apply. They exist so a pathological document cannot generate
+// megabytes of warnings out of one repeated name.
+func (w *overlapWarnings) addOwnershipLosses(losses []ownershipLoss) {
+	for _, loss := range losses {
+		if !w.wants() {
+			return
+		}
+		w.examined++
+		value := loss.loser.CanonicalOrOriginal()
+		key := loss.loser.Category + "|" + strings.ToLower(value)
+		if w.seen[key] {
+			continue
+		}
+		w.seen[key] = true
+		w.out = append(w.out, Conflict{
+			Kind:     "overlap",
+			Severity: "warn",
+			Value:    value,
+			Refs:     []ValueRef{{Kind: "detection", Category: loss.loser.Category, Canonical: strings.ToLower(value)}},
+			Message: fmt.Sprintf(
+				"%q was found by %s as %s and by %s as %s. %s takes priority, so it is replaced as %s everywhere.",
+				value,
+				originWord(loss.loser.Origin), loss.loser.Category,
+				originWord(loss.winner.Origin), loss.winner.Category,
+				originWord(loss.winner.Origin), loss.winner.Category),
+			Fix: "If the other one should win, switch off the type that covered it, narrow the pattern, or add the covering term to the never anonymise list.",
+		})
+	}
+}
+
+// originWord is the route named in a warning sentence. The engine's identifiers
+// are contracts, not prose, so a message that printed "ai" would read as jargon;
+// these are the same words the value card's origin chip uses.
+func originWord(origin string) string {
+	switch origin {
+	case OriginNative:
+		return "native detection"
+	case OriginAuto:
+		return "Smart detection"
+	case OriginAI:
+		return "the local AI"
+	default:
+		return "your own values and patterns"
+	}
+}
+
 // conflicts returns the collected warnings.
 func (w *overlapWarnings) conflicts() []Conflict {
 	return w.out
