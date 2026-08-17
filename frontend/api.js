@@ -217,7 +217,9 @@ export async function cancelDetection() {
 }
 
 /** expandVariants(entity) resolves to the variant list of one entity
- *  ({category, canonical, manualVariants, excludedVariants}). */
+ *  ({category, canonical, manualVariants, autoExpand}). autoExpand false means
+ *  the user curated the spellings, so Go derives none and returns exactly the
+ *  list it was given. */
 export async function expandVariants(entity) {
   return bridge().ExpandEntityVariants(entity);
 }

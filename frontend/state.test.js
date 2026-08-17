@@ -33,7 +33,7 @@ import {
   askConfirm, answerConfirm, askChoice, answerChoice,
   entityKey,
   renameEntity, renameVariant, changeEntityCategory, changeCandidateCategory,
-  groupEntities, clearAllEntities, entityConflicts, spellingsOf,
+  groupEntities, clearAllEntities, entityConflicts, spellingsOf, curate,
 } from "./state.js";
 
 test("setState merges and notifies subscribers", () => {
@@ -340,7 +340,7 @@ test("buildRunRequest assembles only pipeline-ready inputs", () => {
 
   const req = buildRunRequest();
   assert.equal(req.useDeepScan, undefined);
-  assert.deepEqual(req.entities, [{ category: "entity_names", canonical: "Alpine", manualVariants: [], excludedVariants: [] }]);
+  assert.deepEqual(req.entities, [{ category: "entity_names", canonical: "Alpine", manualVariants: [], autoExpand: true }]);
   assert.deepEqual(req.allowTerms, ["CSSF"]);
   assert.deepEqual(req.patterns, [{ expr: "PRJ-[0-9]+" }]);
   assert.equal(req.simpleRules.length, 1);
@@ -539,7 +539,7 @@ test("reject removes, duplicates and existing entities are skipped", () => {
 
 // --- Variant regrouping --------------------------------------------------
 
-test("moveVariant happy path: source excludes, target gains, both re-pend", () => {
+test("moveVariant happy path: source curates without it, target gains it", () => {
   resetState();
   addEntities([
     { category: "person_names", canonical: "Jean Muller" },
@@ -551,9 +551,14 @@ test("moveVariant happy path: source excludes, target gains, both re-pend", () =
   assert.equal(moveVariant("person_names", "Jean Muller", "person_names", "J Muller Sr", "J. Muller"), true);
   const from = getState().entities.find((e) => e.canonical === "Jean Muller");
   const to = getState().entities.find((e) => e.canonical === "J Muller Sr");
-  assert.deepEqual(from.excludedVariants, ["J. Muller"]);
+  // The source is CURATED without the moved spelling: an automatic expansion
+  // would derive "J. Muller" again and both values would claim it.
+  assert.equal(from.autoExpand, false);
+  assert.deepEqual(from.manualVariants, ["Jean Muller"],
+    "the source keeps its remaining spellings as its own list");
+  assert.deepEqual([...spellingsOf(from).keys()], ["jean muller"]);
   assert.deepEqual(to.manualVariants, ["J. Muller"]);
-  assert.equal(from.variants, null, "source re-expands");
+  assert.deepEqual(from.variants, [], "a curated source has nothing left to expand");
   assert.equal(to.variants, null, "target re-expands");
 });
 
@@ -573,7 +578,7 @@ test("moveVariant rejects self-drops, unknown rows and absent variants", () => {
   assert.equal(getState().entities.find((e) => e.canonical === "Alpine").manualVariants.length, 0);
 });
 
-test("moveVariant across categories re-pends only the two touched rows", () => {
+test("moveVariant across categories touches only the two rows involved", () => {
   resetState();
   addEntities([
     { category: "person_names", canonical: "Jean Muller" },
@@ -587,8 +592,14 @@ test("moveVariant across categories re-pends only the two touched rows", () => {
   assert.equal(moveVariant("person_names", "Jean Muller", "entity_names", "Alpine", "Muller"), true);
   const untouched = getState().entities.find((e) => e.canonical === "Borealis");
   assert.deepEqual(untouched.variants, ["Borealis"], "third row untouched");
+  assert.equal(untouched.autoExpand, true);
+  // Only the target re-expands. The source is curated, so its list is settled
+  // and re-deriving it would put the moved spelling straight back.
   const pendingNames = getState().entities.filter((e) => e.variants === null).map((e) => e.canonical).sort();
-  assert.deepEqual(pendingNames, ["Alpine", "Jean Muller"]);
+  assert.deepEqual(pendingNames, ["Alpine"]);
+  const source = getState().entities.find((e) => e.canonical === "Jean Muller");
+  assert.equal(source.autoExpand, false);
+  assert.ok(!source.manualVariants.some((x) => x.toLowerCase() === "muller"));
 });
 
 // --- Reassignment helpers ------------------------------------------------
@@ -1618,15 +1629,59 @@ test("renameEntity refuses a name the same type already holds", () => {
   assert.equal(getState().entities.length, 2);
 });
 
-test("renameVariant excludes the old spelling and adds the new one", () => {
+test("renameVariant curates the list with the old spelling swapped out", () => {
   resetState();
   seedValue("entity_names", "Delta Industries", ["Delta Industries", "Delta"]);
   assert.equal(renameVariant("entity_names", "Delta Industries", "Delta", "Deltaa"), "");
   const e = getState().entities[0];
-  assert.ok(e.manualVariants.includes("Deltaa"), "the new spelling is a manual variant");
-  assert.ok((e.excludedVariants ?? []).some((x) => x.toLowerCase() === "delta"),
-    "the old spelling is excluded so the expansion cannot re-add it");
-  assert.equal(e.variants, null);
+  assert.equal(e.autoExpand, false, "editing a spelling makes the list the user's");
+  assert.ok(e.manualVariants.includes("Deltaa"), "the new spelling is in the list");
+  assert.ok(!e.manualVariants.some((x) => x.toLowerCase() === "delta"),
+    "the old spelling is gone, and no expansion is left to derive it again");
+  assert.deepEqual(e.variants, [], "a curated row is settled, not pending");
+});
+
+// pendingExpansions is what refreshVariants iterates: a curated row must not
+// appear in it, or Go would derive the deleted spelling straight back.
+import { pendingExpansions } from "./entitymodel.js";
+
+test("a deleted spelling stays deleted through a refresh", () => {
+  // The regression a per-value exclusion list existed to prevent. Curation
+  // covers it instead: a settled row is never asked to expand again, so nothing
+  // can derive the deleted spelling a second time.
+  resetState();
+  seedValue("entity_names", "Delta Industries", ["Delta Industries", "Delta"]);
+  const before = getState().entities[0];
+  const kept = [...spellingsOf(before).values()].filter((x) => x !== "Delta");
+  setState({ entities: [curate(before, kept)] });
+
+  const e = getState().entities[0];
+  assert.equal(e.autoExpand, false);
+  assert.ok(!spellingsOf(e).has("delta"), "the spelling is gone");
+  assert.deepEqual(pendingExpansions(getState().entities), [],
+    "a curated row is never re-expanded, so nothing brings it back");
+});
+
+test("groupEntities keeps the survivor curated when any participant was", () => {
+  resetState();
+  seedValue("entity_names", "Delta Industries", ["Delta Industries", "Delta"]);
+  seedValue("entity_names", "Delta Group", ["Delta Group"]);
+  // The user curated the value they are about to fold in. A merge must not
+  // silently re-derive a list they set by hand.
+  const src = getState().entities.find((e) => e.canonical === "Delta Group");
+  setState({
+    entities: getState().entities.map((e) =>
+      e.canonical === "Delta Group" ? curate(e, ["DG"]) : e),
+  });
+  assert.ok(src);
+
+  assert.equal(groupEntities(
+    { category: "entity_names", canonical: "Delta Industries" },
+    [{ category: "entity_names", canonical: "Delta Group" }]), 1);
+  const kept = getState().entities[0];
+  assert.equal(kept.autoExpand, false, "the merged value stays curated");
+  assert.ok(spellingsOf(kept).has("delta group"), "the folded name is a spelling");
+  assert.ok(spellingsOf(kept).has("dg"), "so are the folded value's own spellings");
 });
 
 test("renameVariant on the spelling that IS the name renames the value", () => {
@@ -1693,16 +1748,25 @@ test("clearAllEntities empties the list and reports the count", () => {
 
 // --- Conflict detection for the My values tab ----------------------------
 
-test("spellingsOf is the name, the variants and the manual ones, minus excluded", () => {
+test("spellingsOf is the name, the expanded variants and the manual ones", () => {
   const e = {
     category: "entity_names", canonical: "Delta Industries",
     variants: ["Delta Industries", "Delta"], manualVariants: ["DI"],
-    excludedVariants: ["Delta"],
   };
   const keys = [...spellingsOf(e).keys()];
-  assert.ok(keys.includes("delta industries"));
-  assert.ok(keys.includes("di"));
-  assert.ok(!keys.includes("delta"), "an excluded spelling is not a spelling");
+  assert.deepEqual(keys.sort(), ["delta", "delta industries", "di"]);
+});
+
+test("spellingsOf on a curated value is exactly its curated list", () => {
+  // A curated row carries an empty expanded list, so the same walk covers it:
+  // what the card shows is what the run replaces.
+  const e = curate({
+    category: "entity_names", canonical: "Delta Industries",
+    variants: ["Delta Industries", "Delta"], manualVariants: ["DI"],
+  }, ["Delta Industries", "DI"]);
+  const keys = [...spellingsOf(e).keys()];
+  assert.deepEqual(keys.sort(), ["delta industries", "di"]);
+  assert.ok(!keys.includes("delta"), "a deleted spelling is not re-derived");
 });
 
 test("entityConflicts flags the same name under two types", () => {

@@ -274,27 +274,31 @@ func TestCountTermMatches(t *testing.T) {
 	}
 }
 
-// TestExcludedVariants: an excluded spelling disappears from expansion,
-// so a moved variant matches exactly one entity afterwards.
-func TestExcludedVariants(t *testing.T) {
+// TestCuratedVariants: once the user has curated a value's spellings, the
+// automatic expansion no longer applies, so the chips on the card are exactly
+// what the run replaces. This is what makes a deleted spelling stay deleted:
+// there is no expansion left to derive it again.
+func TestCuratedVariants(t *testing.T) {
+	curated := false
 	got := engine.ExpandVariants(engine.Entity{
-		Category:         "person_names",
-		Canonical:        "Jean Muller",
-		ExcludedVariants: []string{"J. Muller", "muller"},
+		Category:       "person_names",
+		Canonical:      "Jean Muller",
+		ManualVariants: []string{"Jean"},
+		AutoExpand:     &curated,
 	})
 	for _, v := range got {
 		if strings.EqualFold(v, "J. Muller") || strings.EqualFold(v, "Muller") {
-			t.Errorf("excluded variant %q still expanded: %v", v, got)
+			t.Errorf("curated value still derived %q: %v", v, got)
 		}
 	}
-	found := false
+	want := map[string]bool{"Jean Muller": true, "Jean": true}
+	if len(got) != len(want) {
+		t.Fatalf("a curated value expands to its name plus its own spellings, got %v", got)
+	}
 	for _, v := range got {
-		if v == "Jean Muller" {
-			found = true
+		if !want[v] {
+			t.Errorf("unexpected spelling %q in a curated expansion: %v", v, got)
 		}
-	}
-	if !found {
-		t.Errorf("canonical must survive exclusion of other variants: %v", got)
 	}
 }
 

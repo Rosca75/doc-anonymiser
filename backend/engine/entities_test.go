@@ -275,6 +275,73 @@ func TestLiteralOnlyCategoriesStillTakeManualVariants(t *testing.T) {
 	}
 }
 
+// TestCuratedExpansion covers the curated-variant model: once AutoExpand is
+// false, ManualVariants IS the list. The chips on a value's card are then
+// exactly what the run replaces, which is what makes deleting a spelling stick
+// without recording a rule that suppresses it.
+func TestCuratedExpansion(t *testing.T) {
+	curated, expanding := false, true
+	cases := []struct {
+		name   string
+		entity Entity
+		want   []string
+	}{
+		{
+			name: "a curated value expands to exactly its list",
+			entity: Entity{
+				Category:       CatPersonNames,
+				Canonical:      "Marie Duval",
+				ManualVariants: []string{"Duval", "Mimi"},
+				AutoExpand:     &curated,
+			},
+			// No "M. Duval", no "Marie": those are derived, and this value's
+			// spellings are the user's.
+			want: []string{"Marie Duval", "Duval", "Mimi"},
+		},
+		{
+			name: "an explicit true expands as usual",
+			entity: Entity{
+				Category:   CatEntityNames,
+				Canonical:  "Alpine Trust S.A.",
+				AutoExpand: &expanding,
+			},
+			want: []string{"Alpine Trust S.A.", "Alpine Trust"},
+		},
+		{
+			name: "an absent flag expands as usual",
+			entity: Entity{
+				Category:  CatEntityNames,
+				Canonical: "Alpine Trust S.A.",
+			},
+			want: []string{"Alpine Trust S.A.", "Alpine Trust"},
+		},
+		{
+			name: "minVariantLen still guards a curated list",
+			entity: Entity{
+				Category:  CatPersonNames,
+				Canonical: "Marie Duval",
+				// "Du" is two runes: replacing it would shred ordinary text,
+				// whether it was derived or typed.
+				ManualVariants: []string{"Du", "Duval"},
+				AutoExpand:     &curated,
+			},
+			want: []string{"Marie Duval", "Duval"},
+		},
+	}
+	for _, tc := range cases {
+		got := ExpandVariants(tc.entity)
+		if len(got) != len(tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+			continue
+		}
+		for _, w := range tc.want {
+			if !containsString(got, w) {
+				t.Errorf("%s: missing %q, got %v", tc.name, w, got)
+			}
+		}
+	}
+}
+
 func TestOneLegalSuffixTableServesBothDetectionAndExpansion(t *testing.T) {
 	// Two tables meant smart detection could propose "Bidco SCSp" from a form
 	// only IT knew, and the expansion could then not produce "Bidco".

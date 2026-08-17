@@ -534,6 +534,15 @@ export const WORKSPACE = {
   },
   variantsPending: "working out the other spellings...",
   noVariants: "no other spellings found",
+  /**
+   * variantDeleted(v) confirms a spelling was dropped from one value, and
+   * points at the tab that IS for negative rules. Deleting a spelling here
+   * stops it belonging to THIS value; it does not stop it being replaced by
+   * something else, and the difference is not guessable from the button.
+   */
+  variantDeleted(v) {
+    return `Removed the spelling "${v}" from this value. To stop it being replaced by anything at all, add it to Never anonymise.`;
+  },
   /** variantAlreadyThere(v) explains an add that changed nothing. */
   variantAlreadyThere(v) {
     return `${v} is already one of the spellings.`;

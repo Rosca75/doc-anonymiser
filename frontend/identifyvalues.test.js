@@ -12,10 +12,11 @@ import assert from "node:assert/strict";
 import {
   resetState, getState, setState, toggleCategory,
   addEntities, setEntityVariants, addAllowTerm, addCandidates, entityKey,
-  groupEntities,
+  groupEntities, curate,
 } from "./state.js";
 import { valuesTab, suggestionsTab, visibleValues } from "./views/identifyworkspace.js";
 import { all, one, exists, textOf } from "./testhtml.js";
+import { WORKSPACE } from "./copy.js";
 
 /** seed(category, canonical, variants) adds one accepted value with a settled
  *  variant list, the shape the tab renders. */
@@ -153,4 +154,20 @@ test("grouping three values and choosing a source as the main keeps that source 
   const folded = es[0].manualVariants ?? [];
   assert.ok(folded.includes("Acme"), "the card value folded in as a spelling");
   assert.ok(folded.includes("Acme Corp"), "the other source folded in as a spelling");
+});
+
+test("a curated value shows its chips and no pending placeholder", () => {
+  // A curated row's list is settled by definition: showing "working out the
+  // other spellings..." on it would promise a round-trip that never comes,
+  // because nothing is left for Go to derive.
+  resetState();
+  seed("entity_names", "Delta Industries", ["Delta Industries", "Delta"]);
+  const before = getState().entities[0];
+  setState({ entities: [curate(before, ["Delta Industries"])] });
+
+  const html = valuesTab(getState());
+  assert.deepEqual(all(html, "span.variant-chip").map((c) => c.attrs["data-variant"]),
+    ["Delta Industries"], "only the curated spellings are chips");
+  assert.ok(!html.includes(WORKSPACE.variantsPending),
+    "a curated row is settled, so it never shows the pending placeholder");
 });

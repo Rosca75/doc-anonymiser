@@ -103,7 +103,7 @@ display choice: it decides which country-specific regex categories run.
 |---|---|---|
 | `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, pages}` (null = every document whole; restricts the LOCAL AI route only; `pages` is a 1-based `number[]` over the document's own page/slide/row/line units, and an empty array means the whole selected document) | `DetectionResult {candidates, proposals, phases, skipped, errors, cancelled, status}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
 | `cancelDetection()` | — | aborts the in-flight run, reaching whichever route is running, including mid-file |
-| `expandVariants(entity)` | entity | `{category, canonical, manualVariants, excludedVariants}` |
+| `expandVariants(entity)` | `{category, canonical, manualVariants, autoExpand}` | the spellings this value matches, longest first. `autoExpand: false` means the user curated the list: Go derives nothing and returns the canonical name plus exactly the spellings it was given, so the chips on the card are what the run replaces |
 | `countTermMatches(term)` | term | `{count, documents}`, the live read-out under the manual add-value row (debounced) |
 | `validatePattern(expr)` | regex | `""` (valid) or the error message |
 | `patternMatches(expr)` | regex | up to 20 sample matches across the loaded documents, shown live under the pattern field: a regex that compiles and matches nothing is the common mistake |
@@ -134,7 +134,11 @@ removed list with restore.
 | `getMapping()` | — | placeholder → `{original, category}` lookup (empty before the first run) |
 
 The run `request` is `{entities, allowTerms, patterns, categories, simpleRules,
-suppressRegexPII}`. `suppressRegexPII` is the "Native detection" master switch
+suppressRegexPII}`. Each entity is
+`{category, canonical, manualVariants, autoExpand}`: `autoExpand: false` means
+the spellings are curated, so Go replaces exactly `manualVariants` plus the
+canonical name and derives nothing.
+`suppressRegexPII` is the "Native detection" master switch
 inverted (`!useNativeDetect`): when true, Go skips the deterministic regex PII
 pass (pass 1) so NO signal category is replaced, whatever `categories` selects;
 the entity, custom-pattern and code passes are unaffected.

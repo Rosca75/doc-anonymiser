@@ -28,14 +28,24 @@ type Entity struct {
 	// Canonical is the full name as entered/discovered.
 	Canonical string `json:"canonical"`
 	// ManualVariants are extra spellings added by the user in the review
-	// UI, on top of the automatic expansion.
+	// UI. While AutoExpand applies they sit ON TOP of the automatic
+	// expansion; once the user has curated the list they ARE the list.
 	ManualVariants []string `json:"manualVariants,omitempty"`
-	// ExcludedVariants are spellings this entity must NOT match, even
-	// when the automatic expansion would produce them. Written by the
-	// variant drag-and-drop regrouping: moving a
-	// variant to another entity excludes it here so exactly one entity
-	// matches it afterwards.
-	ExcludedVariants []string `json:"excludedVariants,omitempty"`
+	// AutoExpand reports whether the automatic variant expansion still
+	// applies. Nil and true both mean yes, which is the state of every value
+	// detection or the user creates. It goes false the first time the user
+	// edits the spellings: from then on ManualVariants IS the list, and the
+	// chips on the card are exactly what will be replaced.
+	//
+	// This is what makes deleting a spelling stick without a negative rule.
+	// A per-value exclusion list is a rule with no home in the UI: invisible
+	// except as the absence of a chip, impossible to undo, and duplicating
+	// the job of the never-anonymise list, which is the one place a negative
+	// rule is meant to live and be visible.
+	//
+	// A pointer so an absent field reads as "expand", and so the frontend
+	// can send the field without inventing a default.
+	AutoExpand *bool `json:"autoExpand,omitempty"`
 	// Confidence is how much this entity is trusted, in [0.0, 1.0]
 	// Zero means "not
 	// stated", which DetectEntities reads as ConfidenceManualDefault:
@@ -104,23 +114,29 @@ var legalSuffixes = []string{
 // user explicitly asked for them).
 const minVariantLen = 3
 
+// AutoExpands reports whether the automatic expansion applies to this
+// entity. An unset AutoExpand means yes: every value arrives uncurated, and a
+// producer that never touches the field must not accidentally freeze the list.
+func (e Entity) AutoExpands() bool {
+	return e.AutoExpand == nil || *e.AutoExpand
+}
+
 // ExpandVariants returns every spelling the entity should match, canonical
 // first, deduplicated, longest first (the order replacement wants).
+//
+// A CURATED entity (AutoExpand false) expands to nothing: its canonical name
+// plus exactly the spellings on ManualVariants. That is what the chips on the
+// card show, so what the card shows is what the run replaces. The length guard
+// still applies, because a 2-character spelling would shred ordinary text
+// whether it was derived or typed.
 func ExpandVariants(e Entity) []string {
-	// Excluded spellings never make it into the list (drag-and-drop
-	// regrouping moved them to another entity, Phase 9d).
-	excluded := map[string]bool{}
-	for _, x := range e.ExcludedVariants {
-		excluded[strings.ToLower(strings.TrimSpace(x))] = true
-	}
-
 	seen := map[string]bool{}
 	var out []string
 	add := func(v string) {
 		v = strings.TrimSpace(v)
 		// Case-insensitive dedupe; keep the first spelling encountered.
 		key := strings.ToLower(v)
-		if v == "" || len([]rune(v)) < minVariantLen || seen[key] || excluded[key] {
+		if v == "" || len([]rune(v)) < minVariantLen || seen[key] {
 			return
 		}
 		seen[key] = true
@@ -129,25 +145,21 @@ func ExpandVariants(e Entity) []string {
 
 	add(e.Canonical)
 
-	switch {
-	case literalOnlyCategories[e.Category]:
-		// No automatic expansion; manual variants below still apply.
-	case personCategories[e.Category]:
-		expandPersonInto(e.Canonical, add)
-	default:
-		expandOrgInto(e.Canonical, add)
+	if e.AutoExpands() {
+		switch {
+		case literalOnlyCategories[e.Category]:
+			// No automatic expansion; manual variants below still apply.
+		case personCategories[e.Category]:
+			expandPersonInto(e.Canonical, add)
+		default:
+			expandOrgInto(e.Canonical, add)
+		}
 	}
 
 	// Manual variants last (typically added because the automatic ones
-	// missed a nickname); dedupe still applies but not the length guard —
-	// the user asked for them explicitly.
+	// missed a nickname, or because the user curated the list by hand).
 	for _, v := range e.ManualVariants {
-		v = strings.TrimSpace(v)
-		key := strings.ToLower(v)
-		if v != "" && !seen[key] && !excluded[key] {
-			seen[key] = true
-			out = append(out, v)
-		}
+		add(v)
 	}
 
 	// Longest first, so longest-match-first replacement can simply walk

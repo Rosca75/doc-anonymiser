@@ -51,7 +51,7 @@ import {
   addPattern, removePattern, NAME_CATEGORIES,
   renameEntity, renameVariant, changeEntityCategory, changeCandidateCategory,
   groupEntities, clearAllEntities, entityConflicts, spellingsOf, removeAllowTerm,
-  aiScopeArg,
+  aiScopeArg, curate,
 } from "../state.js";
 import { pendingExpansions } from "../entitymodel.js";
 import {
@@ -978,11 +978,15 @@ function wireValues(container) {
         // The chip itself is a drag handle, so the remove button has to stop the
         // click reaching it.
         ev.stopPropagation();
-        // Removing a variant is an EXCLUSION, not a deletion: automatic expansion
-        // would put it straight back otherwise. moveVariant is for regrouping;
-        // here the variant simply stops applying.
-        excludeVariant(cat, canonical, del.dataset.variant);
+        // Deleting a spelling curates the value: the remaining chips become its
+        // whole list. moveVariant is for regrouping; here the spelling simply
+        // stops applying to anything.
+        const gone = del.dataset.variant;
+        deleteVariant(cat, canonical, gone);
         await refreshVariants();
+        // The nudge towards the tab that IS for negative rules: this deletion
+        // stops the spelling belonging to THIS value, not to every value.
+        notify(WORKSPACE.variantDeleted(gone), "info");
       });
     }
 
@@ -1126,7 +1130,7 @@ function wireSolvePanel(cardEl, cat, canonical) {
       } else if (act === "remove-allow") {
         removeAllowTerm(canonical);
       } else if (act === "drop-variant") {
-        excludeVariant(cat, canonical, action.dataset.spelling);
+        deleteVariant(cat, canonical, action.dataset.spelling);
         await refreshVariants();
       } else if (act === "merge") {
         groupEntities(
@@ -1324,32 +1328,25 @@ function revealVariantEditInput(textEl, category, canonical, key) {
 }
 
 /**
- * excludeVariant(category, canonical, variant) stops one spelling applying to a
+ * deleteVariant(category, canonical, variant) removes one spelling from a
  * value.
  *
- * It has to be an EXCLUSION rather than a removal: the automatic expansion would
- * regenerate an automatic variant on the next expansion, so deleting it would
- * look like the button did nothing. Setting variants back to pending re-expands
- * this row only.
+ * It CURATES the row: the remaining chips become the value's whole list and the
+ * automatic expansion stops applying. That is what makes the deletion stick.
+ * Deleting from an auto-expanding list would look like the button did nothing,
+ * because the next expansion would derive the same spelling again.
  *
- * It does NOT trigger the re-expansion itself: the caller calls refreshVariants
- * after it, so the value's own repaint and the re-expansion's repaint stay
- * separate. The value list's scroll survives both because scroll offsets are
- * preserved centrally by the shell repaint (scroll.js).
+ * It does NOT trigger a re-expansion, and there is nothing left to expand: a
+ * curated row's list is settled. The value list's scroll survives the repaint
+ * because scroll offsets are preserved centrally (scroll.js).
  */
-function excludeVariant(category, canonical, variant) {
+function deleteVariant(category, canonical, variant) {
   const s = getState();
+  const lower = variant.toLowerCase();
   setState({
     entities: s.entities.map((e) => {
       if (entityKey(e.category, e.canonical) !== entityKey(category, canonical)) return e;
-      const lower = variant.toLowerCase();
-      return {
-        ...e,
-        manualVariants: (e.manualVariants ?? []).filter((x) => x.toLowerCase() !== lower),
-        excludedVariants: [...(e.excludedVariants ?? []), variant],
-        variants: null, // re-expand ONLY this row
-        variantError: null,
-      };
+      return curate(e, [...spellingsOf(e).values()].filter((x) => x.toLowerCase() !== lower));
     }),
   });
 }
@@ -1381,7 +1378,7 @@ async function refreshVariants() {
     try {
       const variants = await expandVariants({
         category: e.category, canonical: e.canonical,
-        manualVariants: e.manualVariants, excludedVariants: e.excludedVariants ?? [],
+        manualVariants: e.manualVariants, autoExpand: e.autoExpand !== false,
       });
       setEntityVariants(e.category, e.canonical, variants ?? []);
     } catch (err) {
