@@ -18,7 +18,7 @@ import {
 import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
 import {
   ALL_CATEGORIES, NAME_CATEGORIES, resetState, getState, setState, setUseAI,
-  setAIScope,
+  setAIScope, setCategoryGroup,
 } from "./state.js";
 import { textOf, stripTags, all, one, exists } from "./testhtml.js";
 
@@ -345,4 +345,88 @@ test("a category only a detection route or manual entry can produce says so", ()
     assert.match(description, /AI|add(ed)? by you/i,
       `${category} cannot be found offline, so its description must say where it comes from`);
   }
+});
+
+// --- The group select-all buttons address the RIGHT group (CR11) ----------
+//
+// The rail's select-all/deselect-all buttons carry their target as data-*
+// attributes, and wireScope resolves the group from btn.dataset.groupType. A
+// browser lowercases attribute NAMES, so a camelCase data key (data-groupType)
+// is read back as data-grouptype, and dataset.groupType comes out undefined ->
+// the handler falls back to "regex" and the "Auto detected values" (entity)
+// group's buttons silently drive the Contact regex group instead. The fix is a
+// hyphenated key (data-group-type) that survives the dataset round-trip. These
+// tests drive the handler's exact resolution FROM the rendered attributes, so a
+// regression to the camelCase key fails them.
+
+/** datasetOf(attrs) reproduces the browser's data-* -> element.dataset mapping:
+ *  drop the "data-" prefix, then camel-case each "-x" boundary. This is the
+ *  round-trip the bug broke, so the test must model it rather than read the raw
+ *  attribute by hand. */
+function datasetOf(attrs) {
+  const ds = {};
+  for (const [name, value] of Object.entries(attrs)) {
+    if (!name.startsWith("data-")) continue;
+    const key = name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+    ds[key] = value;
+  }
+  return ds;
+}
+
+/** bulkButton(html, title, on) finds one group's select-all ("1") or
+ *  deselect-all ("0") button by its aria-label and returns its parsed attrs. */
+function bulkButton(html, title, on) {
+  const label = `${on === "1" ? CONFIGURE.selectAll : CONFIGURE.deselectAll}: ${title}`;
+  const btn = all(html, "button.cat-group-all")
+    .find((b) => b.attrs["aria-label"] === label && b.attrs["data-on"] === on);
+  assert.ok(btn, `the "${title}" group is missing its ${on === "1" ? "select-all" : "deselect-all"} button`);
+  return btn;
+}
+
+/** clickBulk replays wireScope's click handler verbatim, but resolves the group
+ *  from the button's RENDERED data-* attributes via datasetOf, which is exactly
+ *  the path the bug corrupted. ENTITY_GROUPS/REGEX_GROUPS are private to the
+ *  view, so they are re-derived here the same way the view slices them. */
+function clickBulk(btn) {
+  const REGEX_GROUPS = CATEGORY_GROUPS.slice(0, 3);
+  const ENTITY_GROUPS = CATEGORY_GROUPS.slice(3);
+  const ds = datasetOf(btn.attrs);
+  const type = ds.groupType || "regex";
+  const groupArray = type === "entity" ? ENTITY_GROUPS : REGEX_GROUPS;
+  const group = groupArray[Number(ds.group)];
+  assert.ok(group, "the button's data-group index must resolve to a real group");
+  setCategoryGroup(group[1], ds.on === "1");
+}
+
+test("the entity group's select-all toggles the NAME categories, not the regex ones (CR11)", () => {
+  resetState();
+  // A clean baseline: every category off, so "became selected" is unambiguous.
+  const off = {};
+  for (const c of ALL_CATEGORIES) off[c] = false;
+  setState({ settings: { ...getState().settings, categories: off } });
+
+  clickBulk(bulkButton(railBody(getState()), CONFIGURE.groupDetected, "1"));
+
+  const cats = getState().settings.categories;
+  for (const name of NAME_CATEGORIES) {
+    assert.equal(cats[name], true,
+      `${name} is a NAME category, so the Auto detected values select-all must switch it on`);
+  }
+  // The Contact regex group is REGEX_GROUPS[0], which the bug's "regex" fallback
+  // would have toggled by mistake. These must stay exactly as they were.
+  for (const regex of ["email", "url", "iban", "vat"]) {
+    assert.equal(cats[regex], false,
+      `${regex} belongs to the Contact regex group and must be left untouched`);
+  }
+});
+
+test("the entity select-all carries the hyphenated data key so dataset reads it back (CR11)", () => {
+  resetState();
+  const btn = bulkButton(railBody(getState()), CONFIGURE.groupDetected, "1");
+  // The literal attribute must be hyphenated: a camelCase key is lowercased by
+  // the browser and dataset.groupType comes back undefined.
+  assert.ok("data-group-type" in btn.attrs,
+    "the bulk button must emit data-group-type, not a camelCase data-groupType");
+  assert.equal(datasetOf(btn.attrs).groupType, "entity",
+    "the entity group's button must resolve to the entity route");
 });

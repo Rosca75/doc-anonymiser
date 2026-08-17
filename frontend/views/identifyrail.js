@@ -327,12 +327,12 @@ function categoryGroups(s, groups, type = "regex") {
       button("", {
         kind: "ghost", cls: "cat-group-all icon-action ok", icon: "check",
         ariaLabel: `${CONFIGURE.selectAll}: ${title}`, title: CONFIGURE.selectAll,
-        data: { groupType: type, group: String(index), on: "1" },
+        data: { "group-type": type, group: String(index), on: "1" },
       }) +
       button("", {
         kind: "ghost", cls: "cat-group-all icon-action", icon: "remove",
         ariaLabel: `${CONFIGURE.deselectAll}: ${title}`, title: CONFIGURE.deselectAll,
-        data: { groupType: type, group: String(index), on: "0" },
+        data: { "group-type": type, group: String(index), on: "0" },
       });
 
     return collapsibleGroup(`cat-group-${type}-${index}`, title, rows, {
