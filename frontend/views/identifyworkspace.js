@@ -1553,7 +1553,7 @@ const INTERSECTION_DEBOUNCE_MS = 400;
  * and the screen unchanged. It must never throw: an unhandled rejection here
  * would take the whole repaint down and blank the screen.
  */
-export function scheduleIntersectionCheck() {
+function scheduleIntersectionCheck() {
   if (intersectionTimer) clearTimeout(intersectionTimer);
   intersectionTimer = setTimeout(async () => {
     intersectionTimer = null;

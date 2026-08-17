@@ -69,6 +69,21 @@ enforced anywhere else:
   `ResolveOverlapsWithLosers`, the one place the decision is made, because a
   parallel check can disagree with the pipeline and then describe something
   that did not happen.
+- `engine/origin.go` — WHICH ROUTE produced a detection (`native`, `declared`,
+  `auto`, `ai`) and `OriginRank`, the superseding order, lower wins. It is a
+  separate field from `Confidence` on purpose: confidence feeds the
+  `MinConfidence` floor, so using one number for both meant raising the floor
+  silently reordered which route wins. `ResolveOverlaps` compares origin FIRST.
+  Mirrored by `frontend/state.js ORIGINS`, guarded by `../origin_parity_test.go`.
+- `engine/intersections.go` — `DetectIntersections`, which answers "what covers
+  what" BEFORE a run so the warning can sit on the value's own card instead of
+  arriving on the results screen. It reuses `detectText` and the shared
+  comparator, never a parallel check, because a parallel check can disagree
+  with the pipeline and then describe something that did not happen.
+- `engine/families.go` — `FoldValueFamilies`: "Coca-Cola" and "Coca-Cola
+  company" are ONE value, and the SHORTER form is the main one. Variants match
+  longest first, so that way the phrase collapses into one placeholder; the
+  other way the shorter fires inside the longer and leaks the rest.
 - `engine/codes.go` — the offline detector for CODE-SHAPED values, a second
   scanner over the raw text. It is separate from `discover.go` because that
   file's tokenizer treats a digit as a word boundary, so no code shape can
@@ -92,16 +107,28 @@ refused to free.
 1. Deterministic PII regex pass (`engine/pii.go`). Regexes are compiled once
    at package init and documented with match / deliberately-no-match examples.
 2. Known-entity pass (`engine/entities.go`): discovery + manual entities,
-   expanded into name variants, longest-match-first. Expansion has three
-   classes and a category belongs to exactly one: person-style (initials,
-   surname-only, first-name-only, hyphen/space), organisation-style (a legal
-   suffix stripped, never added), and literal, for the categories with no name
-   structure to expand.
+   expanded into name variants, longest-match-first. Expansion stops applying
+   once the user has curated a value's spellings (`Entity.AutoExpand`, nil and
+   true both meaning "expand"): from then on `ManualVariants` IS the list,
+   which is what makes deleting a spelling stick without a negative rule.
+   While it applies, expansion has three classes and a category belongs to
+   exactly one: person-style (initials, surname-only, first-name-only,
+   hyphen/space), organisation-style (a legal suffix stripped, never added),
+   and literal, for the categories with no name structure to expand.
 3. Optional LLM deep-scan pass (`engine/discover.go` + `ollama`): every
    LLM-proposed entity passes a **hallucination filter** (dropped unless the
    exact string occurs in the source text) and respects the allowlist.
 4. Post-pass: registry re-application across ALL loaded documents so the same
    real-world entity maps to the same placeholder everywhere.
+
+`Run` executes those passes in THREE phases rather than one loop: detect every
+document, then UNIFY OWNERSHIP across the whole batch (`unifyOwnership` picks
+each string's owner by `OriginRank`), then apply. The split exists because
+`Registry.Assign`'s `byOriginal` index gives a string to its first claimant for
+the whole session, and with detection and replacement in one step the first
+claimant was decided by byte offset within DOCUMENT order: which category a
+value ended up under, and therefore its placeholder text, depended on the order
+the files were imported in.
 
 Allowlisted terms are never replaced, by any pass. Placeholders are stable
 per session, format `[CATEGORY_N]`; the registry maps original → placeholder
@@ -115,7 +142,7 @@ an override took. The renames a user made are recorded rather than inferred
 (`Registry.Overrides`) and persist in the session file; **session files are read
 only by the version that wrote them**, so a file whose `SessionVersion` this
 build does not know is refused with an actionable message instead of
-half-migrated (BUILD-05 decision 1). The current version is **4**. A corrupt
+half-migrated (BUILD-05 decision 1). The current version is **6**. A corrupt
 key (two entries claiming one value) is refused the same way, as an ERROR:
 these functions run behind bound methods on a file the user picked, so
 panicking would take the application down on a bad file.
