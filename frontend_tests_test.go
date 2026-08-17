@@ -218,10 +218,10 @@ func TestNoFrontendTestIsSilenced(t *testing.T) {
 // notices.test.js) rather than entries: an exemption is for a module where a test
 // would assert nothing, not for one nobody has got round to.
 var frontendModulesWithoutTests = map[string]string{
-	"frontend/html.js":            "one function, escapeHTML, exercised by every render test that escapes anything",
-	"frontend/icons.js":           "a map of vendored SVG strings, no logic to assert",
-	"frontend/main.js":            "pure wiring: it attaches listeners to shell.js markup, which shell.test.js covers. What it renders is asserted by the layer 3 rendering harness",
-	"frontend/views/home.js":      "a static landing page with no branching",
+	"frontend/html.js":       "one function, escapeHTML, exercised by every render test that escapes anything",
+	"frontend/icons.js":      "a map of vendored SVG strings, no logic to assert",
+	"frontend/main.js":       "pure wiring: it attaches listeners to shell.js markup, which shell.test.js covers. What it renders is asserted by the layer 3 rendering harness",
+	"frontend/views/home.js": "a static landing page with no branching",
 }
 
 // TestEveryFrontendModuleWithLogicHasATest is mode 3: the module nothing tests.
