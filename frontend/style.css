@@ -1376,6 +1376,21 @@ input, select {
   font-size: 0.78rem;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* The panel grew a body: three stages, and the middle one is three options
+   each with a hint. It is positioned against the Compare card and clamped to
+   the card's bounds by wireTextSelection, the same clamp the mark tooltip
+   uses, so a selection near the right edge does not push it off screen. */
+.selection-options { display: flex; flex-direction: column; gap: 0.5rem; }
+.selection-option {
+  display: flex; align-items: flex-start; gap: 0.5rem;
+  cursor: pointer; font-size: 0.82rem;
+}
+.selection-option input { margin-top: 0.25rem; flex: none; }
+.selection-option-body { display: flex; flex-direction: column; gap: 0.15rem; }
+.selection-option-name { color: var(--text); }
+.selection-card .field-label {
+  display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.78rem;
+}
 
 /* Highlight tints per category family: black text on every fill (BUILD-02
    section 5 remapping). */

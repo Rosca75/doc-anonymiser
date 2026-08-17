@@ -912,13 +912,39 @@ export const ANONYMISE = {
     return `${n} replacement${n === 1 ? "" : "s"} in this document`;
   },
 
-  // The floating replace-selection panel.
-  replaceSelection: "Replace selection",
+  // The floating selection panel. Selecting text in either pane offers to copy
+  // it or to replace it, and replacing has three outcomes that differ in WHAT
+  // ENDS UP IN THE RE-IDENTIFICATION KEY. That difference is not guessable from
+  // the labels, which is why each mode carries a hint.
+  selectionTitle: "Selected text",
+  selectionCopy: "Copy",
+  selectionReplace: "Replace",
+  selectionModeVariant: "Make it a spelling of an existing value",
+  selectionModeValue: "Add it as a new value",
+  selectionModeText: "Replace the text only",
+  selectionModeVariantHint: "The text is replaced with that value's placeholder, so both spellings share one number.",
+  selectionModeValueHint: "The text becomes a value of its own, with its own placeholder.",
+  selectionModeTextHint: "A find and replace rule. No value is created and nothing is added to the re-identification key.",
+  selectionTargetLabel: "Which value it is a spelling of",
+  selectionTargetPlaceholder: "start typing a value",
+  selectionTypeLabel: "Type",
   replaceWith: "What to replace it with",
-  applySelection: "Replace",
+  applySelection: "Apply",
   cancelSelection: "Cancel",
+  selectionBack: "Back",
   selectionNeedsReplacement: "Type what the selected text should become.",
-  /** selectionApplied(find, replace) confirms the new rule. */
+  selectionNeedsTarget: "Choose the value this is a spelling of.",
+  selectionUnknownTarget: "That value is not in the list. Pick one of the suggestions.",
+  selectionCopied: "Copied to the clipboard.",
+  /** selectionBecameVariant(text, main) confirms mode 1. */
+  selectionBecameVariant(text, main) {
+    return `${text} now counts as a spelling of ${main}, so both share one placeholder.`;
+  },
+  /** selectionBecameValue(text) confirms mode 2. */
+  selectionBecameValue(text) {
+    return `${text} is now a value of its own, with its own placeholder.`;
+  },
+  /** selectionApplied(find, replace) confirms mode 3. */
   selectionApplied(find, replace) {
     return `${find} is now replaced with ${replace} everywhere, by a find and replace rule.`;
   },

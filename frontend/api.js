@@ -391,6 +391,17 @@ export async function copyDocument(name) {
   return bridge().CopyDocument(name);
 }
 
+/**
+ * copyText(text) puts an arbitrary short string on the clipboard.
+ *
+ * Clipboard access goes through Go, as copyDocument does. Rejects with an
+ * actionable message when the selection is empty or longer than the cap, which
+ * is a mis-drag guard rather than a product limit.
+ */
+export async function copyText(text) {
+  return bridge().CopyText(text);
+}
+
 /** exportMapping(format) saves the re-identification key ("csv"/"json").
  *  Call ONLY after the user confirmed the sensitivity warning. */
 export async function exportMapping(format) {

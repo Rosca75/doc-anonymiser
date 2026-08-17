@@ -16,6 +16,7 @@ import {
   openDocumentation, documentationURL, exportDocumentFormats, ping, runPipeline,
   valuePlaceholders, setValuePlaceholder, removeValue, restoreValue,
   listRemovedValues, nextRulePlaceholder, validateValues, checkIntersections,
+  copyText,
 } from "./api.js";
 
 /**
@@ -192,6 +193,32 @@ test("the value wrappers reject rather than throw when the bridge is absent", as
       assert.ok(promise instanceof Promise, `${wrapper.name} must be async`);
       await assert.rejects(promise, /must run inside the/, wrapper.name);
     }
+  } finally {
+    if (previous === undefined) delete globalThis.window;
+    else globalThis.window = previous;
+  }
+});
+
+test("copyText calls CopyText with the selected text", async () => {
+  // Clipboard access goes through Go, as copyDocument does, so the wrapper's
+  // job is to reach the right bound method with the right argument.
+  const called = [];
+  const app = {
+    CopyText: (...args) => { called.push(args); return "CopyText"; },
+  };
+  await withStubBridge(app, () => ({}), async () => {
+    assert.equal(await copyText("Marie Duval"), "CopyText");
+  });
+  assert.deepEqual(called, [["Marie Duval"]]);
+});
+
+test("copyText rejects rather than throws when the bridge is absent", async () => {
+  const previous = globalThis.window;
+  globalThis.window = {};
+  try {
+    const promise = copyText("Marie Duval");
+    assert.ok(promise instanceof Promise);
+    await assert.rejects(promise, /must run inside the/);
   } finally {
     if (previous === undefined) delete globalThis.window;
     else globalThis.window = previous;
