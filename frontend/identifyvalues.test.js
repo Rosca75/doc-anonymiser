@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import {
   resetState, getState, setState, toggleCategory,
   addEntities, setEntityVariants, addAllowTerm, addCandidates, entityKey,
-  groupEntities, curate,
+  groupEntities, curate, acceptCandidate,
 } from "./state.js";
 import { valuesTab, suggestionsTab, visibleValues } from "./views/identifyworkspace.js";
 import { all, one, exists, textOf } from "./testhtml.js";
@@ -170,4 +170,25 @@ test("a curated value shows its chips and no pending placeholder", () => {
     ["Delta Industries"], "only the curated spellings are chips");
   assert.ok(!html.includes(WORKSPACE.variantsPending),
     "a curated row is settled, so it never shows the pending placeholder");
+});
+
+test("a value card names the route that found it", () => {
+  // Origin is DISPLAYED, not just stored: a precedence rule whose inputs the
+  // user cannot see is indistinguishable from randomness, which is how the old
+  // behaviour came to be reported.
+  resetState();
+  addCandidates([{ text: "Meridian", category: "entity_names" }], "smart");
+  acceptCandidate("Meridian");
+  setEntityVariants("entity_names", "Meridian", ["Meridian"]);
+
+  const chip = one(valuesTab(getState()), "span.origin-chip");
+  assert.equal(chip.inner, WORKSPACE.originLabel.auto);
+  assert.match(chip.attrs.class, /origin-auto/);
+});
+
+test("a value the user typed is labelled as theirs", () => {
+  resetState();
+  seed("entity_names", "Alpine");
+  const chip = one(valuesTab(getState()), "span.origin-chip");
+  assert.equal(chip.inner, WORKSPACE.originLabel.declared);
 });

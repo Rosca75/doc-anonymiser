@@ -530,6 +530,14 @@ function valueCard(e, conflict, s) {
     cls: "value-type", title: WORKSPACE.changeTypeLabel, ariaLabel: WORKSPACE.changeTypeLabel,
   });
 
+  // Which route found this value. It is shown, not just stored, because the
+  // precedence rule between routes is only meaningful to a user who can see
+  // which route owns a value: an unexplained decision reads as randomness.
+  const origin = e.origin ?? "declared";
+  const originChip =
+    `<span class="origin-chip origin-${escapeHTML(origin)}" title="${escapeHTML(WORKSPACE.originTitle)}">` +
+    `${escapeHTML(WORKSPACE.originLabel[origin] ?? origin)}</span>`;
+
   const actions =
     button(WORKSPACE.groupWith, {
       kind: "ghost", cls: "value-group", icon: "content_copy", title: WORKSPACE.groupWithTitle,
@@ -592,7 +600,7 @@ function valueCard(e, conflict, s) {
     ` data-category="${escapeHTML(e.category)}" data-canonical="${escapeHTML(e.canonical)}"` +
     ` data-search="${escapeHTML(searchText)}">` +
     `<div class="row-between">` +
-    `<div class="value-head">${nameBtn}${typeSelect}</div>` +
+    `<div class="value-head">${nameBtn}${typeSelect}${originChip}</div>` +
     `<div class="value-actions">${actions}</div>` +
     `</div>` +
     conflictNote +

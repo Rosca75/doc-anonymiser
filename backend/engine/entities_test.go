@@ -342,6 +342,29 @@ func TestCuratedExpansion(t *testing.T) {
 	}
 }
 
+// TestDetectEntitiesStampsTheEntitysOrigin: provenance has to survive the
+// accept, or the only trace of which route found a value is its confidence
+// score, and confidence is also the MinConfidence floor's input.
+func TestDetectEntitiesStampsTheEntitysOrigin(t *testing.T) {
+	text := "Meridian and Delta Industries both appear here.\n"
+	spans := DetectEntities(text, []Entity{
+		{Category: CatEntityNames, Canonical: "Meridian", Origin: OriginAI},
+		// No origin stated: a value the user typed, which is what declared means.
+		{Category: CatEntityNames, Canonical: "Delta Industries"},
+	}, NewEmptyAllowlist())
+
+	got := map[string]string{}
+	for _, s := range spans {
+		got[s.Canonical] = s.Origin
+	}
+	if got["Meridian"] != OriginAI {
+		t.Errorf("an AI entity must produce AI spans, got %q", got["Meridian"])
+	}
+	if got["Delta Industries"] != OriginDeclared {
+		t.Errorf("an entity with no origin must read as declared, got %q", got["Delta Industries"])
+	}
+}
+
 func TestOneLegalSuffixTableServesBothDetectionAndExpansion(t *testing.T) {
 	// Two tables meant smart detection could propose "Bidco SCSp" from a form
 	// only IT knew, and the expansion could then not produce "Bidco".

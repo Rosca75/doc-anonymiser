@@ -457,3 +457,26 @@ func TestPipelineBudget(t *testing.T) {
 		t.Error("budget run replaced nothing — the measurement is meaningless")
 	}
 }
+
+// TestAcceptProposalsStampsTheAIOrigin: a proposal that survives the
+// hallucination filter becomes an entity carrying its route, not only its
+// score. The score alone cannot serve as provenance, because it is also what
+// MinConfidence filters on: raising the floor would otherwise reorder which
+// route wins.
+func TestAcceptProposalsStampsTheAIOrigin(t *testing.T) {
+	accepted := acceptProposals(
+		[]ProposedEntity{{Category: CatEntityNames, Text: "Meridian"}},
+		"Meridian signed the deed.\n",
+		NewEmptyAllowlist(),
+		PresetSelection(LevelMedium))
+
+	if len(accepted) != 1 {
+		t.Fatalf("want the proposal accepted, got %+v", accepted)
+	}
+	if accepted[0].Origin != OriginAI {
+		t.Errorf("an accepted proposal must carry OriginAI, got %q", accepted[0].Origin)
+	}
+	if accepted[0].Confidence != ConfidenceLLMDefault {
+		t.Errorf("the score must be unchanged, got %v", accepted[0].Confidence)
+	}
+}

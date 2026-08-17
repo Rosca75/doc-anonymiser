@@ -31,6 +31,16 @@ type Entity struct {
 	// UI. While AutoExpand applies they sit ON TOP of the automatic
 	// expansion; once the user has curated the list they ARE the list.
 	ManualVariants []string `json:"manualVariants,omitempty"`
+	// Origin is the ROUTE this value came from (origin.go): OriginDeclared
+	// for a value the user typed, OriginAuto for one Smart detection found,
+	// OriginAI for one the local model proposed. It decides precedence when
+	// two routes claim the same text.
+	//
+	// Empty reads as OriginDeclared, which is correct for every value the user
+	// typed. It is deliberately NOT the same field as Confidence: confidence
+	// feeds the MinConfidence floor, so a value cannot be filtered and
+	// re-prioritised by one number without the two decisions interfering.
+	Origin string `json:"origin,omitempty"`
 	// AutoExpand reports whether the automatic variant expansion still
 	// applies. Nil and true both mean yes, which is the state of every value
 	// detection or the user creates. It goes false the first time the user
@@ -278,6 +288,7 @@ func DetectEntities(text string, entities []Entity, allow *Allowlist) []Span {
 					// (AI proposals do); anything else is a value the user
 					// listed, which is high trust.
 					Confidence: entityConfidence(e),
+					Origin:     entityOrigin(e),
 				})
 			}
 		}
@@ -295,6 +306,18 @@ func entityConfidence(e Entity) float32 {
 		return e.Confidence
 	}
 	return ConfidenceManualDefault
+}
+
+// entityOrigin is the route DetectEntities stamps on an entity's spans: the
+// entity's own Origin when it states one, otherwise OriginDeclared. Keeping the
+// "unset means the user declared it" rule in one function means an entity that
+// predates the field, or a caller that builds one by hand, cannot be demoted
+// below a detector's guess by accident.
+func entityOrigin(e Entity) string {
+	if e.Origin != "" {
+		return e.Origin
+	}
+	return OriginDeclared
 }
 
 // isWordBoundary reports whether text[start:end] is delimited by

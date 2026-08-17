@@ -505,6 +505,18 @@ export const WORKSPACE = {
     "local-ai": "Local AI",
   },
 
+  // The ROUTE a value came from, shown on its card. A precedence rule the user
+  // cannot see the inputs of is indistinguishable from randomness, which is how
+  // the old behaviour came to be reported. One label per engine origin,
+  // enforced by ../origin_parity_test.go.
+  originLabel: {
+    native: "Native",
+    declared: "You",
+    auto: "Smart detection",
+    ai: "Local AI",
+  },
+  originTitle: "The detection route this value came from",
+
   // My values.
   addValueLabel: "A value to replace",
   /** valueMatches(count, documents) is the live read-out under the add row.

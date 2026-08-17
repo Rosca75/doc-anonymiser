@@ -617,6 +617,12 @@ func acceptProposals(proposals []ProposedEntity, sourceText string, allow *Allow
 			Category:   p.Category,
 			Canonical:  p.Text,
 			Confidence: ConfidenceLLMDefault,
+			// The route, recorded separately from the score. Confidence
+			// decides whether the MinConfidence floor keeps this value at all;
+			// origin decides who wins when it and another route claim the same
+			// text. One number cannot answer both without raising the floor
+			// silently reordering precedence.
+			Origin: OriginAI,
 		})
 	}
 	return out

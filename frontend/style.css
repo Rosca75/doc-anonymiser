@@ -555,6 +555,18 @@ main#view.page { overflow-y: auto; }
 }
 .src-badge.src-local-ai { color: var(--src-ai-fg); background: var(--src-ai-bg); }
 .src-badge.src-pattern { color: var(--src-pattern-fg); background: var(--src-pattern-bg); }
+/* The origin chip on a value card: which detection route the value came from.
+   It reuses the suggestion-source palette so one route reads the same colour
+   wherever it appears, and stays quiet, because it explains a decision rather
+   than asking for one. */
+.origin-chip {
+  font-size: 0.7rem; letter-spacing: 0.03em;
+  padding: 0.1rem 0.45rem; border-radius: 4px; white-space: nowrap;
+  color: var(--ink-3); background: var(--bg-secondary);
+}
+.origin-chip.origin-auto { color: var(--src-smart-fg); background: var(--src-smart-bg); }
+.origin-chip.origin-ai { color: var(--src-ai-fg); background: var(--src-ai-bg); }
+.origin-chip.origin-native { color: var(--src-pattern-fg); background: var(--src-pattern-bg); }
 .badge-experimental {
   font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em;
   color: var(--experimental-fg); background: var(--experimental-bg);

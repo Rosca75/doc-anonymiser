@@ -20,7 +20,8 @@ import {
   applyPreset, toggleCategory, selectionPresetName, presetCategories,
   setUseAI, setUseSmartDetect, detectionRoutesOn, llmEnabled,
   setUseNativeDetect, setUseAutoDetect,
-  addCandidates, acceptCandidate, rejectCandidate,
+  addCandidates, acceptCandidate, rejectCandidate, acceptAllShown,
+  originOf,
   markDetectionRan,
   moveVariant, entityAutocomplete, reassignOriginal,
   applyImportResult,
@@ -340,7 +341,7 @@ test("buildRunRequest assembles only pipeline-ready inputs", () => {
 
   const req = buildRunRequest();
   assert.equal(req.useDeepScan, undefined);
-  assert.deepEqual(req.entities, [{ category: "entity_names", canonical: "Alpine", manualVariants: [], autoExpand: true }]);
+  assert.deepEqual(req.entities, [{ category: "entity_names", canonical: "Alpine", manualVariants: [], origin: "declared", autoExpand: true }]);
   assert.deepEqual(req.allowTerms, ["CSSF"]);
   assert.deepEqual(req.patterns, [{ expr: "PRJ-[0-9]+" }]);
   assert.equal(req.simpleRules.length, 1);
@@ -1808,4 +1809,43 @@ test("entityConflicts ignores values whose type is switched off", () => {
   toggleCategory("person_names", false);
   const conflicts = entityConflicts();
   assert.equal(conflicts.size, 0, "with one side off there is no ambiguity to flag");
+});
+
+// --- Provenance: which route found a value -------------------------------
+
+test("originOf maps a suggestion's source badge to its route", () => {
+  assert.equal(originOf("smart"), "auto");
+  assert.equal(originOf("local-ai"), "ai");
+  // Anything unrecognised reads as declared, the same fallback the engine
+  // applies: an unknown route is trusted rather than demoted below a guess.
+  assert.equal(originOf("manual"), "declared");
+  assert.equal(originOf(undefined), "declared");
+});
+
+test("accepting a suggestion keeps the route that found it", () => {
+  resetState();
+  addCandidates([{ text: "Meridian", category: "entity_names" }], "smart");
+  addCandidates([{ text: "Borealis", category: "entity_names" }], "local-ai");
+  assert.equal(acceptCandidate("Meridian"), true);
+  assert.equal(acceptCandidate("Borealis"), true);
+
+  const byName = Object.fromEntries(getState().entities.map((e) => [e.canonical, e.origin]));
+  assert.equal(byName.Meridian, "auto");
+  assert.equal(byName.Borealis, "ai");
+});
+
+test("acceptAllShown keeps each row's own route", () => {
+  resetState();
+  addCandidates([{ text: "Meridian", category: "entity_names" }], "smart");
+  addCandidates([{ text: "Borealis", category: "entity_names" }], "local-ai");
+  assert.equal(acceptAllShown(["Meridian", "Borealis"]), 2);
+  const byName = Object.fromEntries(getState().entities.map((e) => [e.canonical, e.origin]));
+  assert.deepEqual(byName, { Meridian: "auto", Borealis: "ai" });
+});
+
+test("a value the user typed is declared, and the route travels to Go", () => {
+  resetState();
+  addEntities([{ category: "entity_names", canonical: "Alpine" }]);
+  assert.equal(getState().entities[0].origin, "declared");
+  assert.equal(acceptedEntities()[0].origin, "declared");
 });

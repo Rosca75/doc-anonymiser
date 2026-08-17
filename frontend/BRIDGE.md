@@ -135,9 +135,13 @@ removed list with restore.
 
 The run `request` is `{entities, allowTerms, patterns, categories, simpleRules,
 suppressRegexPII}`. Each entity is
-`{category, canonical, manualVariants, autoExpand}`: `autoExpand: false` means
-the spellings are curated, so Go replaces exactly `manualVariants` plus the
-canonical name and derives nothing.
+`{category, canonical, manualVariants, origin, autoExpand}`. `autoExpand: false`
+means the spellings are curated, so Go replaces exactly `manualVariants` plus
+the canonical name and derives nothing. `origin` is the ROUTE that produced the
+value, one of `native`, `declared`, `auto`, `ai` (precedence order, lower wins);
+it is what decides which route owns a string when two claim the same text, and
+it is deliberately separate from confidence, which feeds the `minConfidence`
+floor. Absent reads as `declared`.
 `suppressRegexPII` is the "Native detection" master switch
 inverted (`!useNativeDetect`): when true, Go skips the deterministic regex PII
 pass (pass 1) so NO signal category is replaced, whatever `categories` selects;

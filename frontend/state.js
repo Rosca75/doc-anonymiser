@@ -283,6 +283,34 @@ export const ALL_CATEGORIES = [
   ...NAME_CATEGORIES, ...DECLARED_CATEGORIES,
 ];
 
+// --- Detection routes, as provenance ------------------------------------
+//
+// ORIGINS mirrors engine.AllOrigins exactly, in PRECEDENCE order, and is
+// checked by ../origin_parity_test.go. It is what a value carries to say WHICH
+// ROUTE found it, which is a different question from how much the value is
+// trusted: the confidence floor answers the second, and using one number for
+// both means raising the floor silently reorders which route wins.
+export const ORIGINS = ["native", "declared", "auto", "ai"];
+
+/**
+ * originOf(source) maps a suggestion's source badge to the route that produced
+ * it. The suggestion list labels its rows by where they came from ("smart",
+ * "local-ai"); the engine ranks them by origin. This is the one place the two
+ * vocabularies meet, so the mapping has a single home and can be tested.
+ *
+ * Anything unrecognised reads as "declared", the same fallback the engine
+ * applies: a value whose route is unknown is trusted rather than demoted below
+ * a detector's guess.
+ *
+ * @param {string} source a candidate's source badge
+ * @returns {string} one of ORIGINS
+ */
+export function originOf(source) {
+  if (source === "smart") return "auto";
+  if (source === "local-ai" || source === "ai") return "ai";
+  return "declared";
+}
+
 /**
  * presetCategories(level) mirrors engine.PresetSelection exactly:
  *
@@ -1237,6 +1265,10 @@ export function addEntities(items) {
       // the fix.
       variants: item.variants ?? null,
       variantError: null,
+      // The route that produced this value. It travels to Go, where it decides
+      // precedence against the other routes. A value with no stated route is
+      // one the user typed, which is what "declared" means.
+      origin: item.origin ?? "declared",
       // autoExpand false means the user has curated the spellings and the
       // automatic expansion no longer applies. Every value starts uncurated.
       autoExpand: item.autoExpand ?? true,
@@ -1351,6 +1383,7 @@ export function acceptedEntities(s = state) {
       category: e.category,
       canonical: e.canonical,
       manualVariants: e.manualVariants,
+      origin: e.origin ?? "declared",
       autoExpand: e.autoExpand !== false,
     }));
 }
@@ -1413,7 +1446,12 @@ export function acceptCandidate(text) {
   const key = candidateKey(text);
   const cand = state.candidates.find((c) => candidateKey(c.text) === key);
   if (!cand) return false;
-  const added = addEntities([{ category: cand.category, canonical: cand.text }]);
+  // The route survives the accept. Without it the only trace of which route
+  // found a value is its confidence score, and confidence is also the input to
+  // the MinConfidence floor, so the two decisions would interfere.
+  const added = addEntities([{
+    category: cand.category, canonical: cand.text, origin: originOf(cand.source),
+  }]);
   setState({ candidates: state.candidates.filter((c) => candidateKey(c.text) !== key) });
   return added > 0;
 }
@@ -1446,7 +1484,9 @@ export function acceptAllShown(texts) {
   if (shown.size === 0) return 0;
   const batch = state.candidates.filter((c) => shown.has(candidateKey(c.text)));
   if (!batch.length) return 0;
-  const added = addEntities(batch.map((c) => ({ category: c.category, canonical: c.text })));
+  const added = addEntities(batch.map((c) => ({
+    category: c.category, canonical: c.text, origin: originOf(c.source),
+  })));
   setState({ candidates: state.candidates.filter((c) => !shown.has(candidateKey(c.text))) });
   return added;
 }
