@@ -183,7 +183,11 @@ export function railBody(s) {
   // by default like the other off-by-default panels below Smart detection.
   return routes + collapsibleGroup("rail-profile", RAIL.profileTitle, profileSection(s), {
     open: !collapsedGroups.has("rail-profile"),
-    cls: "rail-section",
+    // NOT "rail-section": that class marks a detection ROUTE, and the render
+    // harness counts it to assert the rail is exactly three routes. Load profile
+    // is a switch-less utility panel, so it takes the parallel "rail-panel" class
+    // (same layout, no route semantics).
+    cls: "rail-panel",
   });
 }
 

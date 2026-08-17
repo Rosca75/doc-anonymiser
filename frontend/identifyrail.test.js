@@ -172,14 +172,20 @@ function railHTML(patch = {}) {
 
 test("the rail renders the three routes plus the Load profile section", () => {
   const html = railHTML();
+  // Exactly three DETECTION ROUTE sections carry .rail-section; the render
+  // harness (scripts/uitest/probes.js) counts the same class to assert the rail
+  // is three routes, not four peers. Load profile is a switch-less panel with
+  // its own .rail-panel class, so it must NOT be counted here.
   const sections = all(html, "section.rail-section");
-  assert.equal(sections.length, 4);
-  // The first title in a section is its own; the rest belong to the groups
-  // nested inside it (the category groups, the strictness block). The fourth
-  // section is the switch-less Load profile panel at the foot of the rail.
+  assert.equal(sections.length, 3);
   const titles = sections.map((sec) =>
     stripTags(all(sec.outer, "span.cgroup-title")[0].inner).trim());
-  assert.deepEqual(titles, [RAIL.tabSmart, RAIL.tabLocalAI, RAIL.tabCloudAI, RAIL.profileTitle]);
+  assert.deepEqual(titles, [RAIL.tabSmart, RAIL.tabLocalAI, RAIL.tabCloudAI]);
+  // The Load profile panel sits after the routes as its own .rail-panel section.
+  const panel = all(html, "section.rail-panel");
+  assert.equal(panel.length, 1);
+  assert.equal(
+    stripTags(all(panel[0].outer, "span.cgroup-title")[0].inner).trim(), RAIL.profileTitle);
 });
 
 test("Smart detection is ON by default, and switchable", () => {
