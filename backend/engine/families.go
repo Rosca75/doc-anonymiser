@@ -44,8 +44,9 @@ func FoldValueFamilies(cands []Candidate, allow *Allowlist) []Candidate {
 	for i := range parent {
 		parent[i] = i
 	}
-	var find func(int) int
-	find = func(i int) int {
+	// Iterative with path halving rather than recursive: a family of any size
+	// resolves in a loop, so there is no stack depth to think about.
+	find := func(i int) int {
 		for parent[i] != i {
 			parent[i] = parent[parent[i]]
 			i = parent[i]

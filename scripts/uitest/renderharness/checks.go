@@ -568,7 +568,7 @@ func checkCompareSearch(c *cdpClient, r *reporter) {
 
 	r.assert("the active hit has a size", got.Visible.HasSize,
 		"a rendered span with width and height",
-		fmt.Sprintf("%s", got.Visible.ActiveRect),
+		got.Visible.ActiveRect.String(),
 		"An empty hit span means the slice offsets and the text disagree.")
 
 	// The check this layer exists for: a hit the pane's own overflow scrolled

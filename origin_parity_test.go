@@ -16,7 +16,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"regexp"
 	"sort"
@@ -91,10 +90,10 @@ func TestEveryOriginHasAFrontendLabel(t *testing.T) {
 	}
 	sort.Strings(missing)
 	if len(missing) > 0 {
-		t.Error(fmt.Sprintf(
+		t.Errorf(
 			"WORKSPACE.originLabel in frontend/copy.js has no label for: %s\n"+
 				"The origin chip renders the raw identifier without one, and the precedence\n"+
 				"rule is only meaningful to a user who can read which route owns a value.",
-			strings.Join(missing, ", ")))
+			strings.Join(missing, ", "))
 	}
 }
