@@ -28,7 +28,15 @@ import (
 // previous one, or the other way round: an added field the loader can ignore is
 // not a bump, but a renamed category, a retired category and a new field the
 // pipeline depends on all are.
-const SessionVersion = 4
+//
+// Version history (reason for each bump, newest last):
+//
+//	v5: added the useNativeDetect/useAutoDetect settings (the "Smart detection"
+//	    route split into a Native-detection master over the regex signals and an
+//	    Auto-detection word-frequency pass). A v4 file has neither flag, and a v4
+//	    reader would not know Native detection can be off, so the versions are not
+//	    interchangeable.
+const SessionVersion = 5
 
 // SessionSettings mirrors the app settings worth persisting. The engine
 // does not interpret them — they round-trip for app.go. The
@@ -47,6 +55,13 @@ type SessionSettings struct {
 	// "the user switched it off" are the same value, and the wrong reading of
 	// the two silently changes what a restored session detects.
 	UseSmartDetect *bool `json:"useSmartDetect,omitempty"`
+	// UseNativeDetect and UseAutoDetect are the two halves the "Smart detection"
+	// route split into. UseNativeDetect is the master over the regex signal
+	// categories (pass 1); UseAutoDetect is the offline word-frequency pass.
+	// Both are POINTERS for the same reason as UseSmartDetect: their default is
+	// TRUE, so "absent" must be distinguishable from "the user switched it off".
+	UseNativeDetect *bool `json:"useNativeDetect,omitempty"`
+	UseAutoDetect   *bool `json:"useAutoDetect,omitempty"`
 	// MinConfidence is the detection-confidence floor. Absent
 	// in every session file written before, where it loads as 0,
 	// which is exactly the "keep every detection" default: an older

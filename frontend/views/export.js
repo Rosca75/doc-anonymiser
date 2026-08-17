@@ -451,8 +451,11 @@ function wireSession(container) {
  * field. The two `??` below are the genuine cases: a field legitimately absent
  * because the user never set it, and the settings that describe the MACHINE
  * rather than the batch.
+ *
+ * Exported so identity of the restore (which flags an absent field turns back
+ * on) can be unit-tested without a bridge.
  */
-function applySession(session) {
+export function applySession(session) {
   const settings = session.settings ?? {};
   const current = getState().settings;
   setState({
@@ -473,7 +476,10 @@ function applySession(session) {
       useAI: settings.useAI,
       // Absent means ON: Smart detection is the default route, and
       // a file that says nothing about it must not restore it switched off.
-      useSmartDetect: settings.useSmartDetect !== false,
+      // useSmartDetect is derived from the two halves it split into.
+      useNativeDetect: settings.useNativeDetect !== false,
+      useAutoDetect: settings.useAutoDetect !== false,
+      useSmartDetect: settings.useNativeDetect !== false || settings.useAutoDetect !== false,
       minConfidence: settings.minConfidence ?? 0,
       // A session that deliberately turned every smart-detection filter off
       // writes zeroes, which must be obeyed; a session that says nothing about

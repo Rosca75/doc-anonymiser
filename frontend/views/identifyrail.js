@@ -31,7 +31,8 @@
 import { applySettings, listOllamaModels, probeOllama } from "../api.js";
 import {
   getState, setState,
-  applyPreset, toggleCategory, selectionPresetName, setUseAI, setUseSmartDetect,
+  applyPreset, toggleCategory, selectionPresetName, setUseAI,
+  setUseNativeDetect, setUseAutoDetect,
   setCategoryGroup, setMinConfidence, setDocumentCountry,
   setSmartDetectOptions, smartDetectOptions,
   setAIScope,
@@ -162,13 +163,22 @@ export function renderIdentifyRail(container) {
  */
 export function railBody(s) {
   return RAIL_SECTIONS.map(([id, title, key]) => {
-    const on = key ? !!s.settings[key] : false;
+    const on = id === "rail-smart" ? smartRouteOn(s) : (key ? !!s.settings[key] : false);
     return collapsibleGroup(id, title, sectionBody(s, id), {
       open: !collapsedGroups.has(id),
       cls: `rail-section${on ? "" : " route-off"}`,
       headRightHTML: routeSwitch(s, id, key, on),
     });
   }).join("");
+}
+
+/**
+ * smartRouteOn(s) is the Smart detection section's master state: the section
+ * counts as on when EITHER half is on. The header switch is a master over the
+ * two sub-toggles rather than a fourth independent flag.
+ */
+function smartRouteOn(s) {
+  return !!(s.settings.useNativeDetect || s.settings.useAutoDetect);
 }
 
 /**
@@ -208,7 +218,12 @@ function wireSectionSwitches(container) {
       ev.stopPropagation();
       const on = ev.target.checked;
       if (ev.target.dataset.route === "rail-local") setUseAI(on);
-      else setUseSmartDetect(on);
+      else {
+        // The Smart detection header is a MASTER over its two sub-toggles:
+        // switching it flips both Native and Auto detection together.
+        setUseNativeDetect(on);
+        setUseAutoDetect(on);
+      }
       // Turning a route on opens its section: the settings it reads are the
       // next thing the user wants.
       if (on) collapsedGroups.delete(ev.target.dataset.route);
@@ -233,11 +248,31 @@ function wireSectionSwitches(container) {
  */
 function smartSection(s) {
   return `<p class="hint">${escapeHTML(RAIL.smartIntro)}</p>` +
+    smartToggles(s) +
     scopeBlocks(s) +
     collapsibleGroup("rail-smart-tuning", RAIL.smartTuning, smartTuning(s), {
       open: !collapsedGroups.has("rail-smart-tuning"),
       cls: "rail-subgroup",
     });
+}
+
+/**
+ * smartToggles(s) is the two independent halves the Smart detection route split
+ * into, rendered at the very top of the section so they read as governing what
+ * follows: Native detection is the master over the regex signal categories, Auto
+ * detection is the offline word-frequency pass. Both default on.
+ */
+function smartToggles(s) {
+  const row = (id, checked, label, hint) =>
+    `<label class="cat-row">` +
+    `<input type="checkbox" id="${id}"${checked ? " checked" : ""}/>` +
+    `<span class="cat-label">${escapeHTML(label)}</span>` +
+    `</label>` +
+    `<p class="hint">${escapeHTML(hint)}</p>`;
+  return `<div class="rail-block">` +
+    row("smart-native", s.settings.useNativeDetect !== false, RAIL.nativeDetect, RAIL.nativeDetectHint) +
+    row("smart-auto", s.settings.useAutoDetect !== false, RAIL.autoDetect, RAIL.autoDetectHint) +
+    `</div>`;
 }
 
 /** scopeBlocks(s) is the country, the preset, the REGEX categories, and the
@@ -256,7 +291,7 @@ function scopeBlocks(s) {
     `</div>` +
     `<div class="rail-block">` +
     sectionLabel(RAIL.whatToAnonymise) +
-    categoryGroups(s, REGEX_GROUPS, "regex") +
+    categoryGroups(s, REGEX_GROUPS, "regex", !s.settings.useNativeDetect) +
     `</div>` +
     `<div class="rail-block">` +
     sectionLabel(RAIL.valuesAuto) +
@@ -300,8 +335,13 @@ function presetChips(s) {
  * times over.
  *
  * type is "regex" (static PII detection) or "entity" (auto-detection values).
+ *
+ * blockDisabled greys the whole block out without clearing the stored selection:
+ * when Native detection is off, the regex categories still show (so the user
+ * sees the scope) but cannot be edited, and the selection returns intact when
+ * Native detection is switched back on.
  */
-function categoryGroups(s, groups, type = "regex") {
+function categoryGroups(s, groups, type = "regex", blockDisabled = false) {
   const labels = categoryLabels(examplesFor(s.documentCountry));
 
   return groups.map(([title, keys], index) => {
@@ -309,12 +349,13 @@ function categoryGroups(s, groups, type = "regex") {
     const rows = keys.map((key) => {
       const [label, example] = labels[key] ?? [key, ""];
       const applies = categoryAppliesTo(key, s.documentCountry);
+      const disabled = blockDisabled || !applies;
       const countries = CATEGORY_COUNTRIES[key] ?? [];
       const disabledHint = `Only applies to ${countries.join(", ")}`;
       const hint = applies ? example : `${example}. ${disabledHint}`;
       return `<label class="cat-row"${applies ? "" : ` title="${escapeHTML(disabledHint)}"`}>` +
         `<input type="checkbox" class="cat-toggle" data-category="${escapeHTML(key)}"` +
-        `${s.settings.categories?.[key] ? " checked" : ""}${applies ? "" : " disabled"}/>` +
+        `${s.settings.categories?.[key] ? " checked" : ""}${disabled ? " disabled" : ""}/>` +
         `<span class="cat-label">${escapeHTML(label)}</span>` +
         `<span class="cat-example" title="${escapeHTML(hint)}">${escapeHTML(example)}</span>` +
         `</label>`;
@@ -328,11 +369,13 @@ function categoryGroups(s, groups, type = "regex") {
         kind: "ghost", cls: "cat-group-all icon-action ok", icon: "check",
         ariaLabel: `${CONFIGURE.selectAll}: ${title}`, title: CONFIGURE.selectAll,
         data: { "group-type": type, group: String(index), on: "1" },
+        disabled: blockDisabled,
       }) +
       button("", {
         kind: "ghost", cls: "cat-group-all icon-action", icon: "remove",
         ariaLabel: `${CONFIGURE.deselectAll}: ${title}`, title: CONFIGURE.deselectAll,
         data: { "group-type": type, group: String(index), on: "0" },
+        disabled: blockDisabled,
       });
 
     return collapsibleGroup(`cat-group-${type}-${index}`, title, rows, {
@@ -491,6 +534,18 @@ function strictnessOption(value, label, current) {
 }
 
 function wireSmart(container) {
+  // The two master toggles at the top of the section. They set their flag and
+  // push, so the disabled state of the regex block and the derived
+  // useSmartDetect update in the same round-trip.
+  container.querySelector("#smart-native")?.addEventListener("change", (ev) => {
+    setUseNativeDetect(ev.target.checked);
+    pushSettings(container);
+  });
+  container.querySelector("#smart-auto")?.addEventListener("change", (ev) => {
+    setUseAutoDetect(ev.target.checked);
+    pushSettings(container);
+  });
+
   const numbers = [
     ["#smart-min-length", (v) => ({ minLength: Math.round(v) })],
     ["#smart-min-occurrences", (v) => ({ minOccurrences: Math.round(v) })],
@@ -691,7 +746,11 @@ async function pushSettings(container) {
     model: model?.value || s.settings.model,
     contextSize: ctxSize ? (parseInt(ctxSize.value, 10) || 0) : (s.settings.contextSize ?? 8192),
     useAI: !!s.settings.useAI,
-    useSmartDetect: s.settings.useSmartDetect !== false,
+    useNativeDetect: s.settings.useNativeDetect !== false,
+    useAutoDetect: s.settings.useAutoDetect !== false,
+    // Derived: the section counts as on when either half is, so the header
+    // switch and any backward-compat reader keep working.
+    useSmartDetect: (s.settings.useNativeDetect !== false) || (s.settings.useAutoDetect !== false),
     // Read from the store, not the input: setMinConfidence already validated and
     // stored it, and the Scope tab may not be rendered at all.
     minConfidence: s.settings.minConfidence ?? 0,

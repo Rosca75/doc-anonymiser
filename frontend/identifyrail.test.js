@@ -18,7 +18,7 @@ import {
 import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
 import {
   ALL_CATEGORIES, NAME_CATEGORIES, resetState, getState, setState, setUseAI,
-  setAIScope, setCategoryGroup,
+  setAIScope, setCategoryGroup, setUseNativeDetect, setUseAutoDetect,
 } from "./state.js";
 import { textOf, stripTags, all, one, exists } from "./testhtml.js";
 
@@ -215,6 +215,52 @@ test("the scope controls live inside the Smart detection section", () => {
   assert.ok(exists(smart, ".cat-toggle"), "the category checkboxes");
   assert.ok(exists(smart, "#min-confidence"), "the confidence floor");
   assert.ok(exists(smart, "#smart-min-length"), "and the strictness fields");
+});
+
+test("Native and Auto detection are two toggles at the top of Smart detection", () => {
+  const smart = all(railHTML(), "section.rail-section")[0].outer;
+  const native = one(smart, "#smart-native");
+  const auto = one(smart, "#smart-auto");
+  assert.ok(native, "the Native detection toggle renders");
+  assert.ok(auto, "the Auto detection toggle renders");
+  assert.ok("checked" in native.attrs, "Native detection defaults on");
+  assert.ok("checked" in auto.attrs, "Auto detection defaults on");
+  // They lead the section: both appear before the first category checkbox.
+  const nativeAt = smart.indexOf('id="smart-native"');
+  const autoAt = smart.indexOf('id="smart-auto"');
+  const firstCat = smart.indexOf('class="cat-toggle"');
+  assert.ok(nativeAt >= 0 && autoAt >= 0 && firstCat >= 0);
+  assert.ok(nativeAt < firstCat && autoAt < firstCat,
+    "both toggles come before the category block they govern");
+  assert.ok(smart.includes(RAIL.nativeDetect), "the Native detection label renders");
+  assert.ok(smart.includes(RAIL.autoDetect), "the Auto detection label renders");
+});
+
+test("turning Native detection off disables the regex category block only", () => {
+  resetState();
+  setUseNativeDetect(false);
+  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
+  // The regex signal categories (email, vat, ...) go disabled; the name
+  // categories (person_names, ...) stay editable, because Auto detection is
+  // still on.
+  const email = all(smart, "input.cat-toggle").find((b) => b.attrs["data-category"] === "email");
+  const person = all(smart, "input.cat-toggle").find((b) => b.attrs["data-category"] === "person_names");
+  assert.ok("disabled" in email.attrs, "regex category is disabled while Native detection is off");
+  assert.ok(!("disabled" in person.attrs), "name categories stay editable");
+  // The selection is not cleared: the checkbox keeps its checked state.
+  assert.ok("checked" in email.attrs, "the stored selection is preserved, not cleared");
+});
+
+test("the Smart detection header switch is a master over both sub-toggles", () => {
+  // Off when BOTH halves are off; on when either is.
+  resetState();
+  setUseNativeDetect(false);
+  setUseAutoDetect(false);
+  let smart = all(railBody(getState()), "input.route-toggle")[0];
+  assert.ok(!("checked" in smart.attrs), "both halves off means the section reads off");
+  setUseNativeDetect(true);
+  smart = all(railBody(getState()), "input.route-toggle")[0];
+  assert.ok("checked" in smart.attrs, "either half on means the section reads on");
 });
 
 test("the strictness lever is a select of the three levels, balanced by default", () => {

@@ -19,6 +19,7 @@ import {
   goToScreen,
   applyPreset, toggleCategory, selectionPresetName, presetCategories,
   setUseAI, setUseSmartDetect, detectionRoutesOn, llmEnabled,
+  setUseNativeDetect, setUseAutoDetect,
   addCandidates, acceptCandidate, rejectCandidate,
   moveVariant, entityAutocomplete, reassignOriginal,
   applyImportResult,
@@ -412,6 +413,26 @@ test("buildRunRequest carries the category selection", () => {
   });
   toggleCategory("iban", false);
   assert.equal(buildRunRequest().categories.iban, false);
+});
+
+test("setUseNativeDetect and setUseAutoDetect flip their flags independently", () => {
+  resetState();
+  assert.equal(getState().settings.useNativeDetect, true, "Native detection defaults on");
+  assert.equal(getState().settings.useAutoDetect, true, "Auto detection defaults on");
+  setUseNativeDetect(false);
+  assert.equal(getState().settings.useNativeDetect, false);
+  assert.equal(getState().settings.useAutoDetect, true, "Auto is untouched by Native");
+  setUseAutoDetect(false);
+  assert.equal(getState().settings.useAutoDetect, false);
+  setUseNativeDetect(true);
+  assert.equal(getState().settings.useNativeDetect, true);
+});
+
+test("buildRunRequest carries suppressRegexPII as the inverse of useNativeDetect", () => {
+  resetState();
+  assert.equal(buildRunRequest().suppressRegexPII, false, "Native on means do not suppress");
+  setUseNativeDetect(false);
+  assert.equal(buildRunRequest().suppressRegexPII, true, "Native off suppresses the regex pass");
 });
 
 // --- Local-AI gating -----------------------------------------------------

@@ -23,6 +23,11 @@ type RunRequest struct {
 	// settings, then to the level preset.
 	Categories  engine.CategorySelection `json:"categories"`
 	SimpleRules []engine.SimpleRule      `json:"simpleRules"`
+	// SuppressRegexPII is the "Native detection" master switch, inverted: true
+	// means the deterministic regex PII pass (pass 1) is skipped for this run,
+	// so no signal category is replaced. The frontend sends it as
+	// !settings.useNativeDetect.
+	SuppressRegexPII bool `json:"suppressRegexPII"`
 }
 
 // MappingInfo is the per-placeholder lookup the results view uses for
@@ -135,17 +140,18 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 	removed := a.removedValues()
 
 	input := engine.PipelineInput{
-		Documents:     docs,
-		Entities:      req.Entities,
-		Patterns:      req.Patterns,
-		Level:         level,
-		Categories:    categories,
-		MinConfidence: minConfidence,
-		Country:       a.settings.Country,
-		Allowlist:     allow,
-		Registry:      reg,
-		SimpleRules:   req.SimpleRules,
-		Removed:       removed,
+		Documents:        docs,
+		Entities:         req.Entities,
+		Patterns:         req.Patterns,
+		Level:            level,
+		Categories:       categories,
+		MinConfidence:    minConfidence,
+		Country:          a.settings.Country,
+		Allowlist:        allow,
+		Registry:         reg,
+		SimpleRules:      req.SimpleRules,
+		Removed:          removed,
+		SuppressRegexPII: req.SuppressRegexPII,
 		Progress: func(ev engine.ProgressEvent) {
 			a.emit("pipeline:progress", ev)
 		},

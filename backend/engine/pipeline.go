@@ -76,8 +76,17 @@ type PipelineInput struct {
 	MinConfidence float32
 	// Country scopes the country-specific regex categories. Empty falls back to
 	// Luxembourg, the documented application default.
-	Country   string
-	Allowlist *Allowlist
+	Country string
+	// SuppressRegexPII is the "Native detection" master switch, inverted: when
+	// true, pass 1 (the deterministic regex PII pass in pii.go) is skipped
+	// entirely, so NO signal category (email, VAT, IBAN, amount, date, ...) is
+	// replaced regardless of what Categories selects. The Categories map is
+	// left untouched on purpose: the user's per-category selection is
+	// remembered so turning Native detection back on restores it exactly. Only
+	// the regex signal categories are affected; the entity pass, custom
+	// patterns, the code detector and everything else run unchanged.
+	SuppressRegexPII bool
+	Allowlist        *Allowlist
 	// Registry is the session registry. Pass the same instance across
 	// runs to keep placeholders stable for the whole session; nil creates
 	// a fresh one (fresh numbering).
@@ -363,12 +372,13 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		}
 
 		scope := detectionScope{
-			entities:      docEntities,
-			patterns:      in.Patterns,
-			categories:    sel,
-			minConfidence: in.MinConfidence,
-			country:       in.Country,
-			allow:         in.Allowlist,
+			entities:         docEntities,
+			patterns:         in.Patterns,
+			categories:       sel,
+			minConfidence:    in.MinConfidence,
+			country:          in.Country,
+			allow:            in.Allowlist,
+			suppressRegexPII: in.SuppressRegexPII,
 		}
 		rd, traces := anonymiseDocument(doc, scope, reg, overlaps, in.OnTrace != nil)
 		if in.OnTrace != nil {
@@ -624,6 +634,10 @@ type detectionScope struct {
 	minConfidence float32
 	country       string
 	allow         *Allowlist
+	// suppressRegexPII, when true, skips pass 1 (the regex PII detectors) for
+	// this run: the "Native detection" master switch is off. The entity and
+	// custom-pattern passes are unaffected.
+	suppressRegexPII bool
 }
 
 // anonymiseDocument runs passes 1 and 2 (with the already-merged pass-3
@@ -714,11 +728,16 @@ func anonymiseDocument(doc Document, scope detectionScope, reg *Registry,
 //
 // The category selection gates BOTH the PII categories (pass 1) and the
 // custom-pattern pass; entity categories were already filtered by the caller
-// (filterEntities).
+// (filterEntities). When scope.suppressRegexPII is set (the "Native detection"
+// master switch is off) pass 1 is skipped entirely, so no signal category is
+// replaced; the entity and custom-pattern passes still run.
 func anonymiseText(text string, scope detectionScope, assign func(Span) string,
 	traceFn func([]Span), overlaps *overlapWarnings) string {
 
-	spans := FilterAllowed(DetectPIISelected(text, scope.categories, scope.country), scope.allow)
+	var spans []Span
+	if !scope.suppressRegexPII {
+		spans = FilterAllowed(DetectPIISelected(text, scope.categories, scope.country), scope.allow)
+	}
 	spans = append(spans, DetectEntities(text, scope.entities, scope.allow)...)
 	if scope.categories[CatCustomPatterns] {
 		spans = append(spans, DetectCustomPatterns(text, scope.patterns, scope.allow)...)

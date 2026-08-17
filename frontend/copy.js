@@ -223,6 +223,12 @@ export const RAIL = {
   // being a section of its own because it is the scope OF smart detection.
   smartIntro: "Finds names by how they are written, on this machine and without any AI. It runs on the categories you choose below.",
   smartTuning: "Strictness",
+  // The two independent halves the Smart detection route splits into, rendered
+  // as toggles at the top of the section.
+  nativeDetect: "Native detection (signals)",
+  nativeDetectHint: "Regex signals such as emails, VAT numbers and IBANs.",
+  autoDetect: "Auto detection (word frequency)",
+  autoDetectHint: "Finds recurring names by word frequency.",
   routeOn: "On",
   routeOff: "Off",
   /** routeSwitchLabel(title) is the accessible name of a section's switch. */

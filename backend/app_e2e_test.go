@@ -254,6 +254,12 @@ func TestDetectionRouteDefaults(t *testing.T) {
 	if !s.UseSmartDetect {
 		t.Error("Smart detection must be on by default")
 	}
+	if !s.UseNativeDetect {
+		t.Error("Native detection must be on by default")
+	}
+	if !s.UseAutoDetect {
+		t.Error("Auto detection must be on by default")
+	}
 	if s.UseAI {
 		t.Error("the local AI route must be off by default")
 	}

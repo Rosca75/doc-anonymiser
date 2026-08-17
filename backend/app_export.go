@@ -473,16 +473,18 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 		Patterns:    req.Patterns,
 		SimpleRules: req.SimpleRules,
 		Settings: engine.SessionSettings{
-			Level:          settings.Level,
-			Categories:     settings.Categories,
-			OllamaPort:     settings.OllamaPort,
-			Model:          settings.Model,
-			ContextSize:    settings.ContextSize,
-			Country:        settings.Country,
-			UseAI:          settings.UseAI,
-			UseSmartDetect: &settings.UseSmartDetect,
-			MinConfidence:  settings.MinConfidence,
-			SmartDetect:    &smartDetect,
+			Level:           settings.Level,
+			Categories:      settings.Categories,
+			OllamaPort:      settings.OllamaPort,
+			Model:           settings.Model,
+			ContextSize:     settings.ContextSize,
+			Country:         settings.Country,
+			UseAI:           settings.UseAI,
+			UseSmartDetect:  &settings.UseSmartDetect,
+			UseNativeDetect: &settings.UseNativeDetect,
+			UseAutoDetect:   &settings.UseAutoDetect,
+			MinConfidence:   settings.MinConfidence,
+			SmartDetect:     &smartDetect,
 		},
 		Registry:             registry,
 		PlaceholderOverrides: overrides,
@@ -590,19 +592,27 @@ func (a *App) restoredSettings(session engine.Session) Settings {
 	defer a.mu.Unlock()
 
 	restored := Settings{
-		Level:          session.Settings.Level,
-		Categories:     session.Settings.Categories,
-		OllamaPort:     session.Settings.OllamaPort,
-		Model:          session.Settings.Model,
-		ContextSize:    session.Settings.ContextSize,
-		Country:        session.Settings.Country,
-		UseAI:          session.Settings.UseAI,
-		UseSmartDetect: true, // the default; an absent field means "on"
-		MinConfidence:  session.Settings.MinConfidence,
-		SmartDetect:    a.settings.SmartDetect,
+		Level:           session.Settings.Level,
+		Categories:      session.Settings.Categories,
+		OllamaPort:      session.Settings.OllamaPort,
+		Model:           session.Settings.Model,
+		ContextSize:     session.Settings.ContextSize,
+		Country:         session.Settings.Country,
+		UseAI:           session.Settings.UseAI,
+		UseSmartDetect:  true, // the default; an absent field means "on"
+		UseNativeDetect: true, // absent means "on", like UseSmartDetect
+		UseAutoDetect:   true, // absent means "on", like UseSmartDetect
+		MinConfidence:   session.Settings.MinConfidence,
+		SmartDetect:     a.settings.SmartDetect,
 	}
 	if session.Settings.UseSmartDetect != nil {
 		restored.UseSmartDetect = *session.Settings.UseSmartDetect
+	}
+	if session.Settings.UseNativeDetect != nil {
+		restored.UseNativeDetect = *session.Settings.UseNativeDetect
+	}
+	if session.Settings.UseAutoDetect != nil {
+		restored.UseAutoDetect = *session.Settings.UseAutoDetect
 	}
 	if session.Settings.SmartDetect != nil {
 		restored.SmartDetect = *session.Settings.SmartDetect

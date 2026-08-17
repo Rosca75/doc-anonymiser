@@ -62,6 +62,25 @@ type Settings struct {
 	// is scaffolding that would have to be trusted later.
 	UseAI          bool `json:"useAI"`
 	UseSmartDetect bool `json:"useSmartDetect"`
+	// UseNativeDetect and UseAutoDetect are the two halves the "Smart detection"
+	// route split into, so the user controls them independently:
+	//
+	// UseNativeDetect is the MASTER SWITCH over the regex signal categories
+	// (email, VAT, IBAN, amount, date, ...). OFF means pass 1 is skipped and no
+	// signal category is replaced at anonymisation time, whatever the per-category
+	// checkboxes say; the checkboxes keep their selection so turning it back on
+	// restores exactly what was chosen. ON by default: the deterministic PII pass
+	// is what most documents need.
+	//
+	// UseAutoDetect is the offline word-frequency pass (engine SmartDetect). ON by
+	// default; it needs nothing installed.
+	//
+	// UseSmartDetect stays for backward field compatibility and is DERIVED:
+	// written = (UseNativeDetect || UseAutoDetect) on every settings push, so the
+	// section header and any older reader still see the route as "on" when either
+	// half is.
+	UseNativeDetect bool `json:"useNativeDetect"`
+	UseAutoDetect   bool `json:"useAutoDetect"`
 	// MinConfidence is the detection-confidence floor, on
 	// the scale of 0.0 to 1.0. Spans scoring below it are
 	// not replaced. 0 (the default, and what an older session file without
@@ -221,8 +240,11 @@ func defaultSettings() Settings {
 		// detection over-detecting was the reported problem.
 		SmartDetect: engine.DefaultSmartDetectOptions(),
 		// Smart detection is on by default (it needs nothing installed);
-		// the AI route is not.
-		UseSmartDetect: true,
+		// the AI route is not. Both halves of Smart detection default on, and
+		// UseSmartDetect stays true as their derived value.
+		UseSmartDetect:  true,
+		UseNativeDetect: true,
+		UseAutoDetect:   true,
 	}
 }
 

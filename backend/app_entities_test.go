@@ -70,7 +70,7 @@ func aiOnlyApp(t *testing.T, replyFor func(userPrompt string) string) *App {
 	t.Helper()
 	app := newTestApp(t, replyFor)
 	app.settings.UseAI = true
-	app.settings.UseSmartDetect = false
+	app.settings.UseAutoDetect = false
 	return app
 }
 

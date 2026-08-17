@@ -72,11 +72,17 @@ Local AI section sizes its From/To range inputs from it.
 
 `useAI` and `useSmartDetect` are the DETECTION ROUTE switches: Smart detection
 on by default, Local AI off by default and additionally gated on the live
-Ollama probe. There is no cloud route and no `useCloudAI`, on either side. The
-frontend store carried one and `pushSettings` sent it while Go discarded it,
-which made this line read as a contradiction rather than a contract; BUILD-06
-Phase 8 deleted the field instead of documenting it, because a setting nothing
-reads and nothing can change is a claim the next reader has to disprove.
+Ollama probe. Smart detection split into two independently switchable halves,
+both sent alongside `useSmartDetect`: `useNativeDetect` is the MASTER over the
+regex signal categories (email, VAT, IBAN, amount, date, ...) applied at
+anonymisation time, and `useAutoDetect` is the offline word-frequency detection
+pass. Both default on. `useSmartDetect` is now DERIVED and sent for backward
+compatibility, always `useNativeDetect || useAutoDetect`. There is no cloud
+route and no `useCloudAI`, on either side. The frontend store carried one and
+`pushSettings` sent it while Go discarded it, which made this line read as a
+contradiction rather than a contract; BUILD-06 Phase 8 deleted the field instead
+of documenting it, because a setting nothing reads and nothing can change is a
+claim the next reader has to disprove.
 
 `country` is the DOCUMENT COUNTRY (BUILD-06 Phase 1), one of the codes in
 `engine.SupportedCountries`. It is a real engine setting, not a frontend
@@ -126,6 +132,12 @@ removed list with restore.
 | `cancelPipeline()` | — | aborts the in-flight run |
 | `fastRerun(request)` | request | re-runs the deterministic passes only (no LLM); resolves directly to fresh `Results` |
 | `getMapping()` | — | placeholder → `{original, category}` lookup (empty before the first run) |
+
+The run `request` is `{entities, allowTerms, patterns, categories, simpleRules,
+suppressRegexPII}`. `suppressRegexPII` is the "Native detection" master switch
+inverted (`!useNativeDetect`): when true, Go skips the deterministic regex PII
+pass (pass 1) so NO signal category is replaced, whatever `categories` selects;
+the entity, custom-pattern and code passes are unaffected.
 
 ## Export screen
 

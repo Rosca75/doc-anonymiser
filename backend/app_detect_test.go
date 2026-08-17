@@ -117,11 +117,37 @@ func TestDetectionAlwaysEndsWithATerminalEvent(t *testing.T) {
 	}
 }
 
+// TestDetectionAutoDetectOffRunsNoSmartPhase: the Smart PHASE is now gated on
+// UseAutoDetect, the offline word-frequency pass, NOT on the derived
+// UseSmartDetect. Native detection being on (its default) is the master over the
+// regex signals at anonymisation time and must not, by itself, make the detect
+// button find word-frequency candidates.
+func TestDetectionAutoDetectOffRunsNoSmartPhase(t *testing.T) {
+	app := detectionApp()
+	app.settings.UseAutoDetect = false
+	app.settings.UseNativeDetect = true // the master is on; it is not a detection route
+	app.settings.UseAI = false
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"a.txt"}, nil, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	for _, p := range res.Phases {
+		if p == PhaseSmart {
+			t.Errorf("Auto detection is off, so the smart phase must not run; phases %v", res.Phases)
+		}
+	}
+	if len(res.Candidates) != 0 {
+		t.Errorf("no smart phase means no word-frequency candidates, got %+v", res.Candidates)
+	}
+}
+
 // TestDetectionWithNoRouteOnStillEnds: with every switch off there is nothing
 // to run, and that has to be said, not left as a spinning bar.
 func TestDetectionWithNoRouteOnStillEnds(t *testing.T) {
 	app := detectionApp()
-	app.settings.UseSmartDetect = false
+	app.settings.UseAutoDetect = false
 	app.settings.UseAI = false
 	rec := withRecorder(t, app)
 
@@ -375,7 +401,7 @@ func TestDetectionAIScopeLimitsToPageRange(t *testing.T) {
 	}
 	app.llm = ollama.New(srv.URL)
 	app.settings.UseAI = true
-	app.settings.UseSmartDetect = false // isolate the AI route
+	app.settings.UseAutoDetect = false // isolate the AI route
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"big.txt"}, nil,
@@ -417,7 +443,7 @@ func TestDetectionAIScopeOutOfRangeReportsButFinishes(t *testing.T) {
 	}
 	app.llm = ollama.New(srv.URL)
 	app.settings.UseAI = true
-	app.settings.UseSmartDetect = false
+	app.settings.UseAutoDetect = false
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"small.txt"}, nil,

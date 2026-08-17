@@ -89,9 +89,20 @@ const initialState = {
   // they are three separate ways of finding values and the user turns them on
   // and off independently:
   //   useSmartDetect the offline heuristic pass. ON by default, and
-  //                   deactivable. Its scope (the categories, the preset, the
-  //                   confidence floor) and its tuning are the settings it
-  //                   reads, which is why the rail nests them inside it.
+  //                   deactivable. It is now a DERIVED value, written on every
+  //                   settings push = (useNativeDetect || useAutoDetect), so the
+  //                   section header and any backward-compat reader still see the
+  //                   route as "on" when either half is. Its scope (the
+  //                   categories, the preset, the confidence floor) and its
+  //                   tuning are the settings it reads, which is why the rail
+  //                   nests them inside it.
+  //   useNativeDetect the MASTER SWITCH over the regex signal categories
+  //                   (email, VAT, IBAN, amount, date, ...). ON by default. OFF
+  //                   means no signal category is replaced at anonymisation time,
+  //                   whatever the per-category checkboxes say; the checkboxes
+  //                   keep their selection so turning it back on restores it.
+  //   useAutoDetect the offline word-frequency pass (engine SmartDetect). ON by
+  //                   default.
   //   useAI the local model (Ollama). OFF by default. Detecting
   //                   Ollama ENABLES the switch, it never flips it: turning on
   //                   a route that sends the document to a model, however
@@ -109,6 +120,7 @@ const initialState = {
   settings: {
     level: "medium", categories: null, ollamaPort: 11434, model: "", country: DEFAULT_COUNTRY,
     contextSize: 8192, useAI: false, useSmartDetect: true,
+    useNativeDetect: true, useAutoDetect: true,
     minConfidence: 0,
     // smartDetect is the tuning for the offline Smart
     // detection pass, matching engine.SmartDetectOptions field for field.
@@ -763,6 +775,29 @@ export function aiScopeArg(s = state) {
  */
 export function setUseSmartDetect(on) {
   setState({ settings: { ...state.settings, useSmartDetect: !!on } });
+}
+
+/**
+ * setUseNativeDetect(on) turns the Native detection master switch on or off.
+ *
+ * Native detection is the master over the regex signal categories (email, VAT,
+ * IBAN, amount, date, ...). OFF means no signal category is replaced at
+ * anonymisation time, whatever the per-category checkboxes say; the selection is
+ * left intact so turning it back on restores exactly what was chosen.
+ */
+export function setUseNativeDetect(on) {
+  setState({ settings: { ...state.settings, useNativeDetect: !!on } });
+}
+
+/**
+ * setUseAutoDetect(on) turns the Auto detection (word-frequency) pass on or off.
+ *
+ * It is the offline heuristic pass; ON by default, because it needs nothing
+ * installed and a user who has just imported documents expects the app to look
+ * at them.
+ */
+export function setUseAutoDetect(on) {
+  setState({ settings: { ...state.settings, useAutoDetect: !!on } });
 }
 
 /**
@@ -2020,5 +2055,8 @@ export function buildRunRequest() {
     // pipeline always sees exactly what the configure screen shows.
     categories: state.settings.categories ?? presetCategories(state.settings.level),
     simpleRules: state.simpleRules,
+    // The "Native detection" master switch, inverted: when Native detection is
+    // off, the Go pipeline skips pass 1 so no regex signal category is replaced.
+    suppressRegexPII: !getState().settings.useNativeDetect,
   };
 }

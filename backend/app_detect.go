@@ -154,7 +154,11 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 	// stale "on" from starting a model that is not running.
 	useAI := settings.UseAI && llm.Probe().Available
 	phases := []string{}
-	if settings.UseSmartDetect {
+	// The Smart PHASE is the offline word-frequency ("auto") pass, gated on
+	// UseAutoDetect. Native detection (the regex signals) is NOT a detection
+	// phase: it runs at anonymisation time, so its master switch does not appear
+	// here.
+	if settings.UseAutoDetect {
 		phases = append(phases, PhaseSmart)
 	}
 	if useAI {
