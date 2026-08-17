@@ -6,14 +6,10 @@ package backend
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"doc-anonymiser/backend/engine"
-	"doc-anonymiser/backend/ollama"
 )
 
 func TestRunPipelineCancellation(t *testing.T) {
@@ -37,41 +33,21 @@ func TestRunPipelineCancellation(t *testing.T) {
 	}
 }
 
-// TestFastRerunAppliesEntityWithoutLLM: after a first run that used the
-// (mock) LLM, adding an entity and fast-rerunning must (a) apply the new
-// entity, (b) keep existing placeholders stable via the session registry,
-// and (c) make ZERO additional LLM calls.
-func TestFastRerunAppliesEntityWithoutLLM(t *testing.T) {
-	var chatCalls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/tags":
-			w.Write([]byte(`{"models":[{"name":"m"}]}`))
-		case "/api/chat":
-			chatCalls.Add(1)
-			resp, _ := json.Marshal(map[string]interface{}{
-				"message": map[string]string{"role": "assistant",
-					"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`},
-			})
-			w.Write(resp)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-
+// TestFastRerunAppliesEntity: after a first run, adding an entity and
+// fast-rerunning must (a) apply the new entity and (b) keep existing
+// placeholders stable via the session registry. No LLM is involved: the run
+// path anonymises the values it is given plus the deterministic regex passes.
+func TestFastRerunAppliesEntity(t *testing.T) {
 	app := NewApp()
-	app.llm = ollama.New(srv.URL)
-	// The deep scan is gated on the Local AI switch in Go, so a
-	// test that exercises it has to turn the route on, exactly like a user.
-	app.settings.UseAI = true
 	app.docs = []engine.Document{{
 		Name: "a.txt", Format: engine.FormatTXT,
 		Markdown: "Alpine Trust met Marie Duval by mail marie.duval@example.com.",
 	}}
 
-	// First run WITH deep-scan: the mock proposes "Alpine Trust".
-	res1, err := app.runPipelineBlocking(context.Background(), RunRequest{UseDeepScan: true})
+	// First run knows the organisation and the email; the person is still missed.
+	res1, err := app.runPipelineBlocking(context.Background(), RunRequest{
+		Entities: []engine.Entity{{Category: "entity_names", Canonical: "Alpine Trust"}},
+	})
 	if err != nil {
 		t.Fatalf("first run: %v", err)
 	}
@@ -79,18 +55,16 @@ func TestFastRerunAppliesEntityWithoutLLM(t *testing.T) {
 	if !strings.Contains(out1, "[ENTITY_1]") || !strings.Contains(out1, "[EMAIL_1]") {
 		t.Fatalf("first run output unexpected: %q", out1)
 	}
-	if strings.Contains(out1, "Marie Duval") == false {
+	if !strings.Contains(out1, "Marie Duval") {
 		t.Fatalf("precondition: Marie Duval should survive the first run (no entity yet): %q", out1)
-	}
-	callsAfterFirst := chatCalls.Load()
-	if callsAfterFirst == 0 {
-		t.Fatal("the first run should have called the LLM")
 	}
 
 	// The user notices the missed person and adds them, then fast-reruns.
 	res2, err := app.FastRerun(RunRequest{
-		Entities:    []engine.Entity{{Category: "person_names", Canonical: "Marie Duval"}},
-		UseDeepScan: true, // must be ignored by the fast path
+		Entities: []engine.Entity{
+			{Category: "entity_names", Canonical: "Alpine Trust"},
+			{Category: "person_names", Canonical: "Marie Duval"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("fast rerun: %v", err)
@@ -99,12 +73,9 @@ func TestFastRerunAppliesEntityWithoutLLM(t *testing.T) {
 	if strings.Contains(out2, "Marie Duval") {
 		t.Errorf("new entity not applied on fast rerun: %q", out2)
 	}
-	// Registry stability: the client and email keep their numbers.
+	// Registry stability: the organisation and email keep their numbers.
 	if !strings.Contains(out2, "[ENTITY_1]") || !strings.Contains(out2, "[EMAIL_1]") {
 		t.Errorf("existing placeholders must stay stable: %q", out2)
-	}
-	if chatCalls.Load() != callsAfterFirst {
-		t.Errorf("fast rerun must not call the LLM (calls went %d → %d)", callsAfterFirst, chatCalls.Load())
 	}
 	// The stored results are refreshed for the export screen.
 	if app.latestResults() != res2 {

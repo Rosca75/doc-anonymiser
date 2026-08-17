@@ -2,8 +2,8 @@
 //
 // A column of cards on the left, one big Compare card on the right:
 //
-//   Run the deep-scan checkbox (LLM-gated), RUN / RUN AGAIN,
-//                        Cancel, the progress bar and the four stat tiles.
+//   Run                  RUN / RUN AGAIN, Cancel, the progress bar and the
+//                        four stat tiles.
 //   Selected placeholder appears when a mark in the anonymised pane is clicked.
 //                        It REPLACES the floating reassign popover: a popover
 //                        anchored inside a scrolling pane drifted away from the
@@ -30,7 +30,7 @@ import {
   restoreValue, nextRulePlaceholder,
 } from "../api.js";
 import {
-  getState, setState, llmEnabled,
+  getState, setState,
   buildRunRequest, documentSource, cacheDocumentSource,
   addSimpleRule, removeSimpleRule, moveSimpleRule,
   entityAutocomplete, reassignOriginal, addEntities,
@@ -39,7 +39,6 @@ import {
 import { escapeHTML } from "../html.js";
 import { renderHighlighted } from "../highlight.js";
 import { button, card, statTile, collapsibleGroup, wireGroups, icon, sectionLabel } from "../ui.js";
-import { llmGateTooltip } from "./identifyrail.js";
 import { CATEGORIES } from "./identifyworkspace.js";
 import { stepFooterHTML, wireStepFooter } from "../nav.js";
 import { notify, wireNotice } from "../toast.js";
@@ -48,10 +47,10 @@ import { toastHTML } from "../ui.js";
 
 // --- View-local state -----------------------------------------------------
 
-// Which of the four collapsible cards are folded shut. The Report starts OPEN
-// and the other three closed: the report is what a user wants immediately after
-// a run, the other three are what they reach for when something is wrong.
-const collapsed = new Set(["missed", "rules", "selected", "removed"]);
+// Which of the four collapsible cards are folded shut. All four start closed:
+// the result cards open on demand, so the screen after a run is a compact
+// column of headings rather than a wall of tables.
+const collapsed = new Set(["missed", "rules", "selected", "removed", "values", "report"]);
 // Which report categories are expanded, by category key.
 const expandedCategories = new Set();
 // The report's scope: "__all" or one document name.
@@ -83,7 +82,6 @@ const drafts = { missedCategory: "person_names", missed: "", find: "", replace: 
 
 export function renderAnonymise(container) {
   const s = getState();
-  const aiOK = llmEnabled(s);
   const doc = currentDocument(s);
   // A refused run carries empty documents and an empty report, so the value,
   // report and "something missed" cards would show a zero run beside a stale
@@ -95,12 +93,12 @@ export function renderAnonymise(container) {
     <div class="anonymise-view">
       <div class="workspace workspace-side">
         <div class="card-column">
-          ${runCard(s, aiOK)}
+          ${runCard(s)}
           ${selectedMark ? selectedCard(s) : ""}
           ${s.results && !blocked ? valuesCard(s) : ""}
           ${s.results && !blocked ? reportCard(s) : ""}
           ${s.results && !blocked ? missedCard(s) : ""}
-          ${rulesCard(s)}
+          ${s.results ? rulesCard(s) : ""}
         </div>
         ${compareCard(s, doc)}
       </div>
@@ -133,8 +131,7 @@ function currentDocument(s) {
 
 // --- Run card -------------------------------------------------------------
 
-function runCard(s, aiOK) {
-  const gate = aiOK ? "" : ` disabled title="${escapeHTML(llmGateTooltip(s))}"`;
+export function runCard(s) {
   const done = !!s.results && !s.running;
 
   const actions =
@@ -153,15 +150,13 @@ function runCard(s, aiOK) {
     }) +
     `</div>`;
 
-  const deepScan =
-    `<label class="cat-row" title="${escapeHTML(aiOK ? ANONYMISE.deepScanTooltip : llmGateTooltip(s))}">` +
-    `<input type="checkbox" id="deep-scan"${gate}/>` +
-    `<span class="cat-label">${escapeHTML(ANONYMISE.deepScan)}</span></label>`;
-
+  // The explanatory sentence rides on the heading as a hover tooltip rather
+  // than a visible subtitle: the run card is a compact control strip, and the
+  // status line was repeating what the progress bar and stat tiles already say.
   return card({
-    id: "run-card", title: CARDS.run.title, subtitle: runSubtitle(s),
+    id: "run-card", title: CARDS.run.title, titleTooltip: runSubtitle(s),
     bodyCls: "stack",
-    bodyHTML: deepScan + actions + progressStrip(s) + blockedPanel(s) + statsRow(s),
+    bodyHTML: actions + progressStrip(s) + blockedPanel(s) + statsRow(s),
   });
 }
 
@@ -349,15 +344,12 @@ export function reportCard(s) {
 
 /**
  * runNote(s) surfaces what the run itself did, which the card used to ignore
- * entirely: the preset it ran at, and what happened to the AI pass. A run that
- * silently degraded ("degraded: connection refused") said so only in the JSON
- * export, which is the one place nobody looks after a run.
+ * entirely: the preset it ran at.
  */
 function runNote(s) {
   const report = s.results?.report ?? {};
   const parts = [];
   if (report.level) parts.push(ANONYMISE.reportLevel(report.level));
-  if (report.llmPass) parts.push(ANONYMISE.reportLLMPass(report.llmPass));
   if (!parts.length) return "";
   return `<p class="hint" id="report-run-note">${escapeHTML(parts.join(". "))}.</p>`;
 }
@@ -542,7 +534,7 @@ export function countOccurrences(text, needle) {
 
 // --- Something missed? card ----------------------------------------------
 
-function missedCard(s) {
+export function missedCard(s) {
   const body =
     `<p class="hint">${escapeHTML(ANONYMISE.missedHint)}</p>` +
     `<div class="add-row">` +
@@ -566,7 +558,7 @@ function missedCard(s) {
 
 // --- Find and replace card ----------------------------------------------
 
-function rulesCard(s) {
+export function rulesCard(s) {
   const rows = s.simpleRules.map((r, i) =>
     `<div class="rule-row" data-index="${i}">` +
     `<span class="rule-text mono">` +
@@ -746,14 +738,13 @@ function wire(container, s, doc) {
 
 function wireRun(container) {
   container.querySelector("#btn-run")?.addEventListener("click", async () => {
-    const deep = container.querySelector("#deep-scan")?.checked ?? false;
     try {
       // Clearing the results before the run is deliberate: a stale Compare pane
       // beside a live progress bar reads as the new result, and it is not.
       selectedMark = null;
       selection = null;
       setState({ running: true, progress: null, results: null, mapping: null });
-      await runPipeline(buildRunRequest(deep));
+      await runPipeline(buildRunRequest());
       // Results arrive via the "pipeline:done" event (see main.js boot).
     } catch (err) {
       setState({ running: false });
@@ -1218,7 +1209,7 @@ function wireSelectionPanel(container) {
  */
 async function runFastRerun(container, message) {
   try {
-    const results = await fastRerun(buildRunRequest(false));
+    const results = await fastRerun(buildRunRequest());
     // The mapping and the value table may both have grown: new values earned
     // placeholders, and removed ones lost theirs.
     tablesLoadedFor = results;

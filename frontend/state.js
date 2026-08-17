@@ -703,8 +703,8 @@ export function detectionRoutesOn(s = state) {
 }
 
 /**
- * llmEnabled(s) is THE gate for every AI-dependent control (discovery,
- * deep-scan): the master toggle must be on AND Ollama must be reachable.
+ * llmEnabled(s) is THE gate for every AI-dependent control (Local AI
+ * detection): the master toggle must be on AND Ollama must be reachable.
  */
 export function llmEnabled(s = state) {
   return !!(s.settings.useAI && s.ollama?.available);
@@ -1927,17 +1927,18 @@ export function moveSimpleRule(index, delta) {
   return true;
 }
 
-/** buildRunRequest(useDeepScan, s) assembles the Go RunRequest from the
- *  current state, the single place the pipeline payload is shaped. */
-export function buildRunRequest(useDeepScan, s = state) {
+/** buildRunRequest() assembles the Go RunRequest from the current state, the
+ *  single place the pipeline payload is shaped. It takes no arguments: a
+ *  leftover boolean from an older caller (e.g. buildRunRequest(false)) is
+ *  simply ignored, so retired call sites stay harmless. */
+export function buildRunRequest() {
   return {
-    entities: acceptedEntities(s),
-    allowTerms: s.allowlist,
-    patterns: validPatterns(s),
+    entities: acceptedEntities(state),
+    allowTerms: state.allowlist,
+    patterns: validPatterns(state),
     // The granular selection travels with every run request so the Go
     // pipeline always sees exactly what the configure screen shows.
-    categories: s.settings.categories ?? presetCategories(s.settings.level),
-    simpleRules: s.simpleRules,
-    useDeepScan: !!useDeepScan,
+    categories: state.settings.categories ?? presetCategories(state.settings.level),
+    simpleRules: state.simpleRules,
   };
 }

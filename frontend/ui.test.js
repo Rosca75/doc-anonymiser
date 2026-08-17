@@ -263,6 +263,18 @@ test("card renders head, body and foot in order", () => {
   assert.ok(html.indexOf("card-body") < html.indexOf("card-foot"));
 });
 
+test("card renders a titleTooltip on the heading, and escapes it", () => {
+  const plain = card({ title: "Run anonymisation", bodyHTML: "x" });
+  assert.ok(plain.includes("<h2>Run anonymisation</h2>"),
+    "with no tooltip the heading stays a bare h2");
+
+  const tipped = card({ title: "Run anonymisation", titleTooltip: `on "hover"`, bodyHTML: "x" });
+  assert.ok(tipped.includes('<h2 title="on &quot;hover&quot;">Run anonymisation</h2>'),
+    "the tooltip lands on the h2's title attribute, escaped");
+  assert.ok(!tipped.includes('class="card-sub"'),
+    "a titleTooltip is not a visible subtitle");
+});
+
 test("card omits the head entirely when there is nothing to put in it", () => {
   const html = card({ bodyHTML: "x" });
   assert.ok(!html.includes("card-head"), html);

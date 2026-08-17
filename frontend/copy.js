@@ -635,8 +635,6 @@ export const ANONYMISE = {
   cancel: "Cancel",
   cancelTooltip: "Stop the run. Anything already replaced is discarded.",
   cancelIdleTooltip: "Nothing is running.",
-  deepScan: "Deep scan (AI)",
-  deepScanTooltip: "An extra AI pass that looks for values the deterministic passes left behind.",
   subtitleRunning: "Working through your documents.",
   subtitleDone: "Check the result side by side. Every replacement maps back to its original.",
   subtitleBlocked: "The run was refused before any text was changed. Fix the conflict, then run again.",
@@ -720,11 +718,6 @@ export const ANONYMISE = {
   /** reportLevel(level) names the preset the run used. */
   reportLevel(level) {
     return `Ran at the ${level} preset`;
-  },
-  /** reportLLMPass(text) reports what happened to the AI pass, verbatim from
-   *  Go. A run that degraded halfway used to say so only in the JSON export. */
-  reportLLMPass(text) {
-    return `AI deep scan: ${text}`;
   },
   noValuesInScope: "No values from this category appear in the files in scope.",
   dismissWarning: "Hide this warning",

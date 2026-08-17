@@ -88,6 +88,9 @@ export function button(label, opts = {}) {
  *
  * @param {object} opts
  * @param {string} [opts.title] the card heading (escaped)
+ * @param {string} [opts.titleTooltip] a sentence shown only on hover over the
+ *   heading (escaped, set as the h2's title attribute). Use it instead of a
+ *   visible subtitle when the explanation is secondary to a compact card.
  * @param {string} [opts.subtitle] the sentence beside it (escaped). This is
  *   where the copy from the deleted per-step explainer banner now lives.
  * @param {string} [opts.caption] a right-aligned uppercase fact about the
@@ -116,7 +119,9 @@ export function card(opts = {}) {
   const head = hasHead
     ? `<div class="card-head${opts.headRightHTML ? " with-controls" : ""}">` +
       `<div class="card-head-left">` +
-      (opts.title ? `<h2>${escapeHTML(opts.title)}</h2>` : "") +
+      (opts.title
+        ? `<h2${opts.titleTooltip ? ` title="${escapeHTML(opts.titleTooltip)}"` : ""}>${escapeHTML(opts.title)}</h2>`
+        : "") +
       (opts.subtitle ? `<span class="card-sub">${escapeHTML(opts.subtitle)}</span>` : "") +
       `</div>${right}</div>`
     : "";

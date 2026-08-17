@@ -16,8 +16,11 @@ import assert from "node:assert/strict";
 import {
   countOccurrences, valuesInCategory, formatDuration, continueHint,
   compareCard, reportCard, valuesCard, filterValues, blockedPanel, selectedCard,
+  runCard, rulesCard, missedCard, renderAnonymise,
 } from "./views/anonymise.js";
-import { textOf, all } from "./testhtml.js";
+import { resetState, setState } from "./state.js";
+import { ANONYMISE } from "./copy.js";
+import { textOf, all, attr } from "./testhtml.js";
 
 // --- countOccurrences ----------------------------------------------------
 
@@ -68,7 +71,7 @@ function reportState(patch = {}) {
         { name: "b.pptx", anonymised: "[PERSON_2] chaired.", byCategory: { person_names: 1 } },
       ],
       report: {
-        level: "medium", llmPass: "skipped (Ollama not available)",
+        level: "medium",
         totalReplacements: 6, byCategory: { person_names: 4, entity_names: 2 },
         values: RUN_VALUES,
         documents: [
@@ -150,13 +153,12 @@ test("the Selected placeholder card edits the replacement value, like the table"
   assert.match(html, /Marie Duval/, "the card still names what the placeholder replaces");
 });
 
-test("the report says what the run did, including a degraded AI pass", () => {
+test("the report note says the preset the run used, and nothing about an AI pass", () => {
   const s = reportState();
-  s.results.report.llmPass = "degraded: connection refused";
   const note = textOf(reportCard(s), "#report-run-note");
   assert.match(note, /medium/);
-  assert.match(note, /degraded: connection refused/,
-    "a run that silently degraded must say so where the user is looking");
+  assert.doesNotMatch(note, /deep scan|AI/i,
+    "the deep-scan feature is gone, so the run note must not mention an AI pass");
 });
 
 test("filterValues searches the value and the placeholder, because users use both", () => {
@@ -354,4 +356,96 @@ test("compareCard carries the truncation notice through to the ORIGINAL pane", (
   const html = compareCard(s, s.results.documents[0]);
   assert.match(textOf(html, "#original-pane"), /Preview truncated/);
   assert.ok(textOf(html, "#original-pane").includes(SOURCE));
+});
+
+// --- The run card: no deep-scan control, explanation on hover ------------
+//
+// The "Deep scan (AI)" checkbox was removed from step 3: the run offers only
+// the deterministic passes now. Its explanatory subtitle moved onto the
+// heading as a hover tooltip so the card stays a compact control strip.
+
+test("the run card offers no deep-scan control", () => {
+  assert.equal(all(runCard(reportState()), "input#deep-scan").length, 0,
+    "the Deep scan (AI) checkbox is gone: the run runs the deterministic passes only");
+  assert.doesNotMatch(runCard(reportState()), /Deep scan/i,
+    "no leftover copy naming the removed feature");
+});
+
+test("the run card carries its explanation on the heading, not as a subtitle", () => {
+  const html = runCard(reportState());
+  assert.equal(all(html, "span.card-sub").length, 0,
+    "the status line is a hover tooltip now, not a visible subtitle");
+  // reportState() is a finished, unblocked run, so the tooltip is subtitleDone.
+  assert.equal(attr(html, "h2", "title"), ANONYMISE.subtitleDone,
+    "the heading spells out the run's state on hover");
+});
+
+// --- CR9: result sections start collapsed, rules gated on a run ----------
+//
+// renderAnonymise reads the module state, so these tests seed it through the
+// state API and capture the HTML the view writes. wire() only touches a real
+// DOM, and it runs after innerHTML is set, so the captured markup is complete.
+
+/** renderColumn() returns the HTML renderAnonymise writes for the current
+ *  module state. The fake container swallows the wiring calls. */
+function renderColumn() {
+  let html = "";
+  const container = {
+    set innerHTML(v) { html = v; },
+    get innerHTML() { return html; },
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+  };
+  try { renderAnonymise(container); } catch { /* wiring needs a real DOM */ }
+  return html;
+}
+
+const CR9_VALUES = [
+  { original: "Marie Duval", placeholder: "[PERSON_1]", category: "person_names", count: 1 },
+];
+
+/** seedRun() puts one finished, unblocked run into the module state. */
+function seedRun() {
+  setState({
+    running: false,
+    results: {
+      documents: [{ name: "a.txt", anonymised: "[PERSON_1].", byCategory: { person_names: 1 } }],
+      report: {
+        level: "medium", totalReplacements: 1, byCategory: { person_names: 1 },
+        values: CR9_VALUES, documents: [{ name: "a.txt", values: CR9_VALUES }],
+      },
+    },
+    replacedValues: CR9_VALUES,
+  });
+}
+
+test("the Find and replace card is absent before the first run", () => {
+  resetState();
+  setState({ documents: [{ name: "a.txt", markdown: "x", previewTruncated: false, isGrid: false }] });
+  const html = renderColumn();
+  assert.doesNotMatch(html, /Find and replace/,
+    "with no run yet there is nothing to find-and-replace against");
+});
+
+test("after a run all four result cards render, and each starts collapsed", () => {
+  resetState();
+  setState({ documents: [{ name: "a.txt", markdown: "x", previewTruncated: false, isGrid: false }] });
+  seedRun();
+  const html = renderColumn();
+  assert.match(html, /Find and replace/, "the rules card appears once a run has happened");
+  // The four foldable result cards (values, report, missed, rules) all fold shut.
+  assert.equal((html.match(/data-open="false"/g) ?? []).length, 4,
+    "values, report, something-missed and find-and-replace all start collapsed");
+  assert.equal((html.match(/data-open="true"/g) ?? []).length, 0,
+    "nothing in the result column starts open");
+});
+
+test("each result card, rendered on its own, starts collapsed", () => {
+  // The collapsed set is the single source of truth for all four, so checking
+  // each helper directly guards the set membership CR9 relies on.
+  const s = reportState();
+  for (const [name, fn] of [["values", valuesCard], ["report", reportCard], ["missed", missedCard], ["rules", rulesCard]]) {
+    assert.equal(attr(fn(s), ".cgroup", "data-open"), "false",
+      `${name} card must start collapsed`);
+  }
 });
