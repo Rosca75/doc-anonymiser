@@ -19,16 +19,18 @@ import {
   goToScreen,
   applyPreset, toggleCategory, selectionPresetName, presetCategories,
   setUseAI, setUseSmartDetect, detectionRoutesOn, llmEnabled,
+  setUseNativeDetect, setUseAutoDetect,
   addCandidates, acceptCandidate, rejectCandidate,
+  markDetectionRan,
   moveVariant, entityAutocomplete, reassignOriginal,
   applyImportResult,
-  setAIScope, aiScopeArg,
+  setAIScope, aiScopeArg, parsePageSpec,
   setNotice, clearNotice, NOTICE_TONES,
   setDocumentCountry,
   setValueTables,
   dismissWarning, visibleWarnings,
   setExportDir, startNewBatch, setMetaReview,
-  askConfirm, answerConfirm,
+  askConfirm, answerConfirm, askChoice, answerChoice,
   entityKey,
   renameEntity, renameVariant, changeEntityCategory, changeCandidateCategory,
   groupEntities, clearAllEntities, entityConflicts, spellingsOf,
@@ -105,61 +107,91 @@ test("applyImportResult updates documents, errors and preview selection", () => 
 
 // --- local-AI scan scope -------------------------------------------------
 
-test("setAIScope clamps the range to the chosen document", () => {
+test("parsePageSpec parses numbers, ranges and a mix into a sorted set", () => {
+  assert.deepEqual(parsePageSpec("12-15,18", 20),
+    { pages: [12, 13, 14, 15, 18], error: null });
+  assert.deepEqual(parsePageSpec("1-3,7", 20).pages, [1, 2, 3, 7]);
+  // De-duplicated and sorted, whatever order the tokens arrive in.
+  assert.deepEqual(parsePageSpec("3, 1, 2, 2", 20).pages, [1, 2, 3]);
+  // A reversed range still reads low..high.
+  assert.deepEqual(parsePageSpec("5-3", 20).pages, [3, 4, 5]);
+});
+
+test("parsePageSpec drops out-of-range tokens and reports a bad one", () => {
+  // Out-of-range indices are silently ignored, the valid ones survive.
+  assert.deepEqual(parsePageSpec("2,99,4", 10).pages, [2, 4]);
+  assert.deepEqual(parsePageSpec("0,1", 10).pages, [1]);
+  // A malformed token names the first offender but keeps the valid pages.
+  const bad = parsePageSpec("2,abc,4", 10);
+  assert.deepEqual(bad.pages, [2, 4]);
+  assert.equal(bad.error, "abc");
+  // Empty or whitespace-only is not an error.
+  assert.deepEqual(parsePageSpec("", 10), { pages: [], error: null });
+  assert.deepEqual(parsePageSpec("   ", 10), { pages: [], error: null });
+});
+
+test("setAIScope stores the document and mode, defaulting to whole", () => {
   resetState();
   setState({ documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }] });
 
-  // A valid range is kept as-is.
-  assert.deepEqual(setAIScope({ docName: "a.pdf", fromPage: 2, toPage: 4 }),
-    { docName: "a.pdf", fromPage: 2, toPage: 4 });
+  // Choosing a document defaults to scanning it whole.
+  assert.deepEqual(setAIScope({ docName: "a.pdf" }),
+    { docName: "a.pdf", mode: "all", pages: "" });
 
-  // To past the last unit is pulled back to it; From below one is pushed up.
-  assert.deepEqual(setAIScope({ fromPage: 0, toPage: 99 }),
-    { docName: "a.pdf", fromPage: 1, toPage: 6 });
-
-  // From after To drags To up so the range never inverts.
-  assert.deepEqual(setAIScope({ fromPage: 5, toPage: 2 }),
-    { docName: "a.pdf", fromPage: 5, toPage: 5 });
+  // Switching to a page set stores the raw spec verbatim.
+  assert.deepEqual(setAIScope({ mode: "pages", pages: "2-4" }),
+    { docName: "a.pdf", mode: "pages", pages: "2-4" });
 });
 
 test("setAIScope resets to all documents for an unknown or empty name", () => {
   resetState();
   setState({ documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }] });
-  setAIScope({ docName: "a.pdf", fromPage: 2, toPage: 4 });
+  setAIScope({ docName: "a.pdf", mode: "pages", pages: "2-4" });
 
   assert.deepEqual(setAIScope({ docName: "gone.pdf" }),
-    { docName: "", fromPage: 1, toPage: 1 }, "a name not in the list clears the scope");
+    { docName: "", mode: "all", pages: "" }, "a name not in the list clears the scope");
   assert.equal(aiScopeArg(), null, "and nothing is sent to Go");
 });
 
-test("aiScopeArg is null until a document is chosen", () => {
+test("aiScopeArg emits {docName, pages} and null for every document", () => {
   resetState();
   assert.equal(aiScopeArg(), null, "the default is every document, whole");
   setState({ documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }] });
-  setAIScope({ docName: "a.pdf", fromPage: 1, toPage: 3 });
-  assert.deepEqual(aiScopeArg(), { docName: "a.pdf", fromPage: 1, toPage: 3 });
+
+  // Whole selected document: pages is an empty array.
+  setAIScope({ docName: "a.pdf", mode: "all" });
+  assert.deepEqual(aiScopeArg(), { docName: "a.pdf", pages: [] });
+
+  // A page set parses against the selected document's unit count.
+  setAIScope({ mode: "pages", pages: "1-3,5" });
+  assert.deepEqual(aiScopeArg(), { docName: "a.pdf", pages: [1, 2, 3, 5] });
+
+  // Out-of-range units are dropped at send time.
+  setAIScope({ pages: "5,99" });
+  assert.deepEqual(aiScopeArg(), { docName: "a.pdf", pages: [5] });
 });
 
-test("a new import drops a scope whose document is gone or shrank", () => {
+test("a new import drops a scope whose document is gone", () => {
   resetState();
   setState({ documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }] });
-  setAIScope({ docName: "a.pdf", fromPage: 3, toPage: 5 });
+  setAIScope({ docName: "a.pdf", mode: "pages", pages: "3-5" });
 
-  // Re-importing the same document with fewer pages invalidates the range.
-  applyImportResult({ documents: [{ name: "a.pdf", unit: "page", pageCount: 2 }] });
-  assert.deepEqual(getState().aiScope, { docName: "", fromPage: 1, toPage: 1 });
+  // Re-importing without that document clears the scope.
+  applyImportResult({ documents: [{ name: "b.pdf", unit: "page", pageCount: 2 }] });
+  assert.deepEqual(getState().aiScope, { docName: "", mode: "all", pages: "" });
 
-  // A scope still inside the re-imported document survives.
-  setAIScope({ docName: "a.pdf", fromPage: 1, toPage: 2 });
-  applyImportResult({ documents: [{ name: "a.pdf", unit: "page", pageCount: 4 }] });
-  assert.deepEqual(getState().aiScope, { docName: "a.pdf", fromPage: 1, toPage: 2 });
+  // A document that merely shrank keeps its scope: the spec re-parses at send
+  // time, so out-of-range units are dropped then, not stored now.
+  setAIScope({ docName: "b.pdf", mode: "pages", pages: "1-2" });
+  applyImportResult({ documents: [{ name: "b.pdf", unit: "page", pageCount: 4 }] });
+  assert.deepEqual(getState().aiScope, { docName: "b.pdf", mode: "pages", pages: "1-2" });
 });
 
 // --- entity review reducers ----------------------------------------------
 import {
   addEntities, removeEntity,
   setEntityVariants, addManualVariant, acceptedEntities,
-  addAllowTerm, removeAllowTerm, addPattern, removePattern, validPatterns,
+  addAllowTerm, removeAllowTerm, clearAllowlist, addPattern, removePattern, validPatterns,
 } from "./state.js";
 
 test("addEntities dedupes case-insensitively and defaults to accepted", () => {
@@ -241,6 +273,24 @@ test("allowlist add/remove is case-insensitive on identity", () => {
   assert.deepEqual(getState().allowlist, []);
 });
 
+test("the allowlist starts empty: nothing is seeded", () => {
+  // The engine does not seed defaults (App.allowlistFor is empty) and neither
+  // does the frontend anymore, so a fresh state protects nothing until the user
+  // adds a term. A test here so a re-introduced seed is caught, not shipped.
+  resetState();
+  assert.deepEqual(getState().allowlist, []);
+});
+
+test("clearAllowlist empties the list and returns the count cleared", () => {
+  resetState();
+  addAllowTerm("CSSF");
+  addAllowTerm("ACME");
+  assert.equal(clearAllowlist(), 2);
+  assert.deepEqual(getState().allowlist, []);
+  // Clearing an already-empty list removes nothing and says so.
+  assert.equal(clearAllowlist(), 0);
+});
+
 test("patterns: only compile-clean ones feed the pipeline", () => {
   resetState();
   addPattern("PRJ-[0-9]+", null);
@@ -288,8 +338,8 @@ test("buildRunRequest assembles only pipeline-ready inputs", () => {
   addPattern("[", "broken");
   addSimpleRule({ find: "x", replace: "y" });
 
-  const req = buildRunRequest(true);
-  assert.equal(req.useDeepScan, true);
+  const req = buildRunRequest();
+  assert.equal(req.useDeepScan, undefined);
   assert.deepEqual(req.entities, [{ category: "entity_names", canonical: "Alpine", manualVariants: [], excludedVariants: [] }]);
   assert.deepEqual(req.allowTerms, ["CSSF"]);
   assert.deepEqual(req.patterns, [{ expr: "PRJ-[0-9]+" }]);
@@ -385,7 +435,7 @@ test("selectionPresetName recognises each exact preset", () => {
 test("buildRunRequest carries the category selection", () => {
   resetState();
   applyPreset("soft");
-  const req = buildRunRequest(false);
+  const req = buildRunRequest();
   // The preset plus the country's identifier switches, which is what the rail
   // actually shows and therefore what the pipeline must obey.
   assert.deepEqual(req.categories, {
@@ -393,7 +443,27 @@ test("buildRunRequest carries the category selection", () => {
     ...countryIDCategories(DEFAULT_COUNTRY),
   });
   toggleCategory("iban", false);
-  assert.equal(buildRunRequest(false).categories.iban, false);
+  assert.equal(buildRunRequest().categories.iban, false);
+});
+
+test("setUseNativeDetect and setUseAutoDetect flip their flags independently", () => {
+  resetState();
+  assert.equal(getState().settings.useNativeDetect, true, "Native detection defaults on");
+  assert.equal(getState().settings.useAutoDetect, true, "Auto detection defaults on");
+  setUseNativeDetect(false);
+  assert.equal(getState().settings.useNativeDetect, false);
+  assert.equal(getState().settings.useAutoDetect, true, "Auto is untouched by Native");
+  setUseAutoDetect(false);
+  assert.equal(getState().settings.useAutoDetect, false);
+  setUseNativeDetect(true);
+  assert.equal(getState().settings.useNativeDetect, true);
+});
+
+test("buildRunRequest carries suppressRegexPII as the inverse of useNativeDetect", () => {
+  resetState();
+  assert.equal(buildRunRequest().suppressRegexPII, false, "Native on means do not suppress");
+  setUseNativeDetect(false);
+  assert.equal(buildRunRequest().suppressRegexPII, true, "Native off suppresses the regex pass");
 });
 
 // --- Local-AI gating -----------------------------------------------------
@@ -1130,6 +1200,46 @@ test("the notice and the question are cleared by resetState", () => {
   assert.equal(getState().confirm, null);
 });
 
+// --- The in-app pick-one (askChoice) -------------------------------------
+
+test("askChoice stores the choices and resolves to the picked id", async () => {
+  resetState();
+  const pending = askChoice({
+    title: "Choose the main value", body: "Pick one.",
+    choices: [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }],
+  });
+  const q = getState().confirm;
+  assert.deepEqual(q.choices, [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }]);
+  assert.equal(answerChoice("b"), true, "there was a question to answer");
+  assert.equal(await pending, "b");
+  assert.equal(getState().confirm, null);
+});
+
+test("askChoice resolves null when cancelled through answerConfirm(false)", async () => {
+  resetState();
+  const pending = askChoice({ title: "t", body: "b", choices: [{ id: "a", label: "A" }] });
+  // The backdrop and Escape route through answerConfirm(false); for a choice
+  // that means "cancelled", which is null rather than the yes/no false.
+  answerConfirm(false);
+  assert.equal(await pending, null);
+  assert.equal(getState().confirm, null);
+});
+
+test("resetState settles a pending choice with null", async () => {
+  resetState();
+  const pending = askChoice({ title: "t", body: "b", choices: [{ id: "a", label: "A" }] });
+  resetState();
+  assert.equal(await pending, null);
+  assert.equal(getState().confirm, null);
+});
+
+test("answerChoice with no id resolves null so a malformed button invents nothing", async () => {
+  resetState();
+  const pending = askChoice({ title: "t", body: "b", choices: [{ id: "a", label: "A" }] });
+  answerChoice(undefined);
+  assert.equal(await pending, null);
+});
+
 // --- The document country ------------------------------------------------
 
 test("setDocumentCountry records the country and switches its identifiers", () => {
@@ -1342,6 +1452,18 @@ test("startNewBatch clears everything about THIS batch", () => {
   assert.equal(s.running, false);
   assert.equal(s.progress, null);
   assert.equal(s.discovery, null);
+  assert.equal(s.detectionRan, false, "the profile Save gate closes again for a new batch");
+});
+
+test("markDetectionRan latches detectionRan on, and startNewBatch resets it", () => {
+  resetState();
+  assert.equal(getState().detectionRan, false, "a fresh session has not run detection");
+  markDetectionRan();
+  assert.equal(getState().detectionRan, true, "a completed detection opens the Save gate");
+  markDetectionRan();
+  assert.equal(getState().detectionRan, true, "it is a one-way latch, not a toggle");
+  startNewBatch();
+  assert.equal(getState().detectionRan, false, "Start over closes the gate again");
 });
 
 test("startNewBatch clears the MAPPING, which is the previous batch's key", () => {

@@ -89,9 +89,20 @@ const initialState = {
   // they are three separate ways of finding values and the user turns them on
   // and off independently:
   //   useSmartDetect the offline heuristic pass. ON by default, and
-  //                   deactivable. Its scope (the categories, the preset, the
-  //                   confidence floor) and its tuning are the settings it
-  //                   reads, which is why the rail nests them inside it.
+  //                   deactivable. It is now a DERIVED value, written on every
+  //                   settings push = (useNativeDetect || useAutoDetect), so the
+  //                   section header and any backward-compat reader still see the
+  //                   route as "on" when either half is. Its scope (the
+  //                   categories, the preset, the confidence floor) and its
+  //                   tuning are the settings it reads, which is why the rail
+  //                   nests them inside it.
+  //   useNativeDetect the MASTER SWITCH over the regex signal categories
+  //                   (email, VAT, IBAN, amount, date, ...). ON by default. OFF
+  //                   means no signal category is replaced at anonymisation time,
+  //                   whatever the per-category checkboxes say; the checkboxes
+  //                   keep their selection so turning it back on restores it.
+  //   useAutoDetect the offline word-frequency pass (engine SmartDetect). ON by
+  //                   default.
   //   useAI the local model (Ollama). OFF by default. Detecting
   //                   Ollama ENABLES the switch, it never flips it: turning on
   //                   a route that sends the document to a model, however
@@ -109,6 +120,7 @@ const initialState = {
   settings: {
     level: "medium", categories: null, ollamaPort: 11434, model: "", country: DEFAULT_COUNTRY,
     contextSize: 8192, useAI: false, useSmartDetect: true,
+    useNativeDetect: true, useAutoDetect: true,
     minConfidence: 0,
     // smartDetect is the tuning for the offline Smart
     // detection pass, matching engine.SmartDetectOptions field for field.
@@ -124,14 +136,16 @@ const initialState = {
     },
   },
 
-  // Local-AI SCAN SCOPE (CLAUDE.md §5): which ONE document, and which range of
-  // its own units (pages/slides/rows/lines), the local model reads. Handing a
-  // whole document to a small local model is "too much", so the user can aim
-  // the scan. docName "" means "every document, whole", the unchanged
-  // behaviour. It is a transient per-run choice, deliberately NOT part of
-  // settings, so it never travels in a session file and never reaches Go
-  // through applySettings.
-  aiScope: { docName: "", fromPage: 1, toPage: 1 },
+  // Local-AI SCAN SCOPE (CLAUDE.md §5): which ONE document, and which of its own
+  // units (pages/slides/rows/lines), the local model reads. Handing a whole
+  // document to a small local model is "too much", so the user can aim the scan.
+  //   docName ""     means "every document, whole", the unchanged behaviour.
+  //   mode "all"     scans the whole selected document.
+  //   mode "pages"   scans only the units named in the free-text `pages` spec
+  //                  (parsePageSpec parses "14", "12-15", "12,13,18-20").
+  // It is a transient per-run choice, deliberately NOT part of settings, so it
+  // never travels in a session file and never reaches Go through applySettings.
+  aiScope: { docName: "", mode: "all", pages: "" },
 
   // Entity review state: array of
   // {category, canonical, manualVariants, status: "accepted"|"denied"}.
@@ -184,6 +198,13 @@ const initialState = {
   // It is never recomputed here.
   discovery: null,
 
+  // Has a detection run completed at least once this session? Gates the
+  // "Save profile" button on the Identify rail: a profile records what a run
+  // produced (the registry, the accepted values), so offering to save one
+  // before anything has been detected would write an empty key. Set true on the
+  // detection-done path (markDetectionRan), reset when the batch is cleared.
+  detectionRan: false,
+
   // Unified candidate review list: candidates from
   // any discovery method wait HERE until explicitly accepted; nothing
   // flows into entities without user confirmation. Each row:
@@ -204,9 +225,12 @@ const initialState = {
 
   // The in-app confirm's pending question, or null
   // when nothing is being asked: {title, body, confirmLabel, cancelLabel,
-  // keyBearing}. The PROMISE that resolves it is module-private below, not
-  // stored here, because state must stay clonable (resetState uses
-  // structuredClone, which cannot copy a function).
+  // keyBearing}. A question may instead carry `choices: [{id, label}]`, which
+  // turns it into a pick-one dialog (askChoice) rather than yes/no; the two
+  // buttons are then replaced by one button per choice. The PROMISE that
+  // resolves it is module-private below, not stored here, because state must
+  // stay clonable (resetState uses structuredClone, which cannot copy a
+  // function).
   confirm: null,
 
   // The destination folder for the batch zip, or
@@ -303,9 +327,13 @@ export function getState() {
  *  hanging forever. */
 export function resetState() {
   if (confirmResolve) {
+    // A choice question resolves to null on cancel, a yes/no one to false;
+    // settle whichever is pending with its own "cancelled" value so an awaiter
+    // sees the shape it expected rather than a foreign one.
     const stale = confirmResolve;
+    const wasChoice = !!state.confirm?.choices;
     confirmResolve = null;
-    stale(false);
+    stale(wasChoice ? null : false);
   }
   state = structuredClone(initialState);
   notify();
@@ -402,6 +430,50 @@ export function askConfirm(question) {
         confirmLabel: question?.confirmLabel ?? "Continue",
         cancelLabel: question?.cancelLabel ?? "Cancel",
         keyBearing: !!question?.keyBearing,
+        // No choices: this is the yes/no dialog.
+        choices: null,
+      },
+    });
+  });
+}
+
+/**
+ * askChoice(question) shows the in-app dialog as a PICK-ONE: instead of the
+ * yes/no pair it renders one button per choice, and resolves to the chosen
+ * id (or null when the user cancels with the backdrop, Escape or Cancel).
+ *
+ * It shares the confirm slot and the single pending promise with askConfirm,
+ * so the same superseding and reset rules apply. It is the mechanism behind
+ * "Group with", where the user must say WHICH of the participating values
+ * becomes the surviving one before the merge happens.
+ *
+ * @param {object} question
+ * @param {string} question.title the short heading
+ * @param {string} question.body what the pick means, in full sentences
+ * @param {Array<{id: string, label: string}>} question.choices the options; each
+ *   renders as one button whose click resolves to its id
+ * @param {string} [question.cancelLabel] default "Cancel"
+ * @param {boolean} [question.keyBearing] tints the dialog with the key surface
+ * @returns {Promise<string|null>} the chosen id, or null when cancelled
+ */
+export function askChoice(question) {
+  if (confirmResolve) {
+    // Superseding a pending question settles it as cancelled. A choice resolves
+    // null, a yes/no resolves false: use the shape the pending awaiter expects.
+    const stale = confirmResolve;
+    const wasChoice = !!state.confirm?.choices;
+    confirmResolve = null;
+    stale(wasChoice ? null : false);
+  }
+  return new Promise((resolve) => {
+    confirmResolve = resolve;
+    setState({
+      confirm: {
+        title: question?.title ?? "Choose",
+        body: question?.body ?? "",
+        cancelLabel: question?.cancelLabel ?? "Cancel",
+        keyBearing: !!question?.keyBearing,
+        choices: (question?.choices ?? []).map((c) => ({ id: c.id, label: c.label })),
       },
     });
   });
@@ -411,14 +483,35 @@ export function askConfirm(question) {
  * answerConfirm(answer) closes the open question and settles its promise.
  * modal.js calls it from the two buttons and from the Escape key (which
  * answers false, the same as Cancel).
+ *
+ * When the open question is a CHOICE (askChoice), there is no true/false
+ * answer to give: the only thing this path represents is cancellation, so it
+ * settles the promise with null, matching askChoice's contract. answerChoice
+ * is what carries an actual pick.
  * @param {boolean} answer
  * @returns {boolean} whether there was a question to answer
  */
 export function answerConfirm(answer) {
   const resolve = confirmResolve;
+  const wasChoice = !!state.confirm?.choices;
   confirmResolve = null;
   if (state.confirm) setState({ confirm: null });
-  if (resolve) resolve(!!answer);
+  if (resolve) resolve(wasChoice ? null : !!answer);
+  return !!resolve;
+}
+
+/**
+ * answerChoice(id) settles a choice question with the picked id. modal.js
+ * calls it from each choice button. A missing id resolves null, the same as a
+ * cancel, so a malformed button can never fabricate a selection.
+ * @param {string} id the chosen choice's id
+ * @returns {boolean} whether there was a question to answer
+ */
+export function answerChoice(id) {
+  const resolve = confirmResolve;
+  confirmResolve = null;
+  if (state.confirm) setState({ confirm: null });
+  if (resolve) resolve(id ?? null);
   return !!resolve;
 }
 
@@ -642,29 +735,77 @@ export function setUseAI(on) {
 // --- Local-AI scan scope ----------------------------------
 
 /**
- * setAIScope(patch) records which document and page range the local AI reads,
- * clamped to what actually exists. An empty or unknown docName resets the scope
- * to "every document, whole", so a stale selection (a document that was removed)
- * can never send an out-of-range request. from is pinned to <= to, and both to
- * the selected document's addressable unit count (DocumentInfo.pageCount), so
- * the numbers the user sees are always requestable.
- * @param {object} patch any subset of {docName, fromPage, toPage}
- * @returns {object} the stored scope after clamping
+ * parsePageSpec(spec, maxPage) turns a free-text page spec into a sorted,
+ * de-duplicated set of 1-based unit indices.
+ *
+ * The spec is comma-separated; each token is either a single number "N" or a
+ * range "A-B" (inclusive). Whitespace around tokens and either side of the dash
+ * is ignored. Indices outside 1..maxPage are dropped silently (a stale UI or a
+ * typed number past the end is the user's request, not a crash), and a token
+ * that is not a number or a range sets `error` naming the FIRST bad token while
+ * still returning whatever valid pages parsed, so the read-out stays useful.
+ * An empty or whitespace-only spec is not an error: it resolves to no pages.
+ *
+ * @param {string} spec the raw text, e.g. "14", "12-15", "12,13,18-20"
+ * @param {number} maxPage the selected document's addressable unit count
+ * @returns {{pages: number[], error: (string|null)}}
+ */
+export function parsePageSpec(spec, maxPage) {
+  const set = new Set();
+  let error = null;
+  const max = Number.isInteger(maxPage) && maxPage > 0 ? maxPage : 0;
+  const text = String(spec ?? "").trim();
+  if (text === "") return { pages: [], error: null };
+  for (const rawToken of text.split(",")) {
+    const token = rawToken.trim();
+    if (token === "") continue;
+    const range = token.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (range) {
+      let lo = parseInt(range[1], 10);
+      let hi = parseInt(range[2], 10);
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      for (let n = lo; n <= hi; n++) {
+        if (n >= 1 && n <= max) set.add(n);
+      }
+      continue;
+    }
+    if (/^\d+$/.test(token)) {
+      const n = parseInt(token, 10);
+      if (n >= 1 && n <= max) set.add(n);
+      continue;
+    }
+    // A token that is neither "N" nor "A-B": name the first one that fails,
+    // but keep the pages already parsed so the read-out is not blanked.
+    if (error === null) error = token;
+  }
+  const pages = [...set].sort((a, b) => a - b);
+  return { pages, error };
+}
+
+/**
+ * setAIScope(patch) records which document the local AI reads and, within it,
+ * whether to scan the whole document ("all") or a set of pages ("pages"). An
+ * empty or unknown docName resets the scope to "every document, whole", so a
+ * stale selection (a document that was removed) can never send a request for a
+ * document that is gone. The `pages` string is stored verbatim; it is parsed
+ * against the selected document's unit count only when the bridge arg is built
+ * (aiScopeArg), so the read-out and the request always agree.
+ * @param {object} patch any subset of {docName, mode, pages}
+ * @returns {object} the stored scope
  */
 export function setAIScope(patch) {
   const next = { ...state.aiScope, ...(patch ?? {}) };
   const doc = state.documents.find((d) => d.name === next.docName);
   if (!next.docName || !doc) {
-    const cleared = { docName: "", fromPage: 1, toPage: 1 };
+    const cleared = { docName: "", mode: "all", pages: "" };
     setState({ aiScope: cleared });
     return cleared;
   }
-  const count = Math.max(1, doc.pageCount || 1);
-  let from = Number.isInteger(next.fromPage) ? next.fromPage : 1;
-  let to = Number.isInteger(next.toPage) ? next.toPage : from;
-  from = Math.min(Math.max(1, from), count);
-  to = Math.min(Math.max(from, to), count);
-  const scope = { docName: next.docName, fromPage: from, toPage: to };
+  const scope = {
+    docName: next.docName,
+    mode: next.mode === "pages" ? "pages" : "all",
+    pages: typeof next.pages === "string" ? next.pages : "",
+  };
   setState({ aiScope: scope });
   return scope;
 }
@@ -673,11 +814,20 @@ export function setAIScope(patch) {
  * aiScopeArg(s) is the scope to hand runDetection, or null when the local AI
  * should read every document whole. Kept out of the settings payload on
  * purpose: the scope is a per-run choice, not a saved setting.
+ *
+ * The backend shape is {docName, pages: number[]} where an EMPTY pages array
+ * means "the whole selected document"; that is what "all" mode, and any spec
+ * that resolves to nothing, both send. A null return keeps today's meaning:
+ * every document, whole.
  */
 export function aiScopeArg(s = state) {
   const sc = s.aiScope;
   if (!sc || !sc.docName) return null;
-  return { docName: sc.docName, fromPage: sc.fromPage, toPage: sc.toPage };
+  if (sc.mode !== "pages") return { docName: sc.docName, pages: [] };
+  const doc = s.documents.find((d) => d.name === sc.docName);
+  const max = doc ? Math.max(1, doc.pageCount || 1) : 0;
+  const { pages } = parsePageSpec(sc.pages, max);
+  return { docName: sc.docName, pages };
 }
 
 /**
@@ -694,6 +844,29 @@ export function setUseSmartDetect(on) {
 }
 
 /**
+ * setUseNativeDetect(on) turns the Native detection master switch on or off.
+ *
+ * Native detection is the master over the regex signal categories (email, VAT,
+ * IBAN, amount, date, ...). OFF means no signal category is replaced at
+ * anonymisation time, whatever the per-category checkboxes say; the selection is
+ * left intact so turning it back on restores exactly what was chosen.
+ */
+export function setUseNativeDetect(on) {
+  setState({ settings: { ...state.settings, useNativeDetect: !!on } });
+}
+
+/**
+ * setUseAutoDetect(on) turns the Auto detection (word-frequency) pass on or off.
+ *
+ * It is the offline heuristic pass; ON by default, because it needs nothing
+ * installed and a user who has just imported documents expects the app to look
+ * at them.
+ */
+export function setUseAutoDetect(on) {
+  setState({ settings: { ...state.settings, useAutoDetect: !!on } });
+}
+
+/**
  * detectionRoutesOn(s) is how many ways of FINDING values are enabled. Zero
  * means the detect button has nothing to run, which the UI says rather than
  * running an empty pass and reporting "0 suggestions" as if it had looked.
@@ -703,8 +876,8 @@ export function detectionRoutesOn(s = state) {
 }
 
 /**
- * llmEnabled(s) is THE gate for every AI-dependent control (discovery,
- * deep-scan): the master toggle must be on AND Ollama must be reachable.
+ * llmEnabled(s) is THE gate for every AI-dependent control (Local AI
+ * detection): the master toggle must be on AND Ollama must be reachable.
  */
 export function llmEnabled(s = state) {
   return !!(s.settings.useAI && s.ollama?.available);
@@ -845,6 +1018,9 @@ export const STEP_RESETS = {
     candidates: [],
     patterns: [],
     discovery: null,
+    // Stepping back to Identify clears what detection produced, so the
+    // "Save profile" gate must close again until a fresh run completes.
+    detectionRan: false,
   }),
   // Anonymise owns the run itself, everything it produced, and the two
   // editing surfaces that only exist once there is a result to edit: the
@@ -945,17 +1121,17 @@ export function nextStep() {
 export function applyImportResult(result) {
   const documents = result.documents ?? [];
   const previewStillValid = documents.some((d) => d.name === state.previewDoc);
-  // A local-AI scope that named a document no longer in the list would send an
-  // out-of-range request, so it resets to "every document" when its target is
-  // gone (or its page count shrank under the stored range).
+  // A local-AI scope that named a document no longer in the list would target a
+  // document that is gone, so it resets to "every document" when its target
+  // disappears. A document that merely SHRANK needs no reset: the page spec is
+  // stored as text and re-parsed against the current unit count at send time
+  // (aiScopeArg), so out-of-range units are dropped then, not stored now.
   const scopedDoc = documents.find((d) => d.name === state.aiScope?.docName);
-  const scopeStillValid = scopedDoc &&
-    state.aiScope.toPage <= Math.max(1, scopedDoc.pageCount || 1);
   setState({
     documents,
     importErrors: result.errors ?? [],
     previewDoc: previewStillValid ? state.previewDoc : (documents[0]?.name ?? null),
-    aiScope: scopeStillValid ? state.aiScope : { docName: "", fromPage: 1, toPage: 1 },
+    aiScope: scopedDoc ? state.aiScope : { docName: "", mode: "all", pages: "" },
     // A fresh import list makes every cached source stale (a re-imported file
     // with the same name is a DIFFERENT file). Dropping the cache is cheaper
     // and safer than deciding which entries survived.
@@ -1170,6 +1346,18 @@ export function addCandidates(items, source) {
   }
   if (added.length) setState({ candidates: [...state.candidates, ...added] });
   return added.length;
+}
+
+/**
+ * markDetectionRan() records that a detection run has completed at least once
+ * this session. It is a one-way latch within a batch: the Identify rail's
+ * "Save profile" button reads it, and a saved profile is only meaningful once a
+ * run has produced a registry to preserve. It is called from the detection-done
+ * path (main.js) and reset when the batch is cleared (startNewBatch, the
+ * Identify step reset).
+ */
+export function markDetectionRan() {
+  if (!state.detectionRan) setState({ detectionRan: true });
 }
 
 /**
@@ -1857,6 +2045,7 @@ export function startNewBatch() {
     metaReview: {},
     exportDir: state.exportDir,
     notice: null,
+    detectionRan: false,
   });
   return cleared;
 }
@@ -1872,6 +2061,14 @@ export function addAllowTerm(term) {
 
 export function removeAllowTerm(term) {
   setState({ allowlist: state.allowlist.filter((x) => x.toLowerCase() !== term.toLowerCase()) });
+}
+
+/** clearAllowlist() empties the never-anonymise list in one action and returns
+ *  the number of terms it removed, so the caller can report the count. */
+export function clearAllowlist() {
+  const cleared = state.allowlist.length;
+  setState({ allowlist: [] });
+  return cleared;
 }
 
 /** addPattern(expr, error) stores a custom regex with its validation state. */
@@ -1927,17 +2124,21 @@ export function moveSimpleRule(index, delta) {
   return true;
 }
 
-/** buildRunRequest(useDeepScan, s) assembles the Go RunRequest from the
- *  current state, the single place the pipeline payload is shaped. */
-export function buildRunRequest(useDeepScan, s = state) {
+/** buildRunRequest() assembles the Go RunRequest from the current state, the
+ *  single place the pipeline payload is shaped. It takes no arguments: a
+ *  leftover boolean from an older caller (e.g. buildRunRequest(false)) is
+ *  simply ignored, so retired call sites stay harmless. */
+export function buildRunRequest() {
   return {
-    entities: acceptedEntities(s),
-    allowTerms: s.allowlist,
-    patterns: validPatterns(s),
+    entities: acceptedEntities(state),
+    allowTerms: state.allowlist,
+    patterns: validPatterns(state),
     // The granular selection travels with every run request so the Go
     // pipeline always sees exactly what the configure screen shows.
-    categories: s.settings.categories ?? presetCategories(s.settings.level),
-    simpleRules: s.simpleRules,
-    useDeepScan: !!useDeepScan,
+    categories: state.settings.categories ?? presetCategories(state.settings.level),
+    simpleRules: state.simpleRules,
+    // The "Native detection" master switch, inverted: when Native detection is
+    // off, the Go pipeline skips pass 1 so no regex signal category is replaced.
+    suppressRegexPII: !getState().settings.useNativeDetect,
   };
 }

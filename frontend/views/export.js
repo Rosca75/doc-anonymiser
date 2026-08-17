@@ -22,7 +22,7 @@
 
 import {
   exportDocumentFormats, saveDocument, exportAllZipTo, chooseExportFolder,
-  copyDocument, exportMapping, exportReport, saveSession, loadSession,
+  copyDocument, exportMapping, exportReport, saveSession,
   getSameFormatMetadata, saveSameFormat,
 } from "../api.js";
 import {
@@ -61,7 +61,7 @@ export function renderExport(container) {
           ${exportCard(s, docs)}
           ${mappingCard()}
           ${reportCard(s)}
-          ${sessionCard()}
+          ${profileCard()}
         </div>
         ${documentsCard(s, docs)}
       </div>
@@ -131,12 +131,17 @@ function reportCard(s) {
   return foldCard("report", EXPORT.reportTitle, EXPORT.reportSummary(categories), body);
 }
 
-function sessionCard() {
+/**
+ * profileCard() offers ONLY Save. Load moved to the Identify rail's "Load
+ * profile" section, because loading a profile is a setup choice made before a
+ * run, not an egress action taken after one. Exported so the render test can
+ * assert the trimmed shape without standing up the whole screen.
+ */
+export function profileCard() {
   const body =
     `<p class="hint">${escapeHTML(EXPORT.sessionHint)}</p>` +
     `<div class="button-pair">` +
     button(EXPORT.save, { kind: "secondary", id: "ses-save" }) +
-    button(EXPORT.load, { kind: "secondary", id: "ses-load" }) +
     `</div>`;
   return foldCard("session", EXPORT.sessionTitle, EXPORT.sessionSummary, body);
 }
@@ -338,7 +343,6 @@ function wire(container, s) {
   wireDestination(container);
   wireKeyBearing(container);
   wireReport(container);
-  wireSession(container);
   wireDocuments(container);
   wireMetaReview(container, s);
   wireNewBatch(container);
@@ -426,21 +430,6 @@ function wireReport(container) {
     save("md", EXPORT.reportMdDone));
 }
 
-function wireSession(container) {
-  container.querySelector("#ses-load")?.addEventListener("click", async () => {
-    try {
-      const session = await loadSession();
-      if (!session) return; // cancelled
-      applySession(session);
-      notify(EXPORT.sessionLoadDone, "ok");
-    } catch (err) {
-      // A refused session file (a version this build does not read) lands here
-      // with Go's actionable message, and the user needs the whole of it.
-      notify(String(err?.message ?? err), "warn");
-    }
-  });
-}
-
 /**
  * applySession(session) restores the frontend state from a loaded session.
  *
@@ -451,8 +440,11 @@ function wireSession(container) {
  * field. The two `??` below are the genuine cases: a field legitimately absent
  * because the user never set it, and the settings that describe the MACHINE
  * rather than the batch.
+ *
+ * Exported so identity of the restore (which flags an absent field turns back
+ * on) can be unit-tested without a bridge.
  */
-function applySession(session) {
+export function applySession(session) {
   const settings = session.settings ?? {};
   const current = getState().settings;
   setState({
@@ -473,7 +465,10 @@ function applySession(session) {
       useAI: settings.useAI,
       // Absent means ON: Smart detection is the default route, and
       // a file that says nothing about it must not restore it switched off.
-      useSmartDetect: settings.useSmartDetect !== false,
+      // useSmartDetect is derived from the two halves it split into.
+      useNativeDetect: settings.useNativeDetect !== false,
+      useAutoDetect: settings.useAutoDetect !== false,
+      useSmartDetect: settings.useNativeDetect !== false || settings.useAutoDetect !== false,
       minConfidence: settings.minConfidence ?? 0,
       // A session that deliberately turned every smart-detection filter off
       // writes zeroes, which must be obeyed; a session that says nothing about

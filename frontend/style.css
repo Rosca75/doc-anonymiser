@@ -731,9 +731,9 @@ input, select {
    overflow: hidden) and squashes the sections below it into slivers, and the
    card never scrolls. Pinning the sections to their natural height lets the
    card-body's overflow-y: auto do the scrolling. */
-.rail-section { flex: none; margin-bottom: 0.9rem; }
-.rail-section:last-child { margin-bottom: 0; }
-.rail-section > .cgroup-body { padding: 0.9rem 1.1rem; gap: 0.9rem; }
+.rail-section, .rail-panel { flex: none; margin-bottom: 0.9rem; }
+.rail-section:last-child, .rail-panel:last-child { margin-bottom: 0; }
+.rail-section > .cgroup-body, .rail-panel > .cgroup-body { padding: 0.9rem 1.1rem; gap: 0.9rem; }
 /* A route that is off keeps its settings visible but recedes: the user can
    still read what it WOULD do, which is what they need to decide. */
 .rail-section.route-off > .cgroup-body { opacity: 0.62; }

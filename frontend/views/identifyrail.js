@@ -28,13 +28,16 @@
 // llmEnabled(state) = useAI AND ollama.available, so the deterministic pipeline
 // stays fully usable with Ollama absent.
 
-import { applySettings, listOllamaModels, probeOllama } from "../api.js";
+import { applySettings, listOllamaModels, probeOllama, loadSession, saveSession } from "../api.js";
 import {
   getState, setState,
-  applyPreset, toggleCategory, selectionPresetName, setUseAI, setUseSmartDetect,
+  applyPreset, toggleCategory, selectionPresetName, setUseAI,
+  setUseNativeDetect, setUseAutoDetect,
   setCategoryGroup, setMinConfidence, setDocumentCountry,
   setSmartDetectOptions, smartDetectOptions,
   setAIScope,
+  parsePageSpec,
+  buildRunRequest,
   ALL_CATEGORIES,
   NAME_CATEGORIES, DECLARED_CATEGORIES,
 } from "../state.js";
@@ -43,6 +46,11 @@ import { button, chipRow, sectionLabel, collapsibleGroup, wireGroups } from "../
 import { CARDS, CONFIGURE, RAIL, VALUES, categoryLabels } from "../copy.js";
 import { examplesFor, countryOptions } from "../countries.js";
 import { categoryAppliesTo, CATEGORY_COUNTRIES } from "../countries.js";
+import { notify } from "../toast.js";
+// applySession lives in export.js (it is the load half of the same save/load
+// pair the Export step owns). Importing it here is a one-way edge: export.js
+// never imports the rail, so the module graph stays acyclic.
+import { applySession } from "./export.js";
 
 /**
  * llmDisabledTooltip(port) is what every disabled LLM control says when Ollama
@@ -80,7 +88,7 @@ export const RAIL_SECTIONS = [
 //
 // Local AI and Cloud AI start folded: they are off, and an open panel of
 // disabled fields is noise above the settings that ARE in use.
-const collapsedGroups = new Set(["rail-local", "rail-cloud"]);
+const collapsedGroups = new Set(["rail-local", "rail-cloud", "rail-profile"]);
 
 // PRESETS: engine level → user-facing label. "soft/medium/advanced" reads too
 // technical; Standard and Thorough say what they mean.
@@ -142,6 +150,7 @@ export function renderIdentifyRail(container) {
   wireScope(container);
   wireSmart(container);
   wireLocalAI(container);
+  wireProfile(container);
   wireGroups(container, (id) => {
     if (collapsedGroups.has(id)) collapsedGroups.delete(id);
     else collapsedGroups.add(id);
@@ -161,14 +170,56 @@ export function renderIdentifyRail(container) {
  * itself rather than three fields down inside it.
  */
 export function railBody(s) {
-  return RAIL_SECTIONS.map(([id, title, key]) => {
-    const on = key ? !!s.settings[key] : false;
+  const routes = RAIL_SECTIONS.map(([id, title, key]) => {
+    const on = id === "rail-smart" ? smartRouteOn(s) : (key ? !!s.settings[key] : false);
     return collapsibleGroup(id, title, sectionBody(s, id), {
       open: !collapsedGroups.has(id),
       cls: `rail-section${on ? "" : " route-off"}`,
       headRightHTML: routeSwitch(s, id, key, on),
     });
   }).join("");
+  // The Load profile section sits AFTER the routes. It is not a detection route,
+  // so it has no header switch: it is a plain collapsible section, folded shut
+  // by default like the other off-by-default panels below Smart detection.
+  return routes + collapsibleGroup("rail-profile", RAIL.profileTitle, profileSection(s), {
+    open: !collapsedGroups.has("rail-profile"),
+    // NOT "rail-section": that class marks a detection ROUTE, and the render
+    // harness counts it to assert the rail is exactly three routes. Load profile
+    // is a switch-less utility panel, so it takes the parallel "rail-panel" class
+    // (same layout, no route semantics).
+    cls: "rail-panel",
+  });
+}
+
+/**
+ * profileSection(s) is the Load/Save profile body. Load restores a saved setup;
+ * Save writes one, but only once detection has run at least once this session
+ * (s.detectionRan), because a profile without a registry behind it saves an
+ * empty key. The disabled Save says why in its tooltip rather than vanishing, so
+ * the control that will become available is visible before it does.
+ */
+function profileSection(s) {
+  const canSave = !!s.detectionRan;
+  return `<div class="rail-block">` +
+    `<p class="hint">${escapeHTML(RAIL.profileHint)}</p>` +
+    `<div class="button-pair">` +
+    button(RAIL.profileLoad, { kind: "secondary", id: "profile-load" }) +
+    button(RAIL.profileSave, {
+      kind: "secondary",
+      id: "profile-save",
+      disabled: !canSave,
+      title: canSave ? "" : RAIL.profileSaveDisabled,
+    }) +
+    `</div></div>`;
+}
+
+/**
+ * smartRouteOn(s) is the Smart detection section's master state: the section
+ * counts as on when EITHER half is on. The header switch is a master over the
+ * two sub-toggles rather than a fourth independent flag.
+ */
+function smartRouteOn(s) {
+  return !!(s.settings.useNativeDetect || s.settings.useAutoDetect);
 }
 
 /**
@@ -208,7 +259,12 @@ function wireSectionSwitches(container) {
       ev.stopPropagation();
       const on = ev.target.checked;
       if (ev.target.dataset.route === "rail-local") setUseAI(on);
-      else setUseSmartDetect(on);
+      else {
+        // The Smart detection header is a MASTER over its two sub-toggles:
+        // switching it flips both Native and Auto detection together.
+        setUseNativeDetect(on);
+        setUseAutoDetect(on);
+      }
       // Turning a route on opens its section: the settings it reads are the
       // next thing the user wants.
       if (on) collapsedGroups.delete(ev.target.dataset.route);
@@ -233,11 +289,31 @@ function wireSectionSwitches(container) {
  */
 function smartSection(s) {
   return `<p class="hint">${escapeHTML(RAIL.smartIntro)}</p>` +
+    smartToggles(s) +
     scopeBlocks(s) +
     collapsibleGroup("rail-smart-tuning", RAIL.smartTuning, smartTuning(s), {
       open: !collapsedGroups.has("rail-smart-tuning"),
       cls: "rail-subgroup",
     });
+}
+
+/**
+ * smartToggles(s) is the two independent halves the Smart detection route split
+ * into, rendered at the very top of the section so they read as governing what
+ * follows: Native detection is the master over the regex signal categories, Auto
+ * detection is the offline word-frequency pass. Both default on.
+ */
+function smartToggles(s) {
+  const row = (id, checked, label, hint) =>
+    `<label class="cat-row">` +
+    `<input type="checkbox" id="${id}"${checked ? " checked" : ""}/>` +
+    `<span class="cat-label">${escapeHTML(label)}</span>` +
+    `</label>` +
+    `<p class="hint">${escapeHTML(hint)}</p>`;
+  return `<div class="rail-block">` +
+    row("smart-native", s.settings.useNativeDetect !== false, RAIL.nativeDetect, RAIL.nativeDetectHint) +
+    row("smart-auto", s.settings.useAutoDetect !== false, RAIL.autoDetect, RAIL.autoDetectHint) +
+    `</div>`;
 }
 
 /** scopeBlocks(s) is the country, the preset, the REGEX categories, and the
@@ -256,7 +332,7 @@ function scopeBlocks(s) {
     `</div>` +
     `<div class="rail-block">` +
     sectionLabel(RAIL.whatToAnonymise) +
-    categoryGroups(s, REGEX_GROUPS, "regex") +
+    categoryGroups(s, REGEX_GROUPS, "regex", !s.settings.useNativeDetect) +
     `</div>` +
     `<div class="rail-block">` +
     sectionLabel(RAIL.valuesAuto) +
@@ -300,8 +376,13 @@ function presetChips(s) {
  * times over.
  *
  * type is "regex" (static PII detection) or "entity" (auto-detection values).
+ *
+ * blockDisabled greys the whole block out without clearing the stored selection:
+ * when Native detection is off, the regex categories still show (so the user
+ * sees the scope) but cannot be edited, and the selection returns intact when
+ * Native detection is switched back on.
  */
-function categoryGroups(s, groups, type = "regex") {
+function categoryGroups(s, groups, type = "regex", blockDisabled = false) {
   const labels = categoryLabels(examplesFor(s.documentCountry));
 
   return groups.map(([title, keys], index) => {
@@ -309,12 +390,13 @@ function categoryGroups(s, groups, type = "regex") {
     const rows = keys.map((key) => {
       const [label, example] = labels[key] ?? [key, ""];
       const applies = categoryAppliesTo(key, s.documentCountry);
+      const disabled = blockDisabled || !applies;
       const countries = CATEGORY_COUNTRIES[key] ?? [];
       const disabledHint = `Only applies to ${countries.join(", ")}`;
       const hint = applies ? example : `${example}. ${disabledHint}`;
       return `<label class="cat-row"${applies ? "" : ` title="${escapeHTML(disabledHint)}"`}>` +
         `<input type="checkbox" class="cat-toggle" data-category="${escapeHTML(key)}"` +
-        `${s.settings.categories?.[key] ? " checked" : ""}${applies ? "" : " disabled"}/>` +
+        `${s.settings.categories?.[key] ? " checked" : ""}${disabled ? " disabled" : ""}/>` +
         `<span class="cat-label">${escapeHTML(label)}</span>` +
         `<span class="cat-example" title="${escapeHTML(hint)}">${escapeHTML(example)}</span>` +
         `</label>`;
@@ -327,12 +409,14 @@ function categoryGroups(s, groups, type = "regex") {
       button("", {
         kind: "ghost", cls: "cat-group-all icon-action ok", icon: "check",
         ariaLabel: `${CONFIGURE.selectAll}: ${title}`, title: CONFIGURE.selectAll,
-        data: { groupType: type, group: String(index), on: "1" },
+        data: { "group-type": type, group: String(index), on: "1" },
+        disabled: blockDisabled,
       }) +
       button("", {
         kind: "ghost", cls: "cat-group-all icon-action", icon: "remove",
         ariaLabel: `${CONFIGURE.deselectAll}: ${title}`, title: CONFIGURE.deselectAll,
-        data: { groupType: type, group: String(index), on: "0" },
+        data: { "group-type": type, group: String(index), on: "0" },
+        disabled: blockDisabled,
       });
 
     return collapsibleGroup(`cat-group-${type}-${index}`, title, rows, {
@@ -491,6 +575,18 @@ function strictnessOption(value, label, current) {
 }
 
 function wireSmart(container) {
+  // The two master toggles at the top of the section. They set their flag and
+  // push, so the disabled state of the regex block and the derived
+  // useSmartDetect update in the same round-trip.
+  container.querySelector("#smart-native")?.addEventListener("change", (ev) => {
+    setUseNativeDetect(ev.target.checked);
+    pushSettings(container);
+  });
+  container.querySelector("#smart-auto")?.addEventListener("change", (ev) => {
+    setUseAutoDetect(ev.target.checked);
+    pushSettings(container);
+  });
+
   const numbers = [
     ["#smart-min-length", (v) => ({ minLength: Math.round(v) })],
     ["#smart-min-occurrences", (v) => ({ minOccurrences: Math.round(v) })],
@@ -518,18 +614,22 @@ function wireSmart(container) {
 
 /**
  * scopeBlock(s, gated) is the "What to scan" control for the Local AI route: a
- * document picker plus an optional page/slide/row/line range. It exists because
+ * document picker plus, for a multi-unit document, a choice between scanning the
+ * whole document or a set of its own pages/slides/rows/lines. It exists because
  * handing a whole document to a small local model is too much (the user's
  * words); aiming the scan keeps the pass quick and the model focused.
  *
  * The picker defaults to "All documents (whole)", the unchanged behaviour. When
- * one document with more than one addressable unit is chosen, From/To inputs
- * appear, bounded by that document's unit count (DocumentInfo.pageCount). A
- * range spanning more than one unit shows a small warning, because a wide range
- * is exactly the "too much" the feature exists to avoid.
+ * one document with more than one addressable unit is chosen, an "Entire
+ * document" / "Specific pages" control appears; choosing "Specific pages"
+ * reveals a free-text field that accepts a single page, a range, or a
+ * discontiguous mix ("14", "12-15", "12,13,18-20"). A live read-out names how
+ * many units the current spec resolves to, and a malformed token is shown
+ * inline, because a wide or mistyped scan is exactly the "too much" the feature
+ * exists to avoid.
  */
 function scopeBlock(s, gated) {
-  const scope = s.aiScope ?? { docName: "", fromPage: 1, toPage: 1 };
+  const scope = s.aiScope ?? { docName: "", mode: "all", pages: "" };
   const docs = s.documents ?? [];
   const options = [
     `<option value=""${scope.docName ? "" : " selected"}>` +
@@ -547,22 +647,35 @@ function scopeBlock(s, gated) {
   const count = Math.max(1, selected?.pageCount || 1);
   if (selected && count > 1) {
     const unit = RAIL.scopeUnitWord(selected.unit);
-    const warn = scope.fromPage !== scope.toPage
-      ? `<p class="hint warn" id="ai-scope-warn">${escapeHTML(RAIL.scopeRangeWarning(unit))}</p>`
-      : "";
-    range =
-      `<div class="rail-range">` +
-      `<label class="rail-field" for="ai-scope-from">` +
-      `<span class="rail-field-label">${escapeHTML(RAIL.scopeFrom)}</span>` +
-      `<input id="ai-scope-from" type="number" min="1" max="${count}" ` +
-        `value="${escapeHTML(String(scope.fromPage))}"${gated}/>` +
-      `</label>` +
-      `<label class="rail-field" for="ai-scope-to">` +
-      `<span class="rail-field-label">${escapeHTML(RAIL.scopeTo)}</span>` +
-      `<input id="ai-scope-to" type="number" min="1" max="${count}" ` +
-        `value="${escapeHTML(String(scope.toPage))}"${gated}/>` +
-      `</label>` +
-      `</div>` + warn;
+    const pagesMode = scope.mode === "pages";
+    // The radio pair: entire document (default) versus a specific page set.
+    const modeControl =
+      `<div class="rail-modes" role="radiogroup">` +
+      `<label class="rail-radio">` +
+      `<input class="ai-scope-mode" type="radio" name="ai-scope-mode" value="all"` +
+        `${pagesMode ? "" : " checked"}${gated}/>` +
+      `<span>${escapeHTML(RAIL.scopeEntireDoc)}</span></label>` +
+      `<label class="rail-radio">` +
+      `<input class="ai-scope-mode" type="radio" name="ai-scope-mode" value="pages"` +
+        `${pagesMode ? " checked" : ""}${gated}/>` +
+      `<span>${escapeHTML(RAIL.scopeSpecificPages)}</span></label>` +
+      `</div>`;
+
+    let pagesField = "";
+    if (pagesMode) {
+      const parsed = parsePageSpec(scope.pages, count);
+      const readout = parsed.error
+        ? `<p class="hint warn" id="ai-pages-error">${escapeHTML(RAIL.scopePagesError(parsed.error))}</p>`
+        : `<p class="hint" id="ai-pages-readout">${escapeHTML(RAIL.scopeReadout(parsed.pages.length, unit))}</p>`;
+      pagesField =
+        `<label class="rail-field" for="ai-pages">` +
+        `<span class="rail-field-label">${escapeHTML(RAIL.scopePagesLabel(unit))}</span>` +
+        `<input id="ai-pages" type="text" ` +
+          `placeholder="${escapeHTML(RAIL.scopePagesPlaceholder)}" ` +
+          `value="${escapeHTML(scope.pages || "")}"${gated}/>` +
+        `</label>` + readout;
+    }
+    range = modeControl + pagesField;
   }
 
   return `<div class="rail-block">` +
@@ -632,21 +745,77 @@ function wireLocalAI(container) {
   });
   // The scan-scope controls write straight to state (no Go round-trip: scope is
   // a per-run choice, not a saved setting). setAIScope re-renders the rail, so
-  // switching to a multi-unit document reveals the From/To inputs, and a range
-  // reveals the warning. Switching document resets the range to its first unit.
+  // switching to a multi-unit document reveals the mode control, and choosing
+  // "Specific pages" reveals the page field. Switching document resets the scope
+  // to the whole document.
   container.querySelector("#ai-scope-doc")?.addEventListener("change", (ev) => {
-    setAIScope({ docName: ev.target.value, fromPage: 1, toPage: 1 });
+    setAIScope({ docName: ev.target.value, mode: "all", pages: "" });
   });
-  const from = container.querySelector("#ai-scope-from");
-  const to = container.querySelector("#ai-scope-to");
-  if (from && to) {
-    const apply = () => setAIScope({
-      fromPage: parseInt(from.value, 10) || 1,
-      toPage: parseInt(to.value, 10) || 1,
+  for (const radio of container.querySelectorAll('input[name="ai-scope-mode"]')) {
+    radio.addEventListener("change", (ev) => {
+      if (ev.target.checked) setAIScope({ mode: ev.target.value });
     });
-    from.addEventListener("change", apply);
-    to.addEventListener("change", apply);
   }
+  const pages = container.querySelector("#ai-pages");
+  if (pages) {
+    // Live read-out: update the parsed-count (or the error) as the user types,
+    // without a full repaint that would steal focus from the field. A repaint
+    // still happens on "change" (blur) so the stored spec and the rest of the
+    // rail stay in step.
+    const doc = getState().documents.find((d) => d.name === getState().aiScope.docName);
+    const max = doc ? Math.max(1, doc.pageCount || 1) : 0;
+    const unit = RAIL.scopeUnitWord(doc?.unit);
+    const refresh = () => {
+      const parsed = parsePageSpec(pages.value, max);
+      const readout = container.querySelector("#ai-pages-readout");
+      const errEl = container.querySelector("#ai-pages-error");
+      const text = parsed.error
+        ? RAIL.scopePagesError(parsed.error)
+        : RAIL.scopeReadout(parsed.pages.length, unit);
+      const target = parsed.error ? errEl : readout;
+      // Reuse whichever line is on screen; class flips so an error reads as one.
+      const line = target || readout || errEl;
+      if (line) {
+        line.textContent = text;
+        line.classList.toggle("warn", !!parsed.error);
+      }
+    };
+    pages.addEventListener("input", refresh);
+    pages.addEventListener("change", () => setAIScope({ pages: pages.value }));
+  }
+}
+
+// --- Load profile ---------------------------------------------------------
+
+/**
+ * wireProfile(container) wires the Load/Save profile buttons. Load restores a
+ * saved session with applySession (export.js owns the load half of the pair);
+ * Save writes one. Save is guarded on detectionRan both in the disabled
+ * attribute (profileSection) and here, so a click that slips through a stale
+ * DOM cannot save an empty registry.
+ */
+function wireProfile(container) {
+  container.querySelector("#profile-load")?.addEventListener("click", async () => {
+    try {
+      const session = await loadSession();
+      if (!session) return; // cancelled
+      applySession(session);
+      notify(RAIL.profileLoadDone, "ok");
+    } catch (err) {
+      // A refused session file (a version this build does not read) lands here
+      // with Go's actionable message, and the user needs the whole of it.
+      notify(String(err?.message ?? err), "warn");
+    }
+  });
+  container.querySelector("#profile-save")?.addEventListener("click", async () => {
+    if (!getState().detectionRan) return; // guard: matches the disabled attribute
+    try {
+      await saveSession(buildRunRequest());
+      notify(RAIL.profileSaveDone, "ok");
+    } catch (err) {
+      notify(String(err?.message ?? err), "warn");
+    }
+  });
 }
 
 // --- Cloud AI -------------------------------------------------------------
@@ -691,7 +860,11 @@ async function pushSettings(container) {
     model: model?.value || s.settings.model,
     contextSize: ctxSize ? (parseInt(ctxSize.value, 10) || 0) : (s.settings.contextSize ?? 8192),
     useAI: !!s.settings.useAI,
-    useSmartDetect: s.settings.useSmartDetect !== false,
+    useNativeDetect: s.settings.useNativeDetect !== false,
+    useAutoDetect: s.settings.useAutoDetect !== false,
+    // Derived: the section counts as on when either half is, so the header
+    // switch and any backward-compat reader keep working.
+    useSmartDetect: (s.settings.useNativeDetect !== false) || (s.settings.useAutoDetect !== false),
     // Read from the store, not the input: setMinConfidence already validated and
     // stored it, and the Scope tab may not be rendered at all.
     minConfidence: s.settings.minConfidence ?? 0,

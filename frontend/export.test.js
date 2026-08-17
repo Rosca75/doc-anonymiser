@@ -8,7 +8,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { outputName } from "./views/export.js";
+import { outputName, applySession, profileCard } from "./views/export.js";
+import { resetState, getState } from "./state.js";
+import { one, exists, textOf } from "./testhtml.js";
 
 test("outputName puts _anon before the extension", () => {
   assert.equal(outputName("services-agreement.docx"), "services-agreement_anon.docx");
@@ -28,4 +30,36 @@ test("outputName leaves a dotfile alone rather than treating it as an extension"
   // ".gitignore" has no name to suffix, so suffixing before the dot would
   // produce "_anon.gitignore", which is a different hidden file.
   assert.equal(outputName(".gitignore"), ".gitignore_anon");
+});
+
+test("applySession restores Native and Auto detection, an absent flag meaning on", () => {
+  resetState();
+  applySession({ settings: { level: "medium", useNativeDetect: false } });
+  const s = getState().settings;
+  assert.equal(s.useNativeDetect, false, "an explicit false is restored");
+  assert.equal(s.useAutoDetect, true, "an absent flag restores ON, like useSmartDetect");
+  assert.equal(s.useSmartDetect, true, "derived: either half on means the route is on");
+});
+
+test("applySession with both detection halves absent restores both on", () => {
+  resetState();
+  applySession({ settings: { level: "medium" } });
+  const s = getState().settings;
+  assert.equal(s.useNativeDetect, true);
+  assert.equal(s.useAutoDetect, true);
+  assert.equal(s.useSmartDetect, true);
+});
+
+test("applySession with both detection halves off derives useSmartDetect off", () => {
+  resetState();
+  applySession({ settings: { level: "medium", useNativeDetect: false, useAutoDetect: false } });
+  assert.equal(getState().settings.useSmartDetect, false, "both off means the route reads off");
+});
+
+test("profileCard renders as Profile with Save and NO Load button", () => {
+  const html = profileCard();
+  // Renamed section: the Export step keeps the SAVE half of the profile only.
+  assert.ok(textOf(html, ".cgroup-title").includes("Profile"), "section titled Profile");
+  assert.ok(exists(html, "#ses-save"), "Save button present");
+  assert.equal(exists(html, "#ses-load"), false, "Load button removed (it lives on the rail)");
 });

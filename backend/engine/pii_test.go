@@ -63,6 +63,15 @@ func TestDetectPIICategories(t *testing.T) {
 		{"amount positive prefix currency", "fee of EUR 1,500.00 agreed", LevelAdvanced, CountryLU, CatAmount, "EUR 1,500.00"},
 		{"amount positive suffix", "budget 12 500 EUR total", LevelAdvanced, CountryLU, CatAmount, "12 500 EUR"},
 		{"amount negative: bare number", "about 1500 items", LevelAdvanced, CountryLU, CatAmount, ""},
+		// Non-breaking spaces (U+00A0) and thin/narrow spaces appear in
+		// European/French documents both before the currency symbol and as
+		// the thousands separator; the regex must treat them like a space.
+		{"amount positive nbsp before euro", "total 1.500,00\u00a0\u20ac due", LevelAdvanced, CountryLU, CatAmount, "1.500,00\u00a0\u20ac"},
+		{"amount positive ascii space before euro decimal", "total 1.250,50 \u20ac due", LevelAdvanced, CountryLU, CatAmount, "1.250,50 \u20ac"},
+		{"amount positive ascii space before euro", "total 25.150 \u20ac due", LevelAdvanced, CountryLU, CatAmount, "25.150 \u20ac"},
+		// Magnitude suffix k/M is honoured only next to a currency marker.
+		{"amount positive k suffix with euro", "cost 1,5k \u20ac roughly", LevelAdvanced, CountryLU, CatAmount, "1,5k \u20ac"},
+		{"amount negative: bare magnitude", "revenue grew 2M last year", LevelAdvanced, CountryLU, CatAmount, ""},
 		// --- date (advanced only) ----------------------------------------------
 		{"date positive iso", "due 2026-07-23 latest", LevelAdvanced, CountryLU, CatDate, "2026-07-23"},
 		{"date positive eu numeric", "signed 23/07/2026 in Luxembourg", LevelAdvanced, CountryLU, CatDate, "23/07/2026"},

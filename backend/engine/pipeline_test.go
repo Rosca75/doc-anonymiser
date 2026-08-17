@@ -27,6 +27,52 @@ func runPipeline(t *testing.T, in PipelineInput) *Results {
 	return res
 }
 
+// TestSuppressRegexPIISkipsPassOne: the "Native detection" master switch, off,
+// must stop the deterministic regex PII pass entirely. Even at LevelAdvanced
+// (which selects every category) an email and a VAT number survive when
+// SuppressRegexPII is true, and are replaced when it is false. The entity pass
+// is unaffected, so a declared entity is still replaced in both cases.
+func TestSuppressRegexPIISkipsPassOne(t *testing.T) {
+	const text = "Alpine Trust wrote to marie.duval@example.com, VAT LU12345678."
+	doc := Document{Name: "a.txt", Format: FormatTXT, Markdown: text}
+	entity := Entity{Category: CatEntityNames, Canonical: "Alpine Trust"}
+
+	// Suppressed: the regex signals stay put, the entity still goes.
+	suppressed := runPipeline(t, PipelineInput{
+		Documents:        []Document{doc},
+		Entities:         []Entity{entity},
+		Level:            LevelAdvanced,
+		Country:          CountryLU,
+		Allowlist:        NewEmptyAllowlist(),
+		SuppressRegexPII: true,
+	})
+	out := suppressed.Documents[0].Anonymised
+	if !strings.Contains(out, "marie.duval@example.com") {
+		t.Errorf("with Native detection off the email must survive, got %q", out)
+	}
+	if !strings.Contains(out, "LU12345678") {
+		t.Errorf("with Native detection off the VAT number must survive, got %q", out)
+	}
+	if strings.Contains(out, "Alpine Trust") {
+		t.Errorf("the entity pass is unaffected, so the entity must still be replaced, got %q", out)
+	}
+
+	// Not suppressed: the same email is replaced (proving the fixture is
+	// otherwise detectable), so the flag is the only thing that changed.
+	on := runPipeline(t, PipelineInput{
+		Documents:        []Document{doc},
+		Entities:         []Entity{entity},
+		Level:            LevelAdvanced,
+		Country:          CountryLU,
+		Allowlist:        NewEmptyAllowlist(),
+		SuppressRegexPII: false,
+	})
+	out2 := on.Documents[0].Anonymised
+	if strings.Contains(out2, "marie.duval@example.com") {
+		t.Errorf("with Native detection on the email must be replaced, got %q", out2)
+	}
+}
+
 // TestTwoDocumentConsistency: an entity declared for doc A must also be
 // replaced in doc B — and a PII value first seen in doc B must be
 // retro-replaced in doc A by the post-pass, with the SAME placeholder.

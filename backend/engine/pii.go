@@ -207,11 +207,24 @@ var piiPatterns = []piiPattern{
 	},
 	{
 		// Monetary amounts — ADVANCED level only (CLAUDE.md §5).
-		// Matches:      €1,500.00, EUR 12 500, 1.250,50 €, $99
+		// Matches:      €1,500.00, EUR 12 500, 1.250,50 €, $99, €1,5k, 2.3M USD.
+		//   The space next to the currency symbol and the thousands separator
+		//   may be an ASCII space OR a Unicode non-breaking space: U+00A0
+		//   (NO-BREAK SPACE), U+202F (NARROW NO-BREAK SPACE) or U+2009 (THIN
+		//   SPACE). European/French documents routinely use these both as the
+		//   thousands separator and before the currency symbol, and Go's \s
+		//   plus a literal ASCII space match ASCII space only, so they are
+		//   listed explicitly.
+		//   An optional magnitude suffix k or M (case-insensitive) is accepted
+		//   immediately after the number (e.g. 1,5k or 2.3M).
 		// Does not match: bare numbers without a currency marker (they are
-		// too common in ordinary text to replace safely).
+		//   too common in ordinary text to replace safely). The k/M suffix is
+		//   only honoured WHEN a currency marker is present, so a bare "2M"
+		//   still does not match.
 		category: CatAmount,
-		re:       regexp.MustCompile(`(?:€|EUR|USD|GBP|CHF|\$|£)\s?[0-9]{1,3}(?:[.,' ][0-9]{3})*(?:[.,][0-9]{1,2})?|\b[0-9]{1,3}(?:[.,' ][0-9]{3})*(?:[.,][0-9]{1,2})?\s?(?:€|EUR|USD|GBP|CHF|\$|£)`),
+		// \x{00a0}=U+00A0, \x{202f}=U+202F, \x{2009}=U+2009 — the three
+		// non-breaking/thin spaces plus a plain ASCII space.
+		re: regexp.MustCompile(`(?:€|EUR|USD|GBP|CHF|\$|£)[\s\x{00a0}\x{202f}\x{2009}]?[0-9]{1,3}(?:[.,'\x{00a0}\x{202f}\x{2009} ][0-9]{3})*(?:[.,][0-9]{1,2})?[kKmM]?|\b[0-9]{1,3}(?:[.,'\x{00a0}\x{202f}\x{2009} ][0-9]{3})*(?:[.,][0-9]{1,2})?[kKmM]?[\s\x{00a0}\x{202f}\x{2009}]?(?:€|EUR|USD|GBP|CHF|\$|£)`),
 	},
 	{
 		// Dates — ADVANCED level only. Three shapes: ISO (2026-07-23),

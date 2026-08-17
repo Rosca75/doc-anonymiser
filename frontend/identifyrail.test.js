@@ -18,7 +18,7 @@ import {
 import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
 import {
   ALL_CATEGORIES, NAME_CATEGORIES, resetState, getState, setState, setUseAI,
-  setAIScope,
+  setAIScope, setCategoryGroup, setUseNativeDetect, setUseAutoDetect,
 } from "./state.js";
 import { textOf, stripTags, all, one, exists } from "./testhtml.js";
 
@@ -170,15 +170,22 @@ function railHTML(patch = {}) {
   return railBody(getState());
 }
 
-test("the rail renders three sections and nothing else at the top level", () => {
+test("the rail renders the three routes plus the Load profile section", () => {
   const html = railHTML();
+  // Exactly three DETECTION ROUTE sections carry .rail-section; the render
+  // harness (scripts/uitest/probes.js) counts the same class to assert the rail
+  // is three routes, not four peers. Load profile is a switch-less panel with
+  // its own .rail-panel class, so it must NOT be counted here.
   const sections = all(html, "section.rail-section");
   assert.equal(sections.length, 3);
-  // The first title in a section is its own; the rest belong to the groups
-  // nested inside it (the category groups, the strictness block).
   const titles = sections.map((sec) =>
     stripTags(all(sec.outer, "span.cgroup-title")[0].inner).trim());
   assert.deepEqual(titles, [RAIL.tabSmart, RAIL.tabLocalAI, RAIL.tabCloudAI]);
+  // The Load profile panel sits after the routes as its own .rail-panel section.
+  const panel = all(html, "section.rail-panel");
+  assert.equal(panel.length, 1);
+  assert.equal(
+    stripTags(all(panel[0].outer, "span.cgroup-title")[0].inner).trim(), RAIL.profileTitle);
 });
 
 test("Smart detection is ON by default, and switchable", () => {
@@ -215,6 +222,84 @@ test("the scope controls live inside the Smart detection section", () => {
   assert.ok(exists(smart, ".cat-toggle"), "the category checkboxes");
   assert.ok(exists(smart, "#min-confidence"), "the confidence floor");
   assert.ok(exists(smart, "#smart-min-length"), "and the strictness fields");
+});
+
+test("Native and Auto detection are two toggles at the top of Smart detection", () => {
+  const smart = all(railHTML(), "section.rail-section")[0].outer;
+  const native = one(smart, "#smart-native");
+  const auto = one(smart, "#smart-auto");
+  assert.ok(native, "the Native detection toggle renders");
+  assert.ok(auto, "the Auto detection toggle renders");
+  assert.ok("checked" in native.attrs, "Native detection defaults on");
+  assert.ok("checked" in auto.attrs, "Auto detection defaults on");
+  // They lead the section: both appear before the first category checkbox.
+  const nativeAt = smart.indexOf('id="smart-native"');
+  const autoAt = smart.indexOf('id="smart-auto"');
+  const firstCat = smart.indexOf('class="cat-toggle"');
+  assert.ok(nativeAt >= 0 && autoAt >= 0 && firstCat >= 0);
+  assert.ok(nativeAt < firstCat && autoAt < firstCat,
+    "both toggles come before the category block they govern");
+  assert.ok(smart.includes(RAIL.nativeDetect), "the Native detection label renders");
+  assert.ok(smart.includes(RAIL.autoDetect), "the Auto detection label renders");
+});
+
+test("turning Native detection off disables the regex category block only", () => {
+  resetState();
+  setUseNativeDetect(false);
+  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
+  // The regex signal categories (email, vat, ...) go disabled; the name
+  // categories (person_names, ...) stay editable, because Auto detection is
+  // still on.
+  const email = all(smart, "input.cat-toggle").find((b) => b.attrs["data-category"] === "email");
+  const person = all(smart, "input.cat-toggle").find((b) => b.attrs["data-category"] === "person_names");
+  assert.ok("disabled" in email.attrs, "regex category is disabled while Native detection is off");
+  assert.ok(!("disabled" in person.attrs), "name categories stay editable");
+  // The selection is not cleared: the checkbox keeps its checked state.
+  assert.ok("checked" in email.attrs, "the stored selection is preserved, not cleared");
+});
+
+test("the Smart detection header switch is a master over both sub-toggles", () => {
+  // Off when BOTH halves are off; on when either is.
+  resetState();
+  setUseNativeDetect(false);
+  setUseAutoDetect(false);
+  let smart = all(railBody(getState()), "input.route-toggle")[0];
+  assert.ok(!("checked" in smart.attrs), "both halves off means the section reads off");
+  setUseNativeDetect(true);
+  smart = all(railBody(getState()), "input.route-toggle")[0];
+  assert.ok("checked" in smart.attrs, "either half on means the section reads on");
+});
+
+// --- The Load profile section (CR7) --------------------------------------
+
+test("the Load profile section renders AFTER Cloud AI", () => {
+  resetState();
+  const html = railBody(getState());
+  // Ordering by first appearance: the profile title must come after the Cloud
+  // AI placeholder copy, so the section sits at the foot of the rail.
+  assert.ok(html.includes(RAIL.profileTitle), "the Load profile section renders");
+  assert.ok(html.indexOf(RAIL.profileTitle) > html.indexOf(RAIL.cloudNotYet),
+    "Load profile is below Cloud AI");
+});
+
+test("the Load profile section has a Load and a Save button", () => {
+  resetState();
+  const html = railBody(getState());
+  assert.ok(exists(html, "#profile-load"), "Load button present");
+  assert.ok(exists(html, "#profile-save"), "Save button present");
+});
+
+test("the profile Save is disabled until detection has run once", () => {
+  resetState();
+  // Fresh session: no detection has run, so Save is disabled with the reason.
+  let save = one(railBody(getState()), "#profile-save");
+  assert.ok("disabled" in save.attrs, "Save is disabled before any detection");
+  assert.ok((save.attrs.title || "").includes(RAIL.profileSaveDisabled),
+    "the disabled Save says why in its tooltip");
+  // After a detection run the gate opens.
+  setState({ detectionRan: true });
+  save = one(railBody(getState()), "#profile-save");
+  assert.ok(!("disabled" in save.attrs), "Save is enabled once detection has run");
 });
 
 test("the strictness lever is a select of the three levels, balanced by default", () => {
@@ -269,7 +354,7 @@ function localAIHTML({ documents = [], scope = null, useAI = true } = {}) {
   return all(railBody(getState()), "section.rail-section")[1].outer;
 }
 
-test("the scan-scope picker defaults to all documents with no range", () => {
+test("the scan-scope picker defaults to all documents with no page controls", () => {
   const html = localAIHTML({
     documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
   });
@@ -277,43 +362,60 @@ test("the scan-scope picker defaults to all documents with no range", () => {
   assert.ok(select, "the Local AI section offers a document picker");
   const selected = all(select.outer, "option").find((o) => "selected" in o.attrs);
   assert.equal(selected.attrs.value, "", "all documents is the default");
-  assert.ok(!exists(html, "#ai-scope-from"), "no range until a document is chosen");
+  assert.ok(!exists(html, "input.ai-scope-mode"),
+    "no mode control until a document is chosen");
+  assert.ok(!exists(html, "#ai-pages"), "no page field until a document is chosen");
 });
 
-test("choosing a multi-unit document reveals a bounded range", () => {
+test("choosing a multi-unit document reveals the Entire/Specific control", () => {
   const html = localAIHTML({
     documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
-    scope: { docName: "a.pdf", fromPage: 1, toPage: 1 },
+    scope: { docName: "a.pdf", mode: "all" },
   });
-  const from = one(html, "#ai-scope-from");
-  const to = one(html, "#ai-scope-to");
-  assert.ok(from && to, "From and To inputs appear for a multi-unit document");
-  assert.equal(from.attrs.max, "6", "the range is bounded by the page count");
-  assert.equal(to.attrs.max, "6");
+  const modes = all(html, "input.ai-scope-mode");
+  assert.equal(modes.length, 2, "an Entire document / Specific pages pair appears");
+  const values = modes.map((m) => m.attrs.value).sort();
+  assert.deepEqual(values, ["all", "pages"]);
+  const checked = modes.find((m) => "checked" in m.attrs);
+  assert.equal(checked.attrs.value, "all", "entire document is the default choice");
+  assert.ok(!exists(html, "#ai-pages"), "no page field until Specific pages is chosen");
 });
 
-test("a single-unit document offers no range at all", () => {
+test("Specific pages mode reveals a page field and a live read-out", () => {
+  const html = localAIHTML({
+    documents: [{ name: "a.pdf", unit: "page", pageCount: 20 }],
+    scope: { docName: "a.pdf", mode: "pages", pages: "12-15,18" },
+  });
+  const field = one(html, "#ai-pages");
+  assert.ok(field, "a free-text page field appears in Specific pages mode");
+  assert.equal(field.attrs.value, "12-15,18", "the field shows the stored spec");
+  assert.ok(exists(html, "#ai-pages-readout"),
+    "a read-out reports how many units the spec resolves to");
+  // 12,13,14,15,18 = five pages.
+  const readout = textOf(html, "#ai-pages-readout");
+  assert.ok(readout.includes("5"),
+    `the read-out counts the resolved units, got ${readout}`);
+});
+
+test("a malformed page spec shows an inline error", () => {
+  const html = localAIHTML({
+    documents: [{ name: "a.pdf", unit: "page", pageCount: 20 }],
+    scope: { docName: "a.pdf", mode: "pages", pages: "12,oops" },
+  });
+  assert.ok(exists(html, "#ai-pages-error"), "a bad token is named inline");
+  const err = textOf(html, "#ai-pages-error");
+  assert.ok(err.includes("oops"),
+    `the error names the offending token, got ${err}`);
+});
+
+test("a single-unit document offers no page controls at all", () => {
   const html = localAIHTML({
     documents: [{ name: "note.txt", unit: "line", pageCount: 1 }],
-    scope: { docName: "note.txt", fromPage: 1, toPage: 1 },
+    scope: { docName: "note.txt", mode: "all" },
   });
-  assert.ok(!exists(html, "#ai-scope-from"),
-    "a document with one addressable unit has nothing to range over");
-});
-
-test("a multi-unit range warns, a single unit does not", () => {
-  const range = localAIHTML({
-    documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
-    scope: { docName: "a.pdf", fromPage: 2, toPage: 4 },
-  });
-  assert.ok(exists(range, "#ai-scope-warn"),
-    "spanning several pages is the 'too much' the feature warns about");
-  const single = localAIHTML({
-    documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
-    scope: { docName: "a.pdf", fromPage: 3, toPage: 3 },
-  });
-  assert.ok(!exists(single, "#ai-scope-warn"),
-    "one page is not a range, so it does not nag");
+  assert.ok(!exists(html, "input.ai-scope-mode"),
+    "a document with one addressable unit has nothing to scope over");
+  assert.ok(!exists(html, "#ai-pages"));
 });
 
 // --- The trigger grouping ------------------------------------------------
@@ -345,4 +447,88 @@ test("a category only a detection route or manual entry can produce says so", ()
     assert.match(description, /AI|add(ed)? by you/i,
       `${category} cannot be found offline, so its description must say where it comes from`);
   }
+});
+
+// --- The group select-all buttons address the RIGHT group (CR11) ----------
+//
+// The rail's select-all/deselect-all buttons carry their target as data-*
+// attributes, and wireScope resolves the group from btn.dataset.groupType. A
+// browser lowercases attribute NAMES, so a camelCase data key (data-groupType)
+// is read back as data-grouptype, and dataset.groupType comes out undefined ->
+// the handler falls back to "regex" and the "Auto detected values" (entity)
+// group's buttons silently drive the Contact regex group instead. The fix is a
+// hyphenated key (data-group-type) that survives the dataset round-trip. These
+// tests drive the handler's exact resolution FROM the rendered attributes, so a
+// regression to the camelCase key fails them.
+
+/** datasetOf(attrs) reproduces the browser's data-* -> element.dataset mapping:
+ *  drop the "data-" prefix, then camel-case each "-x" boundary. This is the
+ *  round-trip the bug broke, so the test must model it rather than read the raw
+ *  attribute by hand. */
+function datasetOf(attrs) {
+  const ds = {};
+  for (const [name, value] of Object.entries(attrs)) {
+    if (!name.startsWith("data-")) continue;
+    const key = name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+    ds[key] = value;
+  }
+  return ds;
+}
+
+/** bulkButton(html, title, on) finds one group's select-all ("1") or
+ *  deselect-all ("0") button by its aria-label and returns its parsed attrs. */
+function bulkButton(html, title, on) {
+  const label = `${on === "1" ? CONFIGURE.selectAll : CONFIGURE.deselectAll}: ${title}`;
+  const btn = all(html, "button.cat-group-all")
+    .find((b) => b.attrs["aria-label"] === label && b.attrs["data-on"] === on);
+  assert.ok(btn, `the "${title}" group is missing its ${on === "1" ? "select-all" : "deselect-all"} button`);
+  return btn;
+}
+
+/** clickBulk replays wireScope's click handler verbatim, but resolves the group
+ *  from the button's RENDERED data-* attributes via datasetOf, which is exactly
+ *  the path the bug corrupted. ENTITY_GROUPS/REGEX_GROUPS are private to the
+ *  view, so they are re-derived here the same way the view slices them. */
+function clickBulk(btn) {
+  const REGEX_GROUPS = CATEGORY_GROUPS.slice(0, 3);
+  const ENTITY_GROUPS = CATEGORY_GROUPS.slice(3);
+  const ds = datasetOf(btn.attrs);
+  const type = ds.groupType || "regex";
+  const groupArray = type === "entity" ? ENTITY_GROUPS : REGEX_GROUPS;
+  const group = groupArray[Number(ds.group)];
+  assert.ok(group, "the button's data-group index must resolve to a real group");
+  setCategoryGroup(group[1], ds.on === "1");
+}
+
+test("the entity group's select-all toggles the NAME categories, not the regex ones (CR11)", () => {
+  resetState();
+  // A clean baseline: every category off, so "became selected" is unambiguous.
+  const off = {};
+  for (const c of ALL_CATEGORIES) off[c] = false;
+  setState({ settings: { ...getState().settings, categories: off } });
+
+  clickBulk(bulkButton(railBody(getState()), CONFIGURE.groupDetected, "1"));
+
+  const cats = getState().settings.categories;
+  for (const name of NAME_CATEGORIES) {
+    assert.equal(cats[name], true,
+      `${name} is a NAME category, so the Auto detected values select-all must switch it on`);
+  }
+  // The Contact regex group is REGEX_GROUPS[0], which the bug's "regex" fallback
+  // would have toggled by mistake. These must stay exactly as they were.
+  for (const regex of ["email", "url", "iban", "vat"]) {
+    assert.equal(cats[regex], false,
+      `${regex} belongs to the Contact regex group and must be left untouched`);
+  }
+});
+
+test("the entity select-all carries the hyphenated data key so dataset reads it back (CR11)", () => {
+  resetState();
+  const btn = bulkButton(railBody(getState()), CONFIGURE.groupDetected, "1");
+  // The literal attribute must be hyphenated: a camelCase key is lowercased by
+  // the browser and dataset.groupType comes back undefined.
+  assert.ok("data-group-type" in btn.attrs,
+    "the bulk button must emit data-group-type, not a camelCase data-groupType");
+  assert.equal(datasetOf(btn.attrs).groupType, "entity",
+    "the entity group's button must resolve to the entity route");
 });

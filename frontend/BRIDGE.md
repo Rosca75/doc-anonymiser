@@ -72,11 +72,17 @@ Local AI section sizes its From/To range inputs from it.
 
 `useAI` and `useSmartDetect` are the DETECTION ROUTE switches: Smart detection
 on by default, Local AI off by default and additionally gated on the live
-Ollama probe. There is no cloud route and no `useCloudAI`, on either side. The
-frontend store carried one and `pushSettings` sent it while Go discarded it,
-which made this line read as a contradiction rather than a contract; BUILD-06
-Phase 8 deleted the field instead of documenting it, because a setting nothing
-reads and nothing can change is a claim the next reader has to disprove.
+Ollama probe. Smart detection split into two independently switchable halves,
+both sent alongside `useSmartDetect`: `useNativeDetect` is the MASTER over the
+regex signal categories (email, VAT, IBAN, amount, date, ...) applied at
+anonymisation time, and `useAutoDetect` is the offline word-frequency detection
+pass. Both default on. `useSmartDetect` is now DERIVED and sent for backward
+compatibility, always `useNativeDetect || useAutoDetect`. There is no cloud
+route and no `useCloudAI`, on either side. The frontend store carried one and
+`pushSettings` sent it while Go discarded it, which made this line read as a
+contradiction rather than a contract; BUILD-06 Phase 8 deleted the field instead
+of documenting it, because a setting nothing reads and nothing can change is a
+claim the next reader has to disprove.
 
 `country` is the DOCUMENT COUNTRY (BUILD-06 Phase 1), one of the codes in
 `engine.SupportedCountries`. It is a real engine setting, not a frontend
@@ -87,7 +93,7 @@ display choice: it decides which country-specific regex categories run.
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
-| `defaultAllowlist()` | — | seeded never-anonymise terms shown at startup (removable like any other) |
+| `defaultAllowlist()` | — | the suggested never-anonymise terms. NOT added to the list automatically: the allowlist starts empty and the user chooses its terms. Kept as the source for the downloadable template. |
 | `importAllowlistCSV()` | — | parsed terms, or `null` when the user cancels the dialog |
 | `saveAllowlistTemplate()` | — | saves the downloadable CSV template |
 
@@ -95,7 +101,7 @@ display choice: it decides which country-specific regex categories run.
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
-| `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, fromPage, toPage}` (null = every document whole; restricts the LOCAL AI route only, 1-based inclusive over the document's own page/slide/row/line units) | `DetectionResult {candidates, proposals, phases, skipped, errors, cancelled, status}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
+| `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, pages}` (null = every document whole; restricts the LOCAL AI route only; `pages` is a 1-based `number[]` over the document's own page/slide/row/line units, and an empty array means the whole selected document) | `DetectionResult {candidates, proposals, phases, skipped, errors, cancelled, status}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
 | `cancelDetection()` | — | aborts the in-flight run, reaching whichever route is running, including mid-file |
 | `expandVariants(entity)` | entity | `{category, canonical, manualVariants, excludedVariants}` |
 | `countTermMatches(term)` | term | `{count, documents}`, the live read-out under the manual add-value row (debounced) |
@@ -126,6 +132,12 @@ removed list with restore.
 | `cancelPipeline()` | — | aborts the in-flight run |
 | `fastRerun(request)` | request | re-runs the deterministic passes only (no LLM); resolves directly to fresh `Results` |
 | `getMapping()` | — | placeholder → `{original, category}` lookup (empty before the first run) |
+
+The run `request` is `{entities, allowTerms, patterns, categories, simpleRules,
+suppressRegexPII}`. `suppressRegexPII` is the "Native detection" master switch
+inverted (`!useNativeDetect`): when true, Go skips the deterministic regex PII
+pass (pass 1) so NO signal category is replaced, whatever `categories` selects;
+the entity, custom-pattern and code passes are unaffected.
 
 ## Export screen
 

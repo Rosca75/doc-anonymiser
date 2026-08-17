@@ -99,6 +99,59 @@ func (d Document) PageRangeMarkdown(from, to int) (string, error) {
 	return d.Markdown, nil
 }
 
+// PagesMarkdown returns the working-form markdown for an arbitrary SET of
+// sub-units, given as 1-based indices. It backs the discontiguous local-AI scan
+// (e.g. "12,13,18,19"): unlike PageRangeMarkdown it does not require the units
+// to be contiguous, so the model reads exactly the pages the user picked and
+// nothing between them.
+//
+// Each index is validated against PageCount with the same actionable message
+// style as PageRangeMarkdown, because the page set comes from a free-text field
+// the user typed and a stale or mistyped index must not panic or silently
+// truncate. The caller (state.js parsePageSpec) already sorts and de-duplicates,
+// but this method does not rely on that: it reads the indices in the order
+// given.
+func (d Document) PagesMarkdown(pages []int) (string, error) {
+	count := d.PageCount()
+	if len(pages) == 0 {
+		return "", fmt.Errorf(
+			"no %s selected for %q, which has %d %s(s); pick at least one within 1-%d",
+			d.pageUnitWord(), d.Name, count, d.pageUnitWord(), count)
+	}
+	for _, p := range pages {
+		if p < 1 || p > count {
+			return "", fmt.Errorf(
+				"page %d is out of bounds for %q, which has %d %s(s); pick %ss within 1-%d",
+				p, d.Name, count, d.pageUnitWord(), d.pageUnitWord(), count)
+		}
+	}
+
+	// A grid keeps its header once, followed by each selected data record, so
+	// the model still sees the column names that give a bare row meaning.
+	// Grid[0] is the header; data record k is Grid[k].
+	if d.Unit == UnitRow && d.Grid != nil && len(d.Pages) == 0 {
+		sub := make([][]string, 0, len(pages)+1)
+		sub = append(sub, d.Grid[0])
+		for _, p := range pages {
+			sub = append(sub, d.Grid[p])
+		}
+		return GridToMarkdownTable(sub), nil
+	}
+
+	// Every other unit slices each requested index on its own and joins them
+	// with a blank line, reusing PageRangeMarkdown's single-unit slicing so
+	// there is one definition of what a "page" of each format is.
+	parts := make([]string, 0, len(pages))
+	for _, p := range pages {
+		part, err := d.PageRangeMarkdown(p, p)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, "\n\n"), nil
+}
+
 // pageUnitWord is the singular unit word for an error message, falling back to
 // the generic "unit" when the document has no natural unit.
 func (d Document) pageUnitWord() string {

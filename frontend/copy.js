@@ -223,6 +223,12 @@ export const RAIL = {
   // being a section of its own because it is the scope OF smart detection.
   smartIntro: "Finds names by how they are written, on this machine and without any AI. It runs on the categories you choose below.",
   smartTuning: "Strictness",
+  // The two independent halves the Smart detection route splits into, rendered
+  // as toggles at the top of the section.
+  nativeDetect: "Native detection (signals)",
+  nativeDetectHint: "Regex signals such as emails, VAT numbers and IBANs.",
+  autoDetect: "Auto detection (word frequency)",
+  autoDetectHint: "Finds recurring names by word frequency.",
   routeOn: "On",
   routeOff: "Off",
   /** routeSwitchLabel(title) is the accessible name of a section's switch. */
@@ -268,25 +274,40 @@ export const RAIL = {
   scopeIntro: "The local AI reads only what you point it at. Scanning one document, or a few pages of one, keeps a small model focused and the pass quick.",
   scopeAllDocs: "All documents (whole)",
   scopeDoc: "Document",
-  scopeFrom: "From",
-  scopeTo: "To",
+  scopeEntireDoc: "Entire document",
+  scopeSpecificPages: "Specific pages",
+  scopePagesPlaceholder: "14, 12-15, 18-20",
   /** scopeUnitWord(unit) is the singular unit noun for the range labels. */
   scopeUnitWord(unit) {
     return unit || "unit";
+  },
+  /** scopePagesLabel(unit) labels the free-text page set for the unit at hand. */
+  scopePagesLabel(unit) {
+    const u = unit || "unit";
+    return `Which ${u}s`;
+  },
+  /**
+   * scopeReadout(n, unit) says how many units the current spec resolves to, so
+   * the user sees the size of what they are about to hand the model before they
+   * run it. Zero reads as "nothing yet" rather than a bare "0".
+   */
+  scopeReadout(n, unit) {
+    const u = unit || "unit";
+    if (!n) return `No ${u}s selected yet`;
+    return `${n} ${u}${n === 1 ? "" : "s"} selected`;
+  },
+  /**
+   * scopePagesError(token) names the first token that is neither a number nor a
+   * range, so the fix is obvious. Stated as a present-tense rule, not a warning
+   * about a wide range: a malformed spec is a mistake, not a cost.
+   */
+  scopePagesError(token) {
+    return `"${token}" is not a page or a range like 12-15.`;
   },
   /** scopeDocOption(name, count, unit) is one entry in the document dropdown. */
   scopeDocOption(name, count, unit) {
     const u = unit || "unit";
     return `${name} (${count} ${u}${count === 1 ? "" : "s"})`;
-  },
-  /**
-   * scopeRangeWarning(unit) warns that a multi-unit range is a lot to hand a
-   * small model. Shown only when From and To differ, so it names the cost of the
-   * choice the user just made rather than nagging about a single unit.
-   */
-  scopeRangeWarning(unit) {
-    const u = unit || "unit";
-    return `Scanning several ${u}s at once is more for the model to read and can be slow. Narrow the range if the pass stalls.`;
   },
 
   // The Cloud AI placeholder. It commits only to the thing that
@@ -294,6 +315,17 @@ export const RAIL = {
   // has said in writing what may.
   cloudNotYet: "Not available yet",
   cloudBody: "Connecting to a cloud endpoint is not built yet. When it is, this is where you will pick the provider, the model and the endpoint, and confirm in writing what may leave this machine before anything is sent.",
+
+  // The Load profile section: a plain (switch-less) section at the foot of the
+  // rail. Load restores a saved profile; Save writes one, but only once a run
+  // has produced a registry worth preserving.
+  profileTitle: "Load profile",
+  profileHint: "Reuse a saved setup: values, allowlist, patterns, rules and the placeholder registry, so a follow-up batch reuses the same placeholders.",
+  profileLoad: "Load",
+  profileSave: "Save",
+  profileSaveDisabled: "Run detection once before saving a profile.",
+  profileLoadDone: "Profile loaded: values, allowlist, patterns and rules restored.",
+  profileSaveDone: "Profile saved. A follow-up batch will reuse these placeholders.",
 };
 
 // Values step copy: the smart-detection tuning block
@@ -334,6 +366,16 @@ export const ALLOWLIST = {
   add: "Add",
   importCSV: "Import CSV",
   template: "Template",
+  clearAll: "Clear all",
+  clearAllTitle: "Remove every term from this list",
+  /** clearAllConfirm(n) is the in-app confirm before emptying the list. */
+  clearAllConfirm(n) {
+    return `Remove all ${n} term${n === 1 ? "" : "s"} from the never-anonymise list? Nothing will be protected from the passes afterwards, but you can add terms again at any time.`;
+  },
+  /** clearedN(n) reports the result of Clear all. */
+  clearedN(n) {
+    return `${n} term${n === 1 ? "" : "s"} removed from the never-anonymise list.`;
+  },
   remove: "Remove from this list",
   empty: "The list is empty, so nothing is protected from the passes.",
   /** alreadyThere(t) explains an add that changed nothing. */
@@ -540,6 +582,10 @@ export const WORKSPACE = {
   groupApply: "Group selected",
   groupCancel: "Cancel",
   groupNone: "There are no other values to group with yet.",
+  // The pick-one that runs after Apply: the participating values become one,
+  // and the user chooses WHICH keeps its placeholder in the output.
+  groupMainTitle: "Choose the main value",
+  groupMainBody: "The other values become spellings of the one you pick. Its placeholder is the one that will appear in the output.",
   /** groupedN(n, target) confirms a merge. */
   groupedN(n, target) {
     return `${n} value${n === 1 ? "" : "s"} merged into ${target}.`;
@@ -635,8 +681,6 @@ export const ANONYMISE = {
   cancel: "Cancel",
   cancelTooltip: "Stop the run. Anything already replaced is discarded.",
   cancelIdleTooltip: "Nothing is running.",
-  deepScan: "Deep scan (AI)",
-  deepScanTooltip: "An extra AI pass that looks for values the deterministic passes left behind.",
   subtitleRunning: "Working through your documents.",
   subtitleDone: "Check the result side by side. Every replacement maps back to its original.",
   subtitleBlocked: "The run was refused before any text was changed. Fix the conflict, then run again.",
@@ -720,11 +764,6 @@ export const ANONYMISE = {
   /** reportLevel(level) names the preset the run used. */
   reportLevel(level) {
     return `Ran at the ${level} preset`;
-  },
-  /** reportLLMPass(text) reports what happened to the AI pass, verbatim from
-   *  Go. A run that degraded halfway used to say so only in the JSON export. */
-  reportLLMPass(text) {
-    return `AI deep scan: ${text}`;
   },
   noValuesInScope: "No values from this category appear in the files in scope.",
   dismissWarning: "Hide this warning",
@@ -858,16 +897,15 @@ export const EXPORT = {
   reportJsonDone: "Report exported as JSON.",
   reportMdDone: "Report exported as Markdown.",
 
-  // Session.
-  sessionTitle: "Session",
+  // Profile (Save only; Load lives on the Identify rail).
+  sessionTitle: "Profile",
   sessionSummary: "reuse placeholders",
   sessionHint: "Saves values, allowlist, patterns, rules and the placeholder registry, so a follow-up batch reuses the same placeholders. Contains the key.",
   save: "Save",
-  load: "Load",
-  sessionSaveTitle: "Save the session file",
-  sessionSaveConfirm: "Save session",
-  sessionSaveDone: "Session saved. A follow-up batch will reuse these placeholders.",
-  sessionLoadDone: "Session loaded: values, allowlist, patterns and rules restored.",
+  sessionSaveTitle: "Save the profile file",
+  sessionSaveConfirm: "Save profile",
+  sessionSaveDone: "Profile saved. A follow-up batch will reuse these placeholders.",
+  sessionLoadDone: "Profile loaded: values, allowlist, patterns and rules restored.",
 
   // The document list.
   documentsTitle: "Documents",

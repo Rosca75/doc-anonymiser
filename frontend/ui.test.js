@@ -263,6 +263,18 @@ test("card renders head, body and foot in order", () => {
   assert.ok(html.indexOf("card-body") < html.indexOf("card-foot"));
 });
 
+test("card renders a titleTooltip on the heading, and escapes it", () => {
+  const plain = card({ title: "Run anonymisation", bodyHTML: "x" });
+  assert.ok(plain.includes("<h2>Run anonymisation</h2>"),
+    "with no tooltip the heading stays a bare h2");
+
+  const tipped = card({ title: "Run anonymisation", titleTooltip: `on "hover"`, bodyHTML: "x" });
+  assert.ok(tipped.includes('<h2 title="on &quot;hover&quot;">Run anonymisation</h2>'),
+    "the tooltip lands on the h2's title attribute, escaped");
+  assert.ok(!tipped.includes('class="card-sub"'),
+    "a titleTooltip is not a visible subtitle");
+});
+
 test("card omits the head entirely when there is nothing to put in it", () => {
   const html = card({ bodyHTML: "x" });
   assert.ok(!html.includes("card-head"), html);
@@ -508,6 +520,28 @@ test("modalHTML tints a key-bearing question and escapes its copy", () => {
   assert.ok(key.includes('class="modal key-bearing"'));
   assert.ok(!key.includes("<b>t</b>"));
   assert.ok(key.includes("a&quot;b"));
+});
+
+test("modalHTML renders one button per choice instead of a confirm button", () => {
+  const html = modalHTML({
+    title: "Choose the main value", body: "Pick one.",
+    choices: [{ id: "person_names|marie", label: "Marie (Person)" },
+      { id: "entity_names|acme", label: "Acme (Organisation)" }],
+  });
+  // A choice dialog has no affirmative modal-confirm; it keeps the cancel.
+  assert.ok(!html.includes('id="modal-confirm"'), "no yes/no confirm button");
+  assert.ok(html.includes('id="modal-cancel"'), "cancel is still offered");
+  // One button per choice, tagged with the choice id.
+  assert.ok(html.includes('data-choice="person_names|marie"'));
+  assert.ok(html.includes('data-choice="entity_names|acme"'));
+  assert.ok(html.includes("Marie (Person)"));
+  assert.ok(html.includes("Acme (Organisation)"));
+});
+
+test("modalHTML with an empty choices list falls back to the yes/no buttons", () => {
+  const html = modalHTML({ title: "t", body: "b", choices: [] });
+  assert.ok(html.includes('id="modal-confirm"'));
+  assert.ok(html.includes('id="modal-cancel"'));
 });
 
 // --- The fixed-height layout contract ------------------------------------

@@ -163,8 +163,10 @@ export async function listOllamaModels() {
 
 // --- Allowlist -----------------------------------------
 
-/** defaultAllowlist() resolves to the seeded never-anonymise terms shown
- *  in the UI at startup (removable like any other term). */
+/** defaultAllowlist() resolves to the built-in suggested never-anonymise terms.
+ *  They are a template source for the "Suggested terms" the user can add, not a
+ *  seeded list: CR6 stopped auto-adding them, so nothing is in the allowlist at
+ *  startup unless the user (or a restored session) put it there. */
 export async function defaultAllowlist() {
   return bridge().DefaultAllowlist();
 }
@@ -193,9 +195,10 @@ export async function saveAllowlistTemplate() {
  * event ("detection:done" or "detection:error") now cover the whole run.
  * Which routes run is decided in Go from the stored switches.
  *
- * aiScope, when set, restricts the LOCAL AI route to one document and a range
- * of its own units (page/slide/row/line): {docName, fromPage, toPage}, 1-based
- * inclusive. null (the default) means every document, whole. It never affects
+ * aiScope, when set, restricts the LOCAL AI route to one document and, within
+ * it, a set of its own units (page/slide/row/line): {docName, pages}, where
+ * pages is a 1-based number[]. An empty pages array means the whole selected
+ * document; null (the default) means every document, whole. It never affects
  * the Smart detection route, which always reads everything.
  *
  * A cancelled run RESOLVES with the partial findings and cancelled: true;

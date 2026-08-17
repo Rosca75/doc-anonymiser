@@ -117,11 +117,37 @@ func TestDetectionAlwaysEndsWithATerminalEvent(t *testing.T) {
 	}
 }
 
+// TestDetectionAutoDetectOffRunsNoSmartPhase: the Smart PHASE is now gated on
+// UseAutoDetect, the offline word-frequency pass, NOT on the derived
+// UseSmartDetect. Native detection being on (its default) is the master over the
+// regex signals at anonymisation time and must not, by itself, make the detect
+// button find word-frequency candidates.
+func TestDetectionAutoDetectOffRunsNoSmartPhase(t *testing.T) {
+	app := detectionApp()
+	app.settings.UseAutoDetect = false
+	app.settings.UseNativeDetect = true // the master is on; it is not a detection route
+	app.settings.UseAI = false
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"a.txt"}, nil, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	for _, p := range res.Phases {
+		if p == PhaseSmart {
+			t.Errorf("Auto detection is off, so the smart phase must not run; phases %v", res.Phases)
+		}
+	}
+	if len(res.Candidates) != 0 {
+		t.Errorf("no smart phase means no word-frequency candidates, got %+v", res.Candidates)
+	}
+}
+
 // TestDetectionWithNoRouteOnStillEnds: with every switch off there is nothing
 // to run, and that has to be said, not left as a spinning bar.
 func TestDetectionWithNoRouteOnStillEnds(t *testing.T) {
 	app := detectionApp()
-	app.settings.UseSmartDetect = false
+	app.settings.UseAutoDetect = false
 	app.settings.UseAI = false
 	rec := withRecorder(t, app)
 
@@ -375,11 +401,11 @@ func TestDetectionAIScopeLimitsToPageRange(t *testing.T) {
 	}
 	app.llm = ollama.New(srv.URL)
 	app.settings.UseAI = true
-	app.settings.UseSmartDetect = false // isolate the AI route
+	app.settings.UseAutoDetect = false // isolate the AI route
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"big.txt"}, nil,
-		&AIScope{DocName: "big.txt", FromPage: 2, ToPage: 3})
+		&AIScope{DocName: "big.txt", Pages: []int{2, 3}})
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
@@ -417,11 +443,11 @@ func TestDetectionAIScopeOutOfRangeReportsButFinishes(t *testing.T) {
 	}
 	app.llm = ollama.New(srv.URL)
 	app.settings.UseAI = true
-	app.settings.UseSmartDetect = false
+	app.settings.UseAutoDetect = false
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"small.txt"}, nil,
-		&AIScope{DocName: "small.txt", FromPage: 5, ToPage: 9})
+		&AIScope{DocName: "small.txt", Pages: []int{5, 9}})
 	if err != nil {
 		t.Fatalf("an out-of-range scope must not fail the run: %v", err)
 	}
@@ -430,6 +456,46 @@ func TestDetectionAIScopeOutOfRangeReportsButFinishes(t *testing.T) {
 	}
 	if len(seen) != 0 {
 		t.Errorf("nothing should have been sent to the model for an invalid range, saw %q", seen)
+	}
+}
+
+// TestDetectionAIScopeDiscontiguousPages proves a discontiguous page set (the
+// CR3 feature, "1,3") reaches the local AI as exactly those pages, with the
+// pages between them left out.
+func TestDetectionAIScopeDiscontiguousPages(t *testing.T) {
+	var seen []string
+	srv := scopeChatServer(&seen)
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{
+		{Name: "big.txt", Format: engine.FormatTXT, Unit: engine.UnitLine,
+			Markdown: "alpha line one\nbravo line two\ncharlie line three\ndelta line four\n"},
+	}
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseAI = true
+	app.settings.UseAutoDetect = false // isolate the AI route
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"big.txt"}, nil,
+		&AIScope{DocName: "big.txt", Pages: []int{1, 3}})
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	if len(res.Errors) != 0 {
+		t.Fatalf("a valid scope must not error: %v", res.Errors)
+	}
+
+	joined := strings.Join(seen, "\n")
+	for _, want := range []string{"alpha", "charlie"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("the discontiguous scan missed line %q; saw %q", want, joined)
+		}
+	}
+	for _, leak := range []string{"bravo", "delta"} {
+		if strings.Contains(joined, leak) {
+			t.Errorf("the discontiguous scope leaked line %q; saw %q", leak, joined)
+		}
 	}
 }
 

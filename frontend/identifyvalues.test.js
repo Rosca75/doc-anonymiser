@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import {
   resetState, getState, setState, toggleCategory,
   addEntities, setEntityVariants, addAllowTerm, addCandidates, entityKey,
+  groupEntities,
 } from "./state.js";
 import { valuesTab, suggestionsTab, visibleValues } from "./views/identifyworkspace.js";
 import { all, one, exists, textOf } from "./testhtml.js";
@@ -126,4 +127,30 @@ test("a suggestion row carries a type dropdown set to its guessed category", () 
   const type = one(html, "select.cand-type");
   assert.match(type.inner, /value="person_names" selected/);
   assert.equal(type.attrs["data-text"], "Meridian");
+});
+
+// CR1: Group with asks which participating value survives. The picker feeds the
+// CHOSEN value to groupEntities as the target and the rest as sources, so a user
+// can fold the card's value INTO a source rather than the other way round. This
+// pins the reducer path the wiring takes when a source is chosen as the main.
+test("grouping three values and choosing a source as the main keeps that source as survivor", () => {
+  resetState();
+  seed("entity_names", "Acme");                                   // the card the picker opened from
+  seed("person_names", "Marie Duval", ["Marie Duval", "Marie"]);  // a source, chosen as the main
+  seed("entity_names", "Acme Corp");                              // another source
+
+  const main = { category: "person_names", canonical: "Marie Duval" };
+  const rest = [
+    { category: "entity_names", canonical: "Acme" },
+    { category: "entity_names", canonical: "Acme Corp" },
+  ];
+  assert.equal(groupEntities(main, rest), 2, "both other values were folded");
+
+  const es = getState().entities;
+  assert.equal(es.length, 1, "only the chosen survivor remains");
+  assert.equal(es[0].canonical, "Marie Duval");
+  assert.equal(es[0].category, "person_names");
+  const folded = es[0].manualVariants ?? [];
+  assert.ok(folded.includes("Acme"), "the card value folded in as a spelling");
+  assert.ok(folded.includes("Acme Corp"), "the other source folded in as a spelling");
 });
