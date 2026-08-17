@@ -50,7 +50,7 @@ import {
   acceptAllShown, rejectAllShown, moveVariant,
   addPattern, removePattern, NAME_CATEGORIES,
   renameEntity, renameVariant, changeEntityCategory, changeCandidateCategory,
-  groupEntities, clearAllEntities, entityConflicts, spellingsOf, removeAllowTerm,
+  groupEntities, clearAllEntities, entityConflicts, spellingsOf, removeAllowTerm, addAllowTerm,
   aiScopeArg, curate, setIntersections, intersectionsFor, buildIntersectionRequest,
 } from "../state.js";
 import { pendingExpansions } from "../entitymodel.js";
@@ -205,10 +205,11 @@ function intersectionSignature(s) {
   const patterns = (s.patterns ?? []).map((p) => p.expr).join("\n");
   const categories = Object.entries(s.settings?.categories ?? {})
     .filter(([, on]) => on).map(([c]) => c).sort().join(",");
-  return [
-    values, patterns, categories,
-    s.allowlist.join(","), String(s.settings?.useNativeDetect),
-  ].join(" ");
+  // JSON rather than a joined string: a value or a pattern may contain any
+  // separator character, and a collision here reads as "nothing changed".
+  return JSON.stringify([
+    values, patterns, categories, s.allowlist, s.settings?.useNativeDetect === true,
+  ]);
 }
 
 /** head(s, busy) is the card header: the title, the live counts, the search box
@@ -519,12 +520,18 @@ export function valuesTab(s) {
   // Conflicts are computed ONCE for the whole list, because a collision is a
   // relationship BETWEEN two values: each card needs to know about the other.
   const conflicts = entityConflicts(s);
+  // Intersections come from Go and are keyed the same way, so a card attaches
+  // its own with no searching.
+  const overlaps = intersectionsFor(s);
   const shown = visibleValues(s.entities, valuesFilter);
   const cards = s.entities.length === 0
     ? `<div class="grid-empty">${escapeHTML(WORKSPACE.noValues)}</div>`
     : (shown.length === 0
       ? `<div class="grid-empty">${escapeHTML(WORKSPACE.noValuesMatch)}</div>`
-      : shown.map((e) => valueCard(e, conflicts.get(entityKey(e.category, e.canonical)), s)).join("") +
+      : shown.map((e) => {
+        const key = entityKey(e.category, e.canonical);
+        return valueCard(e, conflicts.get(key), s, overlaps.get(key));
+      }).join("") +
         // Shown only by the live search when it hides every card: the toolbar
         // filters imperatively without a re-render, so it needs a "no match"
         // line that is already in the DOM to reveal.
@@ -534,14 +541,19 @@ export function valuesTab(s) {
 }
 
 /**
- * valueCard(e, conflict, s) renders one value: its editable name, its type
- * dropdown, the group/solve/remove actions, and its variant chips.
+ * valueCard(e, conflict, s, overlap) renders one value: its editable name, its
+ * type dropdown, the group/solve/remove actions, and its variant chips.
  *
  * `conflict` is this value's entry from entityConflicts (or undefined when it is
  * clean). A conflict tints the card, and the exact name or chip at fault, so a
  * user can see BEFORE the Anonymise step which values would refuse the run.
+ *
+ * `overlap` is its entry from intersectionsFor: another route claims the same
+ * text. It is a WARNING and must not look like a blocking conflict, because the
+ * precedence rule always has an answer and the run will go ahead. It gets its
+ * own quieter tint and note, and it does not touch the step 2 to 3 gate.
  */
-function valueCard(e, conflict, s) {
+function valueCard(e, conflict, s, overlap) {
   const key = entityKey(e.category, e.canonical);
   const feedback = rowFeedback.get(key);
   const nameBad = !!(conflict && conflict.nameConflicts.length);
@@ -626,12 +638,14 @@ function valueCard(e, conflict, s) {
       `</div>`
     : "";
 
+  const intersectionNote = overlap ? intersectionNoteHTML(overlap) : "";
+
   const panel = openValuePanel.key === key
     ? (openValuePanel.kind === "group" ? groupPanel(e, s)
       : (openValuePanel.kind === "solve" && conflict ? solvePanel(e, conflict) : ""))
     : "";
 
-  return `<div class="value-card${conflict ? " conflicted" : ""}" data-key="${escapeHTML(key)}"` +
+  return `<div class="value-card${conflict ? " conflicted" : ""}${overlap ? " intersects" : ""}" data-key="${escapeHTML(key)}"` +
     ` data-category="${escapeHTML(e.category)}" data-canonical="${escapeHTML(e.canonical)}"` +
     ` data-search="${escapeHTML(searchText)}">` +
     `<div class="row-between">` +
@@ -639,6 +653,7 @@ function valueCard(e, conflict, s) {
     `<div class="value-actions">${actions}</div>` +
     `</div>` +
     conflictNote +
+    intersectionNote +
     variantRow +
     (feedback ? `<div class="value-note"><span class="hint bad">${escapeHTML(feedback)}</span></div>` : "") +
     panel +
@@ -670,6 +685,40 @@ function groupPanel(e, s) {
     `<div class="panel-actions">` +
     button(WORKSPACE.groupApply, { kind: "secondary", cls: "group-apply" }) +
     button(WORKSPACE.groupCancel, { kind: "ghost", cls: "panel-cancel" }) +
+    `</div></div>`;
+}
+
+/**
+ * intersectionNoteHTML(overlap) is the quiet warning that another route claims
+ * this value's text.
+ *
+ * It is deliberately NOT shaped like a conflict note. The three blocking
+ * conflicts refuse the run and are tinted as errors; an intersection is a
+ * decision the engine can make on its own, so it explains itself and offers the
+ * two gestures that usually resolve it: never anonymise the covering term, or
+ * fold the two values into one. Both are existing mechanisms, reached through
+ * the same actions the card already carries.
+ */
+function intersectionNoteHTML(overlap) {
+  const route = WORKSPACE.originLabel[overlap.winnerOrigin] ?? overlap.winnerOrigin;
+  const covered = overlap.occurrences ?? 0;
+  const total = overlap.totalOccurrences ?? covered;
+  // Fully covered means the value is NEVER replaced under its own type, which
+  // is a different statement from "sometimes something else wins here".
+  const message = covered >= total
+    ? WORKSPACE.intersectionAll(overlap.value, overlap.winnerValue, route)
+    : WORKSPACE.intersectionSome(covered, total, overlap.value, overlap.winnerValue, route);
+
+  return `<div class="value-note intersection-note">` +
+    `<span class="hint warn-hint">${icon("info")}${escapeHTML(message)}</span>` +
+    `<span class="hint">${escapeHTML(WORKSPACE.intersectionOrder)}</span>` +
+    `<span class="hint">${escapeHTML(WORKSPACE.intersectionFix)}</span>` +
+    `<div class="panel-actions">` +
+    button(WORKSPACE.intersectionAllowWinner, {
+      kind: "ghost", cls: "intersection-allow",
+      data: { term: overlap.winnerValue },
+    }) +
+    button(WORKSPACE.groupWith, { kind: "ghost", cls: "value-group" }) +
     `</div></div>`;
 }
 
@@ -988,9 +1037,22 @@ function wireValues(container) {
       else await refreshVariants();
     });
 
-    cardEl.querySelector(".value-group")?.addEventListener("click", () => {
-      togglePanel(key, "group");
+    // querySelectorAll, not querySelector: the intersection note carries a
+    // second "Group with" button, and both must open the same panel.
+    for (const groupBtn of cardEl.querySelectorAll(".value-group")) {
+      groupBtn.addEventListener("click", () => togglePanel(key, "group"));
+    }
+
+    // The intersection note's own action: the covering term goes on the
+    // never-anonymise list, so nothing replaces it and this value wins its text
+    // back. Existing mechanism, reached from the card that explains why.
+    cardEl.querySelector(".intersection-allow")?.addEventListener("click", (ev) => {
+      const term = ev.currentTarget.dataset.term;
+      if (!term) return;
+      addAllowTerm(term);
+      notify(WORKSPACE.intersectionAllowed(term), "ok");
     });
+
     cardEl.querySelector(".value-solve")?.addEventListener("click", () => {
       togglePanel(key, "solve");
     });

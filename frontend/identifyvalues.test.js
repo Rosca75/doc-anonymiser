@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import {
   resetState, getState, setState, toggleCategory,
   addEntities, setEntityVariants, addAllowTerm, addCandidates, entityKey,
-  groupEntities, curate, acceptCandidate,
+  groupEntities, curate, acceptCandidate, setIntersections, canGoTo,
 } from "./state.js";
 import { valuesTab, suggestionsTab, visibleValues } from "./views/identifyworkspace.js";
 import { all, one, exists, textOf } from "./testhtml.js";
@@ -191,4 +191,76 @@ test("a value the user typed is labelled as theirs", () => {
   seed("entity_names", "Alpine");
   const chip = one(valuesTab(getState()), "span.origin-chip");
   assert.equal(chip.inner, WORKSPACE.originLabel.declared);
+});
+
+// --- Intersections on the value card -------------------------------------
+
+/** overlap(patch) is an intersection row as Go sends it. */
+function overlap(patch = {}) {
+  return {
+    value: "marie.duval@example.com", category: "person_names", origin: "declared",
+    winnerValue: "marie.duval@example.com", winnerCategory: "email", winnerOrigin: "native",
+    occurrences: 2, totalOccurrences: 2,
+    ...patch,
+  };
+}
+
+test("a fully covered value says it is never replaced under its own type", () => {
+  resetState();
+  seed("person_names", "marie.duval@example.com");
+  setIntersections([overlap()]);
+  const html = valuesTab(getState());
+
+  const note = one(html, "div.intersection-note");
+  assert.ok(note.inner.includes("Every occurrence"),
+    "a value nothing leaves alone is the case worth shouting about");
+  // The route is named in the same words the origin chip uses.
+  assert.ok(note.inner.includes(WORKSPACE.originLabel.native));
+  assert.ok(note.inner.includes("Priority order"), "the rule that decided is stated");
+});
+
+test("a partly covered value gets the milder count sentence", () => {
+  resetState();
+  seed("entity_names", "Meridian");
+  setIntersections([overlap({
+    value: "Meridian", category: "entity_names",
+    winnerValue: "Meridian-4471", winnerCategory: "custom_patterns", winnerOrigin: "declared",
+    occurrences: 1, totalOccurrences: 3,
+  })]);
+  const note = one(valuesTab(getState()), "div.intersection-note");
+  assert.ok(note.inner.includes("1 of 3"), "the counts are the difference between a note and an alarm");
+  assert.ok(!note.inner.includes("Every occurrence"));
+});
+
+test("an intersection warns, it does not look like a blocking conflict", () => {
+  resetState();
+  seed("person_names", "marie.duval@example.com");
+  setIntersections([overlap()]);
+  const card = one(valuesTab(getState()), "div.value-card");
+
+  assert.match(card.attrs.class, /intersects/);
+  assert.ok(!/conflicted/.test(card.attrs.class),
+    "the precedence rule has an answer, so the run is not refused");
+  assert.ok(!exists(valuesTab(getState()), "button.value-solve"),
+    "Solve conflicts is for the three blocking kinds, not for a warning");
+});
+
+test("an intersection does not close the step 2 to 3 gate", () => {
+  // The gate exists for unreviewed SUGGESTIONS. An intersection is a decision
+  // the engine can make on its own, so it must never block navigation.
+  resetState();
+  setState({ documents: [{ name: "a.txt" }] });
+  seed("person_names", "marie.duval@example.com");
+  setIntersections([overlap()]);
+  assert.equal(canGoTo("anonymise"), true,
+    "an intersection is a warning, so it must not stand between the steps");
+});
+
+test("a card with no intersection renders no note", () => {
+  resetState();
+  seed("entity_names", "Alpine");
+  setIntersections([overlap()]); // belongs to a different value
+  const html = valuesTab(getState());
+  assert.ok(!exists(html, "div.intersection-note"));
+  assert.ok(!/intersects/.test(one(html, "div.value-card").attrs.class));
 });

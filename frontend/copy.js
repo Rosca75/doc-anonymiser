@@ -517,6 +517,29 @@ export const WORKSPACE = {
   },
   originTitle: "The detection route this value came from",
 
+  // Intersections: two routes claim the same text. The precedence rule always
+  // decides, so these are WARNINGS that explain the decision, never refusals.
+  // The route names come from originLabel above, so a message names a route in
+  // the same words the chip on the card uses.
+  intersectionTitle: "Overlaps another detection",
+  /** intersectionAll(value, winner, route) is the case worth shouting about:
+   *  the value is never replaced under its own type. */
+  intersectionAll(value, winner, route) {
+    return `Every occurrence of "${value}" is also matched by ${route} as "${winner}", which takes priority. This value is not replaced under its own type.`;
+  },
+  /** intersectionSome(covered, total, value, winner, route) is the milder
+   *  case: the value still applies where nothing covers it. */
+  intersectionSome(covered, total, value, winner, route) {
+    return `${covered} of ${total} occurrences of "${value}" are also matched by ${route} as "${winner}", which takes priority there.`;
+  },
+  intersectionOrder: "Priority order: native detection, then your own values and patterns, then Smart detection, then Local AI.",
+  intersectionFix: "If this value should win instead, switch off the type that covers it, narrow the pattern, or add the covering term to Never anonymise.",
+  intersectionAllowWinner: "Never anonymise the covering term",
+  /** intersectionAllowed(term) confirms the covering term is now protected. */
+  intersectionAllowed(term) {
+    return `"${term}" is on the never anonymise list, so nothing replaces it now.`;
+  },
+
   // My values.
   addValueLabel: "A value to replace",
   /** valueMatches(count, documents) is the live read-out under the add row.

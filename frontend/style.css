@@ -1114,6 +1114,17 @@ input, select {
 .conflict-note .hint.bad { display: flex; align-items: center; gap: 0.35rem; }
 .conflict-note .hint.bad .icon { flex: none; width: 1rem; height: 1rem; }
 
+/* An intersection is a WARNING, not a refusal: the precedence rule already
+   decided and the run will go ahead. It gets its own quieter tint so it can
+   never be mistaken for a blocking conflict, which is what .conflicted marks.
+   A card can carry both, and then the error tint wins by cascade order. */
+.value-card.intersects { border-color: var(--warn); background: var(--notice-warn-bg); }
+.value-card.conflicted.intersects { border-color: var(--err); background: var(--invalid-bg); }
+.intersection-note { display: flex; flex-direction: column; gap: 0.25rem; }
+.intersection-note .hint.warn-hint { display: flex; align-items: center; gap: 0.35rem; }
+.intersection-note .hint.warn-hint .icon { flex: none; width: 1rem; height: 1rem; }
+.intersection-note .panel-actions { margin-top: 0.2rem; }
+
 /* The inline panels a card opens: Group with and Solve conflicts. They live
    inside the card so the value they act on is right above them. */
 .value-panel {
