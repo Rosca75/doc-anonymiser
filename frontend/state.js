@@ -136,14 +136,16 @@ const initialState = {
     },
   },
 
-  // Local-AI SCAN SCOPE (CLAUDE.md §5): which ONE document, and which range of
-  // its own units (pages/slides/rows/lines), the local model reads. Handing a
-  // whole document to a small local model is "too much", so the user can aim
-  // the scan. docName "" means "every document, whole", the unchanged
-  // behaviour. It is a transient per-run choice, deliberately NOT part of
-  // settings, so it never travels in a session file and never reaches Go
-  // through applySettings.
-  aiScope: { docName: "", fromPage: 1, toPage: 1 },
+  // Local-AI SCAN SCOPE (CLAUDE.md §5): which ONE document, and which of its own
+  // units (pages/slides/rows/lines), the local model reads. Handing a whole
+  // document to a small local model is "too much", so the user can aim the scan.
+  //   docName ""     means "every document, whole", the unchanged behaviour.
+  //   mode "all"     scans the whole selected document.
+  //   mode "pages"   scans only the units named in the free-text `pages` spec
+  //                  (parsePageSpec parses "14", "12-15", "12,13,18-20").
+  // It is a transient per-run choice, deliberately NOT part of settings, so it
+  // never travels in a session file and never reaches Go through applySettings.
+  aiScope: { docName: "", mode: "all", pages: "" },
 
   // Entity review state: array of
   // {category, canonical, manualVariants, status: "accepted"|"denied"}.
@@ -726,29 +728,77 @@ export function setUseAI(on) {
 // --- Local-AI scan scope ----------------------------------
 
 /**
- * setAIScope(patch) records which document and page range the local AI reads,
- * clamped to what actually exists. An empty or unknown docName resets the scope
- * to "every document, whole", so a stale selection (a document that was removed)
- * can never send an out-of-range request. from is pinned to <= to, and both to
- * the selected document's addressable unit count (DocumentInfo.pageCount), so
- * the numbers the user sees are always requestable.
- * @param {object} patch any subset of {docName, fromPage, toPage}
- * @returns {object} the stored scope after clamping
+ * parsePageSpec(spec, maxPage) turns a free-text page spec into a sorted,
+ * de-duplicated set of 1-based unit indices.
+ *
+ * The spec is comma-separated; each token is either a single number "N" or a
+ * range "A-B" (inclusive). Whitespace around tokens and either side of the dash
+ * is ignored. Indices outside 1..maxPage are dropped silently (a stale UI or a
+ * typed number past the end is the user's request, not a crash), and a token
+ * that is not a number or a range sets `error` naming the FIRST bad token while
+ * still returning whatever valid pages parsed, so the read-out stays useful.
+ * An empty or whitespace-only spec is not an error: it resolves to no pages.
+ *
+ * @param {string} spec the raw text, e.g. "14", "12-15", "12,13,18-20"
+ * @param {number} maxPage the selected document's addressable unit count
+ * @returns {{pages: number[], error: (string|null)}}
+ */
+export function parsePageSpec(spec, maxPage) {
+  const set = new Set();
+  let error = null;
+  const max = Number.isInteger(maxPage) && maxPage > 0 ? maxPage : 0;
+  const text = String(spec ?? "").trim();
+  if (text === "") return { pages: [], error: null };
+  for (const rawToken of text.split(",")) {
+    const token = rawToken.trim();
+    if (token === "") continue;
+    const range = token.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (range) {
+      let lo = parseInt(range[1], 10);
+      let hi = parseInt(range[2], 10);
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      for (let n = lo; n <= hi; n++) {
+        if (n >= 1 && n <= max) set.add(n);
+      }
+      continue;
+    }
+    if (/^\d+$/.test(token)) {
+      const n = parseInt(token, 10);
+      if (n >= 1 && n <= max) set.add(n);
+      continue;
+    }
+    // A token that is neither "N" nor "A-B": name the first one that fails,
+    // but keep the pages already parsed so the read-out is not blanked.
+    if (error === null) error = token;
+  }
+  const pages = [...set].sort((a, b) => a - b);
+  return { pages, error };
+}
+
+/**
+ * setAIScope(patch) records which document the local AI reads and, within it,
+ * whether to scan the whole document ("all") or a set of pages ("pages"). An
+ * empty or unknown docName resets the scope to "every document, whole", so a
+ * stale selection (a document that was removed) can never send a request for a
+ * document that is gone. The `pages` string is stored verbatim; it is parsed
+ * against the selected document's unit count only when the bridge arg is built
+ * (aiScopeArg), so the read-out and the request always agree.
+ * @param {object} patch any subset of {docName, mode, pages}
+ * @returns {object} the stored scope
  */
 export function setAIScope(patch) {
   const next = { ...state.aiScope, ...(patch ?? {}) };
   const doc = state.documents.find((d) => d.name === next.docName);
   if (!next.docName || !doc) {
-    const cleared = { docName: "", fromPage: 1, toPage: 1 };
+    const cleared = { docName: "", mode: "all", pages: "" };
     setState({ aiScope: cleared });
     return cleared;
   }
-  const count = Math.max(1, doc.pageCount || 1);
-  let from = Number.isInteger(next.fromPage) ? next.fromPage : 1;
-  let to = Number.isInteger(next.toPage) ? next.toPage : from;
-  from = Math.min(Math.max(1, from), count);
-  to = Math.min(Math.max(from, to), count);
-  const scope = { docName: next.docName, fromPage: from, toPage: to };
+  const scope = {
+    docName: next.docName,
+    mode: next.mode === "pages" ? "pages" : "all",
+    pages: typeof next.pages === "string" ? next.pages : "",
+  };
   setState({ aiScope: scope });
   return scope;
 }
@@ -757,11 +807,20 @@ export function setAIScope(patch) {
  * aiScopeArg(s) is the scope to hand runDetection, or null when the local AI
  * should read every document whole. Kept out of the settings payload on
  * purpose: the scope is a per-run choice, not a saved setting.
+ *
+ * The backend shape is {docName, pages: number[]} where an EMPTY pages array
+ * means "the whole selected document"; that is what "all" mode, and any spec
+ * that resolves to nothing, both send. A null return keeps today's meaning:
+ * every document, whole.
  */
 export function aiScopeArg(s = state) {
   const sc = s.aiScope;
   if (!sc || !sc.docName) return null;
-  return { docName: sc.docName, fromPage: sc.fromPage, toPage: sc.toPage };
+  if (sc.mode !== "pages") return { docName: sc.docName, pages: [] };
+  const doc = s.documents.find((d) => d.name === sc.docName);
+  const max = doc ? Math.max(1, doc.pageCount || 1) : 0;
+  const { pages } = parsePageSpec(sc.pages, max);
+  return { docName: sc.docName, pages };
 }
 
 /**
@@ -1052,17 +1111,17 @@ export function nextStep() {
 export function applyImportResult(result) {
   const documents = result.documents ?? [];
   const previewStillValid = documents.some((d) => d.name === state.previewDoc);
-  // A local-AI scope that named a document no longer in the list would send an
-  // out-of-range request, so it resets to "every document" when its target is
-  // gone (or its page count shrank under the stored range).
+  // A local-AI scope that named a document no longer in the list would target a
+  // document that is gone, so it resets to "every document" when its target
+  // disappears. A document that merely SHRANK needs no reset: the page spec is
+  // stored as text and re-parsed against the current unit count at send time
+  // (aiScopeArg), so out-of-range units are dropped then, not stored now.
   const scopedDoc = documents.find((d) => d.name === state.aiScope?.docName);
-  const scopeStillValid = scopedDoc &&
-    state.aiScope.toPage <= Math.max(1, scopedDoc.pageCount || 1);
   setState({
     documents,
     importErrors: result.errors ?? [],
     previewDoc: previewStillValid ? state.previewDoc : (documents[0]?.name ?? null),
-    aiScope: scopeStillValid ? state.aiScope : { docName: "", fromPage: 1, toPage: 1 },
+    aiScope: scopedDoc ? state.aiScope : { docName: "", mode: "all", pages: "" },
     // A fresh import list makes every cached source stale (a re-imported file
     // with the same name is a DIFFERENT file). Dropping the cache is cheaper
     // and safer than deciding which entries survived.

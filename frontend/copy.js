@@ -274,25 +274,40 @@ export const RAIL = {
   scopeIntro: "The local AI reads only what you point it at. Scanning one document, or a few pages of one, keeps a small model focused and the pass quick.",
   scopeAllDocs: "All documents (whole)",
   scopeDoc: "Document",
-  scopeFrom: "From",
-  scopeTo: "To",
+  scopeEntireDoc: "Entire document",
+  scopeSpecificPages: "Specific pages",
+  scopePagesPlaceholder: "14, 12-15, 18-20",
   /** scopeUnitWord(unit) is the singular unit noun for the range labels. */
   scopeUnitWord(unit) {
     return unit || "unit";
+  },
+  /** scopePagesLabel(unit) labels the free-text page set for the unit at hand. */
+  scopePagesLabel(unit) {
+    const u = unit || "unit";
+    return `Which ${u}s`;
+  },
+  /**
+   * scopeReadout(n, unit) says how many units the current spec resolves to, so
+   * the user sees the size of what they are about to hand the model before they
+   * run it. Zero reads as "nothing yet" rather than a bare "0".
+   */
+  scopeReadout(n, unit) {
+    const u = unit || "unit";
+    if (!n) return `No ${u}s selected yet`;
+    return `${n} ${u}${n === 1 ? "" : "s"} selected`;
+  },
+  /**
+   * scopePagesError(token) names the first token that is neither a number nor a
+   * range, so the fix is obvious. Stated as a present-tense rule, not a warning
+   * about a wide range: a malformed spec is a mistake, not a cost.
+   */
+  scopePagesError(token) {
+    return `"${token}" is not a page or a range like 12-15.`;
   },
   /** scopeDocOption(name, count, unit) is one entry in the document dropdown. */
   scopeDocOption(name, count, unit) {
     const u = unit || "unit";
     return `${name} (${count} ${u}${count === 1 ? "" : "s"})`;
-  },
-  /**
-   * scopeRangeWarning(unit) warns that a multi-unit range is a lot to hand a
-   * small model. Shown only when From and To differ, so it names the cost of the
-   * choice the user just made rather than nagging about a single unit.
-   */
-  scopeRangeWarning(unit) {
-    const u = unit || "unit";
-    return `Scanning several ${u}s at once is more for the model to read and can be slow. Narrow the range if the pass stalls.`;
   },
 
   // The Cloud AI placeholder. It commits only to the thing that

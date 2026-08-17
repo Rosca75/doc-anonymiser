@@ -83,8 +83,9 @@ type DetectionResult struct {
 	Status    string          `json:"status"`
 }
 
-// AIScope narrows the local-AI route to one document and a range of its own
-// sub-units (pages/slides/rows/lines — see engine.Document.PageCount).
+// AIScope narrows the local-AI route to one document and, within it, an
+// arbitrary SET of its own sub-units (pages/slides/rows/lines — see
+// engine.Document.PageCount).
 //
 // It exists because handing a whole document to a small local model is "too
 // much" (the reported problem): the scan stalls or the context window
@@ -92,12 +93,15 @@ type DetectionResult struct {
 // cheap and reads everything — so it lives here rather than in Settings, and it
 // is a per-run choice that is never persisted to a session.
 //
-// A nil *AIScope, or one with an empty DocName, means "every document, whole"
-// — the unchanged behaviour.
+// Pages is a 1-based set already parsed, sorted and de-duplicated by the
+// frontend (state.js parsePageSpec) from the user's free-text spec, so it can
+// express a single page, a contiguous range, or a discontiguous mix
+// ("12,13,18-20"). An EMPTY Pages means "the whole selected document"; a nil
+// *AIScope, or one with an empty DocName, means "every document, whole" — the
+// unchanged behaviour.
 type AIScope struct {
-	DocName  string `json:"docName"`  // "" = every document
-	FromPage int    `json:"fromPage"` // 1-based inclusive
-	ToPage   int    `json:"toPage"`   // 1-based inclusive
+	DocName string `json:"docName"` // "" = every document
+	Pages   []int  `json:"pages"`   // 1-based set; empty = the whole selected document
 }
 
 // active reports whether this scope actually narrows anything.
@@ -308,15 +312,16 @@ func (a *App) runSmartPhase(ctx context.Context, docs []engine.Document, allow *
 // said so, rather than failing the run: the context window is a fact about
 // the model, not a mistake the user made.
 //
-// When scope is active the route reads ONE document and only the requested
-// page range of it (CLAUDE.md §5), which is the whole point of the feature:
-// keep the text handed to a small local model small. The Smart route is
-// unaffected — it already read everything.
+// When scope is active the route reads ONE document. If the scope names a set
+// of pages it reads only those (CLAUDE.md §5); with no pages it reads the whole
+// selected document. Either way the point is the same: keep the text handed to
+// a small local model small. The Smart route is unaffected — it already read
+// everything.
 func (a *App) runAIPhase(ctx context.Context, docs []engine.Document, llm *ollama.Client,
 	scope *AIScope, res *DetectionResult, report func(DetectionProgress)) {
 
 	// scanUnit pairs a document with the exact text the AI should read for it:
-	// the whole markdown normally, or one page range when scoped.
+	// the whole markdown normally, or the selected pages when scoped.
 	type scanUnit struct {
 		name string
 		text string
@@ -329,7 +334,13 @@ func (a *App) runAIPhase(ctx context.Context, docs []engine.Document, llm *ollam
 				continue
 			}
 			scopeMatched = true
-			text, err := doc.PageRangeMarkdown(scope.FromPage, scope.ToPage)
+			// An empty page set means "the whole selected document"; a
+			// non-empty set narrows to exactly those pages.
+			if len(scope.Pages) == 0 {
+				units = append(units, scanUnit{name: doc.Name, text: doc.Markdown})
+				continue
+			}
+			text, err := doc.PagesMarkdown(scope.Pages)
 			if err != nil {
 				// An out-of-range scope is the user's request, not a file
 				// problem: report it and let the run finish cleanly.

@@ -192,6 +192,68 @@ func TestPageRangeOutOfBounds(t *testing.T) {
 	}
 }
 
+// TestPagesMarkdownDiscontiguous covers the discontiguous local-AI scope (CR3):
+// a set like {1,3} returns exactly those units, concatenated, with the units
+// between them left out.
+func TestPagesMarkdownDiscontiguous(t *testing.T) {
+	doc, err := Load("notes.txt", []byte("alpha\nbravo\ncharlie\ndelta\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got, err := doc.PagesMarkdown([]int{1, 3})
+	if err != nil {
+		t.Fatalf("PagesMarkdown([1,3]): %v", err)
+	}
+	if got != "alpha\n\ncharlie" {
+		t.Errorf("PagesMarkdown([1,3]) = %q, want %q", got, "alpha\n\ncharlie")
+	}
+	for _, leak := range []string{"bravo", "delta"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("PagesMarkdown([1,3]) leaked unselected line %q: %q", leak, got)
+		}
+	}
+}
+
+// TestPagesMarkdownCSVKeepsHeaderOnce proves a grid page set carries the header
+// row exactly once, then each selected data record, so the model keeps column
+// context without a header repeated per row.
+func TestPagesMarkdownCSVKeepsHeaderOnce(t *testing.T) {
+	raw := []byte("name,email\nMarie,m@example.com\nThomas,t@example.com\nAmelie,a@example.com\n")
+	doc, err := Load("people.csv", raw)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got, err := doc.PagesMarkdown([]int{1, 3})
+	if err != nil {
+		t.Fatalf("PagesMarkdown([1,3]): %v", err)
+	}
+	if strings.Count(got, "email") != 1 {
+		t.Errorf("grid page set must carry the header exactly once: %q", got)
+	}
+	if !strings.Contains(got, "Marie") || !strings.Contains(got, "Amelie") {
+		t.Errorf("grid page set dropped a selected record: %q", got)
+	}
+	if strings.Contains(got, "Thomas") {
+		t.Errorf("grid page set leaked an unselected record: %q", got)
+	}
+}
+
+// TestPagesMarkdownOutOfBounds: an index outside 1..PageCount, or an empty set,
+// gives the same actionable error style as PageRangeMarkdown rather than a
+// panic or a silent truncation.
+func TestPagesMarkdownOutOfBounds(t *testing.T) {
+	doc, err := Load("notes.txt", []byte("a\nb\nc\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cases := [][]int{{}, {0}, {4}, {-1}, {2, 99}}
+	for _, c := range cases {
+		if _, err := doc.PagesMarkdown(c); err == nil {
+			t.Errorf("PagesMarkdown(%v) must reject an out-of-bounds or empty set", c)
+		}
+	}
+}
+
 // docxWithPageBreaks builds a minimal .docx whose paragraph groups are
 // separated by <w:lastRenderedPageBreak/> markers, one group per page.
 func docxWithPageBreaks(t *testing.T, groups ...[]string) []byte {

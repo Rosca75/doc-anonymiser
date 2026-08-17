@@ -36,6 +36,7 @@ import {
   setCategoryGroup, setMinConfidence, setDocumentCountry,
   setSmartDetectOptions, smartDetectOptions,
   setAIScope,
+  parsePageSpec,
   ALL_CATEGORIES,
   NAME_CATEGORIES, DECLARED_CATEGORIES,
 } from "../state.js";
@@ -573,18 +574,22 @@ function wireSmart(container) {
 
 /**
  * scopeBlock(s, gated) is the "What to scan" control for the Local AI route: a
- * document picker plus an optional page/slide/row/line range. It exists because
+ * document picker plus, for a multi-unit document, a choice between scanning the
+ * whole document or a set of its own pages/slides/rows/lines. It exists because
  * handing a whole document to a small local model is too much (the user's
  * words); aiming the scan keeps the pass quick and the model focused.
  *
  * The picker defaults to "All documents (whole)", the unchanged behaviour. When
- * one document with more than one addressable unit is chosen, From/To inputs
- * appear, bounded by that document's unit count (DocumentInfo.pageCount). A
- * range spanning more than one unit shows a small warning, because a wide range
- * is exactly the "too much" the feature exists to avoid.
+ * one document with more than one addressable unit is chosen, an "Entire
+ * document" / "Specific pages" control appears; choosing "Specific pages"
+ * reveals a free-text field that accepts a single page, a range, or a
+ * discontiguous mix ("14", "12-15", "12,13,18-20"). A live read-out names how
+ * many units the current spec resolves to, and a malformed token is shown
+ * inline, because a wide or mistyped scan is exactly the "too much" the feature
+ * exists to avoid.
  */
 function scopeBlock(s, gated) {
-  const scope = s.aiScope ?? { docName: "", fromPage: 1, toPage: 1 };
+  const scope = s.aiScope ?? { docName: "", mode: "all", pages: "" };
   const docs = s.documents ?? [];
   const options = [
     `<option value=""${scope.docName ? "" : " selected"}>` +
@@ -602,22 +607,35 @@ function scopeBlock(s, gated) {
   const count = Math.max(1, selected?.pageCount || 1);
   if (selected && count > 1) {
     const unit = RAIL.scopeUnitWord(selected.unit);
-    const warn = scope.fromPage !== scope.toPage
-      ? `<p class="hint warn" id="ai-scope-warn">${escapeHTML(RAIL.scopeRangeWarning(unit))}</p>`
-      : "";
-    range =
-      `<div class="rail-range">` +
-      `<label class="rail-field" for="ai-scope-from">` +
-      `<span class="rail-field-label">${escapeHTML(RAIL.scopeFrom)}</span>` +
-      `<input id="ai-scope-from" type="number" min="1" max="${count}" ` +
-        `value="${escapeHTML(String(scope.fromPage))}"${gated}/>` +
-      `</label>` +
-      `<label class="rail-field" for="ai-scope-to">` +
-      `<span class="rail-field-label">${escapeHTML(RAIL.scopeTo)}</span>` +
-      `<input id="ai-scope-to" type="number" min="1" max="${count}" ` +
-        `value="${escapeHTML(String(scope.toPage))}"${gated}/>` +
-      `</label>` +
-      `</div>` + warn;
+    const pagesMode = scope.mode === "pages";
+    // The radio pair: entire document (default) versus a specific page set.
+    const modeControl =
+      `<div class="rail-modes" role="radiogroup">` +
+      `<label class="rail-radio">` +
+      `<input class="ai-scope-mode" type="radio" name="ai-scope-mode" value="all"` +
+        `${pagesMode ? "" : " checked"}${gated}/>` +
+      `<span>${escapeHTML(RAIL.scopeEntireDoc)}</span></label>` +
+      `<label class="rail-radio">` +
+      `<input class="ai-scope-mode" type="radio" name="ai-scope-mode" value="pages"` +
+        `${pagesMode ? " checked" : ""}${gated}/>` +
+      `<span>${escapeHTML(RAIL.scopeSpecificPages)}</span></label>` +
+      `</div>`;
+
+    let pagesField = "";
+    if (pagesMode) {
+      const parsed = parsePageSpec(scope.pages, count);
+      const readout = parsed.error
+        ? `<p class="hint warn" id="ai-pages-error">${escapeHTML(RAIL.scopePagesError(parsed.error))}</p>`
+        : `<p class="hint" id="ai-pages-readout">${escapeHTML(RAIL.scopeReadout(parsed.pages.length, unit))}</p>`;
+      pagesField =
+        `<label class="rail-field" for="ai-pages">` +
+        `<span class="rail-field-label">${escapeHTML(RAIL.scopePagesLabel(unit))}</span>` +
+        `<input id="ai-pages" type="text" ` +
+          `placeholder="${escapeHTML(RAIL.scopePagesPlaceholder)}" ` +
+          `value="${escapeHTML(scope.pages || "")}"${gated}/>` +
+        `</label>` + readout;
+    }
+    range = modeControl + pagesField;
   }
 
   return `<div class="rail-block">` +
@@ -687,20 +705,43 @@ function wireLocalAI(container) {
   });
   // The scan-scope controls write straight to state (no Go round-trip: scope is
   // a per-run choice, not a saved setting). setAIScope re-renders the rail, so
-  // switching to a multi-unit document reveals the From/To inputs, and a range
-  // reveals the warning. Switching document resets the range to its first unit.
+  // switching to a multi-unit document reveals the mode control, and choosing
+  // "Specific pages" reveals the page field. Switching document resets the scope
+  // to the whole document.
   container.querySelector("#ai-scope-doc")?.addEventListener("change", (ev) => {
-    setAIScope({ docName: ev.target.value, fromPage: 1, toPage: 1 });
+    setAIScope({ docName: ev.target.value, mode: "all", pages: "" });
   });
-  const from = container.querySelector("#ai-scope-from");
-  const to = container.querySelector("#ai-scope-to");
-  if (from && to) {
-    const apply = () => setAIScope({
-      fromPage: parseInt(from.value, 10) || 1,
-      toPage: parseInt(to.value, 10) || 1,
+  for (const radio of container.querySelectorAll('input[name="ai-scope-mode"]')) {
+    radio.addEventListener("change", (ev) => {
+      if (ev.target.checked) setAIScope({ mode: ev.target.value });
     });
-    from.addEventListener("change", apply);
-    to.addEventListener("change", apply);
+  }
+  const pages = container.querySelector("#ai-pages");
+  if (pages) {
+    // Live read-out: update the parsed-count (or the error) as the user types,
+    // without a full repaint that would steal focus from the field. A repaint
+    // still happens on "change" (blur) so the stored spec and the rest of the
+    // rail stay in step.
+    const doc = getState().documents.find((d) => d.name === getState().aiScope.docName);
+    const max = doc ? Math.max(1, doc.pageCount || 1) : 0;
+    const unit = RAIL.scopeUnitWord(doc?.unit);
+    const refresh = () => {
+      const parsed = parsePageSpec(pages.value, max);
+      const readout = container.querySelector("#ai-pages-readout");
+      const errEl = container.querySelector("#ai-pages-error");
+      const text = parsed.error
+        ? RAIL.scopePagesError(parsed.error)
+        : RAIL.scopeReadout(parsed.pages.length, unit);
+      const target = parsed.error ? errEl : readout;
+      // Reuse whichever line is on screen; class flips so an error reads as one.
+      const line = target || readout || errEl;
+      if (line) {
+        line.textContent = text;
+        line.classList.toggle("warn", !!parsed.error);
+      }
+    };
+    pages.addEventListener("input", refresh);
+    pages.addEventListener("change", () => setAIScope({ pages: pages.value }));
   }
 }
 

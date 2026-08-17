@@ -405,7 +405,7 @@ func TestDetectionAIScopeLimitsToPageRange(t *testing.T) {
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"big.txt"}, nil,
-		&AIScope{DocName: "big.txt", FromPage: 2, ToPage: 3})
+		&AIScope{DocName: "big.txt", Pages: []int{2, 3}})
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
@@ -447,7 +447,7 @@ func TestDetectionAIScopeOutOfRangeReportsButFinishes(t *testing.T) {
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"small.txt"}, nil,
-		&AIScope{DocName: "small.txt", FromPage: 5, ToPage: 9})
+		&AIScope{DocName: "small.txt", Pages: []int{5, 9}})
 	if err != nil {
 		t.Fatalf("an out-of-range scope must not fail the run: %v", err)
 	}
@@ -456,6 +456,46 @@ func TestDetectionAIScopeOutOfRangeReportsButFinishes(t *testing.T) {
 	}
 	if len(seen) != 0 {
 		t.Errorf("nothing should have been sent to the model for an invalid range, saw %q", seen)
+	}
+}
+
+// TestDetectionAIScopeDiscontiguousPages proves a discontiguous page set (the
+// CR3 feature, "1,3") reaches the local AI as exactly those pages, with the
+// pages between them left out.
+func TestDetectionAIScopeDiscontiguousPages(t *testing.T) {
+	var seen []string
+	srv := scopeChatServer(&seen)
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{
+		{Name: "big.txt", Format: engine.FormatTXT, Unit: engine.UnitLine,
+			Markdown: "alpha line one\nbravo line two\ncharlie line three\ndelta line four\n"},
+	}
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseAI = true
+	app.settings.UseAutoDetect = false // isolate the AI route
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"big.txt"}, nil,
+		&AIScope{DocName: "big.txt", Pages: []int{1, 3}})
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	if len(res.Errors) != 0 {
+		t.Fatalf("a valid scope must not error: %v", res.Errors)
+	}
+
+	joined := strings.Join(seen, "\n")
+	for _, want := range []string{"alpha", "charlie"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("the discontiguous scan missed line %q; saw %q", want, joined)
+		}
+	}
+	for _, leak := range []string{"bravo", "delta"} {
+		if strings.Contains(joined, leak) {
+			t.Errorf("the discontiguous scope leaked line %q; saw %q", leak, joined)
+		}
 	}
 }
 

@@ -315,7 +315,7 @@ function localAIHTML({ documents = [], scope = null, useAI = true } = {}) {
   return all(railBody(getState()), "section.rail-section")[1].outer;
 }
 
-test("the scan-scope picker defaults to all documents with no range", () => {
+test("the scan-scope picker defaults to all documents with no page controls", () => {
   const html = localAIHTML({
     documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
   });
@@ -323,43 +323,60 @@ test("the scan-scope picker defaults to all documents with no range", () => {
   assert.ok(select, "the Local AI section offers a document picker");
   const selected = all(select.outer, "option").find((o) => "selected" in o.attrs);
   assert.equal(selected.attrs.value, "", "all documents is the default");
-  assert.ok(!exists(html, "#ai-scope-from"), "no range until a document is chosen");
+  assert.ok(!exists(html, "input.ai-scope-mode"),
+    "no mode control until a document is chosen");
+  assert.ok(!exists(html, "#ai-pages"), "no page field until a document is chosen");
 });
 
-test("choosing a multi-unit document reveals a bounded range", () => {
+test("choosing a multi-unit document reveals the Entire/Specific control", () => {
   const html = localAIHTML({
     documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
-    scope: { docName: "a.pdf", fromPage: 1, toPage: 1 },
+    scope: { docName: "a.pdf", mode: "all" },
   });
-  const from = one(html, "#ai-scope-from");
-  const to = one(html, "#ai-scope-to");
-  assert.ok(from && to, "From and To inputs appear for a multi-unit document");
-  assert.equal(from.attrs.max, "6", "the range is bounded by the page count");
-  assert.equal(to.attrs.max, "6");
+  const modes = all(html, "input.ai-scope-mode");
+  assert.equal(modes.length, 2, "an Entire document / Specific pages pair appears");
+  const values = modes.map((m) => m.attrs.value).sort();
+  assert.deepEqual(values, ["all", "pages"]);
+  const checked = modes.find((m) => "checked" in m.attrs);
+  assert.equal(checked.attrs.value, "all", "entire document is the default choice");
+  assert.ok(!exists(html, "#ai-pages"), "no page field until Specific pages is chosen");
 });
 
-test("a single-unit document offers no range at all", () => {
+test("Specific pages mode reveals a page field and a live read-out", () => {
+  const html = localAIHTML({
+    documents: [{ name: "a.pdf", unit: "page", pageCount: 20 }],
+    scope: { docName: "a.pdf", mode: "pages", pages: "12-15,18" },
+  });
+  const field = one(html, "#ai-pages");
+  assert.ok(field, "a free-text page field appears in Specific pages mode");
+  assert.equal(field.attrs.value, "12-15,18", "the field shows the stored spec");
+  assert.ok(exists(html, "#ai-pages-readout"),
+    "a read-out reports how many units the spec resolves to");
+  // 12,13,14,15,18 = five pages.
+  const readout = textOf(html, "#ai-pages-readout");
+  assert.ok(readout.includes("5"),
+    `the read-out counts the resolved units, got ${readout}`);
+});
+
+test("a malformed page spec shows an inline error", () => {
+  const html = localAIHTML({
+    documents: [{ name: "a.pdf", unit: "page", pageCount: 20 }],
+    scope: { docName: "a.pdf", mode: "pages", pages: "12,oops" },
+  });
+  assert.ok(exists(html, "#ai-pages-error"), "a bad token is named inline");
+  const err = textOf(html, "#ai-pages-error");
+  assert.ok(err.includes("oops"),
+    `the error names the offending token, got ${err}`);
+});
+
+test("a single-unit document offers no page controls at all", () => {
   const html = localAIHTML({
     documents: [{ name: "note.txt", unit: "line", pageCount: 1 }],
-    scope: { docName: "note.txt", fromPage: 1, toPage: 1 },
+    scope: { docName: "note.txt", mode: "all" },
   });
-  assert.ok(!exists(html, "#ai-scope-from"),
-    "a document with one addressable unit has nothing to range over");
-});
-
-test("a multi-unit range warns, a single unit does not", () => {
-  const range = localAIHTML({
-    documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
-    scope: { docName: "a.pdf", fromPage: 2, toPage: 4 },
-  });
-  assert.ok(exists(range, "#ai-scope-warn"),
-    "spanning several pages is the 'too much' the feature warns about");
-  const single = localAIHTML({
-    documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
-    scope: { docName: "a.pdf", fromPage: 3, toPage: 3 },
-  });
-  assert.ok(!exists(single, "#ai-scope-warn"),
-    "one page is not a range, so it does not nag");
+  assert.ok(!exists(html, "input.ai-scope-mode"),
+    "a document with one addressable unit has nothing to scope over");
+  assert.ok(!exists(html, "#ai-pages"));
 });
 
 // --- The trigger grouping ------------------------------------------------
