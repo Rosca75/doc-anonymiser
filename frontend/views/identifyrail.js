@@ -28,7 +28,7 @@
 // llmEnabled(state) = useAI AND ollama.available, so the deterministic pipeline
 // stays fully usable with Ollama absent.
 
-import { applySettings, listOllamaModels, probeOllama } from "../api.js";
+import { applySettings, listOllamaModels, probeOllama, loadSession, saveSession } from "../api.js";
 import {
   getState, setState,
   applyPreset, toggleCategory, selectionPresetName, setUseAI,
@@ -37,6 +37,7 @@ import {
   setSmartDetectOptions, smartDetectOptions,
   setAIScope,
   parsePageSpec,
+  buildRunRequest,
   ALL_CATEGORIES,
   NAME_CATEGORIES, DECLARED_CATEGORIES,
 } from "../state.js";
@@ -45,6 +46,11 @@ import { button, chipRow, sectionLabel, collapsibleGroup, wireGroups } from "../
 import { CARDS, CONFIGURE, RAIL, VALUES, categoryLabels } from "../copy.js";
 import { examplesFor, countryOptions } from "../countries.js";
 import { categoryAppliesTo, CATEGORY_COUNTRIES } from "../countries.js";
+import { notify } from "../toast.js";
+// applySession lives in export.js (it is the load half of the same save/load
+// pair the Export step owns). Importing it here is a one-way edge: export.js
+// never imports the rail, so the module graph stays acyclic.
+import { applySession } from "./export.js";
 
 /**
  * llmDisabledTooltip(port) is what every disabled LLM control says when Ollama
@@ -82,7 +88,7 @@ export const RAIL_SECTIONS = [
 //
 // Local AI and Cloud AI start folded: they are off, and an open panel of
 // disabled fields is noise above the settings that ARE in use.
-const collapsedGroups = new Set(["rail-local", "rail-cloud"]);
+const collapsedGroups = new Set(["rail-local", "rail-cloud", "rail-profile"]);
 
 // PRESETS: engine level → user-facing label. "soft/medium/advanced" reads too
 // technical; Standard and Thorough say what they mean.
@@ -144,6 +150,7 @@ export function renderIdentifyRail(container) {
   wireScope(container);
   wireSmart(container);
   wireLocalAI(container);
+  wireProfile(container);
   wireGroups(container, (id) => {
     if (collapsedGroups.has(id)) collapsedGroups.delete(id);
     else collapsedGroups.add(id);
@@ -163,7 +170,7 @@ export function renderIdentifyRail(container) {
  * itself rather than three fields down inside it.
  */
 export function railBody(s) {
-  return RAIL_SECTIONS.map(([id, title, key]) => {
+  const routes = RAIL_SECTIONS.map(([id, title, key]) => {
     const on = id === "rail-smart" ? smartRouteOn(s) : (key ? !!s.settings[key] : false);
     return collapsibleGroup(id, title, sectionBody(s, id), {
       open: !collapsedGroups.has(id),
@@ -171,6 +178,35 @@ export function railBody(s) {
       headRightHTML: routeSwitch(s, id, key, on),
     });
   }).join("");
+  // The Load profile section sits AFTER the routes. It is not a detection route,
+  // so it has no header switch: it is a plain collapsible section, folded shut
+  // by default like the other off-by-default panels below Smart detection.
+  return routes + collapsibleGroup("rail-profile", RAIL.profileTitle, profileSection(s), {
+    open: !collapsedGroups.has("rail-profile"),
+    cls: "rail-section",
+  });
+}
+
+/**
+ * profileSection(s) is the Load/Save profile body. Load restores a saved setup;
+ * Save writes one, but only once detection has run at least once this session
+ * (s.detectionRan), because a profile without a registry behind it saves an
+ * empty key. The disabled Save says why in its tooltip rather than vanishing, so
+ * the control that will become available is visible before it does.
+ */
+function profileSection(s) {
+  const canSave = !!s.detectionRan;
+  return `<div class="rail-block">` +
+    `<p class="hint">${escapeHTML(RAIL.profileHint)}</p>` +
+    `<div class="button-pair">` +
+    button(RAIL.profileLoad, { kind: "secondary", id: "profile-load" }) +
+    button(RAIL.profileSave, {
+      kind: "secondary",
+      id: "profile-save",
+      disabled: !canSave,
+      title: canSave ? "" : RAIL.profileSaveDisabled,
+    }) +
+    `</div></div>`;
 }
 
 /**
@@ -743,6 +779,39 @@ function wireLocalAI(container) {
     pages.addEventListener("input", refresh);
     pages.addEventListener("change", () => setAIScope({ pages: pages.value }));
   }
+}
+
+// --- Load profile ---------------------------------------------------------
+
+/**
+ * wireProfile(container) wires the Load/Save profile buttons. Load restores a
+ * saved session with applySession (export.js owns the load half of the pair);
+ * Save writes one. Save is guarded on detectionRan both in the disabled
+ * attribute (profileSection) and here, so a click that slips through a stale
+ * DOM cannot save an empty registry.
+ */
+function wireProfile(container) {
+  container.querySelector("#profile-load")?.addEventListener("click", async () => {
+    try {
+      const session = await loadSession();
+      if (!session) return; // cancelled
+      applySession(session);
+      notify(RAIL.profileLoadDone, "ok");
+    } catch (err) {
+      // A refused session file (a version this build does not read) lands here
+      // with Go's actionable message, and the user needs the whole of it.
+      notify(String(err?.message ?? err), "warn");
+    }
+  });
+  container.querySelector("#profile-save")?.addEventListener("click", async () => {
+    if (!getState().detectionRan) return; // guard: matches the disabled attribute
+    try {
+      await saveSession(buildRunRequest());
+      notify(RAIL.profileSaveDone, "ok");
+    } catch (err) {
+      notify(String(err?.message ?? err), "warn");
+    }
+  });
 }
 
 // --- Cloud AI -------------------------------------------------------------

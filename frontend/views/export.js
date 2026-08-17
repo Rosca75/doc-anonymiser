@@ -22,7 +22,7 @@
 
 import {
   exportDocumentFormats, saveDocument, exportAllZipTo, chooseExportFolder,
-  copyDocument, exportMapping, exportReport, saveSession, loadSession,
+  copyDocument, exportMapping, exportReport, saveSession,
   getSameFormatMetadata, saveSameFormat,
 } from "../api.js";
 import {
@@ -61,7 +61,7 @@ export function renderExport(container) {
           ${exportCard(s, docs)}
           ${mappingCard()}
           ${reportCard(s)}
-          ${sessionCard()}
+          ${profileCard()}
         </div>
         ${documentsCard(s, docs)}
       </div>
@@ -131,12 +131,17 @@ function reportCard(s) {
   return foldCard("report", EXPORT.reportTitle, EXPORT.reportSummary(categories), body);
 }
 
-function sessionCard() {
+/**
+ * profileCard() offers ONLY Save. Load moved to the Identify rail's "Load
+ * profile" section, because loading a profile is a setup choice made before a
+ * run, not an egress action taken after one. Exported so the render test can
+ * assert the trimmed shape without standing up the whole screen.
+ */
+export function profileCard() {
   const body =
     `<p class="hint">${escapeHTML(EXPORT.sessionHint)}</p>` +
     `<div class="button-pair">` +
     button(EXPORT.save, { kind: "secondary", id: "ses-save" }) +
-    button(EXPORT.load, { kind: "secondary", id: "ses-load" }) +
     `</div>`;
   return foldCard("session", EXPORT.sessionTitle, EXPORT.sessionSummary, body);
 }
@@ -338,7 +343,6 @@ function wire(container, s) {
   wireDestination(container);
   wireKeyBearing(container);
   wireReport(container);
-  wireSession(container);
   wireDocuments(container);
   wireMetaReview(container, s);
   wireNewBatch(container);
@@ -424,21 +428,6 @@ function wireReport(container) {
     save("json", EXPORT.reportJsonDone));
   container.querySelector("#rep-md")?.addEventListener("click", () =>
     save("md", EXPORT.reportMdDone));
-}
-
-function wireSession(container) {
-  container.querySelector("#ses-load")?.addEventListener("click", async () => {
-    try {
-      const session = await loadSession();
-      if (!session) return; // cancelled
-      applySession(session);
-      notify(EXPORT.sessionLoadDone, "ok");
-    } catch (err) {
-      // A refused session file (a version this build does not read) lands here
-      // with Go's actionable message, and the user needs the whole of it.
-      notify(String(err?.message ?? err), "warn");
-    }
-  });
 }
 
 /**

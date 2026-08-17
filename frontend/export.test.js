@@ -8,8 +8,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { outputName, applySession } from "./views/export.js";
+import { outputName, applySession, profileCard } from "./views/export.js";
 import { resetState, getState } from "./state.js";
+import { one, exists, textOf } from "./testhtml.js";
 
 test("outputName puts _anon before the extension", () => {
   assert.equal(outputName("services-agreement.docx"), "services-agreement_anon.docx");
@@ -53,4 +54,12 @@ test("applySession with both detection halves off derives useSmartDetect off", (
   resetState();
   applySession({ settings: { level: "medium", useNativeDetect: false, useAutoDetect: false } });
   assert.equal(getState().settings.useSmartDetect, false, "both off means the route reads off");
+});
+
+test("profileCard renders as Profile with Save and NO Load button", () => {
+  const html = profileCard();
+  // Renamed section: the Export step keeps the SAVE half of the profile only.
+  assert.ok(textOf(html, ".cgroup-title").includes("Profile"), "section titled Profile");
+  assert.ok(exists(html, "#ses-save"), "Save button present");
+  assert.equal(exists(html, "#ses-load"), false, "Load button removed (it lives on the rail)");
 });

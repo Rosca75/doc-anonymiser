@@ -315,6 +315,17 @@ export const RAIL = {
   // has said in writing what may.
   cloudNotYet: "Not available yet",
   cloudBody: "Connecting to a cloud endpoint is not built yet. When it is, this is where you will pick the provider, the model and the endpoint, and confirm in writing what may leave this machine before anything is sent.",
+
+  // The Load profile section: a plain (switch-less) section at the foot of the
+  // rail. Load restores a saved profile; Save writes one, but only once a run
+  // has produced a registry worth preserving.
+  profileTitle: "Load profile",
+  profileHint: "Reuse a saved setup: values, allowlist, patterns, rules and the placeholder registry, so a follow-up batch reuses the same placeholders.",
+  profileLoad: "Load",
+  profileSave: "Save",
+  profileSaveDisabled: "Run detection once before saving a profile.",
+  profileLoadDone: "Profile loaded: values, allowlist, patterns and rules restored.",
+  profileSaveDone: "Profile saved. A follow-up batch will reuse these placeholders.",
 };
 
 // Values step copy: the smart-detection tuning block
@@ -886,16 +897,15 @@ export const EXPORT = {
   reportJsonDone: "Report exported as JSON.",
   reportMdDone: "Report exported as Markdown.",
 
-  // Session.
-  sessionTitle: "Session",
+  // Profile (Save only; Load lives on the Identify rail).
+  sessionTitle: "Profile",
   sessionSummary: "reuse placeholders",
   sessionHint: "Saves values, allowlist, patterns, rules and the placeholder registry, so a follow-up batch reuses the same placeholders. Contains the key.",
   save: "Save",
-  load: "Load",
-  sessionSaveTitle: "Save the session file",
-  sessionSaveConfirm: "Save session",
-  sessionSaveDone: "Session saved. A follow-up batch will reuse these placeholders.",
-  sessionLoadDone: "Session loaded: values, allowlist, patterns and rules restored.",
+  sessionSaveTitle: "Save the profile file",
+  sessionSaveConfirm: "Save profile",
+  sessionSaveDone: "Profile saved. A follow-up batch will reuse these placeholders.",
+  sessionLoadDone: "Profile loaded: values, allowlist, patterns and rules restored.",
 
   // The document list.
   documentsTitle: "Documents",

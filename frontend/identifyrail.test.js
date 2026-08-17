@@ -170,15 +170,16 @@ function railHTML(patch = {}) {
   return railBody(getState());
 }
 
-test("the rail renders three sections and nothing else at the top level", () => {
+test("the rail renders the three routes plus the Load profile section", () => {
   const html = railHTML();
   const sections = all(html, "section.rail-section");
-  assert.equal(sections.length, 3);
+  assert.equal(sections.length, 4);
   // The first title in a section is its own; the rest belong to the groups
-  // nested inside it (the category groups, the strictness block).
+  // nested inside it (the category groups, the strictness block). The fourth
+  // section is the switch-less Load profile panel at the foot of the rail.
   const titles = sections.map((sec) =>
     stripTags(all(sec.outer, "span.cgroup-title")[0].inner).trim());
-  assert.deepEqual(titles, [RAIL.tabSmart, RAIL.tabLocalAI, RAIL.tabCloudAI]);
+  assert.deepEqual(titles, [RAIL.tabSmart, RAIL.tabLocalAI, RAIL.tabCloudAI, RAIL.profileTitle]);
 });
 
 test("Smart detection is ON by default, and switchable", () => {
@@ -261,6 +262,38 @@ test("the Smart detection header switch is a master over both sub-toggles", () =
   setUseNativeDetect(true);
   smart = all(railBody(getState()), "input.route-toggle")[0];
   assert.ok("checked" in smart.attrs, "either half on means the section reads on");
+});
+
+// --- The Load profile section (CR7) --------------------------------------
+
+test("the Load profile section renders AFTER Cloud AI", () => {
+  resetState();
+  const html = railBody(getState());
+  // Ordering by first appearance: the profile title must come after the Cloud
+  // AI placeholder copy, so the section sits at the foot of the rail.
+  assert.ok(html.includes(RAIL.profileTitle), "the Load profile section renders");
+  assert.ok(html.indexOf(RAIL.profileTitle) > html.indexOf(RAIL.cloudNotYet),
+    "Load profile is below Cloud AI");
+});
+
+test("the Load profile section has a Load and a Save button", () => {
+  resetState();
+  const html = railBody(getState());
+  assert.ok(exists(html, "#profile-load"), "Load button present");
+  assert.ok(exists(html, "#profile-save"), "Save button present");
+});
+
+test("the profile Save is disabled until detection has run once", () => {
+  resetState();
+  // Fresh session: no detection has run, so Save is disabled with the reason.
+  let save = one(railBody(getState()), "#profile-save");
+  assert.ok("disabled" in save.attrs, "Save is disabled before any detection");
+  assert.ok((save.attrs.title || "").includes(RAIL.profileSaveDisabled),
+    "the disabled Save says why in its tooltip");
+  // After a detection run the gate opens.
+  setState({ detectionRan: true });
+  save = one(railBody(getState()), "#profile-save");
+  assert.ok(!("disabled" in save.attrs), "Save is enabled once detection has run");
 });
 
 test("the strictness lever is a select of the three levels, balanced by default", () => {

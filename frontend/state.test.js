@@ -21,6 +21,7 @@ import {
   setUseAI, setUseSmartDetect, detectionRoutesOn, llmEnabled,
   setUseNativeDetect, setUseAutoDetect,
   addCandidates, acceptCandidate, rejectCandidate,
+  markDetectionRan,
   moveVariant, entityAutocomplete, reassignOriginal,
   applyImportResult,
   setAIScope, aiScopeArg, parsePageSpec,
@@ -1451,6 +1452,18 @@ test("startNewBatch clears everything about THIS batch", () => {
   assert.equal(s.running, false);
   assert.equal(s.progress, null);
   assert.equal(s.discovery, null);
+  assert.equal(s.detectionRan, false, "the profile Save gate closes again for a new batch");
+});
+
+test("markDetectionRan latches detectionRan on, and startNewBatch resets it", () => {
+  resetState();
+  assert.equal(getState().detectionRan, false, "a fresh session has not run detection");
+  markDetectionRan();
+  assert.equal(getState().detectionRan, true, "a completed detection opens the Save gate");
+  markDetectionRan();
+  assert.equal(getState().detectionRan, true, "it is a one-way latch, not a toggle");
+  startNewBatch();
+  assert.equal(getState().detectionRan, false, "Start over closes the gate again");
 });
 
 test("startNewBatch clears the MAPPING, which is the previous batch's key", () => {

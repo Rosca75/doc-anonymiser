@@ -198,6 +198,13 @@ const initialState = {
   // It is never recomputed here.
   discovery: null,
 
+  // Has a detection run completed at least once this session? Gates the
+  // "Save profile" button on the Identify rail: a profile records what a run
+  // produced (the registry, the accepted values), so offering to save one
+  // before anything has been detected would write an empty key. Set true on the
+  // detection-done path (markDetectionRan), reset when the batch is cleared.
+  detectionRan: false,
+
   // Unified candidate review list: candidates from
   // any discovery method wait HERE until explicitly accepted; nothing
   // flows into entities without user confirmation. Each row:
@@ -1011,6 +1018,9 @@ export const STEP_RESETS = {
     candidates: [],
     patterns: [],
     discovery: null,
+    // Stepping back to Identify clears what detection produced, so the
+    // "Save profile" gate must close again until a fresh run completes.
+    detectionRan: false,
   }),
   // Anonymise owns the run itself, everything it produced, and the two
   // editing surfaces that only exist once there is a result to edit: the
@@ -1336,6 +1346,18 @@ export function addCandidates(items, source) {
   }
   if (added.length) setState({ candidates: [...state.candidates, ...added] });
   return added.length;
+}
+
+/**
+ * markDetectionRan() records that a detection run has completed at least once
+ * this session. It is a one-way latch within a batch: the Identify rail's
+ * "Save profile" button reads it, and a saved profile is only meaningful once a
+ * run has produced a registry to preserve. It is called from the detection-done
+ * path (main.js) and reset when the batch is cleared (startNewBatch, the
+ * Identify step reset).
+ */
+export function markDetectionRan() {
+  if (!state.detectionRan) setState({ detectionRan: true });
 }
 
 /**
@@ -2023,6 +2045,7 @@ export function startNewBatch() {
     metaReview: {},
     exportDir: state.exportDir,
     notice: null,
+    detectionRan: false,
   });
   return cleared;
 }
