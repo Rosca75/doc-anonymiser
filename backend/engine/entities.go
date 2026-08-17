@@ -391,6 +391,11 @@ func DetectCustomPatterns(text string, patterns []CustomPattern, allow *Allowlis
 				Category:   CatCustomPatterns,
 				Original:   original,
 				Confidence: ConfidenceDeterministic,
+				// A pattern the user wrote is a DECLARATION, the same act as
+				// typing a value, so it ranks with one. It loses to a native
+				// signal, which is pass 1 beating pass 2, and beats both
+				// detectors, which is the user beating a guess.
+				Origin: OriginDeclared,
 			})
 		}
 	}

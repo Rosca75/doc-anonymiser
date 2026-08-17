@@ -48,6 +48,12 @@ type Span struct {
 	// value up (capped at 1.0). Zero means "not scored" and is treated as
 	// 1.0 by the threshold filter for back-compat.
 	Confidence float32 `json:"confidence,omitempty"`
+	// Origin is the ROUTE that produced this span (origin.go). It decides
+	// precedence when two routes claim the same characters, which Confidence
+	// cannot do: confidence is also the input to the MinConfidence floor, so
+	// using it for precedence means raising the floor silently reorders which
+	// route wins. Empty ranks with OriginDeclared.
+	Origin string `json:"origin,omitempty"`
 }
 
 // CanonicalOrOriginal returns the registry key for this span: the
@@ -383,6 +389,7 @@ func DetectPIISelected(text string, sel CategorySelection, country string) []Spa
 				Category:   p.category,
 				Original:   original,
 				Confidence: ConfidenceDeterministic,
+				Origin:     OriginNative,
 			})
 		}
 	}
@@ -513,18 +520,25 @@ func effectiveConfidence(s Span) float32 {
 // ResolveOverlaps keeps a non-overlapping subset of spans, in the fixed
 // priority order below. The result is sorted by Start.
 //
-//  1. Higher confidence wins. A checksum-verified card beats a raw pattern hit
-//     at the same offset. A zero Confidence is read as 1.0, so a producer that
-//     states none is trusted rather than ranked last.
-//  2. Longer match wins. This is the "email inside a URL" case: the URL is
-//     longer, so the URL wins.
-//  3. Earlier start, then category name. A tie-break that makes the output
+//  1. Lower OriginRank wins: native, then declared, then auto, then AI
+//     (origin.go). Origin comes FIRST because it is the only comparator that
+//     answers "which route should own this string", and it is the answer the
+//     user is shown. The two comparators below cannot answer it: a regex
+//     signal and a custom pattern both score 1.0, so confidence leaves them
+//     tied, and length then decides by whichever match happens to be longer,
+//     which depends on the text rather than on a rule.
+//  2. Higher confidence wins. A checksum-verified card beats a raw pattern hit
+//     at the same offset. Now a tie-break WITHIN one route. A zero Confidence
+//     is read as 1.0, so a producer that states none is trusted rather than
+//     ranked last.
+//  3. Longer match wins. This is the "email inside a URL" case: both are
+//     native, so this is still what decides it, and the URL is longer.
+//  4. Earlier start, then category name. A tie-break that makes the output
 //     fully deterministic, so the tests can pin it.
 //
 // The order agrees with the registry's precedence rule (pass 1 before pass 2
-// before pass 3, which is also 1.0 before 0.95 before 0.8), so the span
-// resolver and the registry can never disagree about which category owns a
-// string.
+// before pass 3), so the span resolver and the registry can never disagree
+// about which category owns a string.
 func ResolveOverlaps(spans []Span) []Span {
 	kept, _ := resolveOverlaps(spans, false)
 	return kept
@@ -558,6 +572,10 @@ func resolveOverlaps(spans []Span, collect bool) (kept, dropped []Span) {
 	ordered := make([]Span, len(spans))
 	copy(ordered, spans)
 	sort.Slice(ordered, func(i, j int) bool {
+		ri, rj := OriginRank(ordered[i].Origin), OriginRank(ordered[j].Origin)
+		if ri != rj {
+			return ri < rj // the superseding route first
+		}
 		ci, cj := effectiveConfidence(ordered[i]), effectiveConfidence(ordered[j])
 		if ci != cj {
 			return ci > cj // higher confidence first

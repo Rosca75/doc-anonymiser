@@ -130,9 +130,17 @@ func NewRegistry() *Registry {
 //
 // The invariant: if byOriginal already owns the string under another
 // category, return the existing placeholder and bump its count rather than
-// minting a second. Precedence is the fixed pass order: pass 1 (PII) before
-// pass 2 (entities) before pass 3 (LLM), so a string that is both an email
-// and a declared entity becomes [EMAIL_n].
+// minting a second. A string that is both an email and a declared entity gets
+// ONE placeholder.
+//
+// WHICH category owns it is decided UPSTREAM, by ownership unification
+// (pipeline.go unifyOwnership), which picks the winning route by OriginRank
+// before a single placeholder is minted. This function is deliberately not
+// precedence-aware: changing an entry's category after the fact would change
+// its placeholder text, and a placeholder that has already left the machine,
+// in an export, a mapping CSV or a session file, can never be re-numbered
+// (CLAUDE.md section 5). So the first claimant keeps the entry, and it is
+// unification's job to make sure the first claimant is the right one.
 func (r *Registry) Assign(category, original string) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

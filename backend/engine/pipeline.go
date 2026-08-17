@@ -871,6 +871,12 @@ func DetectKnownOriginals(text string, entries []MappingEntry) []Span {
 				Category:  e.Category,
 				Original:  text[m[0]:m[1]],
 				Canonical: e.Original,
+				// A registry entry is ownership that is already DECIDED: the
+				// string earned this placeholder in an earlier pass or an
+				// earlier document, and a placeholder that has left the machine
+				// can never be re-numbered. So it outranks a fresh detection
+				// rather than being re-litigated by one.
+				Origin: OriginNative,
 			})
 		}
 	}
