@@ -40,7 +40,7 @@
 
 import {
   runDetection, cancelDetection, countTermMatches, patternMatches,
-  expandVariants, validatePattern,
+  expandVariants, validatePattern, checkIntersections,
 } from "../api.js";
 import {
   getState, setState, llmEnabled, detectionRoutesOn,
@@ -50,8 +50,9 @@ import {
   acceptAllShown, rejectAllShown, moveVariant,
   addPattern, removePattern, NAME_CATEGORIES,
   renameEntity, renameVariant, changeEntityCategory, changeCandidateCategory,
-  groupEntities, clearAllEntities, entityConflicts, spellingsOf, removeAllowTerm,
-  aiScopeArg,
+  groupEntities, clearAllEntities, entityConflicts, spellingsOf, removeAllowTerm, addAllowTerm,
+  aiScopeArg, curate, setIntersections, intersectionsFor, buildIntersectionRequest,
+  foldIntoFamily,
 } from "../state.js";
 import { pendingExpansions } from "../entitymodel.js";
 import {
@@ -174,6 +175,42 @@ export function renderIdentifyWorkspace(container, opts = {}) {
     (opts.footerHTML ?? "");
 
   wire(container, s, shown);
+
+  // Ask Go which values another route also claims, whenever the answer could
+  // have changed. Reading the CONFIGURATION off each repaint is what makes this
+  // one place instead of a call at every reducer that touches the value list: a
+  // reducer added later cannot forget it, and the debounce absorbs the burst of
+  // repaints one edit produces.
+  const signature = intersectionSignature(s);
+  if (signature !== lastIntersectionSignature) {
+    lastIntersectionSignature = signature;
+    scheduleIntersectionCheck();
+  }
+}
+
+// The configuration the last intersection check was asked about. Compared as a
+// string so a repaint that changed nothing relevant (a filter, a panel opening)
+// does not re-ask.
+let lastIntersectionSignature = "";
+
+/**
+ * intersectionSignature(s) is everything an intersection depends on: the
+ * values, the patterns and the detection scope. Deliberately NOT the whole
+ * state, so opening a panel or typing in the search box does not send Go over
+ * every document again.
+ */
+function intersectionSignature(s) {
+  const values = s.entities
+    .map((e) => `${e.category}|${e.canonical}|${e.origin ?? "declared"}`)
+    .join("\n");
+  const patterns = (s.patterns ?? []).map((p) => p.expr).join("\n");
+  const categories = Object.entries(s.settings?.categories ?? {})
+    .filter(([, on]) => on).map(([c]) => c).sort().join(",");
+  // JSON rather than a joined string: a value or a pattern may contain any
+  // separator character, and a collision here reads as "nothing changed".
+  return JSON.stringify([
+    values, patterns, categories, s.allowlist, s.settings?.useNativeDetect === true,
+  ]);
 }
 
 /** head(s, busy) is the card header: the title, the live counts, the search box
@@ -365,6 +402,21 @@ function suggestionHeader(s) {
     `</div>`;
 }
 
+/**
+ * spellingsOfCandidate(c) names the longer forms folded into a suggestion.
+ *
+ * A family arrives as ONE row, which is the point: three rows for "Coca-Cola",
+ * "Coca-Cola company" and "Coca-Cola Ltd." invite three separate accept
+ * decisions for one company. But accepting the row also accepts the spellings,
+ * so the row has to say which ones, or the user is agreeing to something they
+ * cannot see.
+ */
+function spellingsOfCandidate(c) {
+  const variants = c.variants ?? [];
+  if (variants.length === 0) return "";
+  return ` <span class="cand-spellings hint">${escapeHTML(WORKSPACE.alsoSpelled(variants))}</span>`;
+}
+
 function suggestionRow(c) {
   const source = WORKSPACE.sourceLabels[c.source] ?? c.source;
   // The type is a dropdown, not a label: Smart detection and the local AI guess
@@ -377,7 +429,7 @@ function suggestionRow(c) {
   });
   return `<div class="grid-row" style="grid-template-columns:${SUGGESTION_COLUMNS}"` +
     ` data-text="${escapeHTML(c.text)}">` +
-    `<span class="cell-value" title="${escapeHTML(c.text)}">${escapeHTML(c.text)}</span>` +
+    `<span class="cell-value" title="${escapeHTML(c.text)}">${escapeHTML(c.text)}${spellingsOfCandidate(c)}</span>` +
     type +
     `<span class="cell-count mono">${escapeHTML(String(c.count ?? 0))}</span>` +
     `<span class="src-badge src-${escapeHTML(c.source)}">${escapeHTML(source)}</span>` +
@@ -484,12 +536,18 @@ export function valuesTab(s) {
   // Conflicts are computed ONCE for the whole list, because a collision is a
   // relationship BETWEEN two values: each card needs to know about the other.
   const conflicts = entityConflicts(s);
+  // Intersections come from Go and are keyed the same way, so a card attaches
+  // its own with no searching.
+  const overlaps = intersectionsFor(s);
   const shown = visibleValues(s.entities, valuesFilter);
   const cards = s.entities.length === 0
     ? `<div class="grid-empty">${escapeHTML(WORKSPACE.noValues)}</div>`
     : (shown.length === 0
       ? `<div class="grid-empty">${escapeHTML(WORKSPACE.noValuesMatch)}</div>`
-      : shown.map((e) => valueCard(e, conflicts.get(entityKey(e.category, e.canonical)), s)).join("") +
+      : shown.map((e) => {
+        const key = entityKey(e.category, e.canonical);
+        return valueCard(e, conflicts.get(key), s, overlaps.get(key));
+      }).join("") +
         // Shown only by the live search when it hides every card: the toolbar
         // filters imperatively without a re-render, so it needs a "no match"
         // line that is already in the DOM to reveal.
@@ -499,14 +557,19 @@ export function valuesTab(s) {
 }
 
 /**
- * valueCard(e, conflict, s) renders one value: its editable name, its type
- * dropdown, the group/solve/remove actions, and its variant chips.
+ * valueCard(e, conflict, s, overlap) renders one value: its editable name, its
+ * type dropdown, the group/solve/remove actions, and its variant chips.
  *
  * `conflict` is this value's entry from entityConflicts (or undefined when it is
  * clean). A conflict tints the card, and the exact name or chip at fault, so a
  * user can see BEFORE the Anonymise step which values would refuse the run.
+ *
+ * `overlap` is its entry from intersectionsFor: another route claims the same
+ * text. It is a WARNING and must not look like a blocking conflict, because the
+ * precedence rule always has an answer and the run will go ahead. It gets its
+ * own quieter tint and note, and it does not touch the step 2 to 3 gate.
  */
-function valueCard(e, conflict, s) {
+function valueCard(e, conflict, s, overlap) {
   const key = entityKey(e.category, e.canonical);
   const feedback = rowFeedback.get(key);
   const nameBad = !!(conflict && conflict.nameConflicts.length);
@@ -529,6 +592,14 @@ function valueCard(e, conflict, s) {
   const typeSelect = categorySelect(e.category, {
     cls: "value-type", title: WORKSPACE.changeTypeLabel, ariaLabel: WORKSPACE.changeTypeLabel,
   });
+
+  // Which route found this value. It is shown, not just stored, because the
+  // precedence rule between routes is only meaningful to a user who can see
+  // which route owns a value: an unexplained decision reads as randomness.
+  const origin = e.origin ?? "declared";
+  const originChip =
+    `<span class="origin-chip origin-${escapeHTML(origin)}" title="${escapeHTML(WORKSPACE.originTitle)}">` +
+    `${escapeHTML(WORKSPACE.originLabel[origin] ?? origin)}</span>`;
 
   const actions =
     button(WORKSPACE.groupWith, {
@@ -583,19 +654,22 @@ function valueCard(e, conflict, s) {
       `</div>`
     : "";
 
+  const intersectionNote = overlap ? intersectionNoteHTML(overlap) : "";
+
   const panel = openValuePanel.key === key
     ? (openValuePanel.kind === "group" ? groupPanel(e, s)
       : (openValuePanel.kind === "solve" && conflict ? solvePanel(e, conflict) : ""))
     : "";
 
-  return `<div class="value-card${conflict ? " conflicted" : ""}" data-key="${escapeHTML(key)}"` +
+  return `<div class="value-card${conflict ? " conflicted" : ""}${overlap ? " intersects" : ""}" data-key="${escapeHTML(key)}"` +
     ` data-category="${escapeHTML(e.category)}" data-canonical="${escapeHTML(e.canonical)}"` +
     ` data-search="${escapeHTML(searchText)}">` +
     `<div class="row-between">` +
-    `<div class="value-head">${nameBtn}${typeSelect}</div>` +
+    `<div class="value-head">${nameBtn}${typeSelect}${originChip}</div>` +
     `<div class="value-actions">${actions}</div>` +
     `</div>` +
     conflictNote +
+    intersectionNote +
     variantRow +
     (feedback ? `<div class="value-note"><span class="hint bad">${escapeHTML(feedback)}</span></div>` : "") +
     panel +
@@ -627,6 +701,40 @@ function groupPanel(e, s) {
     `<div class="panel-actions">` +
     button(WORKSPACE.groupApply, { kind: "secondary", cls: "group-apply" }) +
     button(WORKSPACE.groupCancel, { kind: "ghost", cls: "panel-cancel" }) +
+    `</div></div>`;
+}
+
+/**
+ * intersectionNoteHTML(overlap) is the quiet warning that another route claims
+ * this value's text.
+ *
+ * It is deliberately NOT shaped like a conflict note. The three blocking
+ * conflicts refuse the run and are tinted as errors; an intersection is a
+ * decision the engine can make on its own, so it explains itself and offers the
+ * two gestures that usually resolve it: never anonymise the covering term, or
+ * fold the two values into one. Both are existing mechanisms, reached through
+ * the same actions the card already carries.
+ */
+function intersectionNoteHTML(overlap) {
+  const route = WORKSPACE.originLabel[overlap.winnerOrigin] ?? overlap.winnerOrigin;
+  const covered = overlap.occurrences ?? 0;
+  const total = overlap.totalOccurrences ?? covered;
+  // Fully covered means the value is NEVER replaced under its own type, which
+  // is a different statement from "sometimes something else wins here".
+  const message = covered >= total
+    ? WORKSPACE.intersectionAll(overlap.value, overlap.winnerValue, route)
+    : WORKSPACE.intersectionSome(covered, total, overlap.value, overlap.winnerValue, route);
+
+  return `<div class="value-note intersection-note">` +
+    `<span class="hint warn-hint">${icon("info")}${escapeHTML(message)}</span>` +
+    `<span class="hint">${escapeHTML(WORKSPACE.intersectionOrder)}</span>` +
+    `<span class="hint">${escapeHTML(WORKSPACE.intersectionFix)}</span>` +
+    `<div class="panel-actions">` +
+    button(WORKSPACE.intersectionAllowWinner, {
+      kind: "ghost", cls: "intersection-allow",
+      data: { term: overlap.winnerValue },
+    }) +
+    button(WORKSPACE.groupWith, { kind: "ghost", cls: "value-group" }) +
     `</div></div>`;
 }
 
@@ -917,9 +1025,24 @@ function wireValues(container) {
   const add = async () => {
     const value = (drafts.value ?? "").trim();
     if (!value) return;
-    const n = addEntities([{ category: drafts.valueCategory, canonical: value }]);
     drafts.value = "";
     drafts.valueMatches = "";
+
+    // A value that is a spelling of one already listed joins it instead of
+    // becoming a rival. Detection folds families over its whole output; values
+    // added one at a time need the same treatment, or "Coca-Cola company"
+    // beside "Coca-Cola" leaves the text reading "[BRAND_1] company".
+    const family = foldIntoFamily(drafts.valueCategory, value);
+    if (family) {
+      // Said out loud, because a silent "your value became a spelling of
+      // another one" is indistinguishable from the button not working.
+      notify(WORKSPACE.foldedIntoValue(value, family.main), "info");
+      setState({});
+      await refreshVariants();
+      return;
+    }
+
+    const n = addEntities([{ category: drafts.valueCategory, canonical: value }]);
     if (n === 0) notify(WORKSPACE.valueAlreadyThere(value), "info");
     setState({});
     await refreshVariants();
@@ -945,9 +1068,22 @@ function wireValues(container) {
       else await refreshVariants();
     });
 
-    cardEl.querySelector(".value-group")?.addEventListener("click", () => {
-      togglePanel(key, "group");
+    // querySelectorAll, not querySelector: the intersection note carries a
+    // second "Group with" button, and both must open the same panel.
+    for (const groupBtn of cardEl.querySelectorAll(".value-group")) {
+      groupBtn.addEventListener("click", () => togglePanel(key, "group"));
+    }
+
+    // The intersection note's own action: the covering term goes on the
+    // never-anonymise list, so nothing replaces it and this value wins its text
+    // back. Existing mechanism, reached from the card that explains why.
+    cardEl.querySelector(".intersection-allow")?.addEventListener("click", (ev) => {
+      const term = ev.currentTarget.dataset.term;
+      if (!term) return;
+      addAllowTerm(term);
+      notify(WORKSPACE.intersectionAllowed(term), "ok");
     });
+
     cardEl.querySelector(".value-solve")?.addEventListener("click", () => {
       togglePanel(key, "solve");
     });
@@ -978,11 +1114,15 @@ function wireValues(container) {
         // The chip itself is a drag handle, so the remove button has to stop the
         // click reaching it.
         ev.stopPropagation();
-        // Removing a variant is an EXCLUSION, not a deletion: automatic expansion
-        // would put it straight back otherwise. moveVariant is for regrouping;
-        // here the variant simply stops applying.
-        excludeVariant(cat, canonical, del.dataset.variant);
+        // Deleting a spelling curates the value: the remaining chips become its
+        // whole list. moveVariant is for regrouping; here the spelling simply
+        // stops applying to anything.
+        const gone = del.dataset.variant;
+        deleteVariant(cat, canonical, gone);
         await refreshVariants();
+        // The nudge towards the tab that IS for negative rules: this deletion
+        // stops the spelling belonging to THIS value, not to every value.
+        notify(WORKSPACE.variantDeleted(gone), "info");
       });
     }
 
@@ -1126,7 +1266,7 @@ function wireSolvePanel(cardEl, cat, canonical) {
       } else if (act === "remove-allow") {
         removeAllowTerm(canonical);
       } else if (act === "drop-variant") {
-        excludeVariant(cat, canonical, action.dataset.spelling);
+        deleteVariant(cat, canonical, action.dataset.spelling);
         await refreshVariants();
       } else if (act === "merge") {
         groupEntities(
@@ -1324,32 +1464,25 @@ function revealVariantEditInput(textEl, category, canonical, key) {
 }
 
 /**
- * excludeVariant(category, canonical, variant) stops one spelling applying to a
+ * deleteVariant(category, canonical, variant) removes one spelling from a
  * value.
  *
- * It has to be an EXCLUSION rather than a removal: the automatic expansion would
- * regenerate an automatic variant on the next expansion, so deleting it would
- * look like the button did nothing. Setting variants back to pending re-expands
- * this row only.
+ * It CURATES the row: the remaining chips become the value's whole list and the
+ * automatic expansion stops applying. That is what makes the deletion stick.
+ * Deleting from an auto-expanding list would look like the button did nothing,
+ * because the next expansion would derive the same spelling again.
  *
- * It does NOT trigger the re-expansion itself: the caller calls refreshVariants
- * after it, so the value's own repaint and the re-expansion's repaint stay
- * separate. The value list's scroll survives both because scroll offsets are
- * preserved centrally by the shell repaint (scroll.js).
+ * It does NOT trigger a re-expansion, and there is nothing left to expand: a
+ * curated row's list is settled. The value list's scroll survives the repaint
+ * because scroll offsets are preserved centrally (scroll.js).
  */
-function excludeVariant(category, canonical, variant) {
+function deleteVariant(category, canonical, variant) {
   const s = getState();
+  const lower = variant.toLowerCase();
   setState({
     entities: s.entities.map((e) => {
       if (entityKey(e.category, e.canonical) !== entityKey(category, canonical)) return e;
-      const lower = variant.toLowerCase();
-      return {
-        ...e,
-        manualVariants: (e.manualVariants ?? []).filter((x) => x.toLowerCase() !== lower),
-        excludedVariants: [...(e.excludedVariants ?? []), variant],
-        variants: null, // re-expand ONLY this row
-        variantError: null,
-      };
+      return curate(e, [...spellingsOf(e).values()].filter((x) => x.toLowerCase() !== lower));
     }),
   });
 }
@@ -1381,7 +1514,7 @@ async function refreshVariants() {
     try {
       const variants = await expandVariants({
         category: e.category, canonical: e.canonical,
-        manualVariants: e.manualVariants, excludedVariants: e.excludedVariants ?? [],
+        manualVariants: e.manualVariants, autoExpand: e.autoExpand !== false,
       });
       setEntityVariants(e.category, e.canonical, variants ?? []);
     } catch (err) {
@@ -1392,6 +1525,47 @@ async function refreshVariants() {
     }
   }
   return pending.length;
+}
+
+// --- The intersection recheck ---------------------------------------------
+
+// The pending recheck timer. One at a time, last call wins: a user editing a
+// value list produces a burst of changes, and asking Go to re-scan every
+// document on each keystroke would make the screen stutter for an answer that
+// is about to be superseded.
+let intersectionTimer = null;
+
+// How long to wait for the edits to stop. Long enough to swallow a burst of
+// typing, short enough that the warning arrives while the user is still looking
+// at the card it belongs to.
+const INTERSECTION_DEBOUNCE_MS = 400;
+
+/**
+ * scheduleIntersectionCheck() asks Go, once the edits settle, which values
+ * another detection route also claims.
+ *
+ * The debounce lives here rather than in state.js because it is about how this
+ * screen talks to Go, not about what the store holds: the store simply clears
+ * the warnings whenever the value list changes, and this puts the fresh answer
+ * back when there is one.
+ *
+ * A missing bridge (a plain browser, the render tests) leaves the list empty
+ * and the screen unchanged. It must never throw: an unhandled rejection here
+ * would take the whole repaint down and blank the screen.
+ */
+function scheduleIntersectionCheck() {
+  if (intersectionTimer) clearTimeout(intersectionTimer);
+  intersectionTimer = setTimeout(async () => {
+    intersectionTimer = null;
+    try {
+      const res = await checkIntersections(buildIntersectionRequest());
+      setIntersections(res?.intersections ?? []);
+    } catch {
+      // No bridge, or Go refused. There is nothing to tell the user: this is a
+      // warning they never asked for, so its absence is not a failure.
+      setIntersections([]);
+    }
+  }, INTERSECTION_DEBOUNCE_MS);
 }
 
 // --- Patterns wiring ------------------------------------------------------

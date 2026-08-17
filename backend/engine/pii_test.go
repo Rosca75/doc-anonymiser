@@ -151,6 +151,77 @@ func TestOverlapResolution(t *testing.T) {
 	}
 }
 
+// TestOverlapOriginBeatsEverythingElse: with equal confidence and equal
+// length, the ROUTE decides, in all six pairings of the four routes.
+//
+// This is the case that had no defined answer before origin existed. A regex
+// signal and a custom pattern both score ConfidenceDeterministic, so
+// confidence left them tied; length then decided, and with equal lengths the
+// category name did, alphabetically. Which route won therefore depended on the
+// text rather than on a rule anybody chose, which is how it came to be reported
+// as random.
+func TestOverlapOriginBeatsEverythingElse(t *testing.T) {
+	// Every pairing of the four routes, in precedence order, so a reordering
+	// of AllOrigins cannot silently pass.
+	for i := 0; i < len(AllOrigins); i++ {
+		for j := i + 1; j < len(AllOrigins); j++ {
+			stronger, weaker := AllOrigins[i], AllOrigins[j]
+			// Identical offsets, identical confidence, identical length: the
+			// origin is the ONLY thing separating them.
+			spans := []Span{
+				{Start: 0, End: 5, Category: "b_weaker", Original: "Delta",
+					Confidence: ConfidenceDeterministic, Origin: weaker},
+				{Start: 0, End: 5, Category: "a_stronger", Original: "Delta",
+					Confidence: ConfidenceDeterministic, Origin: stronger},
+			}
+			kept := ResolveOverlaps(spans)
+			if len(kept) != 1 {
+				t.Fatalf("%s vs %s: want one span, got %+v", stronger, weaker, kept)
+			}
+			if kept[0].Origin != stronger {
+				t.Errorf("%s must supersede %s, kept %q", stronger, weaker, kept[0].Origin)
+			}
+		}
+	}
+}
+
+// TestOverlapOriginBeatsLength: a native span that is SHORTER than a declared
+// one still wins. Length is the third comparator, not the first, so it can no
+// longer decide which route owns a string.
+func TestOverlapOriginBeatsLength(t *testing.T) {
+	spans := []Span{
+		// The declared value covers more characters...
+		{Start: 0, End: 16, Category: CatCustomPatterns, Original: "Delta Industries",
+			Confidence: ConfidenceDeterministic, Origin: OriginDeclared},
+		// ...and the native signal still wins, because it is native.
+		{Start: 0, End: 5, Category: CatEmail, Original: "Delta",
+			Confidence: ConfidenceDeterministic, Origin: OriginNative},
+	}
+	kept := ResolveOverlaps(spans)
+	if len(kept) != 1 {
+		t.Fatalf("want one span, got %+v", kept)
+	}
+	if kept[0].Origin != OriginNative {
+		t.Errorf("origin must outrank length, kept %+v", kept[0])
+	}
+}
+
+// TestOverlapLengthStillDecidesWithinOneRoute: with the route equal, length is
+// still what separates two spans. This is the "email inside a URL" rule, and
+// both of those spans are native, so it is unaffected by origin.
+func TestOverlapLengthStillDecidesWithinOneRoute(t *testing.T) {
+	spans := []Span{
+		{Start: 11, End: 35, Category: CatEmail, Original: "marie.duval@example.com",
+			Confidence: ConfidenceDeterministic, Origin: OriginNative},
+		{Start: 0, End: 40, Category: CatURL, Original: "https://example.com/u/marie.duval@ex.com",
+			Confidence: ConfidenceDeterministic, Origin: OriginNative},
+	}
+	kept := ResolveOverlaps(spans)
+	if len(kept) != 1 || kept[0].Category != CatURL {
+		t.Errorf("the longer native span must win within one route, got %+v", kept)
+	}
+}
+
 // TestApplySpans proves back-to-front replacement keeps offsets valid and
 // the registry produces stable, numbered placeholders.
 func TestApplySpans(t *testing.T) {

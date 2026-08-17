@@ -151,7 +151,7 @@ test("CR17: a duplicate variant changes nothing, case-insensitively", () => {
   assert.equal(variantState(e), "empty", "an add that changed nothing must not re-pend");
 });
 
-test("CR17: moving a variant between two values re-pends BOTH", () => {
+test("moving a variant curates the source and re-pends the target", () => {
   resetState();
   addEntities([
     { category: "entity_names", canonical: "Alpha" },
@@ -163,13 +163,18 @@ test("CR17: moving a variant between two values re-pends BOTH", () => {
   assert.equal(moveVariant("entity_names", "Alpha", "entity_names", "Beta", "Alph"), true);
   const alpha = entityFor("Alpha");
   const beta = entityFor("Beta");
-  // The source EXCLUDES it, so automatic expansion stops matching it; the target
-  // gains it as a manual variant. Both re-expand.
-  assert.deepEqual(alpha.excludedVariants, ["Alph"]);
+  // The source CURATES without it, so its automatic expansion cannot derive it
+  // again and the two values stop both claiming the spelling. The target gains
+  // it as a manual variant and re-expands around it.
+  assert.equal(alpha.autoExpand, false);
+  assert.deepEqual(alpha.manualVariants, ["Alpha"],
+    "the moved spelling is gone; the value's own name stays a spelling");
   assert.deepEqual(beta.manualVariants, ["Alph"]);
-  assert.equal(variantState(alpha), "pending");
+  // A curated row is settled: nothing is left for Go to derive, so only the
+  // target is asked to expand.
+  assert.equal(variantState(alpha), "empty");
   assert.equal(variantState(beta), "pending");
-  assert.equal(pendingExpansions(getState().entities).length, 2);
+  assert.deepEqual(pendingExpansions(getState().entities).map((e) => e.canonical), ["Beta"]);
 });
 
 test("CR17: a settled row is never re-expanded, an empty result included", () => {

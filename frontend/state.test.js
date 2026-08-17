@@ -20,7 +20,8 @@ import {
   applyPreset, toggleCategory, selectionPresetName, presetCategories,
   setUseAI, setUseSmartDetect, detectionRoutesOn, llmEnabled,
   setUseNativeDetect, setUseAutoDetect,
-  addCandidates, acceptCandidate, rejectCandidate,
+  addCandidates, acceptCandidate, rejectCandidate, acceptAllShown,
+  originOf,
   markDetectionRan,
   moveVariant, entityAutocomplete, reassignOriginal,
   applyImportResult,
@@ -33,7 +34,8 @@ import {
   askConfirm, answerConfirm, askChoice, answerChoice,
   entityKey,
   renameEntity, renameVariant, changeEntityCategory, changeCandidateCategory,
-  groupEntities, clearAllEntities, entityConflicts, spellingsOf,
+  groupEntities, clearAllEntities, entityConflicts, spellingsOf, curate,
+  setIntersections, intersectionsFor, foldIntoFamily,
 } from "./state.js";
 
 test("setState merges and notifies subscribers", () => {
@@ -340,7 +342,7 @@ test("buildRunRequest assembles only pipeline-ready inputs", () => {
 
   const req = buildRunRequest();
   assert.equal(req.useDeepScan, undefined);
-  assert.deepEqual(req.entities, [{ category: "entity_names", canonical: "Alpine", manualVariants: [], excludedVariants: [] }]);
+  assert.deepEqual(req.entities, [{ category: "entity_names", canonical: "Alpine", manualVariants: [], origin: "declared", autoExpand: true }]);
   assert.deepEqual(req.allowTerms, ["CSSF"]);
   assert.deepEqual(req.patterns, [{ expr: "PRJ-[0-9]+" }]);
   assert.equal(req.simpleRules.length, 1);
@@ -539,7 +541,7 @@ test("reject removes, duplicates and existing entities are skipped", () => {
 
 // --- Variant regrouping --------------------------------------------------
 
-test("moveVariant happy path: source excludes, target gains, both re-pend", () => {
+test("moveVariant happy path: source curates without it, target gains it", () => {
   resetState();
   addEntities([
     { category: "person_names", canonical: "Jean Muller" },
@@ -551,9 +553,14 @@ test("moveVariant happy path: source excludes, target gains, both re-pend", () =
   assert.equal(moveVariant("person_names", "Jean Muller", "person_names", "J Muller Sr", "J. Muller"), true);
   const from = getState().entities.find((e) => e.canonical === "Jean Muller");
   const to = getState().entities.find((e) => e.canonical === "J Muller Sr");
-  assert.deepEqual(from.excludedVariants, ["J. Muller"]);
+  // The source is CURATED without the moved spelling: an automatic expansion
+  // would derive "J. Muller" again and both values would claim it.
+  assert.equal(from.autoExpand, false);
+  assert.deepEqual(from.manualVariants, ["Jean Muller"],
+    "the source keeps its remaining spellings as its own list");
+  assert.deepEqual([...spellingsOf(from).keys()], ["jean muller"]);
   assert.deepEqual(to.manualVariants, ["J. Muller"]);
-  assert.equal(from.variants, null, "source re-expands");
+  assert.deepEqual(from.variants, [], "a curated source has nothing left to expand");
   assert.equal(to.variants, null, "target re-expands");
 });
 
@@ -573,7 +580,7 @@ test("moveVariant rejects self-drops, unknown rows and absent variants", () => {
   assert.equal(getState().entities.find((e) => e.canonical === "Alpine").manualVariants.length, 0);
 });
 
-test("moveVariant across categories re-pends only the two touched rows", () => {
+test("moveVariant across categories touches only the two rows involved", () => {
   resetState();
   addEntities([
     { category: "person_names", canonical: "Jean Muller" },
@@ -587,8 +594,14 @@ test("moveVariant across categories re-pends only the two touched rows", () => {
   assert.equal(moveVariant("person_names", "Jean Muller", "entity_names", "Alpine", "Muller"), true);
   const untouched = getState().entities.find((e) => e.canonical === "Borealis");
   assert.deepEqual(untouched.variants, ["Borealis"], "third row untouched");
+  assert.equal(untouched.autoExpand, true);
+  // Only the target re-expands. The source is curated, so its list is settled
+  // and re-deriving it would put the moved spelling straight back.
   const pendingNames = getState().entities.filter((e) => e.variants === null).map((e) => e.canonical).sort();
-  assert.deepEqual(pendingNames, ["Alpine", "Jean Muller"]);
+  assert.deepEqual(pendingNames, ["Alpine"]);
+  const source = getState().entities.find((e) => e.canonical === "Jean Muller");
+  assert.equal(source.autoExpand, false);
+  assert.ok(!source.manualVariants.some((x) => x.toLowerCase() === "muller"));
 });
 
 // --- Reassignment helpers ------------------------------------------------
@@ -1618,15 +1631,59 @@ test("renameEntity refuses a name the same type already holds", () => {
   assert.equal(getState().entities.length, 2);
 });
 
-test("renameVariant excludes the old spelling and adds the new one", () => {
+test("renameVariant curates the list with the old spelling swapped out", () => {
   resetState();
   seedValue("entity_names", "Delta Industries", ["Delta Industries", "Delta"]);
   assert.equal(renameVariant("entity_names", "Delta Industries", "Delta", "Deltaa"), "");
   const e = getState().entities[0];
-  assert.ok(e.manualVariants.includes("Deltaa"), "the new spelling is a manual variant");
-  assert.ok((e.excludedVariants ?? []).some((x) => x.toLowerCase() === "delta"),
-    "the old spelling is excluded so the expansion cannot re-add it");
-  assert.equal(e.variants, null);
+  assert.equal(e.autoExpand, false, "editing a spelling makes the list the user's");
+  assert.ok(e.manualVariants.includes("Deltaa"), "the new spelling is in the list");
+  assert.ok(!e.manualVariants.some((x) => x.toLowerCase() === "delta"),
+    "the old spelling is gone, and no expansion is left to derive it again");
+  assert.deepEqual(e.variants, [], "a curated row is settled, not pending");
+});
+
+// pendingExpansions is what refreshVariants iterates: a curated row must not
+// appear in it, or Go would derive the deleted spelling straight back.
+import { pendingExpansions } from "./entitymodel.js";
+
+test("a deleted spelling stays deleted through a refresh", () => {
+  // The regression a per-value exclusion list existed to prevent. Curation
+  // covers it instead: a settled row is never asked to expand again, so nothing
+  // can derive the deleted spelling a second time.
+  resetState();
+  seedValue("entity_names", "Delta Industries", ["Delta Industries", "Delta"]);
+  const before = getState().entities[0];
+  const kept = [...spellingsOf(before).values()].filter((x) => x !== "Delta");
+  setState({ entities: [curate(before, kept)] });
+
+  const e = getState().entities[0];
+  assert.equal(e.autoExpand, false);
+  assert.ok(!spellingsOf(e).has("delta"), "the spelling is gone");
+  assert.deepEqual(pendingExpansions(getState().entities), [],
+    "a curated row is never re-expanded, so nothing brings it back");
+});
+
+test("groupEntities keeps the survivor curated when any participant was", () => {
+  resetState();
+  seedValue("entity_names", "Delta Industries", ["Delta Industries", "Delta"]);
+  seedValue("entity_names", "Delta Group", ["Delta Group"]);
+  // The user curated the value they are about to fold in. A merge must not
+  // silently re-derive a list they set by hand.
+  const src = getState().entities.find((e) => e.canonical === "Delta Group");
+  setState({
+    entities: getState().entities.map((e) =>
+      e.canonical === "Delta Group" ? curate(e, ["DG"]) : e),
+  });
+  assert.ok(src);
+
+  assert.equal(groupEntities(
+    { category: "entity_names", canonical: "Delta Industries" },
+    [{ category: "entity_names", canonical: "Delta Group" }]), 1);
+  const kept = getState().entities[0];
+  assert.equal(kept.autoExpand, false, "the merged value stays curated");
+  assert.ok(spellingsOf(kept).has("delta group"), "the folded name is a spelling");
+  assert.ok(spellingsOf(kept).has("dg"), "so are the folded value's own spellings");
 });
 
 test("renameVariant on the spelling that IS the name renames the value", () => {
@@ -1693,16 +1750,25 @@ test("clearAllEntities empties the list and reports the count", () => {
 
 // --- Conflict detection for the My values tab ----------------------------
 
-test("spellingsOf is the name, the variants and the manual ones, minus excluded", () => {
+test("spellingsOf is the name, the expanded variants and the manual ones", () => {
   const e = {
     category: "entity_names", canonical: "Delta Industries",
     variants: ["Delta Industries", "Delta"], manualVariants: ["DI"],
-    excludedVariants: ["Delta"],
   };
   const keys = [...spellingsOf(e).keys()];
-  assert.ok(keys.includes("delta industries"));
-  assert.ok(keys.includes("di"));
-  assert.ok(!keys.includes("delta"), "an excluded spelling is not a spelling");
+  assert.deepEqual(keys.sort(), ["delta", "delta industries", "di"]);
+});
+
+test("spellingsOf on a curated value is exactly its curated list", () => {
+  // A curated row carries an empty expanded list, so the same walk covers it:
+  // what the card shows is what the run replaces.
+  const e = curate({
+    category: "entity_names", canonical: "Delta Industries",
+    variants: ["Delta Industries", "Delta"], manualVariants: ["DI"],
+  }, ["Delta Industries", "DI"]);
+  const keys = [...spellingsOf(e).keys()];
+  assert.deepEqual(keys.sort(), ["delta industries", "di"]);
+  assert.ok(!keys.includes("delta"), "a deleted spelling is not re-derived");
 });
 
 test("entityConflicts flags the same name under two types", () => {
@@ -1744,4 +1810,170 @@ test("entityConflicts ignores values whose type is switched off", () => {
   toggleCategory("person_names", false);
   const conflicts = entityConflicts();
   assert.equal(conflicts.size, 0, "with one side off there is no ambiguity to flag");
+});
+
+// --- Provenance: which route found a value -------------------------------
+
+test("originOf maps a suggestion's source badge to its route", () => {
+  assert.equal(originOf("smart"), "auto");
+  assert.equal(originOf("local-ai"), "ai");
+  // Anything unrecognised reads as declared, the same fallback the engine
+  // applies: an unknown route is trusted rather than demoted below a guess.
+  assert.equal(originOf("manual"), "declared");
+  assert.equal(originOf(undefined), "declared");
+});
+
+test("accepting a suggestion keeps the route that found it", () => {
+  resetState();
+  addCandidates([{ text: "Meridian", category: "entity_names" }], "smart");
+  addCandidates([{ text: "Borealis", category: "entity_names" }], "local-ai");
+  assert.equal(acceptCandidate("Meridian"), true);
+  assert.equal(acceptCandidate("Borealis"), true);
+
+  const byName = Object.fromEntries(getState().entities.map((e) => [e.canonical, e.origin]));
+  assert.equal(byName.Meridian, "auto");
+  assert.equal(byName.Borealis, "ai");
+});
+
+test("acceptAllShown keeps each row's own route", () => {
+  resetState();
+  addCandidates([{ text: "Meridian", category: "entity_names" }], "smart");
+  addCandidates([{ text: "Borealis", category: "entity_names" }], "local-ai");
+  assert.equal(acceptAllShown(["Meridian", "Borealis"]), 2);
+  const byName = Object.fromEntries(getState().entities.map((e) => [e.canonical, e.origin]));
+  assert.deepEqual(byName, { Meridian: "auto", Borealis: "ai" });
+});
+
+test("a value the user typed is declared, and the route travels to Go", () => {
+  resetState();
+  addEntities([{ category: "entity_names", canonical: "Alpine" }]);
+  assert.equal(getState().entities[0].origin, "declared");
+  assert.equal(acceptedEntities()[0].origin, "declared");
+});
+
+// --- Intersections: values another route also claims ---------------------
+
+test("intersectionsFor keys each row by the value it belongs to", () => {
+  resetState();
+  seedValue("person_names", "marie.duval@example.com");
+  setIntersections([{
+    value: "marie.duval@example.com", category: "person_names", origin: "declared",
+    winnerValue: "marie.duval@example.com", winnerCategory: "email", winnerOrigin: "native",
+    occurrences: 2, totalOccurrences: 2,
+  }]);
+
+  const byKey = intersectionsFor();
+  const row = byKey.get(entityKey("person_names", "marie.duval@example.com"));
+  assert.ok(row, "the card finds its own row with no searching");
+  assert.equal(row.winnerCategory, "email");
+  assert.equal(byKey.get(entityKey("entity_names", "Alpine")), undefined);
+});
+
+test("a row with no value or no category is not keyable and is skipped", () => {
+  // Go always sends both, but a partial row must not poison the map with an
+  // entry no card can match.
+  resetState();
+  setIntersections([{ value: "", category: "email" }, { value: "x" }]);
+  assert.equal(intersectionsFor().size, 0);
+});
+
+test("editing the values clears the intersection warnings", () => {
+  // A stale warning sits on a card describing a configuration the user has
+  // already changed, and is read as a statement about the one in front of them.
+  resetState();
+  seedValue("entity_names", "Alpine");
+  setIntersections([{ value: "Alpine", category: "entity_names" }]);
+  assert.equal(getState().intersections.length, 1);
+
+  addEntities([{ category: "entity_names", canonical: "Borealis" }]);
+  assert.deepEqual(getState().intersections, [], "adding a value invalidates the answer");
+});
+
+test("editing the patterns clears the intersection warnings too", () => {
+  resetState();
+  setIntersections([{ value: "Alpine", category: "entity_names" }]);
+  addPattern("PRJ-[0-9]+", null);
+  assert.deepEqual(getState().intersections, []);
+});
+
+test("a patch that carries intersections is the one that survives", () => {
+  // setIntersections itself writes entities-adjacent state on some paths; the
+  // clearing rule must not eat the answer it was given.
+  resetState();
+  setState({ entities: [], intersections: [{ value: "Alpine", category: "entity_names" }] });
+  assert.equal(getState().intersections.length, 1);
+});
+
+test("starting a new batch drops the intersections with everything else", () => {
+  resetState();
+  setIntersections([{ value: "Alpine", category: "entity_names" }]);
+  startNewBatch();
+  assert.deepEqual(getState().intersections, []);
+});
+
+// --- Value families: the shorter form is the main value ------------------
+
+test("a longer addition becomes a spelling of the existing shorter value", () => {
+  // Left as two values the shorter fires inside the longer and the text reads
+  // "[BRAND_1] company", leaking the rest of the phrase.
+  resetState();
+  seedValue("brand_names", "Coca-Cola");
+  const folded = foldIntoFamily("brand_names", "Coca-Cola company");
+
+  assert.deepEqual(folded, { main: "Coca-Cola", added: "Coca-Cola company" });
+  assert.equal(getState().entities.length, 1, "one value, not two rivals");
+  assert.ok(getState().entities[0].manualVariants.includes("Coca-Cola company"));
+});
+
+test("a shorter addition takes over as the value's name", () => {
+  // The fold works in both directions: the shorter form is always the main
+  // value, so the old name becomes one of its spellings.
+  resetState();
+  seedValue("brand_names", "Coca-Cola company");
+  const folded = foldIntoFamily("brand_names", "Coca-Cola");
+
+  assert.deepEqual(folded, { main: "Coca-Cola", added: "Coca-Cola company" });
+  assert.equal(getState().entities.length, 1);
+  assert.equal(getState().entities[0].canonical, "Coca-Cola");
+  assert.ok(getState().entities[0].manualVariants.includes("Coca-Cola company"),
+    "the old name is kept as a spelling, so the two share one placeholder");
+});
+
+test("foldIntoFamily refuses across types, off boundaries and below the guard", () => {
+  const cases = [
+    // A person and an organisation are an intersection, not a family: folding
+    // them would file a human being under an organisation.
+    { seed: ["person_names", "Delta"], add: ["entity_names", "Delta Industries"] },
+    // "Alten" is not a spelling of "Altenberg".
+    { seed: ["entity_names", "Alten"], add: ["entity_names", "Altenberg"] },
+    // A two-character stem would shred ordinary text if promoted.
+    { seed: ["entity_names", "BV"], add: ["entity_names", "BV Holdings"] },
+    // Unrelated values.
+    { seed: ["entity_names", "Alpine Trust"], add: ["entity_names", "Borealis"] },
+  ];
+  for (const { seed, add } of cases) {
+    resetState();
+    seedValue(seed[0], seed[1]);
+    assert.equal(foldIntoFamily(add[0], add[1]), null,
+      `${seed[1]} and ${add[1]} must not be folded`);
+  }
+});
+
+test("foldIntoFamily leaves an empty or identical addition alone", () => {
+  resetState();
+  seedValue("entity_names", "Alpine Trust");
+  assert.equal(foldIntoFamily("entity_names", "   "), null);
+  assert.equal(foldIntoFamily("entity_names", "alpine trust"), null,
+    "the same value is not a spelling of itself");
+});
+
+test("an accepted candidate carries its folded spellings across", () => {
+  resetState();
+  addCandidates([{
+    text: "Alpine Trust", category: "entity_names", variants: ["Alpine Trust S.A."],
+  }], "smart");
+  assert.equal(acceptCandidate("Alpine Trust"), true);
+  const e = getState().entities[0];
+  assert.deepEqual(e.manualVariants, ["Alpine Trust S.A."],
+    "one value with its spellings reaches the pipeline, not two rivals");
 });

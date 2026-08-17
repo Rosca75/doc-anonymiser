@@ -64,6 +64,12 @@ type Candidate struct {
 	// ranks and filters what the review list shows. See candidateScore
 	// for the exact ladder.
 	Confidence float32 `json:"confidence,omitempty"`
+	// Variants are the longer spellings folded into this one
+	// (FoldValueFamilies): "Coca-Cola company" under "Coca-Cola". Accepting the
+	// candidate carries them across as the value's manual variants, so one
+	// value with its spellings reaches the pipeline instead of two rivals, the
+	// shorter of which would fire inside the longer.
+	Variants []string `json:"variants,omitempty"`
 }
 
 // SmartDetectOptions tunes how eagerly SmartDetect proposes candidates

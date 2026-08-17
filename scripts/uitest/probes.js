@@ -522,6 +522,80 @@
         samples,
       };
     },
+
+    /**
+     * compareSearch() types a needle present in BOTH Compare panes and reports
+     * whether the active hit is actually visible inside its pane.
+     *
+     * This is the layer that can answer it. A string test proves the hit span
+     * was emitted; only a renderer can prove the pane scrolled to it rather than
+     * leaving it clipped hundreds of pixels below the fold, which is exactly how
+     * the mark-tooltip bug reached a build with a green suite.
+     */
+    async compareSearch() {
+      await seed("anonymise");
+      const input = document.querySelector("#compare-search");
+      if (!input) {
+        return { error: "the Compare search box did not render (#compare-search missing)" };
+      }
+
+      // A needle the seeded fixture carries in both panes: the ORIGINAL pane
+      // holds the source prose and the ANONYMISED pane the rewritten copy, and
+      // both keep the ordinary words between the replacements.
+      const NEEDLE = "the";
+      input.value = NEEDLE;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      // The search box is debounced so a burst of typing does not repaint per
+      // keystroke; wait past that before measuring.
+      await settle(400);
+
+      const hits = [...document.querySelectorAll(".find-hit")];
+      const active = document.querySelector(".find-hit.active");
+      const readout = document.querySelector(".search-readout");
+      const panes = {
+        original: document.querySelector("#original-pane"),
+        anonymised: document.querySelector("#anonymised-pane"),
+      };
+
+      const perPane = {};
+      for (const [name, pane] of Object.entries(panes)) {
+        perPane[name] = pane ? pane.querySelectorAll(".find-hit").length : 0;
+      }
+
+      let visible = null;
+      if (active) {
+        const pane = active.closest(".pane-body");
+        if (pane) {
+          const a = active.getBoundingClientRect();
+          const p = pane.getBoundingClientRect();
+          visible = {
+            // Inside its pane's box: a hit the pane's own overflow has scrolled
+            // out of sight is a hit the user cannot see, whatever the DOM says.
+            insidePane: a.top >= p.top - 1 && a.bottom <= p.bottom + 1 &&
+              a.left >= p.left - 1 && a.right <= p.right + 1,
+            inViewport: a.top >= 0 && a.left >= 0 &&
+              a.right <= innerWidth + 1 && a.bottom <= innerHeight + 1,
+            hasSize: a.width > 0 && a.height > 0,
+            activeRect: rect(active), paneRect: rect(pane),
+          };
+        }
+      }
+
+      // The navigation buttons must be live when there is something to step to.
+      const next = document.querySelector(".search-next");
+      const prev = document.querySelector(".search-prev");
+
+      return {
+        needle: NEEDLE,
+        hits: hits.length,
+        perPane,
+        hasActive: !!active,
+        readout: (readout?.innerText ?? "").replace(/\s+/g, " ").trim(),
+        nextEnabled: !!next && !next.disabled,
+        prevEnabled: !!prev && !prev.disabled,
+        visible,
+      };
+    },
   };
 
   return "installed";

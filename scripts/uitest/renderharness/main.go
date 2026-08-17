@@ -173,6 +173,7 @@ func run(frontendDir, probesPath, artifactDir string, keepArtifacts bool) error 
 	checkConfigureRail(client, r, fx)
 	checkScrollRetention(client, r)
 	checkTooltip(client, r, fx)
+	checkCompareSearch(client, r)
 	// Last, so it sees everything every other check provoked.
 	checkNoConsoleErrors(client, r)
 

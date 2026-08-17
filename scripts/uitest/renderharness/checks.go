@@ -486,6 +486,106 @@ func checkNoConsoleErrors(c *cdpClient, r *reporter) {
 	fmt.Printf("        (%d bridge-absence message(s) ignored: this layer covers rendering, not the bridge)\n", exempt)
 }
 
+// compareSearchResult mirrors the compareSearch probe's payload.
+type compareSearchResult struct {
+	Error       string         `json:"error"`
+	Needle      string         `json:"needle"`
+	Hits        int            `json:"hits"`
+	PerPane     map[string]int `json:"perPane"`
+	HasActive   bool           `json:"hasActive"`
+	Readout     string         `json:"readout"`
+	NextEnabled bool           `json:"nextEnabled"`
+	PrevEnabled bool           `json:"prevEnabled"`
+	Visible     *searchVisible `json:"visible"`
+}
+
+type searchVisible struct {
+	InsidePane bool `json:"insidePane"`
+	InViewport bool `json:"inViewport"`
+	HasSize    bool `json:"hasSize"`
+	ActiveRect rect `json:"activeRect"`
+	PaneRect   rect `json:"paneRect"`
+}
+
+// checkCompareSearch asserts the Compare search finds text in both panes and
+// that the ACTIVE hit is somewhere the user can actually see it.
+//
+// A string test can prove the hit span was emitted. Only a renderer can prove
+// the pane scrolled to it rather than leaving it clipped hundreds of pixels
+// below the fold, which is the same failure mode as the mark-tooltip bug: the
+// markup was right for months while the feature was invisible.
+func checkCompareSearch(c *cdpClient, r *reporter) {
+	r.step("The Compare search finds text in both panes and shows the active hit")
+
+	var got compareSearchResult
+	if err := c.eval("__uiProbes.compareSearch()", &got); err != nil {
+		r.assert("the Compare search box renders and accepts a needle", false,
+			"#compare-search in the Compare card head", err.Error(),
+			"views/anonymise.js searchControls renders it beside the document selector.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the Compare search box renders and accepts a needle", false,
+			"#compare-search in the Compare card head", got.Error,
+			"views/anonymise.js compareCard puts searchControls in .card-head-right.")
+		return
+	}
+
+	r.assert("the needle is found in the ORIGINAL pane", got.PerPane["original"] > 0,
+		fmt.Sprintf("at least one .find-hit in #original-pane for %q", got.Needle),
+		fmt.Sprintf("%d hits", got.PerPane["original"]),
+		"views/anonymise.js renders the original pane through panesearch.js renderPlainWithHits.")
+
+	r.assert("the needle is found in the ANONYMISED pane", got.PerPane["anonymised"] > 0,
+		fmt.Sprintf("at least one .find-hit in #anonymised-pane for %q", got.Needle),
+		fmt.Sprintf("%d hits", got.PerPane["anonymised"]),
+		"highlight.js renderHighlighted takes a fourth search argument and emits hit spans "+
+			"in the plain stretches and inside a mark's own text.")
+
+	r.assert("exactly one hit is the active one", got.HasActive,
+		"a .find-hit.active somewhere on screen", "no active hit was rendered",
+		"searchWalk resolves the active index over the ONE combined list; searchControls "+
+			"and both panes read the same walk.")
+
+	r.assert("the readout says where the active hit is", got.Readout != "",
+		"a readout naming the count, the total and the active hit's pane", "an empty readout",
+		"copy.js ANONYMISE.searchCount(index, total, pane).")
+
+	r.assert("both navigation buttons are live when there are hits",
+		got.NextEnabled && got.PrevEnabled,
+		"next and previous enabled",
+		fmt.Sprintf("next enabled: %t, previous enabled: %t", got.NextEnabled, got.PrevEnabled),
+		"searchControls disables them only when the walk is empty, and gives them a title "+
+			"saying why, so a greyed control is never mute.")
+
+	if got.Visible == nil {
+		r.assert("the active hit sits inside a pane that can show it", false,
+			"the active hit inside a .pane-body", "the active hit has no .pane-body ancestor",
+			"Both panes render their hits through the same two renderers; a hit outside a pane "+
+				"means one of them emitted markup somewhere unexpected.")
+		return
+	}
+
+	r.assert("the active hit has a size", got.Visible.HasSize,
+		"a rendered span with width and height",
+		got.Visible.ActiveRect.String(),
+		"An empty hit span means the slice offsets and the text disagree.")
+
+	// The check this layer exists for: a hit the pane's own overflow scrolled
+	// out of sight is a hit the user cannot see, whatever the DOM says.
+	r.assert("the active hit is visible INSIDE its pane, not scrolled out of sight",
+		got.Visible.InsidePane,
+		"the active hit's rect within its pane's rect",
+		fmt.Sprintf("hit %s, pane %s", got.Visible.ActiveRect, got.Visible.PaneRect),
+		"views/anonymise.js scrollToActiveHit runs after the paint and only when the active "+
+			"index changed, so it does not fight scroll.js restoring the pane's offset.")
+
+	r.assert("the active hit is on screen", got.Visible.InViewport,
+		"the active hit's rect within the viewport",
+		fmt.Sprintf("hit %s", got.Visible.ActiveRect),
+		"scrollIntoView({block: \"center\"}) on .find-hit.active.")
+}
+
 func boolIs(p *bool, want bool) bool { return p != nil && *p == want }
 
 func describeBool(p *bool) string {

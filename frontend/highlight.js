@@ -11,6 +11,7 @@
 // quotes and angle brackets) and must never reach innerHTML raw.
 
 import { escapeHTML } from "./html.js";
+import { hitClass } from "./panesearch.js";
 
 // Placeholder shape produced by the Go registry: [LABEL_N].
 const PLACEHOLDER_RE = /\[([A-Z][A-Z0-9_]*)_(\d+)\]/g;
@@ -61,14 +62,44 @@ export function markClass(label) {
  *   text the i-th occurrence of that placeholder replaced, "" or absent when it
  *   was the canonical value. The marks are walked in the same left-to-right
  *   order Go recorded them, so slot i lines up with occurrence i.
+ * @param {object} [search] {hits, activeIndex} from panesearch.js, with hits
+ *   offset into the SAME text string this walks. Hits are emitted in the plain
+ *   stretches and inside a mark's own text. A hit STRADDLING a mark boundary is
+ *   deliberately not highlighted: the alternative is splitting the mark, which
+ *   breaks the click-to-select and the tooltip, and a needle spanning the edge
+ *   of a placeholder is a rare thing to search for. Three-argument callers are
+ *   unaffected.
  * @returns {string} safe HTML
  */
-export function renderHighlighted(text, mapping, variants) {
+export function renderHighlighted(text, mapping, variants, search) {
   let out = "";
   let last = 0;
+  const hits = search?.hits ?? [];
+  const activeIndex = search?.activeIndex ?? -1;
+  // withHits escapes a stretch of the text and wraps whatever hits fall
+  // ENTIRELY inside it. Passing every stretch through one function is what
+  // keeps the plain text and a mark's inner text behaving the same way.
+  const withHits = (from, to) => {
+    if (hits.length === 0) return escapeHTML(text.slice(from, to));
+    let piece = "";
+    let cursor = from;
+    for (let i = 0; i < hits.length; i++) {
+      const hit = hits[i];
+      if (hit.end <= cursor) continue;
+      if (hit.start >= to) break;
+      // Straddles this stretch's edge: leave it alone rather than split a mark.
+      if (hit.start < from || hit.end > to) continue;
+      piece += escapeHTML(text.slice(cursor, hit.start));
+      piece += `<span class="${hitClass(i === activeIndex)}">` +
+        `${escapeHTML(text.slice(hit.start, hit.end))}</span>`;
+      cursor = hit.end;
+    }
+    return piece + escapeHTML(text.slice(cursor, to));
+  };
+
   const seen = Object.create(null); // placeholder → occurrences emitted so far
   for (const m of String(text).matchAll(PLACEHOLDER_RE)) {
-    out += escapeHTML(text.slice(last, m.index));
+    out += withHits(last, m.index);
     const label = m[1];
     const info = mapping?.[m[0]];
     const occ = seen[m[0]] ?? 0;
@@ -86,12 +117,14 @@ export function renderHighlighted(text, mapping, variants) {
         (showVariant ? ` data-variant="${escapeHTML(variant)}"` : "") +
         (info.category ? ` data-category="${escapeHTML(info.category)}"` : "") +
         ` tabindex="0"` +
-        ` title="Original: ${escapeHTML(tip)}">${escapeHTML(m[0])}</mark>`;
+        ` title="Original: ${escapeHTML(tip)}">` +
+        `${withHits(m.index, m.index + m[0].length)}</mark>`;
     } else {
-      out += `<mark class="${markClass(label)}" title="${escapeHTML(label.toLowerCase())}">${escapeHTML(m[0])}</mark>`;
+      out += `<mark class="${markClass(label)}" title="${escapeHTML(label.toLowerCase())}">` +
+        `${withHits(m.index, m.index + m[0].length)}</mark>`;
     }
     last = m.index + m[0].length;
   }
-  out += escapeHTML(text.slice(last));
+  out += withHits(last, text.length);
   return out;
 }

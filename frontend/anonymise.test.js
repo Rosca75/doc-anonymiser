@@ -16,11 +16,13 @@ import assert from "node:assert/strict";
 import {
   countOccurrences, valuesInCategory, formatDuration, continueHint,
   compareCard, reportCard, valuesCard, filterValues, blockedPanel, selectedCard,
-  runCard, rulesCard, missedCard, renderAnonymise,
+  runCard, rulesCard, missedCard, renderAnonymise, searchWalk, searchControls,
+  selectionPanel, applySelection,
 } from "./views/anonymise.js";
-import { resetState, setState } from "./state.js";
+import { resetState, setState, getState, addEntities } from "./state.js";
+import { readFileSync } from "node:fs";
 import { ANONYMISE } from "./copy.js";
-import { textOf, all, attr } from "./testhtml.js";
+import { textOf, all, attr, exists } from "./testhtml.js";
 
 // --- countOccurrences ----------------------------------------------------
 
@@ -448,4 +450,274 @@ test("each result card, rendered on its own, starts collapsed", () => {
     assert.equal(attr(fn(s), ".cgroup", "data-open"), "false",
       `${name} card must start collapsed`);
   }
+});
+
+// --- CR3: the Compare search --------------------------------------------
+//
+// The walk is ONE ordered list, every original-pane hit then every
+// anonymised-pane hit, with the active hit's PANE named in the readout. Two
+// cursors, or one index over lists of different lengths, would drift; naming
+// the pane makes crossing the boundary visible rather than silent.
+
+/** searchState(needle, index) is the view-local search as the card reads it. */
+function searchState(needle, index = 0) {
+  return { needle, index };
+}
+
+/** walkFor(needle, index) is the walk over the standard compare fixture. */
+function walkFor(needle, index = 0) {
+  const s = compareState();
+  const doc = s.results.documents[0];
+  const source = { found: true, markdown: SOURCE, truncated: false };
+  return searchWalk(s, doc, source, searchState(needle, index));
+}
+
+test("the walk finds hits in both panes and counts them together", () => {
+  // "e" appears in both, but a 1-character needle is refused, so use a word
+  // that is genuinely in each: "M" is in "Marie"/"Meridian", "ME" in neither
+  // pane's placeholder. "et" occurs in "met" in both panes.
+  const walk = walkFor("met");
+  assert.equal(walk.original.length, 1, "ORIGINAL says 'met'");
+  assert.equal(walk.anonymised.length, 1, "so does ANONYMISED");
+  assert.equal(walk.total, 2);
+});
+
+test("the walk crosses from the original pane into the anonymised one", () => {
+  const first = walkFor("met", 0);
+  assert.equal(first.pane, "original");
+  assert.equal(first.activeIn("original"), 0);
+  assert.equal(first.activeIn("anonymised"), -1, "only one pane holds the active hit");
+
+  const second = walkFor("met", 1);
+  assert.equal(second.pane, "anonymised");
+  assert.equal(second.activeIn("original"), -1);
+  assert.equal(second.activeIn("anonymised"), 0);
+});
+
+test("the walk wraps at both ends", () => {
+  assert.equal(walkFor("met", 2).index, 0, "past the last hit wraps to the first");
+  assert.equal(walkFor("met", -1).index, 1, "before the first wraps to the last");
+});
+
+test("a needle that matches nothing leaves the walk empty", () => {
+  const walk = walkFor("Borealis");
+  assert.equal(walk.total, 0);
+  assert.equal(walk.activeIn("original"), -1);
+  assert.equal(walk.activeIn("anonymised"), -1);
+});
+
+test("the readout names the count, the total and the active hit's pane", () => {
+  const html = searchControls(walkFor("met", 1), searchState("met", 1));
+  assert.equal(textOf(html, "span.search-readout"),
+    ANONYMISE.searchCount(2, 2, ANONYMISE.searchPaneAnonymised));
+});
+
+test("the search box and both navigation buttons render", () => {
+  const html = searchControls(walkFor("met"), searchState("met"));
+  assert.equal(attr(html, "input#compare-search", "value"), "met");
+  assert.ok(all(html, "button.search-prev").length === 1);
+  assert.ok(all(html, "button.search-next").length === 1);
+});
+
+test("with no hits both buttons are disabled AND say why", () => {
+  // A greyed control that says nothing is a dead end.
+  const html = searchControls(walkFor("Borealis"), searchState("Borealis"));
+  for (const cls of ["search-prev", "search-next"]) {
+    assert.equal(attr(html, `button.${cls}`, "disabled"), "");
+    assert.equal(attr(html, `button.${cls}`, "title"), ANONYMISE.searchNone);
+  }
+  assert.equal(textOf(html, "span.search-readout"), ANONYMISE.searchNone);
+});
+
+test("an empty needle disables the buttons without claiming there is no match", () => {
+  const html = searchControls(walkFor(""), searchState(""));
+  assert.equal(attr(html, "button.search-next", "disabled"), "");
+  assert.equal(textOf(html, "span.search-readout"), "",
+    "before anything is typed there is nothing to report");
+});
+
+test("compareCard highlights the active hit in the pane that holds it", () => {
+  // Rendered through the real card, so the panes and the readout are proven to
+  // agree about which hit is active.
+  const s = compareState();
+  const html = compareCard(s, s.results.documents[0]);
+  // The module-level needle is empty in a fresh test process, so no hit spans.
+  assert.equal(all(html, "span.find-hit").length, 0,
+    "with no needle the panes render exactly as they did before");
+});
+
+// --- CR2: the selection panel is copy or replace, in three stages --------
+//
+// The panel used to be one field whose only outcome was a find-and-replace
+// rule. It now asks what to DO with the selection, and the three replace modes
+// differ in what ends up in the re-identification key, which is why each one
+// carries a hint: that difference is not guessable from the labels.
+
+/** view(patch) is the panel's view-local state, as the card reads it. */
+function view(patch = {}) {
+  return {
+    selection: { text: "Meridian", x: 100, y: 40 },
+    stage: null, mode: null, target: "", category: "person_names",
+    draft: "", error: "",
+    ...patch,
+  };
+}
+
+test("stage 1 offers exactly two things: copy, or replace", () => {
+  const html = selectionPanel(compareState(), view());
+  assert.ok(exists(html, "button#btn-selection-copy"));
+  assert.ok(exists(html, "button#btn-selection-replace"));
+  assert.ok(!exists(html, "input.selection-mode"), "the modes come after Replace");
+  assert.ok(!exists(html, "button#btn-apply-selection"), "there is nothing to apply yet");
+});
+
+test("stage 2 offers the three replace modes, each with its hint", () => {
+  const html = selectionPanel(compareState(), view({ stage: "replace" }));
+  assert.deepEqual(all(html, "input.selection-mode").map((r) => r.attrs.value),
+    ["variant", "value", "text"]);
+
+  // The hints are the safety-relevant copy: they say what lands in the
+  // re-identification key. Compared as rendered TEXT, because copy containing
+  // an apostrophe is escaped in the markup.
+  assert.deepEqual(
+    all(html, "span.hint").map((h) => textOf(h.outer, "span.hint")),
+    [
+      ANONYMISE.selectionModeVariantHint,
+      ANONYMISE.selectionModeValueHint,
+      ANONYMISE.selectionModeTextHint,
+    ]);
+});
+
+test("each mode's stage 3 shows its own field", () => {
+  const s = compareState();
+
+  const variant = selectionPanel(s, view({ stage: "replace", mode: "variant" }));
+  assert.ok(exists(variant, "input#selection-target"), "mode 1 asks which value");
+  assert.ok(!exists(variant, "input#selection-draft"));
+
+  const value = selectionPanel(s, view({ stage: "replace", mode: "value" }));
+  assert.ok(exists(value, "select#selection-category"), "mode 2 asks which type");
+  assert.ok(!exists(value, "input#selection-target"));
+
+  const text = selectionPanel(s, view({ stage: "replace", mode: "text" }));
+  assert.ok(exists(text, "input#selection-draft"), "mode 3 asks for the replacement");
+  assert.ok(!exists(text, "select#selection-category"));
+});
+
+test("stage 3 offers Apply and a Cancel that steps back rather than closing", () => {
+  const html = selectionPanel(compareState(), view({ stage: "replace", mode: "text" }));
+  assert.ok(exists(html, "button#btn-apply-selection"));
+  assert.ok(exists(html, "button#btn-cancel-selection"));
+});
+
+test("a refusal is shown ON the panel, next to the field the fix goes into", () => {
+  const html = selectionPanel(compareState(), view({
+    stage: "replace", mode: "variant", error: ANONYMISE.selectionUnknownTarget,
+  }));
+  assert.equal(textOf(html, "p.hint"), ANONYMISE.selectionUnknownTarget);
+});
+
+test("no selection renders no panel at all", () => {
+  assert.equal(selectionPanel(compareState(), view({ selection: null })), "");
+});
+
+test("the panel shows the selected text, escaped", () => {
+  const html = selectionPanel(compareState(), view({
+    selection: { text: '<b>Alpine & Co</b>', x: 0, y: 0 },
+  }));
+  assert.equal(textOf(html, "span.selection-text"), "<b>Alpine & Co</b>");
+  assert.ok(!html.includes("<b>Alpine"), "the selection is text, never markup");
+});
+
+// Each mode routes to a DIFFERENT reducer, which is the whole point: they
+// differ in what ends up in the re-identification key. Asserted on the store
+// rather than on the DOM. runFastRerun runs afterwards and rejects without a
+// bridge, which is caught and shown in the error strip, so the store effect is
+// what these read.
+
+/** stubContainer() swallows the wiring lookups applySelection makes. */
+function stubContainer() {
+  return { querySelector: () => null, querySelectorAll: () => [] };
+}
+
+test("mode 2 adds a new value of its own, in the chosen type", async () => {
+  resetState();
+  await applySelection(stubContainer(), view({
+    selection: { text: "Meridian", x: 0, y: 0 },
+    stage: "replace", mode: "value", category: "entity_names",
+  }));
+
+  const e = getState().entities.find((x) => x.canonical === "Meridian");
+  assert.ok(e, "the selection became a value");
+  assert.equal(e.category, "entity_names");
+  assert.equal(e.origin, "declared", "the user declared it");
+  assert.equal(getState().settings.categories.entity_names, true,
+    "adding a value switches its type on, or the pipeline drops it");
+});
+
+test("mode 2 folds into an existing family instead of creating a rival", async () => {
+  // A new value that is a spelling of one already listed must not become a
+  // rival: the shorter would fire inside the longer and leave the rest behind.
+  resetState();
+  addEntities([{ category: "brand_names", canonical: "Coca-Cola" }]);
+  await applySelection(stubContainer(), view({
+    selection: { text: "Coca-Cola company", x: 0, y: 0 },
+    stage: "replace", mode: "value", category: "brand_names",
+  }));
+
+  assert.equal(getState().entities.length, 1, "one value, not two");
+  assert.ok(getState().entities[0].manualVariants.includes("Coca-Cola company"));
+});
+
+test("mode 3 creates a find and replace rule and nothing else", async () => {
+  resetState();
+  await applySelection(stubContainer(), view({
+    selection: { text: "Meridian", x: 0, y: 0 },
+    stage: "replace", mode: "text", draft: "[CUSTOM_1]",
+  }));
+
+  assert.deepEqual(getState().simpleRules.map((r) => [r.find, r.replace, r.caseSensitive]),
+    [["Meridian", "[CUSTOM_1]", true]]);
+  assert.equal(getState().entities.length, 0,
+    "mode 3 creates NO value, so nothing is added to the re-identification key");
+});
+
+test("mode 3 refuses an empty replacement, on the panel", async () => {
+  resetState();
+  await applySelection(stubContainer(), view({
+    selection: { text: "Meridian", x: 0, y: 0 },
+    stage: "replace", mode: "text", draft: "   ",
+  }));
+  assert.equal(getState().simpleRules.length, 0, "no rule was created");
+});
+
+test("mode 1 refuses a target that is not a value, on the panel", async () => {
+  resetState();
+  await applySelection(stubContainer(), view({
+    selection: { text: "Meridian", x: 0, y: 0 },
+    stage: "replace", mode: "variant", target: "Nobody",
+  }));
+  assert.equal(getState().entities.length, 0);
+  assert.equal(getState().simpleRules.length, 0,
+    "a refused mode 1 must not fall through to creating a rule");
+});
+
+test("selecting text reserves NO placeholder: only mode 3 spends one", () => {
+  // The reservation leak. Every stray drag used to mint a [CUSTOM_N] through
+  // nextRulePlaceholder, and numbers are never freed by design: an export or a
+  // mapping CSV in which [CUSTOM_4] means one thing may already have left the
+  // machine. The call moved to the mode-change handler, and this pins it there,
+  // because the drag path needs a real DOM to exercise.
+  const source = readFileSync(new URL("./views/anonymise.js", import.meta.url), "utf8");
+  const start = source.indexOf("function wireTextSelection(");
+  const end = source.indexOf("function wireSelectionPanel(");
+  assert.ok(start > 0 && end > start, "both wiring functions are still there");
+  assert.ok(!source.slice(start, end).includes("nextRulePlaceholder"),
+    "wireTextSelection must not reserve a placeholder: a stray drag would spend a number " +
+    "that is never freed. Reserve when the user chooses the mode that needs one.");
+  // And the mode handler IS where it happens.
+  const modeHandler = source.slice(end);
+  assert.ok(modeHandler.includes("nextRulePlaceholder"),
+    "mode 3 still reserves its placeholder through Go, which is the only side that " +
+    "knows every number already taken");
 });

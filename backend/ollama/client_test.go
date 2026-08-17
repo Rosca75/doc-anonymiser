@@ -141,8 +141,14 @@ func TestDiscoverHappyPath(t *testing.T) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 	for i := range want {
-		if got[i] != want[i] {
+		// Compared field by field: ProposedEntity carries a Variants slice, so
+		// the struct is not comparable with ==. Discover proposes bare strings
+		// and never folds, so an empty Variants list is part of the contract.
+		if got[i].Category != want[i].Category || got[i].Text != want[i].Text {
 			t.Errorf("proposal %d = %+v, want %+v", i, got[i], want[i])
+		}
+		if len(got[i].Variants) != 0 {
+			t.Errorf("proposal %d must carry no variants, got %v", i, got[i].Variants)
 		}
 	}
 }

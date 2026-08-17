@@ -103,8 +103,9 @@ display choice: it decides which country-specific regex categories run.
 |---|---|---|
 | `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, pages}` (null = every document whole; restricts the LOCAL AI route only; `pages` is a 1-based `number[]` over the document's own page/slide/row/line units, and an empty array means the whole selected document) | `DetectionResult {candidates, proposals, phases, skipped, errors, cancelled, status}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
 | `cancelDetection()` | — | aborts the in-flight run, reaching whichever route is running, including mid-file |
-| `expandVariants(entity)` | entity | `{category, canonical, manualVariants, excludedVariants}` |
+| `expandVariants(entity)` | `{category, canonical, manualVariants, autoExpand}` | the spellings this value matches, longest first. `autoExpand: false` means the user curated the list: Go derives nothing and returns the canonical name plus exactly the spellings it was given, so the chips on the card are what the run replaces |
 | `countTermMatches(term)` | term | `{count, documents}`, the live read-out under the manual add-value row (debounced) |
+| `checkIntersections(request)` | `{entities, patterns, allowTerms, categories, suppressRegexPII}` | `{intersections: [{value, category, origin, winnerValue, winnerCategory, winnerOrigin, occurrences, totalOccurrences, documents}]}`. The values another detection route also claims, so a card can warn BEFORE the run rather than the user finding out on the results screen. `occurrences == totalOccurrences` means the value is never replaced under its own type. Mutates nothing (no placeholder minted, registry untouched), so it is safe to call on every edit. An empty list is the normal answer, not an error |
 | `validatePattern(expr)` | regex | `""` (valid) or the error message |
 | `patternMatches(expr)` | regex | up to 20 sample matches across the loaded documents, shown live under the pattern field: a regex that compiles and matches nothing is the common mistake |
 
@@ -134,7 +135,15 @@ removed list with restore.
 | `getMapping()` | — | placeholder → `{original, category}` lookup (empty before the first run) |
 
 The run `request` is `{entities, allowTerms, patterns, categories, simpleRules,
-suppressRegexPII}`. `suppressRegexPII` is the "Native detection" master switch
+suppressRegexPII}`. Each entity is
+`{category, canonical, manualVariants, origin, autoExpand}`. `autoExpand: false`
+means the spellings are curated, so Go replaces exactly `manualVariants` plus
+the canonical name and derives nothing. `origin` is the ROUTE that produced the
+value, one of `native`, `declared`, `auto`, `ai` (precedence order, lower wins);
+it is what decides which route owns a string when two claim the same text, and
+it is deliberately separate from confidence, which feeds the `minConfidence`
+floor. Absent reads as `declared`.
+`suppressRegexPII` is the "Native detection" master switch
 inverted (`!useNativeDetect`): when true, Go skips the deterministic regex PII
 pass (pass 1) so NO signal category is replaced, whatever `categories` selects;
 the entity, custom-pattern and code passes are unaffected.
@@ -150,6 +159,7 @@ the entity, custom-pattern and code passes are unaffected.
 | `chooseExportFolder()` | — | opens the native FOLDER picker and resolves to the chosen path, or `""` when cancelled. Picks only; writes nothing (BUILD-05 Phase 3) |
 | `exportAllZipTo(dir)` | folder path | writes the batch zip into that folder with NO second dialog and resolves to the full path written. The only dialog-free write in the contract, allowed because the folder was chosen explicitly and the zip carries no re-identification key (decision 4). An existing archive is never overwritten, the new one is numbered |
 | `copyDocument(name)` | name | puts the anonymised text on the clipboard |
+| `copyText(text)` | the selected text | puts an arbitrary short string on the clipboard, for the Compare pane's selection panel. Rejects with an actionable message on an empty selection or one over 4096 bytes, which is a mis-drag guard: a drag that ran away down the pane must not push a whole document through the clipboard |
 | `exportMapping(format)` | `"csv"`/`"json"` | saves the re-identification key. Call ONLY after the user confirmed the sensitivity warning |
 | `exportReport(format)` | `"json"`/`"md"` | saves the run report, INCLUDING the per-value table (BUILD-06). That table maps placeholders back to real values, so the exported report is a re-identification key: warn before writing it, as for `exportMapping`. |
 | `saveSession(request)` | request | persists the session (entities, allowlist, patterns, rules, settings, registry, the removal list and the spent placeholder numbers). Warn the user first: the file contains the re-identification key |

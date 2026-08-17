@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -382,6 +383,46 @@ func (a *App) CopyDocument(name string) error {
 	}
 	if err := runtime.ClipboardSetText(a.ctx, rd.Anonymised); err != nil {
 		return fmt.Errorf("could not write to the clipboard (%v), try again", err)
+	}
+	return nil
+}
+
+// maxCopyTextBytes caps CopyText. It is a mis-drag guard, not a product limit:
+// the selection panel copies a VALUE out of a preview, and a drag that ran away
+// down the pane would otherwise push a whole document through the clipboard.
+// Generous for any name, address or account number.
+const maxCopyTextBytes = 4096
+
+// CopyText puts an arbitrary short string on the system clipboard.
+//
+// It exists for the Compare pane's selection panel, where the user copies a
+// value out of the preview. Clipboard access goes through Go, as CopyDocument
+// already does: the WebView's own clipboard API is not reliably available
+// without a user-gesture context the panel's button does not always carry.
+//
+// @param text the selected text
+// @return an actionable error when the selection is empty or too long
+func (a *App) CopyText(text string) error {
+	if err := validateCopyText(text); err != nil {
+		return err
+	}
+	if err := runtime.ClipboardSetText(a.ctx, text); err != nil {
+		return fmt.Errorf("could not write to the clipboard (%v), try again", err)
+	}
+	return nil
+}
+
+// validateCopyText is the guard in front of the clipboard write, split out so
+// it can be tested: the Wails runtime refuses a context it was not given by a
+// lifecycle hook, and there is no such context in a headless test.
+func validateCopyText(text string) error {
+	if strings.TrimSpace(text) == "" {
+		return fmt.Errorf("there is nothing to copy, select some text in one of the previews first")
+	}
+	if len(text) > maxCopyTextBytes {
+		return fmt.Errorf(
+			"that selection is %d characters, which is too long to copy: select a single value rather than a passage",
+			len(text))
 	}
 	return nil
 }

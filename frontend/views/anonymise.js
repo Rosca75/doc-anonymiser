@@ -27,7 +27,7 @@
 import {
   runPipeline, cancelPipeline, fastRerun, getMapping, getDocumentSource,
   valuePlaceholders, listRemovedValues, setValuePlaceholder, removeValue,
-  restoreValue, nextRulePlaceholder,
+  restoreValue, nextRulePlaceholder, copyText,
 } from "../api.js";
 import {
   getState, setState,
@@ -35,14 +35,16 @@ import {
   addSimpleRule, removeSimpleRule, moveSimpleRule,
   entityAutocomplete, reassignOriginal, addEntities,
   setValueTables, dismissWarning, visibleWarnings, blockingConflicts,
+  foldIntoFamily,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { renderHighlighted } from "../highlight.js";
+import { findHits, renderPlainWithHits, MAX_HITS } from "../panesearch.js";
 import { button, card, statTile, collapsibleGroup, wireGroups, icon, sectionLabel } from "../ui.js";
 import { CATEGORIES } from "./identifyworkspace.js";
 import { stepFooterHTML, wireStepFooter } from "../nav.js";
 import { notify, wireNotice } from "../toast.js";
-import { CARDS, ANONYMISE, CATEGORY_LABELS, IMPORT } from "../copy.js";
+import { CARDS, ANONYMISE, CATEGORY_LABELS, IMPORT, WORKSPACE } from "../copy.js";
 import { toastHTML } from "../ui.js";
 
 // --- View-local state -----------------------------------------------------
@@ -77,6 +79,36 @@ let selectedError = "";
 // relative to the Compare card, so the floating panel follows the selection.
 let selection = null;
 let selectionDraft = "";
+// The selection panel's stage: null (choose copy or replace), "replace" (choose
+// how), then a mode. All view state: it is about THIS selection and dies with
+// it, so it resets whenever `selection` is cleared or the document changes.
+let selectionStage = null;    // null | "replace"
+let selectionMode = null;     // null | "variant" | "value" | "text"
+let selectionTarget = "";     // the variant autocomplete's draft
+let selectionCategory = "person_names";
+// A refusal from Apply. It belongs ON the panel, next to the field the fix goes
+// into, for the same reason a refused rename lands on its own row.
+let selectionError = "";
+// The panel's width in pixels, matching .selection-card in style.css. The clamp
+// that keeps it inside the Compare card needs a number, and reading it off the
+// element is not possible before the element exists.
+const SELECTION_PANEL_WIDTH = 304; // 19rem at the 16px root
+// The Compare search: a way of LOOKING at the result, not part of it, so it
+// lives here and not in the store. `index` walks ONE combined list, every
+// original-pane hit then every anonymised-pane hit, because the two panes have
+// different match counts and a single shared index over lists of different
+// lengths would drift.
+//
+// Hits are recomputed during render from the current needle rather than cached,
+// which keeps them in step with the text with nothing to invalidate. It is
+// reset when the compared document changes or a new run lands: offsets belong
+// to one text.
+let search = { needle: "", index: 0 };
+// The hit the pane was last scrolled to, so scrolling happens only when the
+// active hit CHANGED. scroll.js restores each pane's offset on every repaint,
+// and scrolling unconditionally would fight it and drag the pane back on every
+// keystroke.
+let lastScrolledTo = null;
 // The three add rows' draft text, kept across repaints.
 const drafts = { missedCategory: "person_names", missed: "", find: "", replace: "", caseSensitive: false };
 
@@ -643,10 +675,14 @@ export function compareCard(s, doc) {
   // pane is a reader of it. `source` is null only while the fetch for a
   // document that left the import list is in flight (see wireCompare).
   const source = doc ? documentSource(s, doc.name) : null;
+  // The combined walk, computed once so the head's readout and both panes agree
+  // about which hit is active.
+  const walk = searchWalk(s, doc, source, search);
+
   const originalBody = source?.found
     ? (source.truncated
       ? `<div class="banner warn">${escapeHTML(IMPORT.previewTruncated)}</div>` : "") +
-      escapeHTML(source.markdown)
+      renderPlainWithHits(source.markdown, walk.original, walk.activeIn("original"))
     : `<span class="hint">${escapeHTML(ANONYMISE.originalUnavailable)}</span>`;
 
   const panes = doc
@@ -657,7 +693,10 @@ export function compareCard(s, doc) {
       `</div>` +
       `<div class="compare-pane">` +
       `<div class="pane-caption">${escapeHTML(ANONYMISE.paneAnonymised)}</div>` +
-      `<pre class="pane-body" id="anonymised-pane">${renderHighlighted(doc.anonymised ?? "", s.mapping, doc.occurrenceVariants)}</pre>` +
+      `<pre class="pane-body" id="anonymised-pane">${renderHighlighted(
+        doc.anonymised ?? "", s.mapping, doc.occurrenceVariants,
+        { hits: walk.anonymised, activeIndex: walk.activeIn("anonymised") },
+      )}</pre>` +
       `</div></div>`
     : `<div class="card-body"><p class="hint">${escapeHTML(
         blockingConflicts(s).length > 0 ? ANONYMISE.compareBlocked : ANONYMISE.compareEmpty,
@@ -667,13 +706,96 @@ export function compareCard(s, doc) {
     `<div class="card-head with-controls">` +
     `<div class="card-head-left"><h2>${escapeHTML(CARDS.compare.title)}</h2>` +
     `<span class="card-sub">${escapeHTML(compareSubtitle(doc))}</span></div>` +
-    `<div class="card-head-right">${head}</div>` +
+    `<div class="card-head-right">${searchControls(walk, search)}${head}</div>` +
     `</div>` +
-    selectionPanel() +
+    selectionPanel(s) +
     `<div class="mark-tooltip" id="mark-tooltip" role="tooltip" hidden></div>` +
     panes +
     toastHTML(getState().notice) +
     `</section>`;
+}
+
+/**
+ * searchWalk(s, doc, source) computes the current needle's hits in both panes
+ * and resolves which one is active.
+ *
+ * The walk is ONE ordered list: every original-pane hit, then every
+ * anonymised-pane hit. The two panes have different match counts, so a single
+ * shared index over two separate lists would drift, and two cursors would leave
+ * the user unsure which one the buttons move. Crossing the boundary is made
+ * visible instead, by naming the active hit's pane in the readout.
+ *
+ * @returns {object} {original, anonymised, total, index, pane, capped,
+ *   activeIn(pane)} where activeIn returns the active hit's index WITHIN that
+ *   pane, or -1 when the active hit is in the other one
+ */
+export function searchWalk(s, doc, source, state = search) {
+  const needle = state.needle;
+  const originalText = source?.found ? source.markdown : "";
+  const original = doc ? findHits(originalText, needle) : [];
+  const anonymised = doc ? findHits(doc.anonymised ?? "", needle) : [];
+  const total = original.length + anonymised.length;
+
+  // The index is clamped rather than corrected in place: the text can change
+  // under a stale index (a re-run, a new document) and a clamp here means every
+  // reader sees the same answer without anyone having to reset it first.
+  const index = total === 0 ? 0 : ((state.index % total) + total) % total;
+  const inOriginal = index < original.length;
+
+  return {
+    original,
+    anonymised,
+    total,
+    index,
+    pane: inOriginal ? "original" : "anonymised",
+    // Both panes cap independently, so either hitting the cap means the
+    // highlight is showing a prefix and should say so.
+    capped: original.length >= MAX_HITS || anonymised.length >= MAX_HITS,
+    activeIn(pane) {
+      if (total === 0) return -1;
+      if (pane === "original") return inOriginal ? index : -1;
+      return inOriginal ? -1 : index - original.length;
+    },
+  };
+}
+
+/**
+ * searchControls(walk) is the search box, the two navigation buttons and the
+ * readout, in the Compare card head beside the document selector.
+ *
+ * Both buttons are disabled with a title when there is nothing to step through,
+ * because a greyed control that says nothing is a dead end.
+ */
+export function searchControls(walk, state = search) {
+  const none = walk.total === 0;
+  const hasNeedle = state.needle.trim().length > 0;
+  const readout = none
+    ? (hasNeedle ? ANONYMISE.searchNone : "")
+    : ANONYMISE.searchCount(walk.index + 1, walk.total, paneLabel(walk.pane));
+
+  return `<div class="compare-search">` +
+    `<label class="search-box">${icon("search")}` +
+    `<input id="compare-search" value="${escapeHTML(state.needle)}"` +
+    ` placeholder="${escapeHTML(ANONYMISE.searchPlaceholder)}"` +
+    ` aria-label="${escapeHTML(ANONYMISE.searchLabel)}"/></label>` +
+    button("", {
+      kind: "ghost", cls: "search-prev icon-action", icon: "chevron_left",
+      ariaLabel: ANONYMISE.searchPrev, title: none ? ANONYMISE.searchNone : ANONYMISE.searchPrev,
+      disabled: none,
+    }) +
+    button("", {
+      kind: "ghost", cls: "search-next icon-action", icon: "chevron_right",
+      ariaLabel: ANONYMISE.searchNext, title: none ? ANONYMISE.searchNone : ANONYMISE.searchNext,
+      disabled: none,
+    }) +
+    `<span class="search-readout hint">${escapeHTML(readout)}</span>` +
+    (walk.capped ? `<span class="search-readout hint">${escapeHTML(ANONYMISE.searchCapped(MAX_HITS))}</span>` : "") +
+    `</div>`;
+}
+
+/** paneLabel(pane) is the pane name as the readout says it. */
+function paneLabel(pane) {
+  return pane === "original" ? ANONYMISE.searchPaneOriginal : ANONYMISE.searchPaneAnonymised;
 }
 
 function compareSubtitle(doc) {
@@ -691,18 +813,105 @@ function compareSubtitle(doc) {
  * is positioned against the Compare card, so scrolling the pane moves the text
  * out from under it and the panel stays where the user's eye is.
  */
-function selectionPanel() {
-  if (!selection) return "";
+export function selectionPanel(s = getState(), view = selectionViewState()) {
+  if (!view.selection) return "";
   return `<div class="selection-card" id="selection-card"` +
-    ` style="left:${selection.x}px;top:${selection.y}px">` +
-    sectionLabel(ANONYMISE.replaceSelection) +
-    `<span class="selection-text mono">${escapeHTML(selection.text)}</span>` +
-    `<input id="selection-draft" class="mono" value="${escapeHTML(selectionDraft)}"` +
-    ` aria-label="${escapeHTML(ANONYMISE.replaceWith)}"/>` +
+    ` style="left:${view.selection.x}px;top:${view.selection.y}px">` +
+    sectionLabel(ANONYMISE.selectionTitle) +
+    `<span class="selection-text mono">${escapeHTML(view.selection.text)}</span>` +
+    selectionBody(s, view) +
+    (view.error ? `<p class="hint bad">${escapeHTML(view.error)}</p>` : "") +
+    `</div>`;
+}
+
+/**
+ * selectionViewState() bundles the panel's view-local state. The panel is
+ * rendered from it rather than from the module variables directly, so the
+ * stages can be exercised without a live selection.
+ */
+function selectionViewState() {
+  return {
+    selection, stage: selectionStage, mode: selectionMode,
+    target: selectionTarget, category: selectionCategory,
+    draft: selectionDraft, error: selectionError,
+  };
+}
+
+/** selectionBody(s, view) is whichever of the three stages is current. */
+function selectionBody(s, view) {
+  if (view.stage === null) return selectionStageChoose();
+  if (view.mode === null) return selectionStageMode();
+  return selectionStageFields(s, view);
+}
+
+/** Stage 1: copy the text out, or go on to replace it. */
+function selectionStageChoose() {
+  return `<div class="run-actions">` +
+    button(ANONYMISE.selectionCopy, { kind: "secondary", id: "btn-selection-copy", icon: "content_copy" }) +
+    button(ANONYMISE.selectionReplace, { kind: "primary", id: "btn-selection-replace" }) +
+    `</div>`;
+}
+
+/**
+ * Stage 2: WHICH KIND of replacement. The three hints are load-bearing: the
+ * modes differ in what ends up in the re-identification key, and that is not
+ * guessable from the labels.
+ */
+function selectionStageMode() {
+  const option = (mode, label, hint) =>
+    `<label class="selection-option">` +
+    `<input type="radio" name="selection-mode" class="selection-mode" value="${escapeHTML(mode)}"/>` +
+    `<span class="selection-option-body">` +
+    `<span class="selection-option-name">${escapeHTML(label)}</span>` +
+    `<span class="hint">${escapeHTML(hint)}</span>` +
+    `</span></label>`;
+
+  return `<div class="selection-options">` +
+    option("variant", ANONYMISE.selectionModeVariant, ANONYMISE.selectionModeVariantHint) +
+    option("value", ANONYMISE.selectionModeValue, ANONYMISE.selectionModeValueHint) +
+    option("text", ANONYMISE.selectionModeText, ANONYMISE.selectionModeTextHint) +
+    `</div>` +
     `<div class="run-actions">` +
+    button(ANONYMISE.selectionBack, { kind: "ghost", id: "btn-selection-back" }) +
+    `</div>`;
+}
+
+/** Stage 3: the fields the chosen mode needs, plus Apply and Cancel. */
+function selectionStageFields(s, view) {
+  let fields = "";
+  if (view.mode === "variant") {
+    // The same autocomplete the Selected placeholder card uses, so "which value
+    // is this a spelling of" is answered the same way in both places.
+    const options = entityAutocomplete(view.target, s)
+      .map((e) => `<option value="${escapeHTML(e.canonical)}"></option>`).join("");
+    fields =
+      `<label class="field-label">${escapeHTML(ANONYMISE.selectionTargetLabel)}` +
+      `<input id="selection-target" list="selection-targets"` +
+      ` value="${escapeHTML(view.target)}"` +
+      ` placeholder="${escapeHTML(ANONYMISE.selectionTargetPlaceholder)}"` +
+      ` aria-label="${escapeHTML(ANONYMISE.selectionTargetLabel)}"/></label>` +
+      `<datalist id="selection-targets">${options}</datalist>`;
+  } else if (view.mode === "value") {
+    fields =
+      `<label class="field-label">${escapeHTML(ANONYMISE.selectionTypeLabel)}` +
+      `<select id="selection-category" aria-label="${escapeHTML(ANONYMISE.selectionTypeLabel)}">` +
+      CATEGORIES.map((c) =>
+        `<option value="${escapeHTML(c)}"${c === view.category ? " selected" : ""}>` +
+        `${escapeHTML(CATEGORY_LABELS[c]?.label ?? c)}</option>`).join("") +
+      `</select></label>`;
+  } else {
+    fields =
+      `<input id="selection-draft" class="mono" value="${escapeHTML(view.draft)}"` +
+      ` aria-label="${escapeHTML(ANONYMISE.replaceWith)}"/>`;
+  }
+
+  return fields +
+    `<div class="run-actions">` +
+    // Cancel steps BACK to stage 1 rather than closing: a mis-click on a mode
+    // must not throw away the selection the user made.
     button(ANONYMISE.cancelSelection, { kind: "secondary", id: "btn-cancel-selection" }) +
     button(ANONYMISE.applySelection, { kind: "primary", id: "btn-apply-selection" }) +
-    `</div></div>`;
+    `</div>`;
 }
 
 // --- The footer hint -----------------------------------------------------
@@ -988,6 +1197,87 @@ function wireRules(container) {
   }
 }
 
+/**
+ * wireCompareSearch(container) wires the search box, its two buttons and the
+ * keyboard, then scrolls to the active hit.
+ *
+ * The input keeps focus and caret across the repaint each keystroke causes, the
+ * same pattern the values search bar uses: a search box that loses focus
+ * mid-word cannot be typed into.
+ */
+function wireCompareSearch(container) {
+  const input = container.querySelector("#compare-search");
+  input?.addEventListener("input", () => {
+    const caret = input.selectionStart;
+    // A new needle starts at its first hit: keeping the old position would land
+    // the user somewhere unrelated to what they just typed.
+    search = { needle: input.value, index: 0 };
+    lastScrolledTo = null;
+    if (compareSearchTimer) clearTimeout(compareSearchTimer);
+    compareSearchTimer = setTimeout(() => {
+      compareSearchTimer = null;
+      setState({});
+      const again = container.querySelector("#compare-search");
+      if (again) {
+        again.focus();
+        again.setSelectionRange(caret, caret);
+      }
+    }, 150);
+  });
+
+  input?.addEventListener("keydown", (ev) => {
+    // Enter and Shift+Enter step through the hits without leaving the field,
+    // which is how every search box behaves. Escape clears.
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      stepSearch(ev.shiftKey ? -1 : 1);
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      search = { needle: "", index: 0 };
+      lastScrolledTo = null;
+      setState({});
+    }
+  });
+
+  container.querySelector(".search-prev")?.addEventListener("click", () => stepSearch(-1));
+  container.querySelector(".search-next")?.addEventListener("click", () => stepSearch(1));
+
+  scrollToActiveHit(container);
+}
+
+// The pending repaint from a keystroke in the search box. Debounced so the
+// input survives a burst of typing.
+let compareSearchTimer = null;
+
+/**
+ * stepSearch(delta) moves through the ONE combined list and wraps at both ends.
+ * The index is normalised at read time (searchWalk), so this only has to add.
+ */
+function stepSearch(delta) {
+  search = { ...search, index: search.index + delta };
+  setState({});
+}
+
+/**
+ * scrollToActiveHit(container) brings the active hit into view, but ONLY when
+ * it changed since the last paint.
+ *
+ * scroll.js restores each pane's previous offset on every repaint. Scrolling
+ * unconditionally would fight that and drag the pane back to the active hit on
+ * every keystroke, including the ones that were meant to scroll somewhere else.
+ */
+function scrollToActiveHit(container) {
+  const active = container.querySelector(".find-hit.active");
+  if (!active) {
+    lastScrolledTo = null;
+    return;
+  }
+  const key = `${search.needle}|${search.index}`;
+  if (key === lastScrolledTo) return;
+  lastScrolledTo = key;
+  active.scrollIntoView?.({ block: "center" });
+}
+
 function wireCompare(container, doc) {
   // If the ORIGINAL pane has no source to show, ask Go for it ONCE. This is
   // the fallback path for a document that left the import list; the common
@@ -1003,9 +1293,15 @@ function wireCompare(container, doc) {
   container.querySelector("#compare-doc")?.addEventListener("change", (ev) => {
     // Changing document clears the selected mark: it belonged to the old one.
     selectedMark = null;
-    selection = null;
+    resetSelectionPanel();
+    // The search offsets belong to ONE text, so the position resets. The needle
+    // is kept: the user is looking for the same thing in the next document.
+    search = { ...search, index: 0 };
+    lastScrolledTo = null;
     setState({ resultDoc: ev.target.value });
   });
+
+  wireCompareSearch(container);
 
   // A results view restored by navigation can have results but no mapping (the
   // fast re-run path fetches it separately). Without it every mark falls back
@@ -1134,65 +1430,197 @@ function wireTextSelection(container) {
 
   for (const pane of container.querySelectorAll(".pane-body")) {
     pane.addEventListener("mouseup", () => {
-      const sel = container.ownerDocument.defaultView?.getSelection?.();
+      const sel = container.ownerDocument?.defaultView?.getSelection?.();
       if (!sel || sel.isCollapsed) {
-        if (selection) { selection = null; setState({}); }
+        if (selection) { resetSelectionPanel(); setState({}); }
         return;
       }
       const text = sel.toString().trim();
       // A paragraph-length "value" is a mis-drag, not a value. 120 characters is
       // generously long for a name, an address or an account number.
       if (!text || text.length > 120 || !pane.contains(sel.anchorNode)) {
-        if (selection) { selection = null; setState({}); }
+        if (selection) { resetSelectionPanel(); setState({}); }
         return;
       }
       const rect = sel.getRangeAt(0).getBoundingClientRect();
       const hostRect = host.getBoundingClientRect();
+      resetSelectionPanel();
+      // Clamped to the card's bounds, the same clamp the mark tooltip makes:
+      // a selection near the right-hand edge would otherwise push the panel off
+      // screen, and the panel is transform: translate(-50%) about this point.
+      const half = SELECTION_PANEL_WIDTH / 2;
+      const centre = rect.left + rect.width / 2 - hostRect.left;
       selection = {
         text,
-        x: rect.left + rect.width / 2 - hostRect.left,
+        x: Math.max(half + 6, Math.min(centre, hostRect.width - half - 6)),
         y: rect.top - hostRect.top,
       };
-      // GO mints the placeholder and reserves it, because only the registry
-      // knows every number already spent. CUSTOM is also the automatic label
-      // for custom_patterns matches, so numbering from the rules alone hands
-      // out one the registry has already given to a pattern match.
-      selectionDraft = "";
+      // NO placeholder is reserved here. Reserving on selection spent a
+      // [CUSTOM_N] on every stray drag, and numbers are never freed by design:
+      // an export or a mapping CSV in which [CUSTOM_4] means one thing may
+      // already have left the machine. The reservation now happens when the
+      // user chooses the mode that actually needs one.
       setState({});
-      nextRulePlaceholder()
-        .then((placeholder) => {
-          selectionDraft = placeholder;
-          setState({});
-        })
-        .catch(() => { /* no bridge: the user types their own replacement */ });
     });
   }
 }
 
 function wireSelectionPanel(container) {
-  const draft = container.querySelector("#selection-draft");
-  draft?.addEventListener("input", () => { selectionDraft = draft.value; });
-
-  container.querySelector("#btn-cancel-selection")?.addEventListener("click", () => {
-    selection = null;
+  // Stage 1.
+  container.querySelector("#btn-selection-copy")?.addEventListener("click", async () => {
+    const text = selection?.text ?? "";
+    try {
+      await copyText(text);
+      resetSelectionPanel();
+      container.ownerDocument?.defaultView?.getSelection?.()?.removeAllRanges();
+      setState({});
+      notify(ANONYMISE.selectionCopied, "ok");
+    } catch (err) {
+      // The cap and the empty case both come back as an actionable sentence
+      // from Go, and it belongs on the panel the user is looking at.
+      selectionError = String(err?.message ?? err);
+      setState({});
+    }
+  });
+  container.querySelector("#btn-selection-replace")?.addEventListener("click", () => {
+    selectionStage = "replace";
+    selectionError = "";
     setState({});
   });
 
-  container.querySelector("#btn-apply-selection")?.addEventListener("click", async () => {
-    const find = selection?.text;
-    const replace = (selectionDraft ?? "").trim();
-    if (!find || !replace) {
-      notify(ANONYMISE.selectionNeedsReplacement, "info");
+  // Stage 2.
+  container.querySelector("#btn-selection-back")?.addEventListener("click", () => {
+    selectionStage = null;
+    selectionMode = null;
+    selectionError = "";
+    setState({});
+  });
+  for (const radio of container.querySelectorAll(".selection-mode")) {
+    radio.addEventListener("change", () => {
+      selectionMode = radio.value;
+      selectionError = "";
+      setState({});
+      // ONLY mode 3 needs a placeholder, so only mode 3 spends one. Go mints it,
+      // because only the registry knows every number already taken: CUSTOM is
+      // also the automatic label for custom_patterns matches, so numbering from
+      // the rules alone hands out one a pattern match already has.
+      if (selectionMode === "text") {
+        nextRulePlaceholder()
+          .then((placeholder) => { selectionDraft = placeholder; setState({}); })
+          .catch(() => { /* no bridge: the user types their own replacement */ });
+      }
+    });
+  }
+
+  // Stage 3.
+  const target = container.querySelector("#selection-target");
+  target?.addEventListener("input", () => {
+    selectionTarget = target.value;
+    selectionError = "";
+    setState({});
+  });
+  container.querySelector("#selection-category")?.addEventListener("change", (ev) => {
+    selectionCategory = ev.target.value;
+  });
+  const draft = container.querySelector("#selection-draft");
+  draft?.addEventListener("input", () => { selectionDraft = draft.value; });
+
+  // Cancel steps BACK to stage 1 rather than closing, so a mis-click on a mode
+  // does not lose the selection.
+  container.querySelector("#btn-cancel-selection")?.addEventListener("click", () => {
+    selectionStage = null;
+    selectionMode = null;
+    selectionError = "";
+    setState({});
+  });
+
+  container.querySelector("#btn-apply-selection")?.addEventListener("click", () => {
+    applySelection(container);
+  });
+}
+
+/**
+ * applySelection(container) carries out the chosen replace mode.
+ *
+ * The three modes differ in what ends up in the re-identification key, which is
+ * why they are three modes and not one field: a spelling of an existing value
+ * shares that value's placeholder, a new value earns its own, and a
+ * find-and-replace rule creates no value at all.
+ */
+export async function applySelection(container, view = selectionViewState()) {
+  const text = view.selection?.text;
+  if (!text) return;
+  const clearSelection = () =>
+    container.ownerDocument?.defaultView?.getSelection?.()?.removeAllRanges();
+
+  if (view.mode === "variant") {
+    const main = (view.target ?? "").trim();
+    if (!main) {
+      selectionError = ANONYMISE.selectionNeedsTarget;
+      setState({});
       return;
     }
-    // Case-sensitive, because the user selected an exact string: matching it
-    // case-insensitively would replace things they did not point at.
-    addSimpleRule({ find, replace, caseSensitive: true });
-    selection = null;
-    collapsed.delete("rules"); // show the rule that was just created
-    container.ownerDocument.defaultView?.getSelection?.()?.removeAllRanges();
-    await runFastRerun(container, ANONYMISE.selectionApplied(find, replace));
-  });
+    // reassignOriginal refuses an unknown target, or one that IS the text. The
+    // reason goes on the panel rather than into a toast: the fix is in the
+    // field the user is looking at.
+    const entity = entityAutocomplete(main, getState())
+      .find((e) => e.canonical.toLowerCase() === main.toLowerCase());
+    if (!entity || !reassignOriginal(text, entity.category, entity.canonical)) {
+      selectionError = ANONYMISE.selectionUnknownTarget;
+      setState({});
+      return;
+    }
+    resetSelectionPanel();
+    clearSelection();
+    await runFastRerun(container, ANONYMISE.selectionBecameVariant(text, entity.canonical));
+    return;
+  }
+
+  if (view.mode === "value") {
+    // Through foldIntoFamily first, so a new value that belongs to an existing
+    // family becomes a spelling of it instead of a rival that would fire inside
+    // it. addEntities switches the category on, which is what makes the value
+    // actually apply.
+    const family = foldIntoFamily(view.category, text);
+    const message = family
+      ? WORKSPACE.foldedIntoValue(text, family.main)
+      : ANONYMISE.selectionBecameValue(text);
+    if (!family) {
+      addEntities([{ category: view.category, canonical: text, origin: "declared" }]);
+    }
+    resetSelectionPanel();
+    clearSelection();
+    await runFastRerun(container, message);
+    return;
+  }
+
+  const replace = (view.draft ?? "").trim();
+  if (!replace) {
+    selectionError = ANONYMISE.selectionNeedsReplacement;
+    setState({});
+    return;
+  }
+  // Case-sensitive, because the user selected an exact string: matching it
+  // case-insensitively would replace things they did not point at.
+  addSimpleRule({ find: text, replace, caseSensitive: true });
+  resetSelectionPanel();
+  collapsed.delete("rules"); // show the rule that was just created
+  clearSelection();
+  await runFastRerun(container, ANONYMISE.selectionApplied(text, replace));
+}
+
+/**
+ * resetSelectionPanel() clears the panel and everything about the selection it
+ * was showing. One function, so a path that closes the panel cannot leave a
+ * stage or a draft behind for the next selection to inherit.
+ */
+function resetSelectionPanel() {
+  selection = null;
+  selectionStage = null;
+  selectionMode = null;
+  selectionTarget = "";
+  selectionDraft = "";
+  selectionError = "";
 }
 
 /**

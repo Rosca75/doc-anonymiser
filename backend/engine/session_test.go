@@ -159,6 +159,11 @@ func TestSessionSaveLoadEquality(t *testing.T) {
 		wantWrote string
 	}{
 		{version: 1, wantFix: "start a new session", wantWrote: "an older version"},
+		// The immediately previous version is refused too, not migrated: a v5
+		// file's per-value exclusions have no meaning under the curated model,
+		// so reading one would silently start replacing spellings the user had
+		// removed.
+		{version: 5, wantFix: "start a new session", wantWrote: "an older version"},
 		{version: 99, wantFix: "update the application", wantWrote: "a newer version"},
 	} {
 		badStr := strings.Replace(string(bad),
@@ -173,6 +178,39 @@ func TestSessionSaveLoadEquality(t *testing.T) {
 				t.Errorf("version %d refusal must mention %q, got: %v", tt.version, want, err)
 			}
 		}
+	}
+}
+
+// TestSessionRoundTripsCuratedEntity: a value whose spellings the user set by
+// hand must come back curated. If autoExpand were dropped on the way through
+// the file, reloading a session would silently re-derive the list and start
+// replacing spellings the user had deleted.
+func TestSessionRoundTripsCuratedEntity(t *testing.T) {
+	curated := false
+	raw, err := SaveSession(Session{
+		Entities: []Entity{{
+			Category:       CatPersonNames,
+			Canonical:      "Marie Duval",
+			ManualVariants: []string{"Duval"},
+			AutoExpand:     &curated,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	if strings.Contains(string(raw), "excludedVariants") {
+		t.Errorf("a session file must carry no per-value exclusion list, got: %s", raw)
+	}
+	loaded, err := LoadSession(raw)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if len(loaded.Entities) != 1 {
+		t.Fatalf("expected one entity back, got %d", len(loaded.Entities))
+	}
+	if loaded.Entities[0].AutoExpands() {
+		t.Errorf("a curated value must reload curated, got AutoExpand %v",
+			loaded.Entities[0].AutoExpand)
 	}
 }
 

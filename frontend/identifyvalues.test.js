@@ -12,10 +12,11 @@ import assert from "node:assert/strict";
 import {
   resetState, getState, setState, toggleCategory,
   addEntities, setEntityVariants, addAllowTerm, addCandidates, entityKey,
-  groupEntities,
+  groupEntities, curate, acceptCandidate, setIntersections, canGoTo,
 } from "./state.js";
 import { valuesTab, suggestionsTab, visibleValues } from "./views/identifyworkspace.js";
 import { all, one, exists, textOf } from "./testhtml.js";
+import { WORKSPACE } from "./copy.js";
 
 /** seed(category, canonical, variants) adds one accepted value with a settled
  *  variant list, the shape the tab renders. */
@@ -153,4 +154,136 @@ test("grouping three values and choosing a source as the main keeps that source 
   const folded = es[0].manualVariants ?? [];
   assert.ok(folded.includes("Acme"), "the card value folded in as a spelling");
   assert.ok(folded.includes("Acme Corp"), "the other source folded in as a spelling");
+});
+
+test("a curated value shows its chips and no pending placeholder", () => {
+  // A curated row's list is settled by definition: showing "working out the
+  // other spellings..." on it would promise a round-trip that never comes,
+  // because nothing is left for Go to derive.
+  resetState();
+  seed("entity_names", "Delta Industries", ["Delta Industries", "Delta"]);
+  const before = getState().entities[0];
+  setState({ entities: [curate(before, ["Delta Industries"])] });
+
+  const html = valuesTab(getState());
+  assert.deepEqual(all(html, "span.variant-chip").map((c) => c.attrs["data-variant"]),
+    ["Delta Industries"], "only the curated spellings are chips");
+  assert.ok(!html.includes(WORKSPACE.variantsPending),
+    "a curated row is settled, so it never shows the pending placeholder");
+});
+
+test("a value card names the route that found it", () => {
+  // Origin is DISPLAYED, not just stored: a precedence rule whose inputs the
+  // user cannot see is indistinguishable from randomness, which is how the old
+  // behaviour came to be reported.
+  resetState();
+  addCandidates([{ text: "Meridian", category: "entity_names" }], "smart");
+  acceptCandidate("Meridian");
+  setEntityVariants("entity_names", "Meridian", ["Meridian"]);
+
+  const chip = one(valuesTab(getState()), "span.origin-chip");
+  assert.equal(chip.inner, WORKSPACE.originLabel.auto);
+  assert.match(chip.attrs.class, /origin-auto/);
+});
+
+test("a value the user typed is labelled as theirs", () => {
+  resetState();
+  seed("entity_names", "Alpine");
+  const chip = one(valuesTab(getState()), "span.origin-chip");
+  assert.equal(chip.inner, WORKSPACE.originLabel.declared);
+});
+
+// --- Intersections on the value card -------------------------------------
+
+/** overlap(patch) is an intersection row as Go sends it. */
+function overlap(patch = {}) {
+  return {
+    value: "marie.duval@example.com", category: "person_names", origin: "declared",
+    winnerValue: "marie.duval@example.com", winnerCategory: "email", winnerOrigin: "native",
+    occurrences: 2, totalOccurrences: 2,
+    ...patch,
+  };
+}
+
+test("a fully covered value says it is never replaced under its own type", () => {
+  resetState();
+  seed("person_names", "marie.duval@example.com");
+  setIntersections([overlap()]);
+  const html = valuesTab(getState());
+
+  const note = one(html, "div.intersection-note");
+  assert.ok(note.inner.includes("Every occurrence"),
+    "a value nothing leaves alone is the case worth shouting about");
+  // The route is named in the same words the origin chip uses.
+  assert.ok(note.inner.includes(WORKSPACE.originLabel.native));
+  assert.ok(note.inner.includes("Priority order"), "the rule that decided is stated");
+});
+
+test("a partly covered value gets the milder count sentence", () => {
+  resetState();
+  seed("entity_names", "Meridian");
+  setIntersections([overlap({
+    value: "Meridian", category: "entity_names",
+    winnerValue: "Meridian-4471", winnerCategory: "custom_patterns", winnerOrigin: "declared",
+    occurrences: 1, totalOccurrences: 3,
+  })]);
+  const note = one(valuesTab(getState()), "div.intersection-note");
+  assert.ok(note.inner.includes("1 of 3"), "the counts are the difference between a note and an alarm");
+  assert.ok(!note.inner.includes("Every occurrence"));
+});
+
+test("an intersection warns, it does not look like a blocking conflict", () => {
+  resetState();
+  seed("person_names", "marie.duval@example.com");
+  setIntersections([overlap()]);
+  const card = one(valuesTab(getState()), "div.value-card");
+
+  assert.match(card.attrs.class, /intersects/);
+  assert.ok(!/conflicted/.test(card.attrs.class),
+    "the precedence rule has an answer, so the run is not refused");
+  assert.ok(!exists(valuesTab(getState()), "button.value-solve"),
+    "Solve conflicts is for the three blocking kinds, not for a warning");
+});
+
+test("an intersection does not close the step 2 to 3 gate", () => {
+  // The gate exists for unreviewed SUGGESTIONS. An intersection is a decision
+  // the engine can make on its own, so it must never block navigation.
+  resetState();
+  setState({ documents: [{ name: "a.txt" }] });
+  seed("person_names", "marie.duval@example.com");
+  setIntersections([overlap()]);
+  assert.equal(canGoTo("anonymise"), true,
+    "an intersection is a warning, so it must not stand between the steps");
+});
+
+test("a card with no intersection renders no note", () => {
+  resetState();
+  seed("entity_names", "Alpine");
+  setIntersections([overlap()]); // belongs to a different value
+  const html = valuesTab(getState());
+  assert.ok(!exists(html, "div.intersection-note"));
+  assert.ok(!/intersects/.test(one(html, "div.value-card").attrs.class));
+});
+
+test("a folded family is ONE suggestion row that names its spellings", () => {
+  // Three rows for "Alpine Trust", "Alpine Trust S.A." and "Alpine Trust Ltd."
+  // invite three separate accept decisions for one company. Accepting the one
+  // row accepts the spellings too, so the row has to say which.
+  resetState();
+  addCandidates([{
+    text: "Alpine Trust", category: "entity_names", count: 5,
+    variants: ["Alpine Trust S.A."],
+  }], "smart");
+  const html = suggestionsTab(getState(), getState().candidates);
+
+  assert.equal(all(html, "div.grid-row").length, 1, "one family, one row");
+  assert.ok(textOf(html, "span.cand-spellings").includes("Alpine Trust S.A."),
+    "the row names what accepting it will also replace");
+});
+
+test("a suggestion with no folded spellings says nothing extra", () => {
+  resetState();
+  addCandidates([{ text: "Meridian", category: "entity_names", count: 2 }], "smart");
+  const html = suggestionsTab(getState(), getState().candidates);
+  assert.ok(!exists(html, "span.cand-spellings"));
 });

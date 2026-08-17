@@ -211,6 +211,17 @@ const initialState = {
   // {source: "smart"|"local-ai"|"cloud-ai", text, category, count, contexts}.
   candidates: [],
 
+  // The values another detection route also claims, as Go last answered
+  // (api.js checkIntersections). They are WARNINGS, never blocking: the
+  // precedence rule always has an answer, so refusing the run would punish the
+  // user for a configuration the engine can resolve.
+  //
+  // It is cleared by every change to the value list rather than left to go
+  // stale, because a warning describing a configuration the user has already
+  // changed is worse than no warning: it is read as a statement about the one
+  // in front of them.
+  intersections: [],
+
   // Placeholder → {original, category} lookup from the last run
   // MEMORY NOTE: this is the re-identification
   // key; it stays in the app process like the Go registry and is
@@ -283,6 +294,34 @@ export const ALL_CATEGORIES = [
   ...NAME_CATEGORIES, ...DECLARED_CATEGORIES,
 ];
 
+// --- Detection routes, as provenance ------------------------------------
+//
+// ORIGINS mirrors engine.AllOrigins exactly, in PRECEDENCE order, and is
+// checked by ../origin_parity_test.go. It is what a value carries to say WHICH
+// ROUTE found it, which is a different question from how much the value is
+// trusted: the confidence floor answers the second, and using one number for
+// both means raising the floor silently reorders which route wins.
+export const ORIGINS = ["native", "declared", "auto", "ai"];
+
+/**
+ * originOf(source) maps a suggestion's source badge to the route that produced
+ * it. The suggestion list labels its rows by where they came from ("smart",
+ * "local-ai"); the engine ranks them by origin. This is the one place the two
+ * vocabularies meet, so the mapping has a single home and can be tested.
+ *
+ * Anything unrecognised reads as "declared", the same fallback the engine
+ * applies: a value whose route is unknown is trusted rather than demoted below
+ * a detector's guess.
+ *
+ * @param {string} source a candidate's source badge
+ * @returns {string} one of ORIGINS
+ */
+export function originOf(source) {
+  if (source === "smart") return "auto";
+  if (source === "local-ai" || source === "ai") return "ai";
+  return "declared";
+}
+
 /**
  * presetCategories(level) mirrors engine.PresetSelection exactly:
  *
@@ -341,11 +380,52 @@ export function resetState() {
 
 /**
  * setState(patch) shallow-merges the patch and notifies subscribers.
+ *
+ * It has ONE special case: a patch that changes the values or the patterns
+ * invalidates the intersection warnings, because those describe how the value
+ * list overlapped the LAST time Go was asked. A stale intersection warning is
+ * worse than none: it sits on a card describing a configuration the user has
+ * already changed, and it is read as a statement about the one in front of
+ * them. Doing it here rather than in each of the dozen reducers that touch the
+ * list means a reducer added later cannot forget.
+ *
  * @param {object} patch fields to update.
  */
 export function setState(patch) {
+  const invalidates = ("entities" in patch || "patterns" in patch) &&
+    !("intersections" in patch);
   Object.assign(state, patch);
+  if (invalidates) state.intersections = [];
   notify();
+}
+
+/**
+ * setIntersections(list) stores Go's answer about which values another route
+ * also claims. It is the ONLY writer, and it is deliberately a separate call
+ * from the edit that triggered the recheck: the edit clears the list, the
+ * answer arrives later, and a screen showing nothing in between is correct.
+ *
+ * @param {Array} list rows from api.js checkIntersections
+ */
+export function setIntersections(list) {
+  setState({ intersections: Array.isArray(list) ? list : [] });
+}
+
+/**
+ * intersectionsFor(s) is the intersections keyed by the value they belong to,
+ * so a card attaches its own with no searching, exactly as entityConflicts is
+ * consumed.
+ *
+ * @param {object} [s] state
+ * @returns {Map<string, object>} entityKey(category, value) -> the row
+ */
+export function intersectionsFor(s = state) {
+  const out = new Map();
+  for (const row of s.intersections ?? []) {
+    if (!row?.value || !row?.category) continue;
+    out.set(entityKey(row.category, row.value), row);
+  }
+  return out;
 }
 
 /** subscribe(fn) registers a callback; returns an unsubscribe function. */
@@ -1016,6 +1096,7 @@ export const STEP_RESETS = {
     },
     entities: [],
     candidates: [],
+    intersections: [],
     patterns: [],
     discovery: null,
     // Stepping back to Identify clears what detection produced, so the
@@ -1214,6 +1295,83 @@ export function entityKey(category, canonical) {
  * telling the same story, and flips the preset to Custom (selectionPresetName)
  * exactly as ticking the box by hand would.
  */
+/**
+ * foldIntoFamily(category, canonical) folds a ONE-AT-A-TIME addition into an
+ * existing value of the same type when the two are spellings of one thing.
+ *
+ * Detection folds families over its whole output (engine FoldValueFamilies),
+ * but values also arrive singly: the "Something missed?" row, and the Compare
+ * pane's "add as a new value". Without this, typing "Coca-Cola company" beside
+ * an existing "Coca-Cola" creates a rival, and the shorter one then fires
+ * inside the longer one: the text reads "[BRAND_1] company", the rest of the
+ * phrase survives, and two numbers are spent on one company.
+ *
+ * The SHORTER form is always the main value, so this folds in both directions:
+ * a longer addition becomes a spelling of the existing value, and a shorter one
+ * takes over as the value's name with the old name kept as a spelling.
+ *
+ * Same rules as the engine's, and for the same reasons: one category only (a
+ * person "Delta" and an organisation "Delta Industries" are an intersection,
+ * not a family), word boundaries only ("Alten" is not a spelling of
+ * "Altenberg"), and never below MIN_VARIANT_LEN, because promoting a
+ * two-character stem to a main value would shred ordinary text.
+ *
+ * @param {string} category the type the new value would be filed under
+ * @param {string} canonical the value being added
+ * @returns {{main: string, added: string}|null} the surviving value's name and
+ *   the spelling that was folded in, or null when there is no family
+ */
+export function foldIntoFamily(category, canonical) {
+  const added = (canonical ?? "").trim();
+  if (!added) return null;
+
+  for (const e of state.entities) {
+    if (e.category !== category) continue;
+    const existing = (e.canonical ?? "").trim();
+    if (!existing || existing.toLowerCase() === added.toLowerCase()) continue;
+
+    // Rune length, not byte length: an accented name must not be judged longer
+    // than it looks.
+    const [shorter, longer] = [...existing].length <= [...added].length
+      ? [existing, added] : [added, existing];
+    if (!isFamilyPair(shorter, longer)) continue;
+
+    if (shorter === existing) {
+      // The addition is the longer form: it becomes a spelling of the value
+      // that is already there.
+      addManualVariant(category, existing, added);
+      return { main: existing, added };
+    }
+    // The addition is SHORTER, so it takes over as the value's name and the
+    // old name becomes one of its spellings. Renaming rather than adding a
+    // second value is what keeps them sharing one placeholder.
+    renameEntity(category, existing, added);
+    addManualVariant(category, added, existing);
+    return { main: added, added: existing };
+  }
+  return null;
+}
+
+// MIN_VARIANT_LEN mirrors engine.minVariantLen: a spelling shorter than this is
+// never derived or promoted, because replacing every "Al" or "BV" would shred
+// ordinary text.
+export const MIN_VARIANT_LEN = 3;
+
+/**
+ * isFamilyPair(shorter, longer) reports whether the two are spellings of one
+ * thing: the shorter occurs inside the longer at WORD BOUNDARIES. It mirrors
+ * engine.canJoinFamily, so the frontend's one-at-a-time fold agrees with the
+ * one detection already applied.
+ */
+function isFamilyPair(shorter, longer) {
+  if ([...shorter].length < MIN_VARIANT_LEN) return false;
+  if ([...shorter].length >= [...longer].length) return false;
+  // \p{L} and \p{N} rather than \b: \b is ASCII-only, and an accented name
+  // ("Amélie") would fail its boundary check on the wrong side.
+  const escaped = shorter.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(longer);
+}
+
 export function addEntities(items) {
   const existing = new Set(state.entities.map((e) => entityKey(e.category, e.canonical)));
   const added = [];
@@ -1237,7 +1395,13 @@ export function addEntities(items) {
       // the fix.
       variants: item.variants ?? null,
       variantError: null,
-      excludedVariants: item.excludedVariants ?? [],
+      // The route that produced this value. It travels to Go, where it decides
+      // precedence against the other routes. A value with no stated route is
+      // one the user typed, which is what "declared" means.
+      origin: item.origin ?? "declared",
+      // autoExpand false means the user has curated the spellings and the
+      // automatic expansion no longer applies. Every value starts uncurated.
+      autoExpand: item.autoExpand ?? true,
       status: "accepted",
     });
   }
@@ -1298,8 +1462,50 @@ export function addManualVariant(category, canonical, variant) {
   });
 }
 
-/** acceptedEntities(s), the pipeline-ready entity list (manual and
- *  excluded variants travel to Go so expansion matches the UI). */
+/**
+ * curate(e, variants) freezes a value's spellings: the list becomes exactly
+ * `variants`, and the automatic expansion stops applying.
+ *
+ * It is what makes a deletion stick without a negative rule. The alternative,
+ * a per-value exclusion list, is a rule with no home in the interface: it is
+ * invisible except as the absence of a chip, it cannot be undone, and it does
+ * the job of the never-anonymise list, which is the one place negative rules
+ * are meant to live and be visible. After curation the chips on the card ARE
+ * the list, so a deleted spelling is simply not in it any more.
+ *
+ * The canonical name is kept in the list when it is passed in, because that is
+ * how the automatic expansion returns it and how the card draws it: dropping it
+ * on curation would silently remove a chip the user never touched. Go
+ * deduplicates it against the canonical anyway.
+ *
+ * @param {object} e the entity to curate
+ * @param {string[]} variants the complete list of spellings, in display form
+ * @returns {object} a new entity; the caller writes it into the store
+ */
+export function curate(e, variants) {
+  const seen = new Set();
+  const list = [];
+  for (const v of variants ?? []) {
+    const t = (v ?? "").trim();
+    const k = t.toLowerCase();
+    if (!t || seen.has(k)) continue;
+    seen.add(k);
+    list.push(t);
+  }
+  return {
+    ...e,
+    manualVariants: list,
+    autoExpand: false,
+    // A curated row is settled by definition: Go has nothing left to derive,
+    // so the chips are shown straight away rather than through a pending
+    // expansion that would come back with the same list.
+    variants: [],
+    variantError: null,
+  };
+}
+
+/** acceptedEntities(s), the pipeline-ready entity list. The spellings and the
+ *  curated flag travel to Go so its expansion matches the chips on the card. */
 export function acceptedEntities(s = state) {
   return s.entities
     .filter((e) => e.status === "accepted")
@@ -1307,7 +1513,8 @@ export function acceptedEntities(s = state) {
       category: e.category,
       canonical: e.canonical,
       manualVariants: e.manualVariants,
-      excludedVariants: e.excludedVariants ?? [],
+      origin: e.origin ?? "declared",
+      autoExpand: e.autoExpand !== false,
     }));
 }
 
@@ -1342,6 +1549,11 @@ export function addCandidates(items, source) {
       category: item.category ?? "person_names",
       count: item.count ?? 0,
       contexts: item.contexts ?? [],
+      // The longer spellings Go folded into this one. Accepting the row carries
+      // them across as the value's spellings, so ONE value with its variants
+      // reaches the pipeline instead of two rivals, the shorter of which would
+      // fire inside the longer and leave the rest of the phrase in the text.
+      variants: item.variants ?? [],
     });
   }
   if (added.length) setState({ candidates: [...state.candidates, ...added] });
@@ -1369,7 +1581,13 @@ export function acceptCandidate(text) {
   const key = candidateKey(text);
   const cand = state.candidates.find((c) => candidateKey(c.text) === key);
   if (!cand) return false;
-  const added = addEntities([{ category: cand.category, canonical: cand.text }]);
+  // The route survives the accept. Without it the only trace of which route
+  // found a value is its confidence score, and confidence is also the input to
+  // the MinConfidence floor, so the two decisions would interfere.
+  const added = addEntities([{
+    category: cand.category, canonical: cand.text, origin: originOf(cand.source),
+    manualVariants: cand.variants ?? [],
+  }]);
   setState({ candidates: state.candidates.filter((c) => candidateKey(c.text) !== key) });
   return added > 0;
 }
@@ -1402,7 +1620,10 @@ export function acceptAllShown(texts) {
   if (shown.size === 0) return 0;
   const batch = state.candidates.filter((c) => shown.has(candidateKey(c.text)));
   if (!batch.length) return 0;
-  const added = addEntities(batch.map((c) => ({ category: c.category, canonical: c.text })));
+  const added = addEntities(batch.map((c) => ({
+    category: c.category, canonical: c.text, origin: originOf(c.source),
+    manualVariants: c.variants ?? [],
+  })));
   setState({ candidates: state.candidates.filter((c) => !shown.has(candidateKey(c.text))) });
   return added;
 }
@@ -1429,12 +1650,15 @@ export function rejectAllShown(texts) {
 
 /**
  * moveVariant(fromCategory, fromCanonical, toCategory, toCanonical,
- * variant) moves one variant spelling between entities: the source
- * excludes it (so its automatic expansion stops matching it) and the
- * target gains it as a manual variant. Both rows re-expand (variants
- * back to pending). Pure reducer; the drag-and-drop wiring only calls
- * it. Returns false for self-drops, unknown rows, or a variant the
- * source does not actually carry.
+ * variant) moves one variant spelling between entities.
+ *
+ * The source CURATES without the moved spelling, which is what makes the move
+ * stick: its automatic expansion would otherwise regenerate the spelling and
+ * two values would claim it again, which is the collision conflict. The target
+ * gains it as a manual variant and re-expands.
+ *
+ * Pure reducer; the drag-and-drop wiring only calls it. Returns false for
+ * self-drops, unknown rows, or a variant the source does not actually carry.
  */
 export function moveVariant(fromCategory, fromCanonical, toCategory, toCanonical, variant) {
   const v = (variant ?? "").trim();
@@ -1459,24 +1683,17 @@ export function moveVariant(fromCategory, fromCanonical, toCategory, toCanonical
     entities: state.entities.map((e) => {
       const key = entityKey(e.category, e.canonical);
       if (key === fromKey) {
-        return {
-          ...e,
-          manualVariants: (e.manualVariants ?? []).filter((x) => x.toLowerCase() !== lower),
-          excludedVariants: [...(e.excludedVariants ?? []), v],
-          variants: null, // re-expand ONLY the touched rows
-          variantError: null,
-        };
+        // The source keeps every spelling it had except the moved one, and
+        // stops re-deriving: an automatic expansion would put it straight back.
+        return curate(e, [...spellingsOf(e).values()].filter((x) => x.toLowerCase() !== lower));
       }
       if (key === toKey) {
         const dup = (e.manualVariants ?? []).some((x) => x.toLowerCase() === lower);
-        return {
-          ...e,
-          manualVariants: dup ? e.manualVariants : [...(e.manualVariants ?? []), v],
-          // Un-exclude in case the variant is coming back home.
-          excludedVariants: (e.excludedVariants ?? []).filter((x) => x.toLowerCase() !== lower),
-          variants: null,
-          variantError: null,
-        };
+        const manualVariants = dup ? e.manualVariants : [...(e.manualVariants ?? []), v];
+        // A target that is already curated keeps its curated list plus the new
+        // spelling: re-deriving it would undo an explicit choice.
+        if (e.autoExpand === false) return curate(e, [...(e.variants ?? []), ...manualVariants]);
+        return { ...e, manualVariants, variants: null, variantError: null };
       }
       return e;
     }),
@@ -1528,11 +1745,11 @@ export function renameEntity(category, canonical, newCanonical) {
  * renameVariant(category, canonical, oldVariant, newVariant) edits one spelling.
  *
  * A spelling is either automatic (Go expanded it from the name) or manual (the
- * user typed it). Editing either one means the SAME two effects: the old
- * spelling stops applying (it is excluded, so the next expansion cannot bring
- * an automatic one straight back) and the new spelling is added as a manual
- * variant. Editing the spelling that IS the name is a rename of the value, so
- * it routes to renameEntity instead of orphaning the canonical.
+ * user typed it). Editing either one CURATES the row with the old spelling
+ * swapped for the new one: the list becomes the user's, so the next expansion
+ * cannot bring the old spelling straight back. Editing the spelling that IS the
+ * name is a rename of the value, so it routes to renameEntity instead of
+ * orphaning the canonical.
  *
  * @returns {string} "" on success, or a reason ("empty" | "not found")
  */
@@ -1553,21 +1770,10 @@ export function renameVariant(category, canonical, oldVariant, newVariant) {
   setState({
     entities: state.entities.map((e) => {
       if (entityKey(e.category, e.canonical) !== key) return e;
-      const manual = (e.manualVariants ?? []).filter((x) => x.toLowerCase() !== oldLower);
+      const kept = [...spellingsOf(e).values()].filter((x) => x.toLowerCase() !== oldLower);
       // Add the new spelling unless the row already carries it.
-      const already = manual.some((x) => x.toLowerCase() === nextLower);
-      return {
-        ...e,
-        manualVariants: already ? manual : [...manual, next],
-        // Exclude the old spelling so an automatic expansion cannot re-add it,
-        // and un-exclude the new one in case it was excluded before.
-        excludedVariants: [
-          ...(e.excludedVariants ?? []).filter((x) => x.toLowerCase() !== nextLower),
-          old,
-        ],
-        variants: null,
-        variantError: null,
-      };
+      const already = kept.some((x) => x.toLowerCase() === nextLower);
+      return curate(e, already ? kept : [...kept, next]);
     }),
   });
   return "";
@@ -1645,7 +1851,8 @@ export function changeCandidateCategory(text, toCategory) {
  * apart.
  *
  * The target re-expands so its own automatic variants regenerate around the
- * merged set. A source that is the target, or is unknown, is ignored.
+ * merged set, unless any participant was curated, in which case the survivor
+ * stays curated. A source that is the target, or is unknown, is ignored.
  *
  * @param {{category, canonical}} target the value to keep
  * @param {Array<{category, canonical}>} sources the values to fold in
@@ -1686,21 +1893,21 @@ export function groupEntities(target, sources) {
     .filter(([lower]) => !existing.has(lower))
     .map(([, display]) => display);
 
+  // A merge inherits curation: if the survivor or any folded value had its
+  // spellings set by hand, the merged value keeps a settled list rather than
+  // letting an automatic expansion re-derive one over the user's choice.
+  const curatedMerge = keep.autoExpand === false || folded.some((e) => e.autoExpand === false);
+
   setState({
     entities: state.entities
       .filter((e) => !sourceKeys.has(entityKey(e.category, e.canonical)))
       .map((e) => {
         if (entityKey(e.category, e.canonical) !== targetKey) return e;
-        return {
-          ...e,
-          manualVariants: [...(e.manualVariants ?? []), ...additions],
-          // A folded spelling might have been excluded on the target before;
-          // pulling it in un-excludes it so it actually applies.
-          excludedVariants: (e.excludedVariants ?? [])
-            .filter((x) => !gained.has(x.toLowerCase())),
-          variants: null,
-          variantError: null,
-        };
+        const manualVariants = [...(e.manualVariants ?? []), ...additions];
+        // If any participant was curated, the survivor is curated: a merge must
+        // not silently re-derive a list the user set by hand.
+        if (curatedMerge) return curate(e, [...(e.variants ?? []), ...manualVariants]);
+        return { ...e, manualVariants, variants: null, variantError: null };
       }),
   });
   return folded.length;
@@ -1729,17 +1936,17 @@ export function clearAllEntities() {
 
 /**
  * spellingsOf(e) is every lower-cased spelling a value would match: its name,
- * its Go-expanded variants and its manual variants, minus the excluded ones.
+ * its Go-expanded variants and its manual variants. A curated row carries an
+ * empty expanded list, so the same walk covers both cases.
  * It mirrors engine.ExpandVariants so the highlight agrees with the run's check.
  * @returns {Map<string,string>} lower-cased spelling -> a display spelling
  */
 export function spellingsOf(e) {
-  const excluded = new Set((e.excludedVariants ?? []).map((x) => x.trim().toLowerCase()));
   const out = new Map();
   const add = (v) => {
     const t = (v ?? "").trim();
     const k = t.toLowerCase();
-    if (!t || excluded.has(k) || out.has(k)) return;
+    if (!t || out.has(k)) return;
     out.set(k, t);
   };
   add(e.canonical);
@@ -2031,6 +2238,7 @@ export function startNewBatch() {
     sourceCache: {},
     entities: [],
     candidates: [],
+    intersections: [],
     patterns: [],
     simpleRules: [],
     discovery: null,
@@ -2140,5 +2348,24 @@ export function buildRunRequest() {
     // The "Native detection" master switch, inverted: when Native detection is
     // off, the Go pipeline skips pass 1 so no regex signal category is replaced.
     suppressRegexPII: !getState().settings.useNativeDetect,
+  };
+}
+
+/**
+ * buildIntersectionRequest() assembles the CheckIntersections payload.
+ *
+ * It is built from the SAME state buildRunRequest reads, minus the fields a
+ * detection does not need (the find-and-replace rules run after everything and
+ * cannot cover a value). Any drift between the two would make the check answer
+ * a different question from the run, and then the warning on a card describes
+ * something that will not happen.
+ */
+export function buildIntersectionRequest() {
+  return {
+    entities: acceptedEntities(state),
+    allowTerms: state.allowlist,
+    patterns: validPatterns(state),
+    categories: state.settings.categories ?? presetCategories(state.settings.level),
+    suppressRegexPII: !state.settings.useNativeDetect,
   };
 }

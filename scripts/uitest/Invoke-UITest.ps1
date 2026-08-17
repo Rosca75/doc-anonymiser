@@ -261,6 +261,7 @@ function Invoke-DevChecks {
                 Test-ConfigureRail $cdp
                 Test-ScrollRetention $cdp
                 Test-TooltipVisibility $cdp
+                Test-CompareSearch $cdp
                 Save-Screenshot $cdp 'wizard.png'
             } finally {
                 $cdp.Close()
@@ -480,6 +481,68 @@ function Test-TooltipVisibility([CdpSession]$cdp) {
             -Actual "something else is at $tip" `
             -Hint 'The rect of a clipped element is still a full-size rect, so this is the check that catches it.'
     }
+}
+
+# The Compare search. Like the tooltip check, the interesting half cannot be
+# asserted without a renderer: a string test proves the hit span was emitted,
+# but only a real engine can prove the pane scrolled to it rather than leaving
+# it clipped below the fold.
+function Test-CompareSearch([CdpSession]$cdp) {
+    Write-Step 'The Compare search finds text in both panes and shows the active hit'
+    $r = $cdp.Eval('__uiProbes.compareSearch()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the Compare search box renders and accepts a needle' -Condition $false `
+            -Expected '#compare-search in the Compare card head' -Actual $r.error `
+            -Hint 'views/anonymise.js compareCard puts searchControls in .card-head-right.'
+        return
+    }
+
+    Assert-That -Name 'the needle is found in the ORIGINAL pane' -Condition ($r.perPane.original -gt 0) `
+        -Expected "at least one .find-hit in #original-pane for '$($r.needle)'" `
+        -Actual "$($r.perPane.original) hits" `
+        -Hint 'views/anonymise.js renders the original pane through panesearch.js renderPlainWithHits.'
+
+    Assert-That -Name 'the needle is found in the ANONYMISED pane' -Condition ($r.perPane.anonymised -gt 0) `
+        -Expected "at least one .find-hit in #anonymised-pane for '$($r.needle)'" `
+        -Actual "$($r.perPane.anonymised) hits" `
+        -Hint 'highlight.js renderHighlighted takes a fourth search argument and emits hit spans in the plain stretches and inside a mark own text.'
+
+    Assert-That -Name 'exactly one hit is the active one' -Condition ($r.hasActive) `
+        -Expected 'a .find-hit.active somewhere on screen' -Actual 'no active hit was rendered' `
+        -Hint 'searchWalk resolves the active index over the ONE combined list; searchControls and both panes read the same walk.'
+
+    Assert-That -Name 'the readout says where the active hit is' -Condition ($r.readout) `
+        -Expected 'a readout naming the count, the total and the active hit pane' -Actual 'an empty readout' `
+        -Hint 'copy.js ANONYMISE.searchCount(index, total, pane).'
+
+    Assert-That -Name 'both navigation buttons are live when there are hits' `
+        -Condition ($r.nextEnabled -and $r.prevEnabled) `
+        -Expected 'next and previous enabled' `
+        -Actual "next enabled: $($r.nextEnabled), previous enabled: $($r.prevEnabled)" `
+        -Hint 'searchControls disables them only when the walk is empty, and gives them a title saying why.'
+
+    if (-not $r.visible) {
+        Assert-That -Name 'the active hit sits inside a pane that can show it' -Condition $false `
+            -Expected 'the active hit inside a .pane-body' -Actual 'the active hit has no .pane-body ancestor' `
+            -Hint 'Both panes render their hits through the same two renderers.'
+        return
+    }
+
+    $hit = "$($r.visible.activeRect.left),$($r.visible.activeRect.top) to $($r.visible.activeRect.right),$($r.visible.activeRect.bottom)"
+    $pane = "$($r.visible.paneRect.left),$($r.visible.paneRect.top) to $($r.visible.paneRect.right),$($r.visible.paneRect.bottom)"
+
+    Assert-That -Name 'the active hit has a size' -Condition ($r.visible.hasSize) `
+        -Expected 'a rendered span with width and height' -Actual "hit $hit" `
+        -Hint 'An empty hit span means the slice offsets and the text disagree.'
+
+    Assert-That -Name 'the active hit is visible INSIDE its pane, not scrolled out of sight' `
+        -Condition ($r.visible.insidePane) `
+        -Expected 'the active hit rect within its pane rect' -Actual "hit $hit, pane $pane" `
+        -Hint 'views/anonymise.js scrollToActiveHit runs after the paint and only when the active index changed, so it does not fight scroll.js restoring the pane offset.'
+
+    Assert-That -Name 'the active hit is on screen' -Condition ($r.visible.inViewport) `
+        -Expected 'the active hit rect within the viewport' -Actual "hit $hit" `
+        -Hint 'scrollIntoView with block center on .find-hit.active.'
 }
 
 # --- Packaged-binary smoke test (UI Automation) -----------------------------

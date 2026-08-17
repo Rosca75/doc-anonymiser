@@ -53,6 +53,8 @@ doc-anonymiser/
 ├── embed_test.go              # asserts the frontend is embedded (package main)
 ├── backend/app_e2e_test.go    # headless end-to-end through the bound app layer
 ├── category_parity_test.go    # JS↔Go category parity guard (package main)
+├── origin_parity_test.go      # JS↔Go detection-route parity guard (package main)
+├── entity_shape_test.go       # no per-value negative rule comes back (package main)
 ├── copy_guard_test.go         # no em dashes in Go user-facing strings (package main)
 ├── uitest_parity_test.go      # keeps the two UI harnesses on ONE probes.js (package main)
 ├── frontend/                  # THE GUI — vanilla ES modules, embedded via go:embed
@@ -65,7 +67,8 @@ doc-anonymiser/
 │   ├── main.js / shell.js / ui.js / html.js / icons.js / copy.js / scroll.js
 │   ├── nav.js                 # THE one place the wizard moves (per-screen footers + step bar)
 │   ├── toast.js / modal.js    # state-backed notice strip + in-app confirm (no native dialogs)
-│   ├── highlight.js / entitymodel.js / candidatemodel.js / countries.js
+│   ├── highlight.js / panesearch.js / entitymodel.js / candidatemodel.js
+│   ├── countries.js
 │   ├── views/                 # one JS module per wizard step + shared panels:
 │   │                          #   home.js, import.js, export.js, anonymise.js,
 │   │                          #   identify.js (layout) + identifyrail.js (choices)
@@ -83,9 +86,12 @@ doc-anonymiser/
 │   │   ├── csvmd.go           # CSV ⇄ markdown-table conversion (round-trip)
 │   │   ├── convert/           # binary-format → markdown converters (pure Go, one-way)
 │   │   │   ├── docx.go / pptx.go / xlsx.go / pdf.go
+│   │   ├── origin.go          # WHICH ROUTE found a value, and the superseding order
 │   │   ├── pii.go             # Pass 1: deterministic regex PII detection
 │   │   ├── country.go         # Document-country model; which regex categories apply where
 │   │   ├── conflicts.go       # ValidateValues: blocking conflicts + warnings, before pass 1
+│   │   ├── intersections.go   # what two routes both claim, answered BEFORE a run
+│   │   ├── families.go        # one value, its spellings; the shorter form is the main one
 │   │   ├── removals.go        # Removed values: the session exclusion list
 │   │   ├── entities.go        # Entity model, categories, variant expansion
 │   │   ├── discover.go        # LLM discovery / deep-scan orchestration
@@ -229,6 +235,57 @@ doc-anonymiser/
   registry is mutated: a half-run that assigned placeholders for a
   configuration the user was just told is invalid is unrecoverable without a
   new session.
+- **Which route owns a value: the superseding order.** Four routes can claim
+  the same characters, and exactly one has to win. The rule is ORIGIN, and it
+  is deliberately a separate field from confidence: confidence answers "how
+  much is this trusted" and feeds `MinConfidence`, origin answers "who found
+  it" and feeds precedence. With one number doing both, raising the confidence
+  floor silently reordered precedence, and a regex signal and a custom pattern
+  (both 1.0) were separated by whichever match happened to be longer.
+
+  | Origin | Rank | Produced by |
+  |---|---|---|
+  | `native` | 1 | pass 1 regex signals, and an already-decided registry entry |
+  | `declared` | 2 | the user typed it: manual values and custom patterns |
+  | `auto` | 3 | offline Smart detection |
+  | `ai` | 4 | the local model |
+
+  LOWER WINS. An unknown or empty origin ranks with `declared` rather than
+  last, so a producer that states none is trusted rather than silently
+  demoted. The constants live in `backend/engine/origin.go`, are mirrored by
+  `frontend/state.js ORIGINS` and are guarded by `origin_parity_test.go`,
+  exactly as the categories are.
+
+  `ResolveOverlaps` compares origin FIRST, then confidence, then length, then
+  start and category. Ownership is decided ONCE for the whole batch, before a
+  single placeholder is minted (`engine.unifyOwnership`, phase B of
+  `engine.Run`): resolving per document let the same string be won by
+  different routes in different files, and `Registry.Assign`'s `byOriginal`
+  index then froze whichever claim was assigned first, which is byte offset
+  within document order. `Registry.Assign` is deliberately NOT
+  precedence-aware, because changing an entry's category after the fact would
+  change its placeholder text, and a placeholder that has left the machine can
+  never be re-numbered.
+- **An intersection is a warning, never a refusal.** When two routes claim the
+  same text the precedence rule always has an answer, so refusing the run
+  would punish the user for a configuration the engine can resolve.
+  `engine.DetectIntersections` answers "what covers what" BEFORE a run, using
+  the same producers and the same comparator the pipeline uses, so the warning
+  cannot describe a decision the run did not make. It surfaces on the value's
+  own card on step 2. The step 2 to 3 gate is untouched: it exists for
+  unreviewed suggestions, not for warnings.
+- **One value, one placeholder: the shorter form is the main value.** When
+  detection finds both "Coca-Cola" and "Coca-Cola company" they are ONE value
+  with two spellings. The entity pass matches variants longest first, so with
+  the shorter form as the main value the whole phrase collapses into one
+  placeholder; left as two values the shorter fires inside the longer, the
+  text reads `[BRAND_1] company`, the legal form leaks and two numbers are
+  spent on one company. `engine.FoldValueFamilies` folds detection's whole
+  output once, across every route; `state.js foldIntoFamily` does the same for
+  values added one at a time. Both fold only WITHIN one category (a person
+  "Delta" and an organisation "Delta Industries" are an intersection, not a
+  family), only at word boundaries ("Alten" is not a spelling of
+  "Altenberg"), and never below `minVariantLen`.
 - **Country association (BUILD-06 Phase 1):** the country-specific regex
   categories are scoped by the DOCUMENT COUNTRY, owned by the engine
   (`backend/engine/country.go`, `CategoryCountries`, `CategoryAppliesTo`) and
@@ -251,6 +308,21 @@ doc-anonymiser/
   NOT free its number: an export, a mapping CSV or a session file in which
   `[PERSON_4]` means one person may already have left the machine. Restoring a
   value brings it back with a NEW number, for the same reason.
+  A session exclusion is the ONLY negative rule in the model, and it is
+  VISIBLE: it has its own list on step 3, with a restore action. It is not the
+  per-value spelling suppression that curated variants replaced, which had no
+  home in the interface at all.
+- **A value's spellings are its chips, and nothing else (curated variants).**
+  Spellings are derived automatically until the user edits them; from that
+  moment the list is theirs and the engine stops re-deriving it
+  (`Entity.AutoExpand`, nil and true both meaning "expand"). Deleting,
+  renaming or moving a spelling CURATES the value, so the deletion sticks
+  without a negative rule. The alternative, a per-value list of spellings the
+  expansion must suppress, is a rule with no home in the interface: invisible
+  except as the absence of a chip, unlisted anywhere, impossible to undo, and
+  doing the job of the never-anonymise list, which is the one place a negative
+  rule is meant to live and be visible. `entity_shape_test.go` fails the build
+  if the field returns, on either side of the bridge.
 - **Anonymisation levels** (mirror the notebook semantics):
   - `soft` — hard PII (emails, phones, IBANs, national IDs, VAT numbers,
     URLs with credentials) + engagement entities (entity/project names) +
@@ -267,7 +339,9 @@ doc-anonymiser/
   1. Deterministic PII regex pass (`backend/engine/pii.go`).
   2. Known-entity pass: discovery results + manual entities, expanded into
      name variants (initials, surname-only, first-name-only, hyphen/space
-     variants), longest-match-first (`backend/engine/entities.go`).
+     variants), longest-match-first (`backend/engine/entities.go`). The
+     expansion stops applying the moment the user edits a value's spellings:
+     see the curated-variant model below.
   3. Optional LLM deep-scan pass (Ollama): finds residual entities. Every
      LLM-proposed entity passes a **hallucination filter** — it is dropped
      unless the exact string occurs in the source text — and respects the
@@ -341,7 +415,7 @@ doc-anonymiser/
 - **Sensitive state stays in memory** by default. Saving a session (registry
   + entities + settings + the removal list + the spent placeholder numbers) to
   disk is an explicit user action with a warning that the file contains the
-  re-identification key. `SessionVersion` is **4** (BUILD-06); a file of any
+  re-identification key. `SessionVersion` is **6**; a file of any
   other version is refused, never migrated, and the reasons for each bump are
   recorded beside the constant in `backend/engine/session.go`.
 

@@ -555,6 +555,18 @@ main#view.page { overflow-y: auto; }
 }
 .src-badge.src-local-ai { color: var(--src-ai-fg); background: var(--src-ai-bg); }
 .src-badge.src-pattern { color: var(--src-pattern-fg); background: var(--src-pattern-bg); }
+/* The origin chip on a value card: which detection route the value came from.
+   It reuses the suggestion-source palette so one route reads the same colour
+   wherever it appears, and stays quiet, because it explains a decision rather
+   than asking for one. */
+.origin-chip {
+  font-size: 0.7rem; letter-spacing: 0.03em;
+  padding: 0.1rem 0.45rem; border-radius: 4px; white-space: nowrap;
+  color: var(--ink-3); background: var(--bg-secondary);
+}
+.origin-chip.origin-auto { color: var(--src-smart-fg); background: var(--src-smart-bg); }
+.origin-chip.origin-ai { color: var(--src-ai-fg); background: var(--src-ai-bg); }
+.origin-chip.origin-native { color: var(--src-pattern-fg); background: var(--src-pattern-bg); }
 .badge-experimental {
   font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em;
   color: var(--experimental-fg); background: var(--experimental-bg);
@@ -1102,6 +1114,17 @@ input, select {
 .conflict-note .hint.bad { display: flex; align-items: center; gap: 0.35rem; }
 .conflict-note .hint.bad .icon { flex: none; width: 1rem; height: 1rem; }
 
+/* An intersection is a WARNING, not a refusal: the precedence rule already
+   decided and the run will go ahead. It gets its own quieter tint so it can
+   never be mistaken for a blocking conflict, which is what .conflicted marks.
+   A card can carry both, and then the error tint wins by cascade order. */
+.value-card.intersects { border-color: var(--warn); background: var(--notice-warn-bg); }
+.value-card.conflicted.intersects { border-color: var(--err); background: var(--invalid-bg); }
+.intersection-note { display: flex; flex-direction: column; gap: 0.25rem; }
+.intersection-note .hint.warn-hint { display: flex; align-items: center; gap: 0.35rem; }
+.intersection-note .hint.warn-hint .icon { flex: none; width: 1rem; height: 1rem; }
+.intersection-note .panel-actions { margin-top: 0.2rem; }
+
 /* The inline panels a card opens: Group with and Solve conflicts. They live
    inside the card so the value they act on is right above them. */
 .value-panel {
@@ -1353,6 +1376,21 @@ input, select {
   font-size: 0.78rem;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* The panel grew a body: three stages, and the middle one is three options
+   each with a hint. It is positioned against the Compare card and clamped to
+   the card's bounds by wireTextSelection, the same clamp the mark tooltip
+   uses, so a selection near the right edge does not push it off screen. */
+.selection-options { display: flex; flex-direction: column; gap: 0.5rem; }
+.selection-option {
+  display: flex; align-items: flex-start; gap: 0.5rem;
+  cursor: pointer; font-size: 0.82rem;
+}
+.selection-option input { margin-top: 0.25rem; flex: none; }
+.selection-option-body { display: flex; flex-direction: column; gap: 0.15rem; }
+.selection-option-name { color: var(--text); }
+.selection-card .field-label {
+  display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.78rem;
+}
 
 /* Highlight tints per category family: black text on every fill (BUILD-02
    section 5 remapping). */
@@ -1360,6 +1398,26 @@ mark { border-radius: 3px; padding: 0 2px; color: var(--text); }
 mark.pii { background: var(--tint-orange-2); border-bottom: 1px solid var(--tint-orange-1); }
 mark.entity { background: var(--gray-5); border-bottom: 1px solid var(--gray-3); }
 mark.custom { background: var(--src-ai-bg); border-bottom: 1px solid var(--src-ai-fg); }
+
+/* The Compare search's hits. They must stay legible ON TOP of a category mark,
+   because the anonymised pane nests them, so the tint is a translucent wash
+   over whatever is underneath rather than an opaque colour of its own, and the
+   active hit adds an outline the mark cannot hide. Colours come from the brand
+   tokens; brand.css is the single source. */
+.find-hit {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--warn) 30%, transparent);
+}
+.find-hit.active {
+  background: color-mix(in srgb, var(--warn) 60%, transparent);
+  outline: 2px solid var(--warn);
+  outline-offset: 0;
+}
+
+/* The search controls in the Compare card head, beside the document selector. */
+.compare-search { display: flex; align-items: center; gap: 0.3rem; }
+.compare-search .search-box { min-width: 12rem; }
+.search-readout { white-space: nowrap; }
 
 /* --- The original-term tooltip (BUILD-06) -------------------------------- */
 

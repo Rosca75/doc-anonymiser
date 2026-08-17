@@ -36,7 +36,15 @@ import (
 //	    Auto-detection word-frequency pass). A v4 file has neither flag, and a v4
 //	    reader would not know Native detection can be off, so the versions are not
 //	    interchangeable.
-const SessionVersion = 5
+//	v6: the entity shape changed twice. It lost excludedVariants, the per-value
+//	    list of spellings the expansion had to suppress, and gained autoExpand,
+//	    which freezes a value's spellings to exactly the ones shown instead. A v5
+//	    file's exclusions have no meaning under the curated model: a v6 reader
+//	    would drop them and silently start replacing spellings the user had
+//	    removed. It also gained origin, the route that produced the value, which
+//	    decides precedence when two routes claim the same text; a v5 file states
+//	    none, and reading it as "declared" would promote every AI proposal in it.
+const SessionVersion = 6
 
 // SessionSettings mirrors the app settings worth persisting. The engine
 // does not interpret them — they round-trip for app.go. The

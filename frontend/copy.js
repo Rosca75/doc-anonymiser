@@ -505,6 +505,41 @@ export const WORKSPACE = {
     "local-ai": "Local AI",
   },
 
+  // The ROUTE a value came from, shown on its card. A precedence rule the user
+  // cannot see the inputs of is indistinguishable from randomness, which is how
+  // the old behaviour came to be reported. One label per engine origin,
+  // enforced by ../origin_parity_test.go.
+  originLabel: {
+    native: "Native",
+    declared: "You",
+    auto: "Smart detection",
+    ai: "Local AI",
+  },
+  originTitle: "The detection route this value came from",
+
+  // Intersections: two routes claim the same text. The precedence rule always
+  // decides, so these are WARNINGS that explain the decision, never refusals.
+  // The route names come from originLabel above, so a message names a route in
+  // the same words the chip on the card uses.
+  intersectionTitle: "Overlaps another detection",
+  /** intersectionAll(value, winner, route) is the case worth shouting about:
+   *  the value is never replaced under its own type. */
+  intersectionAll(value, winner, route) {
+    return `Every occurrence of "${value}" is also matched by ${route} as "${winner}", which takes priority. This value is not replaced under its own type.`;
+  },
+  /** intersectionSome(covered, total, value, winner, route) is the milder
+   *  case: the value still applies where nothing covers it. */
+  intersectionSome(covered, total, value, winner, route) {
+    return `${covered} of ${total} occurrences of "${value}" are also matched by ${route} as "${winner}", which takes priority there.`;
+  },
+  intersectionOrder: "Priority order: native detection, then your own values and patterns, then Smart detection, then Local AI.",
+  intersectionFix: "If this value should win instead, switch off the type that covers it, narrow the pattern, or add the covering term to Never anonymise.",
+  intersectionAllowWinner: "Never anonymise the covering term",
+  /** intersectionAllowed(term) confirms the covering term is now protected. */
+  intersectionAllowed(term) {
+    return `"${term}" is on the never anonymise list, so nothing replaces it now.`;
+  },
+
   // My values.
   addValueLabel: "A value to replace",
   /** valueMatches(count, documents) is the live read-out under the add row.
@@ -534,6 +569,30 @@ export const WORKSPACE = {
   },
   variantsPending: "working out the other spellings...",
   noVariants: "no other spellings found",
+  /**
+   * variantDeleted(v) confirms a spelling was dropped from one value, and
+   * points at the tab that IS for negative rules. Deleting a spelling here
+   * stops it belonging to THIS value; it does not stop it being replaced by
+   * something else, and the difference is not guessable from the button.
+   */
+  variantDeleted(v) {
+    return `Removed the spelling "${v}" from this value. To stop it being replaced by anything at all, add it to Never anonymise.`;
+  },
+  /**
+   * alsoSpelled(variants) names the longer forms folded into one suggestion.
+   * Accepting the row accepts them too, so the row has to say which.
+   */
+  alsoSpelled(variants) {
+    return `also spelled ${variants.join(", ")}`;
+  },
+  /**
+   * foldedIntoValue(added, main) explains that a new value joined an existing
+   * one as a spelling rather than becoming a value of its own. Said out loud
+   * because a silent fold is indistinguishable from the button not working.
+   */
+  foldedIntoValue(added, main) {
+    return `Added as a spelling of "${main}", which is the shorter form.`;
+  },
   /** variantAlreadyThere(v) explains an add that changed nothing. */
   variantAlreadyThere(v) {
     return `${v} is already one of the spellings.`;
@@ -814,6 +873,29 @@ export const ANONYMISE = {
   compareDoc: "Which document to compare",
   paneOriginal: "ORIGINAL",
   paneAnonymised: "ANONYMISED",
+
+  // The Compare search. It walks ONE combined list, every original-pane hit
+  // then every anonymised-pane hit, and the readout names the pane of the
+  // active one, so crossing from one to the other is visible rather than
+  // silent. Two cursors, or one index over lists of different lengths, would
+  // drift.
+  searchLabel: "Search",
+  searchPlaceholder: "Find in both previews",
+  searchNext: "Next occurrence",
+  searchPrev: "Previous occurrence",
+  searchNone: "No match in either preview.",
+  /** searchCount(index, total, pane) is the readout, e.g. "3 of 8 in Original". */
+  searchCount(index, total, pane) {
+    return `${index} of ${total} in ${pane}`;
+  },
+  /** searchCapped(max) says the highlight stopped rather than froze. */
+  searchCapped(max) {
+    return `Showing the first ${max} matches. Narrow the search to see fewer.`;
+  },
+  // The pane names as they appear in the readout, in sentence case: the
+  // captions above the panes shout, a sentence does not.
+  searchPaneOriginal: "Original",
+  searchPaneAnonymised: "Anonymised",
   compareEmpty: "Run the anonymisation to compare the result with the original.",
   compareBlocked: "The run was refused, so there is nothing to compare. Resolve the conflict on the left, then run again.",
   /** tooltipTimes(n) is the second line of a mark's hover tooltip. */
@@ -830,13 +912,39 @@ export const ANONYMISE = {
     return `${n} replacement${n === 1 ? "" : "s"} in this document`;
   },
 
-  // The floating replace-selection panel.
-  replaceSelection: "Replace selection",
+  // The floating selection panel. Selecting text in either pane offers to copy
+  // it or to replace it, and replacing has three outcomes that differ in WHAT
+  // ENDS UP IN THE RE-IDENTIFICATION KEY. That difference is not guessable from
+  // the labels, which is why each mode carries a hint.
+  selectionTitle: "Selected text",
+  selectionCopy: "Copy",
+  selectionReplace: "Replace",
+  selectionModeVariant: "Make it a spelling of an existing value",
+  selectionModeValue: "Add it as a new value",
+  selectionModeText: "Replace the text only",
+  selectionModeVariantHint: "The text is replaced with that value's placeholder, so both spellings share one number.",
+  selectionModeValueHint: "The text becomes a value of its own, with its own placeholder.",
+  selectionModeTextHint: "A find and replace rule. No value is created and nothing is added to the re-identification key.",
+  selectionTargetLabel: "Which value it is a spelling of",
+  selectionTargetPlaceholder: "start typing a value",
+  selectionTypeLabel: "Type",
   replaceWith: "What to replace it with",
-  applySelection: "Replace",
+  applySelection: "Apply",
   cancelSelection: "Cancel",
+  selectionBack: "Back",
   selectionNeedsReplacement: "Type what the selected text should become.",
-  /** selectionApplied(find, replace) confirms the new rule. */
+  selectionNeedsTarget: "Choose the value this is a spelling of.",
+  selectionUnknownTarget: "That value is not in the list. Pick one of the suggestions.",
+  selectionCopied: "Copied to the clipboard.",
+  /** selectionBecameVariant(text, main) confirms mode 1. */
+  selectionBecameVariant(text, main) {
+    return `${text} now counts as a spelling of ${main}, so both share one placeholder.`;
+  },
+  /** selectionBecameValue(text) confirms mode 2. */
+  selectionBecameValue(text) {
+    return `${text} is now a value of its own, with its own placeholder.`;
+  },
+  /** selectionApplied(find, replace) confirms mode 3. */
   selectionApplied(find, replace) {
     return `${find} is now replaced with ${replace} everywhere, by a find and replace rule.`;
   },

@@ -15,6 +15,25 @@
 //     everywhere.
 //     Finally the ordered simple-replace rules run (simplereplace.go).
 //
+// Run executes those passes in THREE phases rather than one loop, because
+// ownership has to be decided over the whole batch:
+//
+//	A. detect. Every document, every region, spans only. Nothing is replaced
+//	   and no placeholder is minted.
+//	B. unify. One string, one owner, picked by the precedence rule
+//	   (unifyOwnership). Overruled claims become warnings.
+//	C. apply. Overlap resolution and replacement, region by region, reusing
+//	   phase A's spans, so no detection work is repeated.
+//
+// The split exists because Registry.Assign's byOriginal index gives a string to
+// its FIRST claimant for the whole session, and with detection and replacement
+// in one step the first claimant was decided by byte offset within document
+// order. The category a value ended up under therefore depended on the order
+// the files were imported in. Phase B makes it a rule instead. The cost is that
+// a batch holds its spans until phase C; a span is five words plus two strings,
+// so a 10 MB batch replacing every 200 bytes is a few MB, bounded by the same
+// import limits as the documents themselves.
+//
 // Grid documents (CSV and flat xlsx sheets) are anonymised CELL BY CELL and
 // their markdown preview is re-rendered from the anonymised grid — that
 // guarantees the preview and the CSV round-trip export can never disagree.
@@ -35,6 +54,10 @@ import (
 type ProposedEntity struct {
 	Category string `json:"category"`
 	Text     string `json:"text"`
+	// Variants are the longer spellings folded into this one, for the same
+	// reason Candidate carries them: the review list shows one value with its
+	// spellings rather than two rivals.
+	Variants []string `json:"variants,omitempty"`
 }
 
 // LLM is the interface the engine consumes for the deep-scan slot
@@ -331,10 +354,15 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	// resolver, and accumulate across every document and grid cell of the run.
 	overlaps := newOverlapWarnings()
 
-	// --- Passes 1–3, per document. --------------------------------------
+	// --- Phase A: detect, per document. ---------------------------------
+	// Nothing is replaced here, and no placeholder is minted. Detection has to
+	// finish across the whole batch before ownership can be decided by rule
+	// rather than by the order the documents happen to be in.
+	//
 	// llmDurations records per-document deep-scan timing for the report
 	// (soft budget 30 s / 50 KB, surfaced per).
 	llmDurations := make([]int64, len(in.Documents))
+	plans := make([]documentPlan, 0, len(in.Documents))
 	for i, doc := range in.Documents {
 		// Cancellation is honoured between documents;
 		// mid-LLM cancellation is the LLM implementation's job via ctx.
@@ -380,9 +408,28 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 			allow:            in.Allowlist,
 			suppressRegexPII: in.SuppressRegexPII,
 		}
-		rd, traces := anonymiseDocument(doc, scope, reg, overlaps, in.OnTrace != nil)
+		plans = append(plans, detectDocument(doc, scope))
+	}
+
+	// --- Phase B: unify ownership across the whole batch. ----------------
+	// One string, one owner, decided by the precedence rule and not by which
+	// document happens to be first. The overruled claims become warnings.
+	overlaps.addOwnershipLosses(unifyOwnership(plans))
+
+	// --- Phase C: apply, per document. -----------------------------------
+	// Resolution here only decides which of two OVERLAPPING stretches of text
+	// to replace; who owns a value was settled in phase B. Phase C reuses phase
+	// A's spans, so no detection work is repeated.
+	for _, plan := range plans {
+		if err := ctx.Err(); err != nil {
+			res.Report.Warnings = append(res.Report.Warnings,
+				fmt.Sprintf("run cancelled after %d of %d documents", len(res.Documents), len(plans)))
+			finishReport(res, start, overlaps)
+			return res, err
+		}
+		rd, traces := applyPlan(plan, reg, overlaps, in.OnTrace != nil)
 		if in.OnTrace != nil {
-			in.OnTrace(doc.Name, traces)
+			in.OnTrace(plan.doc.Name, traces)
 		}
 		res.Documents = append(res.Documents, rd)
 	}
@@ -617,6 +664,12 @@ func acceptProposals(proposals []ProposedEntity, sourceText string, allow *Allow
 			Category:   p.Category,
 			Canonical:  p.Text,
 			Confidence: ConfidenceLLMDefault,
+			// The route, recorded separately from the score. Confidence
+			// decides whether the MinConfidence floor keeps this value at all;
+			// origin decides who wins when it and another route claim the same
+			// text. One number cannot answer both without raising the floor
+			// silently reordering precedence.
+			Origin: OriginAI,
 		})
 	}
 	return out
@@ -640,18 +693,194 @@ type detectionScope struct {
 	suppressRegexPII bool
 }
 
-// anonymiseDocument runs passes 1 and 2 (with the already-merged pass-3
-// entities) over one document, routing grid documents through per-cell
-// processing.
+// ownershipLoss is one claim unification overruled: a route that wanted a
+// string filed under its own category, and the route that got it instead.
+type ownershipLoss struct {
+	loser  Span
+	winner Span
+}
+
+// unifyOwnership decides, ONCE for the whole batch, which route owns each
+// string, and rewrites every other claim on that string to the winner.
+//
+// This is the structural half of the precedence rule. Without it, resolution
+// happens per region, so the same string can be won by a native regex in one
+// document and by the local AI in another; Registry.Assign's byOriginal index
+// then gives the string to whichever claim was ASSIGNED first, and assignment
+// order is byte offset within document order. Which route owned a value
+// therefore depended on the order the files were imported in, which is what
+// made the behaviour look random. Assign cannot fix this itself: changing an
+// entry's category after the fact would change its placeholder text, and a
+// placeholder that has left the machine can never be re-numbered.
+//
+// The winner is picked by OriginRank first, then by the same tie-breaks
+// resolution uses. Start offset is deliberately NOT among them: comparing
+// offsets across documents would reintroduce exactly the file-order dependence
+// this function exists to remove, so the last tie-break is the category name.
+//
+// @param plans every document's detections; regions are rewritten in place
+// @return the overruled claims, so the run can warn about them
+func unifyOwnership(plans []documentPlan) []ownershipLoss {
+	// Which (category, canonical, origin) owns each string, keyed by the
+	// lower-cased registry key the span would use.
+	winners := map[string]Span{}
+	for _, plan := range plans {
+		for _, region := range plan.regions {
+			for _, s := range region.spans {
+				key := strings.ToLower(s.CanonicalOrOriginal())
+				cur, seen := winners[key]
+				if !seen || supersedesForOwnership(s, cur) {
+					winners[key] = s
+				}
+			}
+		}
+	}
+
+	var losses []ownershipLoss
+	// Report each losing (category, value) pair once: a name that appears two
+	// hundred times must not produce two hundred identical warnings.
+	reported := map[string]bool{}
+	for pi := range plans {
+		for ri := range plans[pi].regions {
+			spans := plans[pi].regions[ri].spans
+			// Rewriting collapses claims onto one owner, so two routes that
+			// both matched the same characters become the same span. Keeping
+			// both would make the region's resolution discard one as an
+			// "overlap" and warn a second time about the event the ownership
+			// warning already explains, so identical claims are compacted here.
+			// Identity is what decides the replacement: the stretch of text,
+			// the category it is filed under and the registry key. Confidence
+			// and the matched spelling can differ between two claims that
+			// produce byte-for-byte the same output.
+			type claim struct {
+				start, end int
+				category   string
+				key        string
+			}
+			seen := make(map[claim]bool, len(spans))
+			kept := spans[:0]
+			for _, s := range spans {
+				key := strings.ToLower(s.CanonicalOrOriginal())
+				win := winners[key]
+				if s.Category != win.Category || s.Origin != win.Origin {
+					lossKey := s.Origin + "|" + s.Category + "|" + key
+					if !reported[lossKey] {
+						reported[lossKey] = true
+						losses = append(losses, ownershipLoss{loser: s, winner: win})
+					}
+					// The claim becomes the winner's, so the registry sees one
+					// owner for this string wherever it occurs. Start, End and
+					// Original stay as they are: they describe THIS occurrence,
+					// and the text being replaced has not changed.
+					s.Category = win.Category
+					s.Origin = win.Origin
+					s.Canonical = win.CanonicalOrOriginal()
+				}
+				id := claim{s.Start, s.End, s.Category, strings.ToLower(s.CanonicalOrOriginal())}
+				if seen[id] {
+					continue
+				}
+				seen[id] = true
+				kept = append(kept, s)
+			}
+			plans[pi].regions[ri].spans = kept
+		}
+	}
+	return losses
+}
+
+// supersedesForOwnership reports whether a should own a string instead of b.
+// Same order as resolveOverlaps minus the length and start comparators: every
+// span in a group covers the same value, so length cannot separate them, and
+// start would make the answer depend on file order.
+func supersedesForOwnership(a, b Span) bool {
+	ra, rb := OriginRank(a.Origin), OriginRank(b.Origin)
+	if ra != rb {
+		return ra < rb
+	}
+	ca, cb := effectiveConfidence(a), effectiveConfidence(b)
+	if ca != cb {
+		return ca > cb
+	}
+	return a.Category < b.Category
+}
+
+// planRegion is one piece of text a document is anonymised in, with the spans
+// detected in it. Regions mirror the document's own shape: one for a markdown
+// body, one per grid cell, one for a complex sheet's JSON blob. Grid
+// coordinates are carried so the apply phase can rebuild the grid; they are -1
+// for the two single-region shapes.
+type planRegion struct {
+	row, col int
+	// region is the trace tag ("" for a body, "row R col C", "json").
+	region string
+	text   string
+	spans  []Span
+}
+
+// documentPlan is one document's detections, held between the detect phase and
+// the apply phase.
+//
+// The two phases are separate so ownership can be decided across the WHOLE
+// batch before a single placeholder is minted. Detecting and replacing in one
+// step meant resolution happened per region, so two occurrences of the same
+// string in different documents could be won by different routes, and
+// Registry.Assign's byOriginal index then froze whichever claim was assigned
+// first, which is byte-offset order within document order. Which route owned a
+// value therefore depended on the order the files were imported in.
+type documentPlan struct {
+	doc     Document
+	regions []planRegion
+}
+
+// detectDocument runs passes 1 and 2 (with the already-merged pass-3 entities)
+// over one document and returns what it found, replacing nothing. Grid
+// documents are detected cell by cell, exactly as they are replaced, so the
+// preview and the CSV round-trip cannot disagree.
+func detectDocument(doc Document, scope detectionScope) documentPlan {
+	plan := documentPlan{doc: doc}
+
+	if doc.Grid != nil {
+		for r, row := range doc.Grid {
+			for c, cell := range row {
+				plan.regions = append(plan.regions, planRegion{
+					row: r, col: c,
+					region: fmt.Sprintf("row %d col %d", r, c),
+					text:   cell,
+					spans:  detectText(cell, scope),
+				})
+			}
+		}
+		return plan
+	}
+
+	if doc.Format == FormatXLSXJSON {
+		plan.regions = append(plan.regions, planRegion{
+			row: -1, col: -1, region: "json",
+			text: doc.JSON, spans: detectText(doc.JSON, scope),
+		})
+		return plan
+	}
+
+	plan.regions = append(plan.regions, planRegion{
+		row: -1, col: -1, region: "",
+		text: doc.Markdown, spans: detectText(doc.Markdown, scope),
+	})
+	return plan
+}
+
+// applyPlan replaces the planned spans, region by region, and assembles the
+// document's result.
 //
 // @param overlaps collects the spans overlap resolution discarded, so the run
 //
 //	warns about them from the ONE place the decision is made. nil skips it.
 //
 // @param traceEnabled collects the resolved spans for the caller's OnTrace hook
-func anonymiseDocument(doc Document, scope detectionScope, reg *Registry,
+func applyPlan(plan documentPlan, reg *Registry,
 	overlaps *overlapWarnings, traceEnabled bool) (ResultDocument, []SpanTrace) {
 
+	doc := plan.doc
 	rd := ResultDocument{
 		Name:               doc.Name,
 		Format:             doc.Format,
@@ -694,46 +923,54 @@ func anonymiseDocument(doc Document, scope detectionScope, reg *Registry,
 	}
 
 	if doc.Grid != nil {
-		// Grid documents: anonymise cell by cell, then re-render the markdown
+		// Grid documents: replace cell by cell, then re-render the markdown
 		// from the anonymised grid so preview and export agree.
 		grid := make([][]string, len(doc.Grid))
 		for r, row := range doc.Grid {
 			grid[r] = make([]string, len(row))
-			for c, cell := range row {
-				var region string
-				if traceEnabled {
-					region = fmt.Sprintf("row %d col %d", r, c)
-				}
-				grid[r][c] = anonymiseText(cell, scope, assign, makeTraceFn(region), overlaps)
+			copy(grid[r], row)
+		}
+		for _, reg := range plan.regions {
+			traceRegion := ""
+			if traceEnabled {
+				traceRegion = reg.region
 			}
+			grid[reg.row][reg.col] = applySpansToText(
+				reg.text, reg.spans, assign, makeTraceFn(traceRegion), overlaps)
 		}
 		rd.Grid = grid
 		rd.Anonymised = GridToMarkdownTable(grid)
 		return rd, traces
 	}
 
+	// The two single-region shapes. A plan always carries exactly one region
+	// for them, built by detectDocument.
+	only := plan.regions[0]
+	text := applySpansToText(only.text, only.spans, assign, makeTraceFn(only.region), overlaps)
+
 	if doc.Format == FormatXLSXJSON {
-		// Complex sheets: anonymise the raw JSON text, keeping both the JSON
-		// (for the .json export) and the fenced markdown rendering in sync.
-		rd.JSON = anonymiseText(doc.JSON, scope, assign, makeTraceFn("json"), overlaps)
+		// Complex sheets: keep both the JSON (for the .json export) and the
+		// fenced markdown rendering in sync.
+		rd.JSON = text
 		rd.Anonymised = "```json\n" + rd.JSON + "\n```\n"
 		return rd, traces
 	}
 
-	rd.Anonymised = anonymiseText(doc.Markdown, scope, assign, makeTraceFn(""), overlaps)
+	rd.Anonymised = text
 	return rd, traces
 }
 
-// anonymiseText is the shared passes-1-and-2 core over one piece of text.
+// detectText is the shared passes-1-and-2 core over one piece of text. It
+// DETECTS only: nothing is resolved and nothing is replaced, because which
+// route owns a value is decided over the whole batch (unifyOwnership) rather
+// than per region.
 //
 // The category selection gates BOTH the PII categories (pass 1) and the
 // custom-pattern pass; entity categories were already filtered by the caller
 // (filterEntities). When scope.suppressRegexPII is set (the "Native detection"
 // master switch is off) pass 1 is skipped entirely, so no signal category is
 // replaced; the entity and custom-pattern passes still run.
-func anonymiseText(text string, scope detectionScope, assign func(Span) string,
-	traceFn func([]Span), overlaps *overlapWarnings) string {
-
+func detectText(text string, scope detectionScope) []Span {
 	var spans []Span
 	if !scope.suppressRegexPII {
 		spans = FilterAllowed(DetectPIISelected(text, scope.categories, scope.country), scope.allow)
@@ -745,7 +982,15 @@ func anonymiseText(text string, scope detectionScope, assign func(Span) string,
 	// The confidence floor is applied BEFORE overlap resolution, so a discarded
 	// low-confidence span cannot suppress a stronger one it happens to overlap.
 	// At the default 0 this is a no-op.
-	spans = FilterByMinConfidence(spans, scope.minConfidence)
+	return FilterByMinConfidence(spans, scope.minConfidence)
+}
+
+// applySpansToText resolves the overlaps among one region's spans and replaces
+// what survives. By the time it runs, ownership is already settled across the
+// batch, so resolution here only decides which of two OVERLAPPING stretches of
+// text to replace, never which route owns a value.
+func applySpansToText(text string, spans []Span, assign func(Span) string,
+	traceFn func([]Span), overlaps *overlapWarnings) string {
 
 	// The losers are collected only while the warning collector still wants
 	// them. Gathering them regardless costs an allocation per discarded span on
@@ -871,6 +1116,12 @@ func DetectKnownOriginals(text string, entries []MappingEntry) []Span {
 				Category:  e.Category,
 				Original:  text[m[0]:m[1]],
 				Canonical: e.Original,
+				// A registry entry is ownership that is already DECIDED: the
+				// string earned this placeholder in an earlier pass or an
+				// earlier document, and a placeholder that has left the machine
+				// can never be re-numbered. So it outranks a fresh detection
+				// rather than being re-litigated by one.
+				Origin: OriginNative,
 			})
 		}
 	}
