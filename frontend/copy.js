@@ -334,6 +334,16 @@ export const ALLOWLIST = {
   add: "Add",
   importCSV: "Import CSV",
   template: "Template",
+  clearAll: "Clear all",
+  clearAllTitle: "Remove every term from this list",
+  /** clearAllConfirm(n) is the in-app confirm before emptying the list. */
+  clearAllConfirm(n) {
+    return `Remove all ${n} term${n === 1 ? "" : "s"} from the never-anonymise list? Nothing will be protected from the passes afterwards, but you can add terms again at any time.`;
+  },
+  /** clearedN(n) reports the result of Clear all. */
+  clearedN(n) {
+    return `${n} term${n === 1 ? "" : "s"} removed from the never-anonymise list.`;
+  },
   remove: "Remove from this list",
   empty: "The list is empty, so nothing is protected from the passes.",
   /** alreadyThere(t) explains an add that changed nothing. */

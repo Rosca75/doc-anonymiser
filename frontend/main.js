@@ -24,7 +24,7 @@
 // question can be asked from any screen and has to survive the re-render its
 // own answer triggers.
 
-import { ping, probeOllama, onEvent, defaultAllowlist } from "./api.js";
+import { ping, probeOllama, onEvent } from "./api.js";
 import {
   getState, setState, subscribe,
   WIZARD_STEPS, canGoTo, goToScreen, knownStep,
@@ -91,16 +91,11 @@ export function boot(root) {
       ollama: { available: false, models: [], detail: `Probe failed unexpectedly: ${err.message ?? err}` },
     }));
 
-  // Seed the allowlist with the engine defaults so the user SEES them and
-  // can remove any. Only on a fresh
-  // state; a loaded session's list is never overwritten.
-  defaultAllowlist()
-    .then((terms) => {
-      if (getState().allowlist.length === 0 && terms?.length) {
-        setState({ allowlist: terms });
-      }
-    })
-    .catch(() => { /* bridge missing (plain browser): keep the empty list */ });
+  // The never-anonymise allowlist starts EMPTY and stays empty until the user
+  // adds a term. The engine does not seed defaults either (App.allowlistFor
+  // builds an empty allowlist), so pre-populating it here would put terms the
+  // user never chose in front of them. A suggested-terms template is still one
+  // click away in the Never anonymise tab for anyone who wants a starting set.
 
   // Drag-and-drop imports arrive as events from Go (app.go OnFileDrop).
   onEvent("documents:changed", (result) => applyImportResult(result));

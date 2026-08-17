@@ -87,7 +87,7 @@ display choice: it decides which country-specific regex categories run.
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
-| `defaultAllowlist()` | — | seeded never-anonymise terms shown at startup (removable like any other) |
+| `defaultAllowlist()` | — | the suggested never-anonymise terms. NOT added to the list automatically: the allowlist starts empty and the user chooses its terms. Kept as the source for the downloadable template. |
 | `importAllowlistCSV()` | — | parsed terms, or `null` when the user cancels the dialog |
 | `saveAllowlistTemplate()` | — | saves the downloadable CSV template |
 
