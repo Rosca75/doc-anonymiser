@@ -578,6 +578,21 @@ export const WORKSPACE = {
   variantDeleted(v) {
     return `Removed the spelling "${v}" from this value. To stop it being replaced by anything at all, add it to Never anonymise.`;
   },
+  /**
+   * alsoSpelled(variants) names the longer forms folded into one suggestion.
+   * Accepting the row accepts them too, so the row has to say which.
+   */
+  alsoSpelled(variants) {
+    return `also spelled ${variants.join(", ")}`;
+  },
+  /**
+   * foldedIntoValue(added, main) explains that a new value joined an existing
+   * one as a spelling rather than becoming a value of its own. Said out loud
+   * because a silent fold is indistinguishable from the button not working.
+   */
+  foldedIntoValue(added, main) {
+    return `Added as a spelling of "${main}", which is the shorter form.`;
+  },
   /** variantAlreadyThere(v) explains an add that changed nothing. */
   variantAlreadyThere(v) {
     return `${v} is already one of the spellings.`;

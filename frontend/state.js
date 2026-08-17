@@ -1295,6 +1295,83 @@ export function entityKey(category, canonical) {
  * telling the same story, and flips the preset to Custom (selectionPresetName)
  * exactly as ticking the box by hand would.
  */
+/**
+ * foldIntoFamily(category, canonical) folds a ONE-AT-A-TIME addition into an
+ * existing value of the same type when the two are spellings of one thing.
+ *
+ * Detection folds families over its whole output (engine FoldValueFamilies),
+ * but values also arrive singly: the "Something missed?" row, and the Compare
+ * pane's "add as a new value". Without this, typing "Coca-Cola company" beside
+ * an existing "Coca-Cola" creates a rival, and the shorter one then fires
+ * inside the longer one: the text reads "[BRAND_1] company", the rest of the
+ * phrase survives, and two numbers are spent on one company.
+ *
+ * The SHORTER form is always the main value, so this folds in both directions:
+ * a longer addition becomes a spelling of the existing value, and a shorter one
+ * takes over as the value's name with the old name kept as a spelling.
+ *
+ * Same rules as the engine's, and for the same reasons: one category only (a
+ * person "Delta" and an organisation "Delta Industries" are an intersection,
+ * not a family), word boundaries only ("Alten" is not a spelling of
+ * "Altenberg"), and never below MIN_VARIANT_LEN, because promoting a
+ * two-character stem to a main value would shred ordinary text.
+ *
+ * @param {string} category the type the new value would be filed under
+ * @param {string} canonical the value being added
+ * @returns {{main: string, added: string}|null} the surviving value's name and
+ *   the spelling that was folded in, or null when there is no family
+ */
+export function foldIntoFamily(category, canonical) {
+  const added = (canonical ?? "").trim();
+  if (!added) return null;
+
+  for (const e of state.entities) {
+    if (e.category !== category) continue;
+    const existing = (e.canonical ?? "").trim();
+    if (!existing || existing.toLowerCase() === added.toLowerCase()) continue;
+
+    // Rune length, not byte length: an accented name must not be judged longer
+    // than it looks.
+    const [shorter, longer] = [...existing].length <= [...added].length
+      ? [existing, added] : [added, existing];
+    if (!isFamilyPair(shorter, longer)) continue;
+
+    if (shorter === existing) {
+      // The addition is the longer form: it becomes a spelling of the value
+      // that is already there.
+      addManualVariant(category, existing, added);
+      return { main: existing, added };
+    }
+    // The addition is SHORTER, so it takes over as the value's name and the
+    // old name becomes one of its spellings. Renaming rather than adding a
+    // second value is what keeps them sharing one placeholder.
+    renameEntity(category, existing, added);
+    addManualVariant(category, added, existing);
+    return { main: added, added: existing };
+  }
+  return null;
+}
+
+// MIN_VARIANT_LEN mirrors engine.minVariantLen: a spelling shorter than this is
+// never derived or promoted, because replacing every "Al" or "BV" would shred
+// ordinary text.
+export const MIN_VARIANT_LEN = 3;
+
+/**
+ * isFamilyPair(shorter, longer) reports whether the two are spellings of one
+ * thing: the shorter occurs inside the longer at WORD BOUNDARIES. It mirrors
+ * engine.canJoinFamily, so the frontend's one-at-a-time fold agrees with the
+ * one detection already applied.
+ */
+function isFamilyPair(shorter, longer) {
+  if ([...shorter].length < MIN_VARIANT_LEN) return false;
+  if ([...shorter].length >= [...longer].length) return false;
+  // \p{L} and \p{N} rather than \b: \b is ASCII-only, and an accented name
+  // ("Amélie") would fail its boundary check on the wrong side.
+  const escaped = shorter.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(longer);
+}
+
 export function addEntities(items) {
   const existing = new Set(state.entities.map((e) => entityKey(e.category, e.canonical)));
   const added = [];
@@ -1472,6 +1549,11 @@ export function addCandidates(items, source) {
       category: item.category ?? "person_names",
       count: item.count ?? 0,
       contexts: item.contexts ?? [],
+      // The longer spellings Go folded into this one. Accepting the row carries
+      // them across as the value's spellings, so ONE value with its variants
+      // reaches the pipeline instead of two rivals, the shorter of which would
+      // fire inside the longer and leave the rest of the phrase in the text.
+      variants: item.variants ?? [],
     });
   }
   if (added.length) setState({ candidates: [...state.candidates, ...added] });
@@ -1504,6 +1586,7 @@ export function acceptCandidate(text) {
   // the MinConfidence floor, so the two decisions would interfere.
   const added = addEntities([{
     category: cand.category, canonical: cand.text, origin: originOf(cand.source),
+    manualVariants: cand.variants ?? [],
   }]);
   setState({ candidates: state.candidates.filter((c) => candidateKey(c.text) !== key) });
   return added > 0;
@@ -1539,6 +1622,7 @@ export function acceptAllShown(texts) {
   if (!batch.length) return 0;
   const added = addEntities(batch.map((c) => ({
     category: c.category, canonical: c.text, origin: originOf(c.source),
+    manualVariants: c.variants ?? [],
   })));
   setState({ candidates: state.candidates.filter((c) => !shown.has(candidateKey(c.text))) });
   return added;

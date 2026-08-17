@@ -35,7 +35,7 @@ import {
   entityKey,
   renameEntity, renameVariant, changeEntityCategory, changeCandidateCategory,
   groupEntities, clearAllEntities, entityConflicts, spellingsOf, curate,
-  setIntersections, intersectionsFor,
+  setIntersections, intersectionsFor, foldIntoFamily,
 } from "./state.js";
 
 test("setState merges and notifies subscribers", () => {
@@ -1909,4 +1909,71 @@ test("starting a new batch drops the intersections with everything else", () => 
   setIntersections([{ value: "Alpine", category: "entity_names" }]);
   startNewBatch();
   assert.deepEqual(getState().intersections, []);
+});
+
+// --- Value families: the shorter form is the main value ------------------
+
+test("a longer addition becomes a spelling of the existing shorter value", () => {
+  // Left as two values the shorter fires inside the longer and the text reads
+  // "[BRAND_1] company", leaking the rest of the phrase.
+  resetState();
+  seedValue("brand_names", "Coca-Cola");
+  const folded = foldIntoFamily("brand_names", "Coca-Cola company");
+
+  assert.deepEqual(folded, { main: "Coca-Cola", added: "Coca-Cola company" });
+  assert.equal(getState().entities.length, 1, "one value, not two rivals");
+  assert.ok(getState().entities[0].manualVariants.includes("Coca-Cola company"));
+});
+
+test("a shorter addition takes over as the value's name", () => {
+  // The fold works in both directions: the shorter form is always the main
+  // value, so the old name becomes one of its spellings.
+  resetState();
+  seedValue("brand_names", "Coca-Cola company");
+  const folded = foldIntoFamily("brand_names", "Coca-Cola");
+
+  assert.deepEqual(folded, { main: "Coca-Cola", added: "Coca-Cola company" });
+  assert.equal(getState().entities.length, 1);
+  assert.equal(getState().entities[0].canonical, "Coca-Cola");
+  assert.ok(getState().entities[0].manualVariants.includes("Coca-Cola company"),
+    "the old name is kept as a spelling, so the two share one placeholder");
+});
+
+test("foldIntoFamily refuses across types, off boundaries and below the guard", () => {
+  const cases = [
+    // A person and an organisation are an intersection, not a family: folding
+    // them would file a human being under an organisation.
+    { seed: ["person_names", "Delta"], add: ["entity_names", "Delta Industries"] },
+    // "Alten" is not a spelling of "Altenberg".
+    { seed: ["entity_names", "Alten"], add: ["entity_names", "Altenberg"] },
+    // A two-character stem would shred ordinary text if promoted.
+    { seed: ["entity_names", "BV"], add: ["entity_names", "BV Holdings"] },
+    // Unrelated values.
+    { seed: ["entity_names", "Alpine Trust"], add: ["entity_names", "Borealis"] },
+  ];
+  for (const { seed, add } of cases) {
+    resetState();
+    seedValue(seed[0], seed[1]);
+    assert.equal(foldIntoFamily(add[0], add[1]), null,
+      `${seed[1]} and ${add[1]} must not be folded`);
+  }
+});
+
+test("foldIntoFamily leaves an empty or identical addition alone", () => {
+  resetState();
+  seedValue("entity_names", "Alpine Trust");
+  assert.equal(foldIntoFamily("entity_names", "   "), null);
+  assert.equal(foldIntoFamily("entity_names", "alpine trust"), null,
+    "the same value is not a spelling of itself");
+});
+
+test("an accepted candidate carries its folded spellings across", () => {
+  resetState();
+  addCandidates([{
+    text: "Alpine Trust", category: "entity_names", variants: ["Alpine Trust S.A."],
+  }], "smart");
+  assert.equal(acceptCandidate("Alpine Trust"), true);
+  const e = getState().entities[0];
+  assert.deepEqual(e.manualVariants, ["Alpine Trust S.A."],
+    "one value with its spellings reaches the pipeline, not two rivals");
 });

@@ -24,6 +24,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"doc-anonymiser/backend/engine"
 	"doc-anonymiser/backend/ollama"
@@ -218,6 +219,13 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 				fmt.Sprintf("the local AI could not refine the categories, the offline guesses were kept: %v", err))
 		}
 	}
+
+	// Fold value families ONCE, over the merged output of every route. Per
+	// route would leave a Smart "Coca-Cola" and an AI "Coca-Cola company"
+	// unmerged, which is exactly the pair that has to become one value: left
+	// apart, the shorter one fires inside the longer one, the text reads
+	// "[BRAND_1] company", and two numbers are spent on one company.
+	foldDetectionFamilies(res, allow)
 
 	res.Cancelled = ctx.Err() != nil
 	res.Status = detectionStatus(res, len(docs))
@@ -445,4 +453,64 @@ func detectionStatus(res *DetectionResult, docCount int) string {
 		return fmt.Sprintf("scanned %d file(s), %d suggestion(s)",
 			docCount, len(res.Candidates)+len(res.Proposals))
 	}
+}
+
+// foldDetectionFamilies collapses the spellings of one real-world thing into
+// one suggestion, across BOTH detection routes.
+//
+// The two routes report into different lists, because the review row shows
+// which one found a value. So the fold runs over a merged view and the result
+// is split back by route: a family's main value keeps the badge of the route
+// that found THAT spelling, and the members folded into it disappear from
+// whichever list they were in, because they are now spellings of a value that
+// is already on screen.
+func foldDetectionFamilies(res *DetectionResult, allow *engine.Allowlist) {
+	if len(res.Candidates)+len(res.Proposals) < 2 {
+		return
+	}
+
+	// Which route each text came from, so the split back is by fact rather than
+	// by guess. A text both routes found is already deduplicated by the merge
+	// that produced these lists, and Smart is checked first, matching the order
+	// the phases ran in.
+	fromAI := map[string]bool{}
+	merged := append([]engine.Candidate(nil), res.Candidates...)
+	for _, p := range res.Proposals {
+		key := strings.ToLower(strings.TrimSpace(p.Text))
+		if candidateAlreadyPresent(merged, key) {
+			continue
+		}
+		fromAI[key] = true
+		merged = append(merged, engine.Candidate{
+			Category: p.Category, Text: p.Text, Variants: p.Variants,
+		})
+	}
+
+	folded := engine.FoldValueFamilies(merged, allow)
+
+	candidates := make([]engine.Candidate, 0, len(folded))
+	proposals := make([]engine.ProposedEntity, 0, len(folded))
+	for _, c := range folded {
+		if fromAI[strings.ToLower(strings.TrimSpace(c.Text))] {
+			proposals = append(proposals, engine.ProposedEntity{
+				Category: c.Category, Text: c.Text, Variants: c.Variants,
+			})
+			continue
+		}
+		candidates = append(candidates, c)
+	}
+	res.Candidates = candidates
+	res.Proposals = proposals
+}
+
+// candidateAlreadyPresent reports whether a lower-cased text is already in the
+// list. The offline route's row wins, so a value both routes found keeps its
+// count and its context snippets.
+func candidateAlreadyPresent(cands []engine.Candidate, lowerText string) bool {
+	for _, c := range cands {
+		if strings.ToLower(strings.TrimSpace(c.Text)) == lowerText {
+			return true
+		}
+	}
+	return false
 }

@@ -264,3 +264,26 @@ test("a card with no intersection renders no note", () => {
   assert.ok(!exists(html, "div.intersection-note"));
   assert.ok(!/intersects/.test(one(html, "div.value-card").attrs.class));
 });
+
+test("a folded family is ONE suggestion row that names its spellings", () => {
+  // Three rows for "Alpine Trust", "Alpine Trust S.A." and "Alpine Trust Ltd."
+  // invite three separate accept decisions for one company. Accepting the one
+  // row accepts the spellings too, so the row has to say which.
+  resetState();
+  addCandidates([{
+    text: "Alpine Trust", category: "entity_names", count: 5,
+    variants: ["Alpine Trust S.A."],
+  }], "smart");
+  const html = suggestionsTab(getState(), getState().candidates);
+
+  assert.equal(all(html, "div.grid-row").length, 1, "one family, one row");
+  assert.ok(textOf(html, "span.cand-spellings").includes("Alpine Trust S.A."),
+    "the row names what accepting it will also replace");
+});
+
+test("a suggestion with no folded spellings says nothing extra", () => {
+  resetState();
+  addCandidates([{ text: "Meridian", category: "entity_names", count: 2 }], "smart");
+  const html = suggestionsTab(getState(), getState().candidates);
+  assert.ok(!exists(html, "span.cand-spellings"));
+});

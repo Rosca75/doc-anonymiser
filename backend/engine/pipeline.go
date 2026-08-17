@@ -54,6 +54,10 @@ import (
 type ProposedEntity struct {
 	Category string `json:"category"`
 	Text     string `json:"text"`
+	// Variants are the longer spellings folded into this one, for the same
+	// reason Candidate carries them: the review list shows one value with its
+	// spellings rather than two rivals.
+	Variants []string `json:"variants,omitempty"`
 }
 
 // LLM is the interface the engine consumes for the deep-scan slot

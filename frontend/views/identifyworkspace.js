@@ -52,6 +52,7 @@ import {
   renameEntity, renameVariant, changeEntityCategory, changeCandidateCategory,
   groupEntities, clearAllEntities, entityConflicts, spellingsOf, removeAllowTerm, addAllowTerm,
   aiScopeArg, curate, setIntersections, intersectionsFor, buildIntersectionRequest,
+  foldIntoFamily,
 } from "../state.js";
 import { pendingExpansions } from "../entitymodel.js";
 import {
@@ -401,6 +402,21 @@ function suggestionHeader(s) {
     `</div>`;
 }
 
+/**
+ * spellingsOfCandidate(c) names the longer forms folded into a suggestion.
+ *
+ * A family arrives as ONE row, which is the point: three rows for "Coca-Cola",
+ * "Coca-Cola company" and "Coca-Cola Ltd." invite three separate accept
+ * decisions for one company. But accepting the row also accepts the spellings,
+ * so the row has to say which ones, or the user is agreeing to something they
+ * cannot see.
+ */
+function spellingsOfCandidate(c) {
+  const variants = c.variants ?? [];
+  if (variants.length === 0) return "";
+  return ` <span class="cand-spellings hint">${escapeHTML(WORKSPACE.alsoSpelled(variants))}</span>`;
+}
+
 function suggestionRow(c) {
   const source = WORKSPACE.sourceLabels[c.source] ?? c.source;
   // The type is a dropdown, not a label: Smart detection and the local AI guess
@@ -413,7 +429,7 @@ function suggestionRow(c) {
   });
   return `<div class="grid-row" style="grid-template-columns:${SUGGESTION_COLUMNS}"` +
     ` data-text="${escapeHTML(c.text)}">` +
-    `<span class="cell-value" title="${escapeHTML(c.text)}">${escapeHTML(c.text)}</span>` +
+    `<span class="cell-value" title="${escapeHTML(c.text)}">${escapeHTML(c.text)}${spellingsOfCandidate(c)}</span>` +
     type +
     `<span class="cell-count mono">${escapeHTML(String(c.count ?? 0))}</span>` +
     `<span class="src-badge src-${escapeHTML(c.source)}">${escapeHTML(source)}</span>` +
@@ -1009,9 +1025,24 @@ function wireValues(container) {
   const add = async () => {
     const value = (drafts.value ?? "").trim();
     if (!value) return;
-    const n = addEntities([{ category: drafts.valueCategory, canonical: value }]);
     drafts.value = "";
     drafts.valueMatches = "";
+
+    // A value that is a spelling of one already listed joins it instead of
+    // becoming a rival. Detection folds families over its whole output; values
+    // added one at a time need the same treatment, or "Coca-Cola company"
+    // beside "Coca-Cola" leaves the text reading "[BRAND_1] company".
+    const family = foldIntoFamily(drafts.valueCategory, value);
+    if (family) {
+      // Said out loud, because a silent "your value became a spelling of
+      // another one" is indistinguishable from the button not working.
+      notify(WORKSPACE.foldedIntoValue(value, family.main), "info");
+      setState({});
+      await refreshVariants();
+      return;
+    }
+
+    const n = addEntities([{ category: drafts.valueCategory, canonical: value }]);
     if (n === 0) notify(WORKSPACE.valueAlreadyThere(value), "info");
     setState({});
     await refreshVariants();

@@ -516,3 +516,67 @@ func TestDetectionRespectsTheRouteSwitches(t *testing.T) {
 		t.Errorf("only the offline route can run without Ollama, got %v", res.Phases)
 	}
 }
+
+// TestDetectionFoldsFamiliesAcrossRoutes: a Smart candidate and an AI proposal
+// that are spellings of the same thing come back as ONE value.
+//
+// Folding per route would leave them unmerged, which is exactly the case that
+// matters: left as two values the shorter fires inside the longer, the text
+// reads "[ENTITY_1] S.A.", the legal form leaks, and two numbers are spent on
+// one company.
+//
+// The two routes must agree on the CATEGORY for a family to form, which is why
+// this fixture uses a name both file under entity_names. That is the rule
+// working, not a limitation: a person "Delta" and an organisation "Delta
+// Industries" are an intersection, not a family, and folding them would file a
+// human being under an organisation.
+func TestDetectionFoldsFamiliesAcrossRoutes(t *testing.T) {
+	// The model proposes the LONGER form; the offline route finds the shorter.
+	app := newTestApp(t, func(string) string {
+		return `{"entity_names":["Alpine Trust S.A."],"person_names":[],"brand_names":[]}`
+	})
+	app.docs = []engine.Document{{
+		Name: "a.txt", Format: engine.FormatTXT,
+		Markdown: "Alpine Trust is here. Alpine Trust again. Alpine Trust S.A. signed the deed.\n",
+	}}
+	app.settings.UseAI = true
+	app.settings.UseAutoDetect = true
+
+	res, err := app.RunDetection([]string{"a.txt"}, nil, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+
+	// Whichever list it lands in, exactly one row must mention Coca-Cola, and
+	// it must be the shorter spelling with the longer one folded in.
+	var rows []struct {
+		text     string
+		variants []string
+	}
+	for _, c := range res.Candidates {
+		if strings.Contains(strings.ToLower(c.Text), "alpine trust") {
+			rows = append(rows, struct {
+				text     string
+				variants []string
+			}{c.Text, c.Variants})
+		}
+	}
+	for _, p := range res.Proposals {
+		if strings.Contains(strings.ToLower(p.Text), "alpine trust") {
+			rows = append(rows, struct {
+				text     string
+				variants []string
+			}{p.Text, p.Variants})
+		}
+	}
+
+	if len(rows) != 1 {
+		t.Fatalf("the two spellings must come back as one value, got %+v", rows)
+	}
+	if rows[0].text != "Alpine Trust" {
+		t.Errorf("the shorter form is the main value, got %q", rows[0].text)
+	}
+	if len(rows[0].variants) != 1 || rows[0].variants[0] != "Alpine Trust S.A." {
+		t.Errorf("the longer form must fold in as a spelling, got %v", rows[0].variants)
+	}
+}
