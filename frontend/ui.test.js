@@ -510,6 +510,28 @@ test("modalHTML tints a key-bearing question and escapes its copy", () => {
   assert.ok(key.includes("a&quot;b"));
 });
 
+test("modalHTML renders one button per choice instead of a confirm button", () => {
+  const html = modalHTML({
+    title: "Choose the main value", body: "Pick one.",
+    choices: [{ id: "person_names|marie", label: "Marie (Person)" },
+      { id: "entity_names|acme", label: "Acme (Organisation)" }],
+  });
+  // A choice dialog has no affirmative modal-confirm; it keeps the cancel.
+  assert.ok(!html.includes('id="modal-confirm"'), "no yes/no confirm button");
+  assert.ok(html.includes('id="modal-cancel"'), "cancel is still offered");
+  // One button per choice, tagged with the choice id.
+  assert.ok(html.includes('data-choice="person_names|marie"'));
+  assert.ok(html.includes('data-choice="entity_names|acme"'));
+  assert.ok(html.includes("Marie (Person)"));
+  assert.ok(html.includes("Acme (Organisation)"));
+});
+
+test("modalHTML with an empty choices list falls back to the yes/no buttons", () => {
+  const html = modalHTML({ title: "t", body: "b", choices: [] });
+  assert.ok(html.includes('id="modal-confirm"'));
+  assert.ok(html.includes('id="modal-cancel"'));
+});
+
 // --- The fixed-height layout contract ------------------------------------
 //
 // These read style.css because the contract IS the CSS: markup alone cannot

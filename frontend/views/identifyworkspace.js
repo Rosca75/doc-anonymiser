@@ -59,7 +59,7 @@ import {
 } from "../candidatemodel.js";
 import { escapeHTML } from "../html.js";
 import { button, tabbar, icon, toastHTML } from "../ui.js";
-import { askConfirm } from "../modal.js";
+import { askConfirm, askChoice } from "../modal.js";
 import { llmGateTooltip } from "./identifyrail.js";
 import { renderAllowlistChips, wireAllowlistChips } from "./allowlist.js";
 import { notify, wireNotice } from "../toast.js";
@@ -128,6 +128,10 @@ let valuesFilter = { search: "", type: "", showVariants: true };
 // at a time: a stack of open "group with" pickers down the list would be noise.
 // key is an entityKey; kind is "group" | "solve" | null.
 let openValuePanel = { key: null, kind: null };
+// The suggestions search's debounce timer. That search re-renders (its result
+// is the bulk-action scope), so it cannot filter in place like the My values
+// search; debouncing keeps the input alive through a burst of keystrokes.
+let workspaceSearchTimer = null;
 // The draft text of the three add rows, kept across repaints so a state change
 // elsewhere does not empty a half-typed value.
 const drafts = {
@@ -485,7 +489,11 @@ export function valuesTab(s) {
     ? `<div class="grid-empty">${escapeHTML(WORKSPACE.noValues)}</div>`
     : (shown.length === 0
       ? `<div class="grid-empty">${escapeHTML(WORKSPACE.noValuesMatch)}</div>`
-      : shown.map((e) => valueCard(e, conflicts.get(entityKey(e.category, e.canonical)), s)).join(""));
+      : shown.map((e) => valueCard(e, conflicts.get(entityKey(e.category, e.canonical)), s)).join("") +
+        // Shown only by the live search when it hides every card: the toolbar
+        // filters imperatively without a re-render, so it needs a "no match"
+        // line that is already in the DOM to reveal.
+        `<div class="grid-empty values-search-empty" style="display:none">${escapeHTML(WORKSPACE.noValuesMatch)}</div>`);
 
   return valuesFilterBar(s) + addRow + cards;
 }
@@ -503,6 +511,13 @@ function valueCard(e, conflict, s) {
   const feedback = rowFeedback.get(key);
   const nameBad = !!(conflict && conflict.nameConflicts.length);
   const variantConflicts = conflict ? conflict.variantConflicts : new Map();
+
+  // Every lower-cased spelling this value would match, joined for the live
+  // search: the toolbar filters cards imperatively (see applyValuesSearchFilter)
+  // rather than re-rendering per keystroke, so it reads this instead of the
+  // card's text. It mirrors visibleValues' matching, and holds the variant
+  // spellings even when the spelling rows are folded away.
+  const searchText = [...spellingsOf(e).keys()].join(" ");
 
   // The name is click-to-edit: a button that reads as a heading until clicked,
   // then reveals an input (revealNameInput). Renaming what a value BECOMES is a
@@ -574,7 +589,8 @@ function valueCard(e, conflict, s) {
     : "";
 
   return `<div class="value-card${conflict ? " conflicted" : ""}" data-key="${escapeHTML(key)}"` +
-    ` data-category="${escapeHTML(e.category)}" data-canonical="${escapeHTML(e.canonical)}">` +
+    ` data-category="${escapeHTML(e.category)}" data-canonical="${escapeHTML(e.canonical)}"` +
+    ` data-search="${escapeHTML(searchText)}">` +
     `<div class="row-between">` +
     `<div class="value-head">${nameBtn}${typeSelect}</div>` +
     `<div class="value-actions">${actions}</div>` +
@@ -718,16 +734,23 @@ function wire(container, s, shown) {
 
   const search = container.querySelector("#workspace-search");
   search?.addEventListener("input", () => {
-    // Repaint on every keystroke, but keep the caret: the input is re-created,
-    // so its value and selection have to be restored by hand.
-    const caret = search.selectionStart;
+    // Debounced repaint. Unlike the My values search (which filters cards in
+    // place), this one feeds the bulk-action scope and the rows' shown set, so
+    // it has to re-render. Debouncing keeps the input alive through a burst of
+    // keystrokes so focus is not lost mid-type; the caret is restored on the
+    // repaint that lands.
     candidateFilter = { ...candidateFilter, search: search.value };
-    setState({});
-    const again = container.querySelector("#workspace-search");
-    if (again) {
-      again.focus();
-      again.setSelectionRange(caret, caret);
-    }
+    const caret = search.selectionStart;
+    if (workspaceSearchTimer) clearTimeout(workspaceSearchTimer);
+    workspaceSearchTimer = setTimeout(() => {
+      workspaceSearchTimer = null;
+      setState({});
+      const again = container.querySelector("#workspace-search");
+      if (again) {
+        again.focus();
+        again.setSelectionRange(caret, caret);
+      }
+    }, 150);
   });
 
   wireDetection(container);
@@ -979,19 +1002,51 @@ function togglePanel(key, kind) {
   setState({});
 }
 
+/**
+ * applyValuesSearchFilter(container, query) shows or hides the already-rendered
+ * value cards to match the search, WITHOUT re-rendering.
+ *
+ * The bug this fixes: the toolbar used to call setState on every keystroke,
+ * which rewrites the whole workspace via innerHTML and destroys the search
+ * input mid-type, so focus and the caret were lost after each character. Here
+ * the input node is never replaced, so focus is preserved for free. Only
+ * structural changes (add/remove/group/type/toggle) still re-render, through
+ * their own reducers, and those regenerate the cards from visibleValues.
+ *
+ * Matching mirrors visibleValues: a card matches when the query is a substring
+ * of any of its spellings, read from data-search. Cards are hidden with an
+ * inline display:none (an author `.value-card{display:flex}` would override a
+ * `[hidden]` attribute or a utility class, and this module cannot touch the
+ * CSS). Exported for the render test.
+ *
+ * @param {HTMLElement} container the workspace element
+ * @param {string} [query] the search text (defaults to the live filter)
+ * @returns {number} how many cards remain visible
+ */
+export function applyValuesSearchFilter(container, query = valuesFilter.search) {
+  const q = (query ?? "").trim().toLowerCase();
+  let visible = 0;
+  for (const card of container.querySelectorAll(".value-card")) {
+    const hay = card.dataset?.search ?? "";
+    const match = !q || hay.includes(q);
+    card.style.display = match ? "" : "none";
+    if (match) visible++;
+  }
+  const empty = container.querySelector(".values-search-empty");
+  if (empty) empty.style.display = visible === 0 ? "" : "none";
+  return visible;
+}
+
 /** wireValuesToolbar(container) wires the search, type filter, show/hide
- *  spellings toggle and Clear all. */
-function wireValuesToolbar(container) {
+ *  spellings toggle and Clear all. Exported for the focus-preservation test. */
+export function wireValuesToolbar(container) {
   const search = container.querySelector("#values-search");
   search?.addEventListener("input", () => {
-    const caret = search.selectionStart;
+    // No setState here: re-rendering would destroy this very input and lose the
+    // caret. Update the module-level filter and toggle the rendered rows in
+    // place, so the input node survives and keeps focus.
     valuesFilter = { ...valuesFilter, search: search.value };
-    setState({});
-    const again = container.querySelector("#values-search");
-    if (again) {
-      again.focus();
-      again.setSelectionRange(caret, caret);
-    }
+    applyValuesSearchFilter(container, search.value);
   });
 
   container.querySelector("#values-type")?.addEventListener("change", (ev) => {
@@ -1016,16 +1071,41 @@ function wireValuesToolbar(container) {
 }
 
 /** wireGroupPanel(cardEl, cat, canonical) wires the Group with picker's Apply
- *  and Cancel. */
+ *  and Cancel.
+ *
+ *  Apply does NOT assume the card's value is the survivor: the merge folds
+ *  several values into one, and which one keeps its placeholder is the user's
+ *  decision, not a side effect of which card they opened the picker from. So it
+ *  asks (askChoice) which participating value becomes the main one, then folds
+ *  the rest into it. Cancelling the pick abandons the merge. */
 function wireGroupPanel(cardEl, cat, canonical) {
   cardEl.querySelector(".group-apply")?.addEventListener("click", async () => {
     const sources = [...cardEl.querySelectorAll(".group-pick:checked")].map((cb) => ({
       category: cb.dataset.category, canonical: cb.dataset.canonical,
     }));
     if (sources.length === 0) return;
+
+    // The card's own value participates too: it is one of the candidates to
+    // become the survivor, not automatically the survivor.
+    const participants = [{ category: cat, canonical }, ...sources];
+    const choices = participants.map((p) => ({
+      id: entityKey(p.category, p.canonical),
+      label: `${p.canonical} (${categoryLabel(p.category)})`,
+    }));
+    const mainKey = await askChoice({
+      title: WORKSPACE.groupMainTitle, body: WORKSPACE.groupMainBody, choices,
+    });
+    // Cancelled: repaint (the modal's own close already cleared it) and leave
+    // the values untouched.
+    if (!mainKey) { setState({}); return; }
+
+    const main = participants.find((p) => entityKey(p.category, p.canonical) === mainKey);
+    if (!main) { setState({}); return; }
+    const rest = participants.filter((p) => entityKey(p.category, p.canonical) !== mainKey);
+
     openValuePanel = { key: null, kind: null };
-    const n = groupEntities({ category: cat, canonical }, sources);
-    if (n) notify(WORKSPACE.groupedN(n, canonical), "ok");
+    const n = groupEntities(main, rest);
+    if (n) notify(WORKSPACE.groupedN(n, main.canonical), "ok");
     await refreshVariants();
   });
   cardEl.querySelector(".panel-cancel")?.addEventListener("click", () => {

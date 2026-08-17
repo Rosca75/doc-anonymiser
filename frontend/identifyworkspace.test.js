@@ -14,7 +14,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { progressStrip, detectionCaption } from "./views/identifyworkspace.js";
+import { subscribe, resetState } from "./state.js";
+import {
+  progressStrip, detectionCaption,
+  applyValuesSearchFilter, wireValuesToolbar,
+} from "./views/identifyworkspace.js";
 import { attr, textOf } from "./testhtml.js";
 
 /** running(patch) is a detection state as main.js builds it from an event. */
@@ -82,4 +86,78 @@ test("the strip renders the caption it computed", () => {
   const state = running({ startedAt: null });
   assert.equal(textOf(progressStrip(state), "#detect-caption"),
     detectionCaption(state.discovery));
+});
+
+// --- CR5: the My values search filters in place, without re-rendering -----
+//
+// The bug: the toolbar called setState on every keystroke, which rewrites the
+// workspace via innerHTML and destroys the search input mid-type, losing focus
+// and the caret. The fix filters the already-rendered cards in place. There is
+// no real DOM here (the suite runs under `node --test`, zero npm deps), so
+// these build the minimum shape the code touches: a container whose
+// querySelector/querySelectorAll resolve the search input and the value cards,
+// and an input that records focus locally.
+
+/** harness(cardSearchTexts) is a fake workspace: value cards carrying a
+ *  data-search string, the search input, the hidden no-match line, and a local
+ *  activeElement the input's focus() sets. */
+function harness(cardSearchTexts) {
+  let active = null;
+  const listeners = {};
+  const input = {
+    value: "", selectionStart: 0, style: {}, dataset: {},
+    addEventListener(type, fn) { (listeners[type] ??= []).push(fn); },
+    fire(type) { for (const fn of (listeners[type] ?? [])) fn(); },
+    focus() { active = input; },
+    setSelectionRange() {},
+  };
+  const cards = cardSearchTexts.map((t) => ({ dataset: { search: t }, style: {} }));
+  const empty = { style: { display: "none" } };
+  const container = {
+    querySelector(sel) {
+      if (sel === "#values-search") return input;
+      if (sel === ".values-search-empty") return empty;
+      return null;
+    },
+    querySelectorAll(sel) { return sel === ".value-card" ? cards : []; },
+  };
+  return { container, input, cards, empty, getActive: () => active };
+}
+
+test("applyValuesSearchFilter shows matching cards and reveals the empty line when none match", () => {
+  const h = harness(["meridian consulting merid", "marie duval"]);
+
+  assert.equal(applyValuesSearchFilter(h.container, "merid"), 1);
+  assert.equal(h.cards[0].style.display, "");
+  assert.equal(h.cards[1].style.display, "none");
+  assert.equal(h.empty.style.display, "none", "some match, so no empty line");
+
+  assert.equal(applyValuesSearchFilter(h.container, "zzz"), 0);
+  assert.equal(h.empty.style.display, "", "nothing matches, so the empty line shows");
+
+  assert.equal(applyValuesSearchFilter(h.container, ""), 2, "an empty query shows every card");
+  assert.equal(h.cards[0].style.display, "");
+  assert.equal(h.cards[1].style.display, "");
+});
+
+test("typing in the My values search filters in place, keeps focus, and never repaints", () => {
+  resetState();
+  let repaints = 0;
+  const unsub = subscribe(() => { repaints++; });
+
+  const h = harness(["meridian consulting merid", "marie duval"]);
+  wireValuesToolbar(h.container);
+  h.input.focus(); // the user is typing into it
+
+  for (const prefix of ["m", "me", "mer", "meri", "merid"]) {
+    h.input.value = prefix;
+    h.input.fire("input");
+    assert.equal(h.getActive(), h.input, `focus stays on the input after "${prefix}"`);
+    assert.equal(h.input.value, prefix, "the value grows to the full typed string");
+  }
+  unsub();
+
+  assert.equal(repaints, 0, "no setState/repaint on any keystroke");
+  assert.equal(h.cards[0].style.display, "", "the matching card stays visible");
+  assert.equal(h.cards[1].style.display, "none", "the non-matching card is hidden");
 });

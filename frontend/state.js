@@ -204,9 +204,12 @@ const initialState = {
 
   // The in-app confirm's pending question, or null
   // when nothing is being asked: {title, body, confirmLabel, cancelLabel,
-  // keyBearing}. The PROMISE that resolves it is module-private below, not
-  // stored here, because state must stay clonable (resetState uses
-  // structuredClone, which cannot copy a function).
+  // keyBearing}. A question may instead carry `choices: [{id, label}]`, which
+  // turns it into a pick-one dialog (askChoice) rather than yes/no; the two
+  // buttons are then replaced by one button per choice. The PROMISE that
+  // resolves it is module-private below, not stored here, because state must
+  // stay clonable (resetState uses structuredClone, which cannot copy a
+  // function).
   confirm: null,
 
   // The destination folder for the batch zip, or
@@ -303,9 +306,13 @@ export function getState() {
  *  hanging forever. */
 export function resetState() {
   if (confirmResolve) {
+    // A choice question resolves to null on cancel, a yes/no one to false;
+    // settle whichever is pending with its own "cancelled" value so an awaiter
+    // sees the shape it expected rather than a foreign one.
     const stale = confirmResolve;
+    const wasChoice = !!state.confirm?.choices;
     confirmResolve = null;
-    stale(false);
+    stale(wasChoice ? null : false);
   }
   state = structuredClone(initialState);
   notify();
@@ -402,6 +409,50 @@ export function askConfirm(question) {
         confirmLabel: question?.confirmLabel ?? "Continue",
         cancelLabel: question?.cancelLabel ?? "Cancel",
         keyBearing: !!question?.keyBearing,
+        // No choices: this is the yes/no dialog.
+        choices: null,
+      },
+    });
+  });
+}
+
+/**
+ * askChoice(question) shows the in-app dialog as a PICK-ONE: instead of the
+ * yes/no pair it renders one button per choice, and resolves to the chosen
+ * id (or null when the user cancels with the backdrop, Escape or Cancel).
+ *
+ * It shares the confirm slot and the single pending promise with askConfirm,
+ * so the same superseding and reset rules apply. It is the mechanism behind
+ * "Group with", where the user must say WHICH of the participating values
+ * becomes the surviving one before the merge happens.
+ *
+ * @param {object} question
+ * @param {string} question.title the short heading
+ * @param {string} question.body what the pick means, in full sentences
+ * @param {Array<{id: string, label: string}>} question.choices the options; each
+ *   renders as one button whose click resolves to its id
+ * @param {string} [question.cancelLabel] default "Cancel"
+ * @param {boolean} [question.keyBearing] tints the dialog with the key surface
+ * @returns {Promise<string|null>} the chosen id, or null when cancelled
+ */
+export function askChoice(question) {
+  if (confirmResolve) {
+    // Superseding a pending question settles it as cancelled. A choice resolves
+    // null, a yes/no resolves false: use the shape the pending awaiter expects.
+    const stale = confirmResolve;
+    const wasChoice = !!state.confirm?.choices;
+    confirmResolve = null;
+    stale(wasChoice ? null : false);
+  }
+  return new Promise((resolve) => {
+    confirmResolve = resolve;
+    setState({
+      confirm: {
+        title: question?.title ?? "Choose",
+        body: question?.body ?? "",
+        cancelLabel: question?.cancelLabel ?? "Cancel",
+        keyBearing: !!question?.keyBearing,
+        choices: (question?.choices ?? []).map((c) => ({ id: c.id, label: c.label })),
       },
     });
   });
@@ -411,14 +462,35 @@ export function askConfirm(question) {
  * answerConfirm(answer) closes the open question and settles its promise.
  * modal.js calls it from the two buttons and from the Escape key (which
  * answers false, the same as Cancel).
+ *
+ * When the open question is a CHOICE (askChoice), there is no true/false
+ * answer to give: the only thing this path represents is cancellation, so it
+ * settles the promise with null, matching askChoice's contract. answerChoice
+ * is what carries an actual pick.
  * @param {boolean} answer
  * @returns {boolean} whether there was a question to answer
  */
 export function answerConfirm(answer) {
   const resolve = confirmResolve;
+  const wasChoice = !!state.confirm?.choices;
   confirmResolve = null;
   if (state.confirm) setState({ confirm: null });
-  if (resolve) resolve(!!answer);
+  if (resolve) resolve(wasChoice ? null : !!answer);
+  return !!resolve;
+}
+
+/**
+ * answerChoice(id) settles a choice question with the picked id. modal.js
+ * calls it from each choice button. A missing id resolves null, the same as a
+ * cancel, so a malformed button can never fabricate a selection.
+ * @param {string} id the chosen choice's id
+ * @returns {boolean} whether there was a question to answer
+ */
+export function answerChoice(id) {
+  const resolve = confirmResolve;
+  confirmResolve = null;
+  if (state.confirm) setState({ confirm: null });
+  if (resolve) resolve(id ?? null);
   return !!resolve;
 }
 

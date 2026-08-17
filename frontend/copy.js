@@ -550,6 +550,10 @@ export const WORKSPACE = {
   groupApply: "Group selected",
   groupCancel: "Cancel",
   groupNone: "There are no other values to group with yet.",
+  // The pick-one that runs after Apply: the participating values become one,
+  // and the user chooses WHICH keeps its placeholder in the output.
+  groupMainTitle: "Choose the main value",
+  groupMainBody: "The other values become spellings of the one you pick. Its placeholder is the one that will appear in the output.",
   /** groupedN(n, target) confirms a merge. */
   groupedN(n, target) {
     return `${n} value${n === 1 ? "" : "s"} merged into ${target}.`;

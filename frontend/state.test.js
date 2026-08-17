@@ -28,7 +28,7 @@ import {
   setValueTables,
   dismissWarning, visibleWarnings,
   setExportDir, startNewBatch, setMetaReview,
-  askConfirm, answerConfirm,
+  askConfirm, answerConfirm, askChoice, answerChoice,
   entityKey,
   renameEntity, renameVariant, changeEntityCategory, changeCandidateCategory,
   groupEntities, clearAllEntities, entityConflicts, spellingsOf,
@@ -1146,6 +1146,46 @@ test("the notice and the question are cleared by resetState", () => {
   resetState();
   assert.equal(getState().notice, null);
   assert.equal(getState().confirm, null);
+});
+
+// --- The in-app pick-one (askChoice) -------------------------------------
+
+test("askChoice stores the choices and resolves to the picked id", async () => {
+  resetState();
+  const pending = askChoice({
+    title: "Choose the main value", body: "Pick one.",
+    choices: [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }],
+  });
+  const q = getState().confirm;
+  assert.deepEqual(q.choices, [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }]);
+  assert.equal(answerChoice("b"), true, "there was a question to answer");
+  assert.equal(await pending, "b");
+  assert.equal(getState().confirm, null);
+});
+
+test("askChoice resolves null when cancelled through answerConfirm(false)", async () => {
+  resetState();
+  const pending = askChoice({ title: "t", body: "b", choices: [{ id: "a", label: "A" }] });
+  // The backdrop and Escape route through answerConfirm(false); for a choice
+  // that means "cancelled", which is null rather than the yes/no false.
+  answerConfirm(false);
+  assert.equal(await pending, null);
+  assert.equal(getState().confirm, null);
+});
+
+test("resetState settles a pending choice with null", async () => {
+  resetState();
+  const pending = askChoice({ title: "t", body: "b", choices: [{ id: "a", label: "A" }] });
+  resetState();
+  assert.equal(await pending, null);
+  assert.equal(getState().confirm, null);
+});
+
+test("answerChoice with no id resolves null so a malformed button invents nothing", async () => {
+  resetState();
+  const pending = askChoice({ title: "t", body: "b", choices: [{ id: "a", label: "A" }] });
+  answerChoice(undefined);
+  assert.equal(await pending, null);
 });
 
 // --- The document country ------------------------------------------------

@@ -19,7 +19,7 @@
 // a question can be asked from any screen and it must survive the re-render
 // its own answer triggers.
 
-import { getState, askConfirm as askConfirmState, answerConfirm } from "./state.js";
+import { getState, askConfirm as askConfirmState, askChoice as askChoiceState, answerConfirm, answerChoice } from "./state.js";
 import { modalHTML } from "./ui.js";
 
 /**
@@ -40,6 +40,22 @@ import { modalHTML } from "./ui.js";
  */
 export function askConfirm(question) {
   return askConfirmState(question);
+}
+
+/**
+ * askChoice(question) asks the user to PICK ONE of several options and resolves
+ * to the chosen id (or null when cancelled). It is the pick-one sibling of
+ * askConfirm, used where a yes/no cannot capture the answer, e.g. choosing
+ * which value survives a "Group with" merge.
+ *
+ * @param {object} question
+ * @param {string} question.title the short heading
+ * @param {string} question.body what the pick means, in full sentences
+ * @param {Array<{id: string, label: string}>} question.choices one button each
+ * @returns {Promise<string|null>} the chosen id, or null when cancelled
+ */
+export function askChoice(question) {
+  return askChoiceState(question);
 }
 
 /**
@@ -79,6 +95,12 @@ export function wireModal(container) {
 
   container.querySelector("#modal-confirm")?.addEventListener("click", () => answerConfirm(true));
   container.querySelector("#modal-cancel")?.addEventListener("click", () => answerConfirm(false));
+
+  // A pick-one question renders one button per choice instead of the confirm
+  // button; each settles the question with its own id.
+  for (const choiceBtn of container.querySelectorAll("[data-choice]")) {
+    choiceBtn.addEventListener("click", () => answerChoice(choiceBtn.dataset.choice));
+  }
 
   // A click on the backdrop dismisses; a click INSIDE the dialog must not, so
   // the target has to be the layer itself rather than any descendant.
