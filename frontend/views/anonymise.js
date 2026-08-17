@@ -38,6 +38,7 @@ import {
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { renderHighlighted } from "../highlight.js";
+import { findHits, renderPlainWithHits, MAX_HITS } from "../panesearch.js";
 import { button, card, statTile, collapsibleGroup, wireGroups, icon, sectionLabel } from "../ui.js";
 import { CATEGORIES } from "./identifyworkspace.js";
 import { stepFooterHTML, wireStepFooter } from "../nav.js";
@@ -77,6 +78,22 @@ let selectedError = "";
 // relative to the Compare card, so the floating panel follows the selection.
 let selection = null;
 let selectionDraft = "";
+// The Compare search: a way of LOOKING at the result, not part of it, so it
+// lives here and not in the store. `index` walks ONE combined list, every
+// original-pane hit then every anonymised-pane hit, because the two panes have
+// different match counts and a single shared index over lists of different
+// lengths would drift.
+//
+// Hits are recomputed during render from the current needle rather than cached,
+// which keeps them in step with the text with nothing to invalidate. It is
+// reset when the compared document changes or a new run lands: offsets belong
+// to one text.
+let search = { needle: "", index: 0 };
+// The hit the pane was last scrolled to, so scrolling happens only when the
+// active hit CHANGED. scroll.js restores each pane's offset on every repaint,
+// and scrolling unconditionally would fight it and drag the pane back on every
+// keystroke.
+let lastScrolledTo = null;
 // The three add rows' draft text, kept across repaints.
 const drafts = { missedCategory: "person_names", missed: "", find: "", replace: "", caseSensitive: false };
 
@@ -643,10 +660,14 @@ export function compareCard(s, doc) {
   // pane is a reader of it. `source` is null only while the fetch for a
   // document that left the import list is in flight (see wireCompare).
   const source = doc ? documentSource(s, doc.name) : null;
+  // The combined walk, computed once so the head's readout and both panes agree
+  // about which hit is active.
+  const walk = searchWalk(s, doc, source, search);
+
   const originalBody = source?.found
     ? (source.truncated
       ? `<div class="banner warn">${escapeHTML(IMPORT.previewTruncated)}</div>` : "") +
-      escapeHTML(source.markdown)
+      renderPlainWithHits(source.markdown, walk.original, walk.activeIn("original"))
     : `<span class="hint">${escapeHTML(ANONYMISE.originalUnavailable)}</span>`;
 
   const panes = doc
@@ -657,7 +678,10 @@ export function compareCard(s, doc) {
       `</div>` +
       `<div class="compare-pane">` +
       `<div class="pane-caption">${escapeHTML(ANONYMISE.paneAnonymised)}</div>` +
-      `<pre class="pane-body" id="anonymised-pane">${renderHighlighted(doc.anonymised ?? "", s.mapping, doc.occurrenceVariants)}</pre>` +
+      `<pre class="pane-body" id="anonymised-pane">${renderHighlighted(
+        doc.anonymised ?? "", s.mapping, doc.occurrenceVariants,
+        { hits: walk.anonymised, activeIndex: walk.activeIn("anonymised") },
+      )}</pre>` +
       `</div></div>`
     : `<div class="card-body"><p class="hint">${escapeHTML(
         blockingConflicts(s).length > 0 ? ANONYMISE.compareBlocked : ANONYMISE.compareEmpty,
@@ -667,13 +691,96 @@ export function compareCard(s, doc) {
     `<div class="card-head with-controls">` +
     `<div class="card-head-left"><h2>${escapeHTML(CARDS.compare.title)}</h2>` +
     `<span class="card-sub">${escapeHTML(compareSubtitle(doc))}</span></div>` +
-    `<div class="card-head-right">${head}</div>` +
+    `<div class="card-head-right">${searchControls(walk, search)}${head}</div>` +
     `</div>` +
     selectionPanel() +
     `<div class="mark-tooltip" id="mark-tooltip" role="tooltip" hidden></div>` +
     panes +
     toastHTML(getState().notice) +
     `</section>`;
+}
+
+/**
+ * searchWalk(s, doc, source) computes the current needle's hits in both panes
+ * and resolves which one is active.
+ *
+ * The walk is ONE ordered list: every original-pane hit, then every
+ * anonymised-pane hit. The two panes have different match counts, so a single
+ * shared index over two separate lists would drift, and two cursors would leave
+ * the user unsure which one the buttons move. Crossing the boundary is made
+ * visible instead, by naming the active hit's pane in the readout.
+ *
+ * @returns {object} {original, anonymised, total, index, pane, capped,
+ *   activeIn(pane)} where activeIn returns the active hit's index WITHIN that
+ *   pane, or -1 when the active hit is in the other one
+ */
+export function searchWalk(s, doc, source, state = search) {
+  const needle = state.needle;
+  const originalText = source?.found ? source.markdown : "";
+  const original = doc ? findHits(originalText, needle) : [];
+  const anonymised = doc ? findHits(doc.anonymised ?? "", needle) : [];
+  const total = original.length + anonymised.length;
+
+  // The index is clamped rather than corrected in place: the text can change
+  // under a stale index (a re-run, a new document) and a clamp here means every
+  // reader sees the same answer without anyone having to reset it first.
+  const index = total === 0 ? 0 : ((state.index % total) + total) % total;
+  const inOriginal = index < original.length;
+
+  return {
+    original,
+    anonymised,
+    total,
+    index,
+    pane: inOriginal ? "original" : "anonymised",
+    // Both panes cap independently, so either hitting the cap means the
+    // highlight is showing a prefix and should say so.
+    capped: original.length >= MAX_HITS || anonymised.length >= MAX_HITS,
+    activeIn(pane) {
+      if (total === 0) return -1;
+      if (pane === "original") return inOriginal ? index : -1;
+      return inOriginal ? -1 : index - original.length;
+    },
+  };
+}
+
+/**
+ * searchControls(walk) is the search box, the two navigation buttons and the
+ * readout, in the Compare card head beside the document selector.
+ *
+ * Both buttons are disabled with a title when there is nothing to step through,
+ * because a greyed control that says nothing is a dead end.
+ */
+export function searchControls(walk, state = search) {
+  const none = walk.total === 0;
+  const hasNeedle = state.needle.trim().length > 0;
+  const readout = none
+    ? (hasNeedle ? ANONYMISE.searchNone : "")
+    : ANONYMISE.searchCount(walk.index + 1, walk.total, paneLabel(walk.pane));
+
+  return `<div class="compare-search">` +
+    `<label class="search-box">${icon("search")}` +
+    `<input id="compare-search" value="${escapeHTML(state.needle)}"` +
+    ` placeholder="${escapeHTML(ANONYMISE.searchPlaceholder)}"` +
+    ` aria-label="${escapeHTML(ANONYMISE.searchLabel)}"/></label>` +
+    button("", {
+      kind: "ghost", cls: "search-prev icon-action", icon: "chevron_left",
+      ariaLabel: ANONYMISE.searchPrev, title: none ? ANONYMISE.searchNone : ANONYMISE.searchPrev,
+      disabled: none,
+    }) +
+    button("", {
+      kind: "ghost", cls: "search-next icon-action", icon: "chevron_right",
+      ariaLabel: ANONYMISE.searchNext, title: none ? ANONYMISE.searchNone : ANONYMISE.searchNext,
+      disabled: none,
+    }) +
+    `<span class="search-readout hint">${escapeHTML(readout)}</span>` +
+    (walk.capped ? `<span class="search-readout hint">${escapeHTML(ANONYMISE.searchCapped(MAX_HITS))}</span>` : "") +
+    `</div>`;
+}
+
+/** paneLabel(pane) is the pane name as the readout says it. */
+function paneLabel(pane) {
+  return pane === "original" ? ANONYMISE.searchPaneOriginal : ANONYMISE.searchPaneAnonymised;
 }
 
 function compareSubtitle(doc) {
@@ -988,6 +1095,87 @@ function wireRules(container) {
   }
 }
 
+/**
+ * wireCompareSearch(container) wires the search box, its two buttons and the
+ * keyboard, then scrolls to the active hit.
+ *
+ * The input keeps focus and caret across the repaint each keystroke causes, the
+ * same pattern the values search bar uses: a search box that loses focus
+ * mid-word cannot be typed into.
+ */
+function wireCompareSearch(container) {
+  const input = container.querySelector("#compare-search");
+  input?.addEventListener("input", () => {
+    const caret = input.selectionStart;
+    // A new needle starts at its first hit: keeping the old position would land
+    // the user somewhere unrelated to what they just typed.
+    search = { needle: input.value, index: 0 };
+    lastScrolledTo = null;
+    if (compareSearchTimer) clearTimeout(compareSearchTimer);
+    compareSearchTimer = setTimeout(() => {
+      compareSearchTimer = null;
+      setState({});
+      const again = container.querySelector("#compare-search");
+      if (again) {
+        again.focus();
+        again.setSelectionRange(caret, caret);
+      }
+    }, 150);
+  });
+
+  input?.addEventListener("keydown", (ev) => {
+    // Enter and Shift+Enter step through the hits without leaving the field,
+    // which is how every search box behaves. Escape clears.
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      stepSearch(ev.shiftKey ? -1 : 1);
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      search = { needle: "", index: 0 };
+      lastScrolledTo = null;
+      setState({});
+    }
+  });
+
+  container.querySelector(".search-prev")?.addEventListener("click", () => stepSearch(-1));
+  container.querySelector(".search-next")?.addEventListener("click", () => stepSearch(1));
+
+  scrollToActiveHit(container);
+}
+
+// The pending repaint from a keystroke in the search box. Debounced so the
+// input survives a burst of typing.
+let compareSearchTimer = null;
+
+/**
+ * stepSearch(delta) moves through the ONE combined list and wraps at both ends.
+ * The index is normalised at read time (searchWalk), so this only has to add.
+ */
+function stepSearch(delta) {
+  search = { ...search, index: search.index + delta };
+  setState({});
+}
+
+/**
+ * scrollToActiveHit(container) brings the active hit into view, but ONLY when
+ * it changed since the last paint.
+ *
+ * scroll.js restores each pane's previous offset on every repaint. Scrolling
+ * unconditionally would fight that and drag the pane back to the active hit on
+ * every keystroke, including the ones that were meant to scroll somewhere else.
+ */
+function scrollToActiveHit(container) {
+  const active = container.querySelector(".find-hit.active");
+  if (!active) {
+    lastScrolledTo = null;
+    return;
+  }
+  const key = `${search.needle}|${search.index}`;
+  if (key === lastScrolledTo) return;
+  lastScrolledTo = key;
+  active.scrollIntoView?.({ block: "center" });
+}
+
 function wireCompare(container, doc) {
   // If the ORIGINAL pane has no source to show, ask Go for it ONCE. This is
   // the fallback path for a document that left the import list; the common
@@ -1004,8 +1192,14 @@ function wireCompare(container, doc) {
     // Changing document clears the selected mark: it belonged to the old one.
     selectedMark = null;
     selection = null;
+    // The search offsets belong to ONE text, so the position resets. The needle
+    // is kept: the user is looking for the same thing in the next document.
+    search = { ...search, index: 0 };
+    lastScrolledTo = null;
     setState({ resultDoc: ev.target.value });
   });
+
+  wireCompareSearch(container);
 
   // A results view restored by navigation can have results but no mapping (the
   // fast re-run path fetches it separately). Without it every mark falls back

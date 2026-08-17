@@ -873,6 +873,29 @@ export const ANONYMISE = {
   compareDoc: "Which document to compare",
   paneOriginal: "ORIGINAL",
   paneAnonymised: "ANONYMISED",
+
+  // The Compare search. It walks ONE combined list, every original-pane hit
+  // then every anonymised-pane hit, and the readout names the pane of the
+  // active one, so crossing from one to the other is visible rather than
+  // silent. Two cursors, or one index over lists of different lengths, would
+  // drift.
+  searchLabel: "Search",
+  searchPlaceholder: "Find in both previews",
+  searchNext: "Next occurrence",
+  searchPrev: "Previous occurrence",
+  searchNone: "No match in either preview.",
+  /** searchCount(index, total, pane) is the readout, e.g. "3 of 8 in Original". */
+  searchCount(index, total, pane) {
+    return `${index} of ${total} in ${pane}`;
+  },
+  /** searchCapped(max) says the highlight stopped rather than froze. */
+  searchCapped(max) {
+    return `Showing the first ${max} matches. Narrow the search to see fewer.`;
+  },
+  // The pane names as they appear in the readout, in sentence case: the
+  // captions above the panes shout, a sentence does not.
+  searchPaneOriginal: "Original",
+  searchPaneAnonymised: "Anonymised",
   compareEmpty: "Run the anonymisation to compare the result with the original.",
   compareBlocked: "The run was refused, so there is nothing to compare. Resolve the conflict on the left, then run again.",
   /** tooltipTimes(n) is the second line of a mark's hover tooltip. */

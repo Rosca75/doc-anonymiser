@@ -123,7 +123,15 @@ Windows it steals focus from the window it belongs to.
 - `html.js` — tiny shared HTML helpers (`escapeHTML`).
 - `icons.js` — vendored Material Symbols SVG map.
 - `highlight.js` — renders placeholders as category-coloured `<mark>` with
-  hover tooltips.
+  hover tooltips, and optionally the Compare search's hits (fourth argument).
+  A hit STRADDLING a mark boundary is deliberately not highlighted: splitting
+  the mark would break the click-to-select and the tooltip contract.
+- `panesearch.js` — the Compare search's pure half: `findHits` over the PLAIN
+  pane text and `renderPlainWithHits`. Hits are never applied to
+  already-rendered HTML, because the anonymised pane is full of `<mark>`
+  elements and escaped entities and a needle like `mark` or `&` would corrupt
+  them; they are emitted during the same pass that escapes the text, which is
+  why `highlight.js` takes an optional search argument instead.
 - `entitymodel.js` — pure variant view-model (regression-tested).
 - `candidatemodel.js` — pure suggestions filter/sort view-model.
 - `countries.js` — the document-country table, MIRRORING the engine's

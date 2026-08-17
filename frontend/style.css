@@ -1384,6 +1384,26 @@ mark.pii { background: var(--tint-orange-2); border-bottom: 1px solid var(--tint
 mark.entity { background: var(--gray-5); border-bottom: 1px solid var(--gray-3); }
 mark.custom { background: var(--src-ai-bg); border-bottom: 1px solid var(--src-ai-fg); }
 
+/* The Compare search's hits. They must stay legible ON TOP of a category mark,
+   because the anonymised pane nests them, so the tint is a translucent wash
+   over whatever is underneath rather than an opaque colour of its own, and the
+   active hit adds an outline the mark cannot hide. Colours come from the brand
+   tokens; brand.css is the single source. */
+.find-hit {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--warn) 30%, transparent);
+}
+.find-hit.active {
+  background: color-mix(in srgb, var(--warn) 60%, transparent);
+  outline: 2px solid var(--warn);
+  outline-offset: 0;
+}
+
+/* The search controls in the Compare card head, beside the document selector. */
+.compare-search { display: flex; align-items: center; gap: 0.3rem; }
+.compare-search .search-box { min-width: 12rem; }
+.search-readout { white-space: nowrap; }
+
 /* --- The original-term tooltip (BUILD-06) -------------------------------- */
 
 /* It used to be a CSS ::after on the mark itself. The mark lives inside

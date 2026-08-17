@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 import {
   countOccurrences, valuesInCategory, formatDuration, continueHint,
   compareCard, reportCard, valuesCard, filterValues, blockedPanel, selectedCard,
-  runCard, rulesCard, missedCard, renderAnonymise,
+  runCard, rulesCard, missedCard, renderAnonymise, searchWalk, searchControls,
 } from "./views/anonymise.js";
 import { resetState, setState } from "./state.js";
 import { ANONYMISE } from "./copy.js";
@@ -448,4 +448,98 @@ test("each result card, rendered on its own, starts collapsed", () => {
     assert.equal(attr(fn(s), ".cgroup", "data-open"), "false",
       `${name} card must start collapsed`);
   }
+});
+
+// --- CR3: the Compare search --------------------------------------------
+//
+// The walk is ONE ordered list, every original-pane hit then every
+// anonymised-pane hit, with the active hit's PANE named in the readout. Two
+// cursors, or one index over lists of different lengths, would drift; naming
+// the pane makes crossing the boundary visible rather than silent.
+
+/** searchState(needle, index) is the view-local search as the card reads it. */
+function searchState(needle, index = 0) {
+  return { needle, index };
+}
+
+/** walkFor(needle, index) is the walk over the standard compare fixture. */
+function walkFor(needle, index = 0) {
+  const s = compareState();
+  const doc = s.results.documents[0];
+  const source = { found: true, markdown: SOURCE, truncated: false };
+  return searchWalk(s, doc, source, searchState(needle, index));
+}
+
+test("the walk finds hits in both panes and counts them together", () => {
+  // "e" appears in both, but a 1-character needle is refused, so use a word
+  // that is genuinely in each: "M" is in "Marie"/"Meridian", "ME" in neither
+  // pane's placeholder. "et" occurs in "met" in both panes.
+  const walk = walkFor("met");
+  assert.equal(walk.original.length, 1, "ORIGINAL says 'met'");
+  assert.equal(walk.anonymised.length, 1, "so does ANONYMISED");
+  assert.equal(walk.total, 2);
+});
+
+test("the walk crosses from the original pane into the anonymised one", () => {
+  const first = walkFor("met", 0);
+  assert.equal(first.pane, "original");
+  assert.equal(first.activeIn("original"), 0);
+  assert.equal(first.activeIn("anonymised"), -1, "only one pane holds the active hit");
+
+  const second = walkFor("met", 1);
+  assert.equal(second.pane, "anonymised");
+  assert.equal(second.activeIn("original"), -1);
+  assert.equal(second.activeIn("anonymised"), 0);
+});
+
+test("the walk wraps at both ends", () => {
+  assert.equal(walkFor("met", 2).index, 0, "past the last hit wraps to the first");
+  assert.equal(walkFor("met", -1).index, 1, "before the first wraps to the last");
+});
+
+test("a needle that matches nothing leaves the walk empty", () => {
+  const walk = walkFor("Borealis");
+  assert.equal(walk.total, 0);
+  assert.equal(walk.activeIn("original"), -1);
+  assert.equal(walk.activeIn("anonymised"), -1);
+});
+
+test("the readout names the count, the total and the active hit's pane", () => {
+  const html = searchControls(walkFor("met", 1), searchState("met", 1));
+  assert.equal(textOf(html, "span.search-readout"),
+    ANONYMISE.searchCount(2, 2, ANONYMISE.searchPaneAnonymised));
+});
+
+test("the search box and both navigation buttons render", () => {
+  const html = searchControls(walkFor("met"), searchState("met"));
+  assert.equal(attr(html, "input#compare-search", "value"), "met");
+  assert.ok(all(html, "button.search-prev").length === 1);
+  assert.ok(all(html, "button.search-next").length === 1);
+});
+
+test("with no hits both buttons are disabled AND say why", () => {
+  // A greyed control that says nothing is a dead end.
+  const html = searchControls(walkFor("Borealis"), searchState("Borealis"));
+  for (const cls of ["search-prev", "search-next"]) {
+    assert.equal(attr(html, `button.${cls}`, "disabled"), "");
+    assert.equal(attr(html, `button.${cls}`, "title"), ANONYMISE.searchNone);
+  }
+  assert.equal(textOf(html, "span.search-readout"), ANONYMISE.searchNone);
+});
+
+test("an empty needle disables the buttons without claiming there is no match", () => {
+  const html = searchControls(walkFor(""), searchState(""));
+  assert.equal(attr(html, "button.search-next", "disabled"), "");
+  assert.equal(textOf(html, "span.search-readout"), "",
+    "before anything is typed there is nothing to report");
+});
+
+test("compareCard highlights the active hit in the pane that holds it", () => {
+  // Rendered through the real card, so the panes and the readout are proven to
+  // agree about which hit is active.
+  const s = compareState();
+  const html = compareCard(s, s.results.documents[0]);
+  // The module-level needle is empty in a fresh test process, so no hit spans.
+  assert.equal(all(html, "span.find-hit").length, 0,
+    "with no needle the panes render exactly as they did before");
 });

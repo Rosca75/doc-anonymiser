@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { renderHighlighted, markClass } from "./highlight.js";
+import { findHits } from "./panesearch.js";
 import { tooltipMeta } from "./views/anonymise.js";
 
 test("placeholders become category-coloured marks", () => {
@@ -120,4 +121,69 @@ test("the tooltip's second line names the category and the count", () => {
   assert.equal(tooltipMeta("person_names", 0), "Person names");
   // An unknown category degrades to its identifier rather than to "undefined".
   assert.equal(tooltipMeta("mystery_names", 0), "mystery_names");
+});
+
+// --- The Compare search's hits inside the anonymised pane ----------------
+
+test("a search hit in the plain text is wrapped without disturbing the marks", () => {
+  const text = "Alpine wrote to [EMAIL_1] about Alpine.";
+  const mapping = { "[EMAIL_1]": { original: "a@b.com", category: "email" } };
+  const html = renderHighlighted(text, mapping, null, {
+    hits: findHits(text, "Alpine"), activeIndex: 0,
+  });
+
+  assert.equal((html.match(/class="find-hit/g) ?? []).length, 2);
+  assert.equal((html.match(/find-hit active/g) ?? []).length, 1);
+  assert.ok(html.includes('data-original="a@b.com"'), "the mark is untouched");
+});
+
+test("a search hit inside a mark's own text is wrapped", () => {
+  // Searching for a placeholder is how a user checks where one value landed,
+  // so the hit has to appear inside the mark, not be skipped.
+  const text = "see [EMAIL_1] here";
+  const mapping = { "[EMAIL_1]": { original: "a@b.com", category: "email" } };
+  const html = renderHighlighted(text, mapping, null, {
+    hits: findHits(text, "EMAIL_1"), activeIndex: 0,
+  });
+
+  assert.match(html, /<mark[^>]*>\[<span class="find-hit active">EMAIL_1<\/span>\]<\/mark>/);
+});
+
+test("a hit straddling a mark boundary is not highlighted, and the mark survives", () => {
+  // Splitting the mark would break the click-to-select and the tooltip, which
+  // are how the anonymisation is actually checked. A needle spanning the edge
+  // of a placeholder is rare; a broken mark is not recoverable.
+  const text = "see [EMAIL_1] here";
+  const mapping = { "[EMAIL_1]": { original: "a@b.com", category: "email" } };
+  const html = renderHighlighted(text, mapping, null, {
+    hits: findHits(text, "e [EMAIL"), activeIndex: 0,
+  });
+
+  assert.ok(!html.includes("find-hit"), "the straddling hit is left alone");
+  assert.ok(html.includes('data-ph="[EMAIL_1]"'), "the mark keeps its attributes");
+  assert.ok(html.includes('data-original="a@b.com"'));
+  assert.ok(html.includes('tabindex="0"'), "and stays reachable from the keyboard");
+});
+
+test("rendering without a search is byte-identical to rendering with none", () => {
+  // Every existing caller passes three arguments. The fourth must be free.
+  const text = "Alpine wrote to [EMAIL_1] and [PERSON_2].";
+  const mapping = {
+    "[EMAIL_1]": { original: "a@b.com", category: "email" },
+    "[PERSON_2]": { original: "Marie Duval", category: "person_names" },
+  };
+  assert.equal(renderHighlighted(text, mapping),
+    renderHighlighted(text, mapping, null, { hits: [], activeIndex: -1 }));
+  assert.equal(renderHighlighted(text, mapping),
+    renderHighlighted(text, mapping, null, undefined));
+});
+
+test("a hit in an unmapped mark's text is wrapped too", () => {
+  // The mapping-miss branch renders a different mark, and it walks the same
+  // text, so it must treat hits the same way.
+  const text = "see [GHOST_9] here";
+  const html = renderHighlighted(text, {}, null, {
+    hits: findHits(text, "GHOST"), activeIndex: 0,
+  });
+  assert.ok(html.includes('class="find-hit active">GHOST</span>'));
 });
