@@ -380,15 +380,24 @@ export function toastHTML(notice, opts = {}) {
  * confirm.
  *
  * The two buttons carry fixed ids (modal-confirm / modal-cancel) because
- * modal.js wires them once at shell level; a caller never wires its own.
+ * modal.js wires them once at shell level; a caller never wires its own. When
+ * the question carries `choices`, it is a pick-one instead of a yes/no: the
+ * affirmative button is replaced by one button per choice (each tagged with
+ * `data-choice="<id>"`), and only the Cancel affordance remains fixed.
  *
  * @param {{title: string, body: string, confirmLabel?: string,
- *   cancelLabel?: string, keyBearing?: boolean}|null} question state.confirm
+ *   cancelLabel?: string, keyBearing?: boolean,
+ *   choices?: Array<{id: string, label: string}>}|null} question state.confirm
  * @returns {string} safe HTML ("" when nothing is being asked)
  */
 export function modalHTML(question) {
   if (!question) return "";
   const keyBearing = !!question.keyBearing;
+  const choices = Array.isArray(question.choices) ? question.choices : null;
+  const cancel = button(question.cancelLabel ?? "Cancel", { kind: "secondary", id: "modal-cancel" });
+  const actions = choices && choices.length
+    ? cancel + choices.map((c) => button(c.label, { kind: "primary", data: { choice: c.id } })).join("")
+    : cancel + button(question.confirmLabel ?? "Continue", { kind: "primary", id: "modal-confirm" });
   return `<div class="modal-layer" role="presentation">` +
     `<div class="modal${keyBearing ? " key-bearing" : ""}" role="dialog" aria-modal="true"` +
     ` aria-label="${escapeHTML(question.title ?? "Confirm")}">` +
@@ -396,7 +405,6 @@ export function modalHTML(question) {
     `<span>${escapeHTML(question.title ?? "")}</span></div>` +
     `<div class="modal-body"><p>${escapeHTML(question.body ?? "")}</p>` +
     `<div class="modal-actions">` +
-    button(question.cancelLabel ?? "Cancel", { kind: "secondary", id: "modal-cancel" }) +
-    button(question.confirmLabel ?? "Continue", { kind: "primary", id: "modal-confirm" }) +
+    actions +
     `</div></div></div></div>`;
 }
