@@ -341,6 +341,65 @@ func (a *App) ValidateValues(req ValidateValuesRequest) (*ValidateValuesResult, 
 	}, nil
 }
 
+// CheckIntersectionsRequest is the input for CheckIntersections. It is the
+// same declaration set ValidateValues takes, plus the two per-run switches the
+// detection needs, because an intersection depends on what would actually be
+// detected: a category switched off cannot cover anything.
+type CheckIntersectionsRequest struct {
+	Entities   []engine.Entity          `json:"entities"`
+	Patterns   []engine.CustomPattern   `json:"patterns"`
+	AllowTerms []string                 `json:"allowTerms"`
+	Categories engine.CategorySelection `json:"categories"`
+	// SuppressRegexPII is the "Native detection" master switch, inverted, the
+	// same field the run request carries.
+	SuppressRegexPII bool `json:"suppressRegexPII"`
+}
+
+// CheckIntersectionsResult is the output from CheckIntersections.
+type CheckIntersectionsResult struct {
+	Intersections []engine.Intersection `json:"intersections"`
+}
+
+// CheckIntersections reports the values another route also claims, so the
+// Identify screen can warn on the card that owns a value instead of the user
+// finding out after a run, on the results screen.
+//
+// It mutates NOTHING: no placeholder is minted and the registry is untouched,
+// so it is safe to call repeatedly while the user is still editing values. It
+// reuses the pipeline's own detection and comparator rather than a parallel
+// check, because a parallel check can disagree with the run and then the
+// warning describes something that did not happen.
+//
+// @param req the declarations, the category selection and the native switch
+// @return one row per value another route covers; an empty list is the normal
+//
+//	"nothing overlaps" answer, never an error
+func (a *App) CheckIntersections(req CheckIntersectionsRequest) (*CheckIntersectionsResult, error) {
+	a.mu.Lock()
+	docs := make([]engine.Document, len(a.docs))
+	copy(docs, a.docs)
+	categories := req.Categories
+	if categories == nil {
+		categories = a.settings.Categories
+	}
+	minConfidence := a.settings.MinConfidence
+	country := a.settings.Country
+	a.mu.Unlock()
+
+	// The same allowlist the run will use, removals included, or the check
+	// would report an overlap on a value the run has already been told to leave
+	// alone.
+	allow := a.allowlistFor(req.AllowTerms)
+	entities := engine.FilterRemoved(req.Entities, a.removedValues())
+
+	scope := engine.NewDetectionScope(entities, req.Patterns, categories,
+		minConfidence, country, allow, req.SuppressRegexPII)
+
+	return &CheckIntersectionsResult{
+		Intersections: engine.DetectIntersections(docs, scope),
+	}, nil
+}
+
 // TermMatchInfo is the live manual-entry preview payload
 // Phase 9c): how often a term occurs, and in how many documents.
 type TermMatchInfo struct {

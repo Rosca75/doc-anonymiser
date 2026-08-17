@@ -331,3 +331,77 @@ func TestOfflineRouteReturnsCandidatesNotEntities(t *testing.T) {
 		t.Errorf("the legal-suffix candidate is wrong: %+v", res.Candidates)
 	}
 }
+
+// TestCheckIntersectionsAgreesWithARealRun: the bound method and the pipeline
+// must reach the same verdict on the same input. That is why the check reuses
+// the engine's own detection rather than a parallel one, and it is what this
+// test holds: a warning that disagrees with the run describes something that
+// did not happen, and the user cannot act on it.
+func TestCheckIntersectionsAgreesWithARealRun(t *testing.T) {
+	const value = "marie.duval@example.com"
+	app := NewApp()
+	app.docs = []engine.Document{{
+		Name: "a.txt", Format: engine.FormatTXT,
+		Markdown: "Write to " + value + " today.\n",
+	}}
+	entities := []engine.Entity{{Category: engine.CatPersonNames, Canonical: value}}
+
+	res, err := app.CheckIntersections(CheckIntersectionsRequest{Entities: entities})
+	if err != nil {
+		t.Fatalf("CheckIntersections: %v", err)
+	}
+	if len(res.Intersections) != 1 {
+		t.Fatalf("the declared value is covered by the email signal, got %+v", res.Intersections)
+	}
+	row := res.Intersections[0]
+	if row.Value != value || row.Category != engine.CatPersonNames {
+		t.Errorf("the row must name the value that lost, got %+v", row)
+	}
+
+	// The check must not have touched the registry: it runs while the user is
+	// still editing values, and minting a placeholder there would spend a
+	// number on a configuration that may never be run.
+	if app.registry != nil && len(app.registry.Entries()) != 0 {
+		t.Errorf("CheckIntersections must mint nothing, got %+v", app.registry.Entries())
+	}
+
+	// Now run for real and compare verdicts.
+	if _, err := app.runPipelineBlocking(context.Background(), RunRequest{
+		Entities: entities,
+	}); err != nil {
+		t.Fatalf("runPipelineBlocking: %v", err)
+	}
+	var owner string
+	for _, e := range app.registry.Entries() {
+		if strings.EqualFold(e.Original, value) {
+			owner = e.Category
+		}
+	}
+	if owner != row.WinnerCategory {
+		t.Errorf("the check predicted %s and the run filed the value under %s",
+			row.WinnerCategory, owner)
+	}
+}
+
+// TestCheckIntersectionsIsQuietWhenNothingOverlaps: an empty list is the
+// normal answer, not an error. A screen that calls this on every edit must not
+// have to distinguish "nothing overlaps" from "the call failed".
+func TestCheckIntersectionsIsQuietWhenNothingOverlaps(t *testing.T) {
+	app := NewApp()
+	app.docs = []engine.Document{{
+		Name: "a.txt", Format: engine.FormatTXT,
+		Markdown: "Alpine Trust met Borealis Capital on the Tuesday.\n",
+	}}
+	res, err := app.CheckIntersections(CheckIntersectionsRequest{
+		Entities: []engine.Entity{
+			{Category: engine.CatEntityNames, Canonical: "Alpine Trust"},
+			{Category: engine.CatBrandNames, Canonical: "Borealis Capital"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckIntersections: %v", err)
+	}
+	if len(res.Intersections) != 0 {
+		t.Errorf("nothing overlaps here, got %+v", res.Intersections)
+	}
+}

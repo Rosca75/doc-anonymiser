@@ -211,6 +211,17 @@ const initialState = {
   // {source: "smart"|"local-ai"|"cloud-ai", text, category, count, contexts}.
   candidates: [],
 
+  // The values another detection route also claims, as Go last answered
+  // (api.js checkIntersections). They are WARNINGS, never blocking: the
+  // precedence rule always has an answer, so refusing the run would punish the
+  // user for a configuration the engine can resolve.
+  //
+  // It is cleared by every change to the value list rather than left to go
+  // stale, because a warning describing a configuration the user has already
+  // changed is worse than no warning: it is read as a statement about the one
+  // in front of them.
+  intersections: [],
+
   // Placeholder → {original, category} lookup from the last run
   // MEMORY NOTE: this is the re-identification
   // key; it stays in the app process like the Go registry and is
@@ -369,11 +380,52 @@ export function resetState() {
 
 /**
  * setState(patch) shallow-merges the patch and notifies subscribers.
+ *
+ * It has ONE special case: a patch that changes the values or the patterns
+ * invalidates the intersection warnings, because those describe how the value
+ * list overlapped the LAST time Go was asked. A stale intersection warning is
+ * worse than none: it sits on a card describing a configuration the user has
+ * already changed, and it is read as a statement about the one in front of
+ * them. Doing it here rather than in each of the dozen reducers that touch the
+ * list means a reducer added later cannot forget.
+ *
  * @param {object} patch fields to update.
  */
 export function setState(patch) {
+  const invalidates = ("entities" in patch || "patterns" in patch) &&
+    !("intersections" in patch);
   Object.assign(state, patch);
+  if (invalidates) state.intersections = [];
   notify();
+}
+
+/**
+ * setIntersections(list) stores Go's answer about which values another route
+ * also claims. It is the ONLY writer, and it is deliberately a separate call
+ * from the edit that triggered the recheck: the edit clears the list, the
+ * answer arrives later, and a screen showing nothing in between is correct.
+ *
+ * @param {Array} list rows from api.js checkIntersections
+ */
+export function setIntersections(list) {
+  setState({ intersections: Array.isArray(list) ? list : [] });
+}
+
+/**
+ * intersectionsFor(s) is the intersections keyed by the value they belong to,
+ * so a card attaches its own with no searching, exactly as entityConflicts is
+ * consumed.
+ *
+ * @param {object} [s] state
+ * @returns {Map<string, object>} entityKey(category, value) -> the row
+ */
+export function intersectionsFor(s = state) {
+  const out = new Map();
+  for (const row of s.intersections ?? []) {
+    if (!row?.value || !row?.category) continue;
+    out.set(entityKey(row.category, row.value), row);
+  }
+  return out;
 }
 
 /** subscribe(fn) registers a callback; returns an unsubscribe function. */
@@ -1044,6 +1096,7 @@ export const STEP_RESETS = {
     },
     entities: [],
     candidates: [],
+    intersections: [],
     patterns: [],
     discovery: null,
     // Stepping back to Identify clears what detection produced, so the
@@ -2101,6 +2154,7 @@ export function startNewBatch() {
     sourceCache: {},
     entities: [],
     candidates: [],
+    intersections: [],
     patterns: [],
     simpleRules: [],
     discovery: null,
@@ -2210,5 +2264,24 @@ export function buildRunRequest() {
     // The "Native detection" master switch, inverted: when Native detection is
     // off, the Go pipeline skips pass 1 so no regex signal category is replaced.
     suppressRegexPII: !getState().settings.useNativeDetect,
+  };
+}
+
+/**
+ * buildIntersectionRequest() assembles the CheckIntersections payload.
+ *
+ * It is built from the SAME state buildRunRequest reads, minus the fields a
+ * detection does not need (the find-and-replace rules run after everything and
+ * cannot cover a value). Any drift between the two would make the check answer
+ * a different question from the run, and then the warning on a card describes
+ * something that will not happen.
+ */
+export function buildIntersectionRequest() {
+  return {
+    entities: acceptedEntities(state),
+    allowTerms: state.allowlist,
+    patterns: validPatterns(state),
+    categories: state.settings.categories ?? presetCategories(state.settings.level),
+    suppressRegexPII: !state.settings.useNativeDetect,
   };
 }

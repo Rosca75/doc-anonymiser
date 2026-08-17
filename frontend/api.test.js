@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 import {
   openDocumentation, documentationURL, exportDocumentFormats, ping, runPipeline,
   valuePlaceholders, setValuePlaceholder, removeValue, restoreValue,
-  listRemovedValues, nextRulePlaceholder, validateValues,
+  listRemovedValues, nextRulePlaceholder, validateValues, checkIntersections,
 } from "./api.js";
 
 /**
@@ -161,6 +161,7 @@ test("the value wrappers name the Go methods BRIDGE.md documents", async () => {
     ListRemovedValues: record("ListRemovedValues"),
     NextRulePlaceholder: record("NextRulePlaceholder"),
     ValidateValues: record("ValidateValues"),
+    CheckIntersections: record("CheckIntersections"),
   };
 
   await withStubBridge(app, () => ({}), async () => {
@@ -171,6 +172,7 @@ test("the value wrappers name the Go methods BRIDGE.md documents", async () => {
     assert.equal(await listRemovedValues(), "ListRemovedValues");
     assert.equal(await nextRulePlaceholder(), "NextRulePlaceholder");
     assert.equal(await validateValues({ entities: [] }), "ValidateValues");
+    assert.equal(await checkIntersections({ entities: [] }), "CheckIntersections");
   });
 
   // The arguments reach Go in the documented order, which is the other half of

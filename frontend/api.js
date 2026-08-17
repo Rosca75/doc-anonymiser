@@ -300,6 +300,19 @@ export async function validateValues(request) {
   return bridge().ValidateValues(request);
 }
 
+/**
+ * checkIntersections(request) resolves to {intersections} : the values another
+ * detection route also claims, so the Identify screen can warn on the card that
+ * owns a value instead of the user finding out after a run.
+ *
+ * It mutates nothing on the Go side (no placeholder is minted, the registry is
+ * untouched), so it is safe to call while the user is still editing values. An
+ * empty list is the normal "nothing overlaps" answer, not an error.
+ */
+export async function checkIntersections(request) {
+  return bridge().CheckIntersections(request);
+}
+
 // --- Run screen -------------------------------------------------
 
 /** runPipeline(request) starts the pipeline; resolves immediately (results

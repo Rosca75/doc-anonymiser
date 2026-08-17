@@ -105,6 +105,7 @@ display choice: it decides which country-specific regex categories run.
 | `cancelDetection()` | — | aborts the in-flight run, reaching whichever route is running, including mid-file |
 | `expandVariants(entity)` | `{category, canonical, manualVariants, autoExpand}` | the spellings this value matches, longest first. `autoExpand: false` means the user curated the list: Go derives nothing and returns the canonical name plus exactly the spellings it was given, so the chips on the card are what the run replaces |
 | `countTermMatches(term)` | term | `{count, documents}`, the live read-out under the manual add-value row (debounced) |
+| `checkIntersections(request)` | `{entities, patterns, allowTerms, categories, suppressRegexPII}` | `{intersections: [{value, category, origin, winnerValue, winnerCategory, winnerOrigin, occurrences, totalOccurrences, documents}]}`. The values another detection route also claims, so a card can warn BEFORE the run rather than the user finding out on the results screen. `occurrences == totalOccurrences` means the value is never replaced under its own type. Mutates nothing (no placeholder minted, registry untouched), so it is safe to call on every edit. An empty list is the normal answer, not an error |
 | `validatePattern(expr)` | regex | `""` (valid) or the error message |
 | `patternMatches(expr)` | regex | up to 20 sample matches across the loaded documents, shown live under the pattern field: a regex that compiles and matches nothing is the common mistake |
 

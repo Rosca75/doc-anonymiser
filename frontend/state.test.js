@@ -35,6 +35,7 @@ import {
   entityKey,
   renameEntity, renameVariant, changeEntityCategory, changeCandidateCategory,
   groupEntities, clearAllEntities, entityConflicts, spellingsOf, curate,
+  setIntersections, intersectionsFor,
 } from "./state.js";
 
 test("setState merges and notifies subscribers", () => {
@@ -1848,4 +1849,64 @@ test("a value the user typed is declared, and the route travels to Go", () => {
   addEntities([{ category: "entity_names", canonical: "Alpine" }]);
   assert.equal(getState().entities[0].origin, "declared");
   assert.equal(acceptedEntities()[0].origin, "declared");
+});
+
+// --- Intersections: values another route also claims ---------------------
+
+test("intersectionsFor keys each row by the value it belongs to", () => {
+  resetState();
+  seedValue("person_names", "marie.duval@example.com");
+  setIntersections([{
+    value: "marie.duval@example.com", category: "person_names", origin: "declared",
+    winnerValue: "marie.duval@example.com", winnerCategory: "email", winnerOrigin: "native",
+    occurrences: 2, totalOccurrences: 2,
+  }]);
+
+  const byKey = intersectionsFor();
+  const row = byKey.get(entityKey("person_names", "marie.duval@example.com"));
+  assert.ok(row, "the card finds its own row with no searching");
+  assert.equal(row.winnerCategory, "email");
+  assert.equal(byKey.get(entityKey("entity_names", "Alpine")), undefined);
+});
+
+test("a row with no value or no category is not keyable and is skipped", () => {
+  // Go always sends both, but a partial row must not poison the map with an
+  // entry no card can match.
+  resetState();
+  setIntersections([{ value: "", category: "email" }, { value: "x" }]);
+  assert.equal(intersectionsFor().size, 0);
+});
+
+test("editing the values clears the intersection warnings", () => {
+  // A stale warning sits on a card describing a configuration the user has
+  // already changed, and is read as a statement about the one in front of them.
+  resetState();
+  seedValue("entity_names", "Alpine");
+  setIntersections([{ value: "Alpine", category: "entity_names" }]);
+  assert.equal(getState().intersections.length, 1);
+
+  addEntities([{ category: "entity_names", canonical: "Borealis" }]);
+  assert.deepEqual(getState().intersections, [], "adding a value invalidates the answer");
+});
+
+test("editing the patterns clears the intersection warnings too", () => {
+  resetState();
+  setIntersections([{ value: "Alpine", category: "entity_names" }]);
+  addPattern("PRJ-[0-9]+", null);
+  assert.deepEqual(getState().intersections, []);
+});
+
+test("a patch that carries intersections is the one that survives", () => {
+  // setIntersections itself writes entities-adjacent state on some paths; the
+  // clearing rule must not eat the answer it was given.
+  resetState();
+  setState({ entities: [], intersections: [{ value: "Alpine", category: "entity_names" }] });
+  assert.equal(getState().intersections.length, 1);
+});
+
+test("starting a new batch drops the intersections with everything else", () => {
+  resetState();
+  setIntersections([{ value: "Alpine", category: "entity_names" }]);
+  startNewBatch();
+  assert.deepEqual(getState().intersections, []);
 });

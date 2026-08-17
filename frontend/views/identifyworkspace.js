@@ -40,7 +40,7 @@
 
 import {
   runDetection, cancelDetection, countTermMatches, patternMatches,
-  expandVariants, validatePattern,
+  expandVariants, validatePattern, checkIntersections,
 } from "../api.js";
 import {
   getState, setState, llmEnabled, detectionRoutesOn,
@@ -51,7 +51,7 @@ import {
   addPattern, removePattern, NAME_CATEGORIES,
   renameEntity, renameVariant, changeEntityCategory, changeCandidateCategory,
   groupEntities, clearAllEntities, entityConflicts, spellingsOf, removeAllowTerm,
-  aiScopeArg, curate,
+  aiScopeArg, curate, setIntersections, intersectionsFor, buildIntersectionRequest,
 } from "../state.js";
 import { pendingExpansions } from "../entitymodel.js";
 import {
@@ -174,6 +174,41 @@ export function renderIdentifyWorkspace(container, opts = {}) {
     (opts.footerHTML ?? "");
 
   wire(container, s, shown);
+
+  // Ask Go which values another route also claims, whenever the answer could
+  // have changed. Reading the CONFIGURATION off each repaint is what makes this
+  // one place instead of a call at every reducer that touches the value list: a
+  // reducer added later cannot forget it, and the debounce absorbs the burst of
+  // repaints one edit produces.
+  const signature = intersectionSignature(s);
+  if (signature !== lastIntersectionSignature) {
+    lastIntersectionSignature = signature;
+    scheduleIntersectionCheck();
+  }
+}
+
+// The configuration the last intersection check was asked about. Compared as a
+// string so a repaint that changed nothing relevant (a filter, a panel opening)
+// does not re-ask.
+let lastIntersectionSignature = "";
+
+/**
+ * intersectionSignature(s) is everything an intersection depends on: the
+ * values, the patterns and the detection scope. Deliberately NOT the whole
+ * state, so opening a panel or typing in the search box does not send Go over
+ * every document again.
+ */
+function intersectionSignature(s) {
+  const values = s.entities
+    .map((e) => `${e.category}|${e.canonical}|${e.origin ?? "declared"}`)
+    .join("\n");
+  const patterns = (s.patterns ?? []).map((p) => p.expr).join("\n");
+  const categories = Object.entries(s.settings?.categories ?? {})
+    .filter(([, on]) => on).map(([c]) => c).sort().join(",");
+  return [
+    values, patterns, categories,
+    s.allowlist.join(","), String(s.settings?.useNativeDetect),
+  ].join(" ");
 }
 
 /** head(s, busy) is the card header: the title, the live counts, the search box
@@ -1397,6 +1432,47 @@ async function refreshVariants() {
     }
   }
   return pending.length;
+}
+
+// --- The intersection recheck ---------------------------------------------
+
+// The pending recheck timer. One at a time, last call wins: a user editing a
+// value list produces a burst of changes, and asking Go to re-scan every
+// document on each keystroke would make the screen stutter for an answer that
+// is about to be superseded.
+let intersectionTimer = null;
+
+// How long to wait for the edits to stop. Long enough to swallow a burst of
+// typing, short enough that the warning arrives while the user is still looking
+// at the card it belongs to.
+const INTERSECTION_DEBOUNCE_MS = 400;
+
+/**
+ * scheduleIntersectionCheck() asks Go, once the edits settle, which values
+ * another detection route also claims.
+ *
+ * The debounce lives here rather than in state.js because it is about how this
+ * screen talks to Go, not about what the store holds: the store simply clears
+ * the warnings whenever the value list changes, and this puts the fresh answer
+ * back when there is one.
+ *
+ * A missing bridge (a plain browser, the render tests) leaves the list empty
+ * and the screen unchanged. It must never throw: an unhandled rejection here
+ * would take the whole repaint down and blank the screen.
+ */
+export function scheduleIntersectionCheck() {
+  if (intersectionTimer) clearTimeout(intersectionTimer);
+  intersectionTimer = setTimeout(async () => {
+    intersectionTimer = null;
+    try {
+      const res = await checkIntersections(buildIntersectionRequest());
+      setIntersections(res?.intersections ?? []);
+    } catch {
+      // No bridge, or Go refused. There is nothing to tell the user: this is a
+      // warning they never asked for, so its absence is not a failure.
+      setIntersections([]);
+    }
+  }, INTERSECTION_DEBOUNCE_MS);
 }
 
 // --- Patterns wiring ------------------------------------------------------
