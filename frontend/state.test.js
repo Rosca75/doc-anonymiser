@@ -306,8 +306,8 @@ test("buildRunRequest assembles only pipeline-ready inputs", () => {
   addPattern("[", "broken");
   addSimpleRule({ find: "x", replace: "y" });
 
-  const req = buildRunRequest(true);
-  assert.equal(req.useDeepScan, true);
+  const req = buildRunRequest();
+  assert.equal(req.useDeepScan, undefined);
   assert.deepEqual(req.entities, [{ category: "entity_names", canonical: "Alpine", manualVariants: [], excludedVariants: [] }]);
   assert.deepEqual(req.allowTerms, ["CSSF"]);
   assert.deepEqual(req.patterns, [{ expr: "PRJ-[0-9]+" }]);
@@ -403,7 +403,7 @@ test("selectionPresetName recognises each exact preset", () => {
 test("buildRunRequest carries the category selection", () => {
   resetState();
   applyPreset("soft");
-  const req = buildRunRequest(false);
+  const req = buildRunRequest();
   // The preset plus the country's identifier switches, which is what the rail
   // actually shows and therefore what the pipeline must obey.
   assert.deepEqual(req.categories, {
@@ -411,7 +411,7 @@ test("buildRunRequest carries the category selection", () => {
     ...countryIDCategories(DEFAULT_COUNTRY),
   });
   toggleCategory("iban", false);
-  assert.equal(buildRunRequest(false).categories.iban, false);
+  assert.equal(buildRunRequest().categories.iban, false);
 });
 
 // --- Local-AI gating -----------------------------------------------------
