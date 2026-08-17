@@ -11,22 +11,26 @@
 // The layout is now an add row plus a box of removable chips, rather than a
 // collapsible panel with a pill list. Two consequences worth knowing:
 //
-//   There is no "Clear all" bulk button. It lived in the panel header, which no
-//   longer exists, and it was the last native confirm() on this screen
-//   Removing terms one chip at a time is the ordinary case, and
-//   a list of ten seeded terms is not a list anyone needs to empty in one go.
-//   The engine defaults are still seeded at startup and still removable
-//   individually.
+//   A "Clear all" button sits in the add row, disabled while the list is empty.
+//   It asks for confirmation first, because emptying the list leaves nothing
+//   protected from the passes; removing terms one chip at a time stays the
+//   ordinary case.
+//
+//   The list starts EMPTY. Nothing is seeded at startup, so every term on it is
+//   one the user chose (typed, imported, or taken from the downloadable
+//   template). That is why "Clear all" only needs its own confirmation, not a
+//   way to distinguish seeded terms from chosen ones.
 //
 //   renderAllowlistChips takes the draft text rather than reading an input,
 //   because the tab it lives in repaints on every keystroke elsewhere and a
 //   half-typed term must survive that.
 
 import { importAllowlistCSV, saveAllowlistTemplate } from "../api.js";
-import { getState, addAllowTerm, removeAllowTerm } from "../state.js";
+import { getState, addAllowTerm, removeAllowTerm, clearAllowlist } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { button } from "../ui.js";
 import { notify } from "../toast.js";
+import { askConfirm } from "../modal.js";
 import { CONFIGURE, ALLOWLIST } from "../copy.js";
 
 /**
@@ -53,6 +57,10 @@ export function renderAllowlistChips(s, draft = "") {
     button(ALLOWLIST.add, { kind: "secondary", id: "allow-add" }) +
     button(ALLOWLIST.importCSV, { kind: "secondary", id: "allow-import", icon: "upload_file" }) +
     button(ALLOWLIST.template, { kind: "secondary", id: "allow-template", icon: "download" }) +
+    button(ALLOWLIST.clearAll, {
+      kind: "ghost", id: "allow-clear", icon: "delete",
+      disabled: s.allowlist.length === 0,
+    }) +
     `</div>` +
     `<div class="chip-box">` +
     (chips || `<span class="hint">${escapeHTML(ALLOWLIST.empty)}</span>`) +
@@ -61,7 +69,7 @@ export function renderAllowlistChips(s, draft = "") {
 
 /**
  * wireAllowlistChips(container, drafts) attaches add / remove / import /
- * template. Failures surface as a notice, never silently.
+ * template / clear all. Failures surface as a notice, never silently.
  *
  * @param {HTMLElement} container the element the view just filled
  * @param {object} drafts the caller's draft store; `drafts.allow` is updated as
@@ -115,5 +123,13 @@ export function wireAllowlistChips(container, drafts = {}) {
     } catch (err) {
       notify(String(err?.message ?? err), "warn");
     }
+  });
+
+  container.querySelector("#allow-clear")?.addEventListener("click", async () => {
+    const n = getState().allowlist.length;
+    if (n === 0) return; // the button is disabled when empty, but guard anyway
+    if (!await askConfirm({ title: ALLOWLIST.clearAllTitle, body: ALLOWLIST.clearAllConfirm(n) })) return;
+    const cleared = clearAllowlist();
+    notify(ALLOWLIST.clearedN(cleared), "ok");
   });
 }

@@ -1874,6 +1874,14 @@ export function removeAllowTerm(term) {
   setState({ allowlist: state.allowlist.filter((x) => x.toLowerCase() !== term.toLowerCase()) });
 }
 
+/** clearAllowlist() empties the never-anonymise list in one action and returns
+ *  the number of terms it removed, so the caller can report the count. */
+export function clearAllowlist() {
+  const cleared = state.allowlist.length;
+  setState({ allowlist: [] });
+  return cleared;
+}
+
 /** addPattern(expr, error) stores a custom regex with its validation state. */
 export function addPattern(expr, error = null) {
   const e = (expr ?? "").trim();

@@ -222,7 +222,6 @@ var frontendModulesWithoutTests = map[string]string{
 	"frontend/icons.js":           "a map of vendored SVG strings, no logic to assert",
 	"frontend/main.js":            "pure wiring: it attaches listeners to shell.js markup, which shell.test.js covers. What it renders is asserted by the layer 3 rendering harness",
 	"frontend/views/home.js":      "a static landing page with no branching",
-	"frontend/views/allowlist.js": "chip markup over a plain array; the allowlist rules live in the engine and are tested there",
 }
 
 // TestEveryFrontendModuleWithLogicHasATest is mode 3: the module nothing tests.

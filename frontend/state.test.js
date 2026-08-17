@@ -159,7 +159,7 @@ test("a new import drops a scope whose document is gone or shrank", () => {
 import {
   addEntities, removeEntity,
   setEntityVariants, addManualVariant, acceptedEntities,
-  addAllowTerm, removeAllowTerm, addPattern, removePattern, validPatterns,
+  addAllowTerm, removeAllowTerm, clearAllowlist, addPattern, removePattern, validPatterns,
 } from "./state.js";
 
 test("addEntities dedupes case-insensitively and defaults to accepted", () => {
@@ -239,6 +239,24 @@ test("allowlist add/remove is case-insensitive on identity", () => {
   assert.deepEqual(getState().allowlist, ["CSSF"]);
   removeAllowTerm("Cssf");
   assert.deepEqual(getState().allowlist, []);
+});
+
+test("the allowlist starts empty: nothing is seeded", () => {
+  // The engine does not seed defaults (App.allowlistFor is empty) and neither
+  // does the frontend anymore, so a fresh state protects nothing until the user
+  // adds a term. A test here so a re-introduced seed is caught, not shipped.
+  resetState();
+  assert.deepEqual(getState().allowlist, []);
+});
+
+test("clearAllowlist empties the list and returns the count cleared", () => {
+  resetState();
+  addAllowTerm("CSSF");
+  addAllowTerm("ACME");
+  assert.equal(clearAllowlist(), 2);
+  assert.deepEqual(getState().allowlist, []);
+  // Clearing an already-empty list removes nothing and says so.
+  assert.equal(clearAllowlist(), 0);
 });
 
 test("patterns: only compile-clean ones feed the pipeline", () => {
