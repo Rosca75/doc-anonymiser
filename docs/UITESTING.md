@@ -1,7 +1,11 @@
 # UI testing
 
-Three layers, cheapest first. **All three run in CI on every push**, plus an
-additional platform check on Windows that is opt-in.
+Three layers, cheapest first. Layers 1 and 2 run in CI on every push; layer 3
+(the render harness) runs on every push that TOUCHES THE UI (path-filtered,
+because it serves the static frontend with no Go bridge, so a backend-only
+change cannot alter what it renders). There is also an additional platform check
+on Windows that is opt-in. Tiers, triggers and commands are defined in
+`TESTING.md`; this file owns the UI-layer detail.
 
 The reason there are three: every one of the seven issues reported against the
 built application passed the existing tests. Unit tests proved each function;
@@ -283,15 +287,24 @@ and what to fix.
 
 ## In CI
 
-`.github/workflows/ci.yml`, job `build-and-test` on `ubuntu-latest`, is the
-blocking job and now runs all three layers: `go test`, the node tests, then the
-rendering harness. The browser is the Google Chrome already on the runner image,
-so nothing is downloaded and no npm is involved.
+The test tiers are split across workflows by trigger (see `TESTING.md`):
+
+- `.github/workflows/ci.yml` runs layers 1 and 2 (the Go unit tier with `-race`
+  and a coverage gate on every push and PR, and the node frontend suite), plus
+  the integration tier on PRs to `main`.
+- `.github/workflows/ui.yml` runs layer 3, the rendering harness, on every push
+  and PR that touches the UI (`frontend/**`, `scripts/uitest/**`, css). The
+  browser is the Google Chrome already on the runner image, so nothing is
+  downloaded and no npm is involved.
 
 Layer 3 blocks deliberately. Every one of the seven reported issues passed the
-steps above it, and a check that catches them without gating is a comment.
+layers above it, and a check that catches them without gating is a comment. It
+is path-filtered rather than dropped: the harness has no Go bridge, so a
+backend-only change cannot change what it renders, and a pure-backend push
+therefore does not need to boot a browser.
 
-The `ui-windows` job runs the PowerShell script on `windows-latest`, on
-`workflow_dispatch` and on tags, uploading `scripts/uitest/artifacts/` and marked
-`continue-on-error` until it has passed a few times. Promote it by deleting that
-line.
+The `ui-windows` job (in `ci.yml`, whose push trigger also fires on tags) runs
+the PowerShell script on `windows-latest`, on `workflow_dispatch` and on tags,
+uploading `scripts/uitest/artifacts/` and marked `continue-on-error` until it
+has passed a few times. Promote it by deleting that line.
+

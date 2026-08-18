@@ -247,10 +247,13 @@ panicking would take the application down on a bad file.
   asserts a retired contract is worse than a failure, because it is read as
   evidence. When a change here alters something the UI reads, the FRONTEND
   suite is part of the same change too: `node --test "frontend/**/*.test.js"`.
-- **Table-driven unit tests** for all engine logic; fixtures live in
-  `backend/testdata/` in the supported formats, English and French. Tests
-  reach fixtures by relative path (`../testdata`, `../../testdata`) — keep
-  `testdata/` under `backend/` so those paths stay valid.
+- **Testing: all conventions, tiers, fixture rules and commands are defined in
+  `../docs/TESTING.md`. Read it before writing or running any test.** Engine
+  logic is table-driven; fixtures live in `backend/testdata/` (English and
+  French) and are reached by relative path (`../testdata`, `../../testdata`), so
+  `testdata/` stays under `backend/`. `go test ./...` is the unit tier; the
+  integration tier (format round-trips, the mock-Ollama detection flow) needs
+  `-tags=integration`; the deep tier (wall-clock budgets) needs `-tags=deep`.
 - No em dashes in user-visible Go string literals (error/report/prompt text);
   enforced by `../copy_guard_test.go`, which walks `backend/` + `.`.
 
