@@ -610,7 +610,17 @@ export function valuesTab(s) {
   // Intersections come from Go and are keyed the same way, so a card attaches
   // its own with no searching.
   const overlaps = intersectionsFor(s);
-  const shown = visibleValues(s.values, valuesFilter);
+  // Only the TYPE filter narrows what is RENDERED. The search is applied IN
+  // PLACE after the render (applyValuesSearchFilter), never here, and the reason
+  // is a bug that returns the moment the search is folded back in: if a render
+  // pruned the cards a search hides, then a render triggered WHILE a search is
+  // active (a type change, an add, an accept) would drop those cards from the
+  // DOM, and the in-place filter cannot reveal a card that is not there. Clearing
+  // the search with the field's own clear then fails to bring the hidden cards
+  // back, because there is nothing left to unhide. Rendering every type match and
+  // hiding by search in place, exactly as the spellings popup does, keeps the
+  // full set in the DOM so clearing always restores it.
+  const shown = visibleValues(s.values, { type: valuesFilter.type });
   const cards = s.values.length === 0
     ? `<div class="grid-empty">${escapeHTML(WORKSPACE.noValues)}</div>`
     : (shown.length === 0
@@ -1540,6 +1550,12 @@ function wireValues(container) {
   draft?.addEventListener("keydown", (ev) => { if (ev.key === "Enter") add(); });
 
   wireValuesToolbar(container);
+
+  // Reflect the live search on the freshly rendered cards. The render puts every
+  // type-matching card in the DOM (see valuesTab); this hides the ones the
+  // current search does not match, so a re-render that happened while a search
+  // was active still shows the right subset without pruning the DOM.
+  applyValuesSearchFilter(container);
 
   // A card with no identity cannot act on a Value, and it has to SAY so: a
   // handler that silently returns is indistinguishable from a button that is not

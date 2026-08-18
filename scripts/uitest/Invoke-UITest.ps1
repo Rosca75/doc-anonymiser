@@ -393,11 +393,16 @@ function Test-ConfigureRail([CdpSession]$cdp) {
         -Condition ($r.categories -ge $script:Fixture.categoryCount) `
         -Expected "at least $($script:Fixture.categoryCount) .cat-toggle checkboxes" -Actual "$($r.categories)" `
         -Hint 'state.js ALL_CATEGORIES plus the country-specific ID categories must all reach the rail.'
-    Assert-That -Name 'every category checkbox is reachable without clicking' `
-        -Condition ($r.categories -gt 0 -and $r.categoriesWithSize -eq $r.categories) `
-        -Expected 'all of them laid out with a non-zero height' `
-        -Actual "$($r.categoriesWithSize) of $($r.categories) have a height" `
-        -Hint 'A checkbox inside a folded group is in the DOM but not something the user can tick.'
+    Assert-That -Name 'the category groups are folded by default' `
+        -Condition ($r.categories -gt 0 -and $r.categoriesWithSize -eq 0) `
+        -Expected 'no category checkbox laid out until its group is opened' `
+        -Actual "$($r.categoriesWithSize) of $($r.categories) have a height while nothing was clicked" `
+        -Hint 'views/identifyrail.js seeds collapsedGroups with every cat-group id so the rail opens on the route switches and the scope summary, not a wall of category lists.'
+    Assert-That -Name 'opening a category group lays out its checkboxes' `
+        -Condition ($r.categories -gt 0 -and $r.categoriesWithSizeAfterExpand -eq $r.categories) `
+        -Expected 'every category checkbox laid out once its group is opened' `
+        -Actual "$($r.categoriesWithSizeAfterExpand) of $($r.categories) have a height after opening every group" `
+        -Hint 'A folded group is only useful if it opens: collapsibleGroup + wireGroups reveal the checkboxes.'
     # The signal control is a tree, built from the frontend lists the Go parity guard
     # holds to the engine. One group per signal, one master per group.
     $signalGroups = @($r.signalGroups)

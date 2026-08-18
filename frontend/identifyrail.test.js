@@ -58,6 +58,32 @@ test("the BUILD-03 recognizers have their own named group (CR9)", () => {
   }
 });
 
+test("every category group renders folded by default", () => {
+  // The rail opens on what a user changes most, the route switches and the scope
+  // summary. A wall of expanded category lists buries those and makes the panel
+  // scroll for a setting most sessions never touch, so each category group opens
+  // only when its owner reaches for the categories inside it. The render harness
+  // proves the folded body has no laid-out checkboxes; this proves the markup the
+  // harness measures, and that all five groups are present to fold.
+  resetState();
+  const html = railBody(getState());
+  const catTitles = [
+    CONFIGURE.groupContact, CONFIGURE.groupTechnical, CONFIGURE.groupThorough,
+    CONFIGURE.groupDetected, CONFIGURE.groupDeclared,
+  ];
+  const seen = new Set();
+  for (const sec of all(html, "section.cgroup")) {
+    const title = all(sec.outer, "span.cgroup-title")[0];
+    if (!title) continue;
+    const name = stripTags(title.inner).trim();
+    if (!catTitles.includes(name)) continue;
+    seen.add(name);
+    assert.equal(sec.attrs["data-open"], "false", `the "${name}" group must be folded by default`);
+  }
+  assert.deepEqual([...seen].sort(), [...catTitles].sort(),
+    "all five category groups render and each is checked for its folded state");
+});
+
 test("every group has a title and at least one category (CR10)", () => {
   // A select-all button on an empty group would do nothing at all.
   for (const [title, keys] of CATEGORY_GROUPS) {

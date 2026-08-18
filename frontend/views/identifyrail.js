@@ -140,6 +140,16 @@ export const CATEGORY_GROUPS = [
 const REGEX_GROUPS = CATEGORY_GROUPS.slice(0, 3);
 const ENTITY_GROUPS = CATEGORY_GROUPS.slice(3);
 
+// The category groups start FOLDED. The rail opens on what a user changes most:
+// the route switches and the scope summary (country, preset, confidence). A wall
+// of expanded category lists buries those above the fold and makes the panel
+// scroll for a setting most sessions never touch, so each group opens only when
+// its owner reaches for the categories inside it. The IDs match the ones
+// categoryGroups() builds, `cat-group-<type>-<index>`, and are derived from the
+// group lists so a group added or reordered folds by default too.
+REGEX_GROUPS.forEach((_g, index) => collapsedGroups.add(`cat-group-regex-${index}`));
+ENTITY_GROUPS.forEach((_g, index) => collapsedGroups.add(`cat-group-entity-${index}`));
+
 /**
  * renderIdentifyRail(container) fills the rail card.
  * @param {HTMLElement} container the card element views/identify.js created

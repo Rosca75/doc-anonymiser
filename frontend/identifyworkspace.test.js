@@ -14,12 +14,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { subscribe, resetState } from "./state.js";
+import {
+  subscribe, resetState, getState, addValues, setValueSpellings,
+} from "./state.js";
 import {
   progressStrip, detectionCaption,
-  applyValuesSearchFilter, wireValuesToolbar,
+  applyValuesSearchFilter, wireValuesToolbar, valuesTab,
 } from "./views/identifyworkspace.js";
 import { attr, textOf } from "./testhtml.js";
+import { container, fire } from "./testdom.js";
 
 /** running(patch) is a detection state as main.js builds it from an event. */
 function running(patch = {}) {
@@ -195,4 +198,49 @@ test("the My values ✕ empties the search and brings every card back", () => {
   assert.equal(h.empty.style.display, "none", "and the no-match line is hidden again");
   assert.equal(repaints, 0,
     "clearing filters in place too, or it would destroy the very input it just focused");
+});
+
+test("the ✕ restores cards a re-render hid while the search was active", async () => {
+  // The reported bug lived at the seam between the two ways the list narrows.
+  // The search filters cards IN PLACE (no repaint, so the caret survives), but a
+  // re-render (a type change, an add, an accept) rebuilds the list, and it used
+  // to render only the cards the active search matched. That pruned the rest
+  // from the DOM, and the in-place ✕ can only unhide what is present, so clearing
+  // the search left the list stuck on the searched subset: the ✕ "did nothing".
+  //
+  // The render now keeps every type match in the DOM and the search narrows only
+  // in place, so this drives the exact sequence and proves the ✕ brings the
+  // hidden cards back. Real DOM (testdom), because it is a wiring fact.
+  resetState();
+  for (const name of ["Marie Duval", "Thomas Berger", "Alice Nowak"]) {
+    addValues([{ category: "person_names", mainText: name }]);
+    setValueSpellings("person_names", name, [name]);
+  }
+
+  const c = container();
+  c.innerHTML = valuesTab(getState());
+  wireValuesToolbar(c);
+  const visible = () =>
+    c.querySelectorAll(".value-card").filter((card) => card.style.display !== "none").length;
+
+  // The user searches for one of the three. The toolbar hides the other two.
+  const search = c.querySelector("#values-search");
+  search.value = "Marie";
+  await fire(search, "input");
+  assert.equal(visible(), 1, "the search narrows to the one matching card");
+
+  // A repaint lands while the search is still active. Every setState reason (a
+  // type change, an add, an accept) rebuilds the list exactly this way.
+  c.innerHTML = valuesTab(getState());
+  assert.equal(c.querySelectorAll(".value-card").length, 3,
+    "the render keeps all three cards in the DOM despite the active search, "
+    + "so the in-place clear has something to reveal");
+  wireValuesToolbar(c);
+  applyValuesSearchFilter(c); // as wireValues does after each render
+  assert.equal(visible(), 1, "the live search still narrows to one in place");
+
+  // Clearing with the field's own ✕ brings the other two back.
+  await fire(c.querySelector('[data-clears="values-search"]'), "click");
+  assert.equal(c.querySelector("#values-search").value, "", "the ✕ empties the field");
+  assert.equal(visible(), 3, "and every card is shown again");
 });
