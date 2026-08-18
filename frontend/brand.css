@@ -131,6 +131,14 @@
   --key-edge: #FFCDA8;
   --key-edge-soft: #FFE8D4;
 
+  /* The "+N more" overflow chip on a compact value card. It leads to the same
+     spellings popup the "add" chip does, so it is drawn as a real chip rather
+     than a link. A quiet blue fill so it reads as a sibling of the spelling
+     pills without competing with them for attention. */
+  --more-chip-fg: #205FAE;
+  --more-chip-bg: #EEF5FF;
+  --more-chip-edge: #CFE0FB;
+
   /* Typography: Windows system fonts only, no font files, no CDNs */
   /* Helvetica first, Arial as the fallback on machines without it, then the
      generic sans-serif. Headings and body share the face (BUILD-04 CR2). */

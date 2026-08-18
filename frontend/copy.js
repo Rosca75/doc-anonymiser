@@ -687,6 +687,9 @@ export const WORKSPACE = {
   },
   moreSpellingsTitle: "Show every spelling, and add, edit, delete or regroup them",
   spellingDragHint: "Drag this spelling onto another Value to regroup it",
+  /** removeSpelling titles the small delete control on a visible spelling chip.
+   * Deleting here curates the value: the remaining chips become its whole list. */
+  removeSpelling: "Remove this spelling",
   /** spellingMoved(v, target) confirms a regrouping drag. */
   spellingMoved(v, target) {
     return `${v} now counts as a spelling of ${target}.`;

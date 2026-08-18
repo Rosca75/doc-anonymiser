@@ -597,10 +597,10 @@ test("a card with many spellings shows a preview and counts the rest", () => {
   assert.equal(textOf(html, "button.spelling-more"), WORKSPACE.moreSpellings(hidden.length));
 });
 
-test("the visible chips are drag sources and carry no delete of their own", () => {
-  // Dragging a chip onto another card still regroups it: that is the quick
-  // gesture. The per-chip delete grew the row, so it lives in the popup, which is
-  // also where a spelling in the overflow is reached.
+test("the visible chips are drag sources and carry their own delete", () => {
+  // Dragging a chip onto another card regroups it: that is the quick gesture.
+  // A small delete "x" on each chip is the other quick gesture, dropping a
+  // spelling the expansion should not have attached without opening the popup.
   resetState();
   seed("person_names", "Marie Duval", ["Marie Duval", "Marie"]);
   const html = valuesTab(getState());
@@ -608,7 +608,10 @@ test("the visible chips are drag sources and carry no delete of their own", () =
     assert.equal(chip.attrs.draggable, "true");
     assert.ok(chip.attrs["data-spelling"], "the drag payload is on the chip");
   }
-  assert.ok(!exists(html, "button.spelling-del"), "no per-chip delete on the compact card");
+  assert.ok(exists(html, "button.spelling-del"), "each visible chip carries a delete");
+  for (const del of all(html, "button.spelling-del")) {
+    assert.ok(del.attrs["data-spelling"], "the delete carries which spelling it drops");
+  }
 });
 
 test("a pending expansion replaces the chips inside the row, never below it", () => {

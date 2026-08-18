@@ -1157,8 +1157,21 @@ input, select {
    the card's drag handle are separate targets rather than one ambiguous one. */
 .spelling-text { cursor: inherit; }
 /* "+N more" leads to the same popup "+ add" does, so it is drawn as a sibling of
-   the add chip rather than as a link: one row of affordances, one destination. */
-.spelling-more { font-variant-numeric: tabular-nums; }
+   the add chip rather than as a link: one row of affordances, one destination.
+   It is a real chip, not the dashed add affordance: a solid blue pill the same
+   size as the spelling chips beside it, so it reads as "there are more of these"
+   rather than as a second way to add one. */
+.spelling-more {
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--more-chip-edge);
+  background: var(--more-chip-bg);
+  color: var(--more-chip-fg);
+}
+.spelling-more:hover {
+  border-color: var(--more-chip-edge);
+  background: var(--more-chip-bg);
+  color: var(--more-chip-fg);
+}
 
 /* --- Value editing, filtering and conflicts (My values) ----------------- */
 
@@ -1183,11 +1196,14 @@ input, select {
 /* The per-card type dropdown, and the suggestion row's retype dropdown: quiet
    until hovered, so a card is not a wall of framed selects. */
 .value-type, .cell-type-select {
-  font-size: 0.78rem; color: var(--ink-2);
+  color: var(--ink-2);
   background: var(--gray-6); border: 1px solid var(--gray-5);
   padding: 0.2rem 0.4rem; border-radius: 4px; max-width: 100%;
 }
-.cell-type-select { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The per-card Value type reads at the same size as the spelling and method
+   chips around it, so the card is one type scale rather than several. */
+.value-type { font-size: 0.8rem; }
+.cell-type-select { font-size: 0.78rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .value-actions { display: flex; align-items: center; gap: 0.25rem; flex-shrink: 0; }
 
 /* A conflict is a light-red state on the exact thing at fault: the card, and
@@ -1812,7 +1828,7 @@ mark[data-original]:focus-visible { outline: 2px solid var(--accent); outline-of
   padding: 0.1rem 0.4rem;
   border: 1px solid var(--gray-3); border-radius: 999px;
   background: var(--surface-subtle);
-  font-size: 0.72rem; color: var(--muted);
+  font-size: 0.8rem; color: var(--muted);
   white-space: nowrap;
 }
 .method-manual { border-color: var(--accent-light); color: var(--text); }
