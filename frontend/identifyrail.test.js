@@ -236,6 +236,29 @@ test("Smart detection's three methods lead the section", () => {
   assert.ok(smart.includes(RAIL.signalSuggestions), "the Signal-based suggestions label renders");
 });
 
+test("the two plain method switches share one row, the expanding one does not", () => {
+  // The panel's height is its scarcest resource and these two carry the shortest
+  // labels in the rail, so they are one row of two rather than two rows of one.
+  // The signal control keeps its own row because it EXPANDS: rows appearing under
+  // one half of a two-column pair would shove the other half's label off its line.
+  const smart = all(railHTML(), "section.rail-section")[0].outer;
+  const pairs = all(smart, ".rail-toggle-pair");
+  assert.equal(pairs.length, 1, "exactly one pair, so nothing else is quietly folded into it");
+
+  const pair = pairs[0].outer;
+  assert.ok(exists(pair, "#smart-built-in"), "Built-in patterns is one half of the pair");
+  assert.ok(exists(pair, "#smart-heuristic"), "Heuristic discovery is the other");
+  assert.ok(!exists(pair, "#signal-sources"),
+    "the signal control must NOT be inside the pair: it expands, so it needs its own row");
+
+  // Each half keeps its own help icon: pairing them is a layout change, not a
+  // reason for either to stop explaining itself.
+  for (const half of all(pair, ".rail-toggle")) {
+    assert.ok(exists(half.outer, "span.help"),
+      `a paired method switch with no help tooltip: ${stripTags(half.inner).trim()}`);
+  }
+});
+
 test("the signal-source checklist is closed by default and summarises what is on", () => {
   // Closed it is ONE row: that is what keeps the panel short as sources are
   // added. The summary is the read-out, not a list of names.

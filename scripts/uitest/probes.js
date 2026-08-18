@@ -360,6 +360,29 @@
         // not assumed.
         categoriesWithSize: [...rail.querySelectorAll(".cat-toggle")]
           .filter((c) => c.getBoundingClientRect().height > 0).length,
+        // The two plain Smart-detection methods share ONE row. "Side by side" is a
+        // claim about geometry, so it is answered with geometry: equal tops, and
+        // one to the left of the other. Markup order proves neither, since a
+        // column-flex parent stacks the same markup.
+        methodPairRow: (() => {
+          const builtIn = rail.querySelector("#smart-built-in");
+          const heuristic = rail.querySelector("#smart-heuristic");
+          if (!builtIn || !heuristic) return null;
+          const a = builtIn.getBoundingClientRect();
+          const b = heuristic.getBoundingClientRect();
+          return {
+            builtInTop: Math.round(a.top),
+            heuristicTop: Math.round(b.top),
+            sameRow: Math.abs(a.top - b.top) <= 2,
+            heuristicIsToTheRight: b.left > a.right,
+            // Neither label may be truncated to nothing by the halving: a pair of
+            // ellipses is worse than two rows.
+            labelWidths: [...rail.querySelectorAll(".rail-toggle-pair .cat-label")]
+              .map((el) => `${(el.textContent ?? "").trim()}: ${el.clientWidth} of ${el.scrollWidth}px`),
+            labelsFullyShown: [...rail.querySelectorAll(".rail-toggle-pair .cat-label")]
+              .every((el) => el.scrollWidth <= el.clientWidth + 1),
+          };
+        })(),
       };
     },
 

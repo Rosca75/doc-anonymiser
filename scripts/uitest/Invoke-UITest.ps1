@@ -395,6 +395,26 @@ function Test-ConfigureRail([CdpSession]$cdp) {
         -Expected 'all of them laid out with a non-zero height' `
         -Actual "$($r.categoriesWithSize) of $($r.categories) have a height" `
         -Hint 'A checkbox inside a folded group is in the DOM but not something the user can tick.'
+    # "Side by side" is a claim about geometry, so geometry answers it: markup order
+    # proves nothing, since a column-flex parent stacks the same markup.
+    $pair = $r.methodPairRow
+    if ($null -eq $pair) {
+        Assert-That -Name 'the two plain method switches render' -Condition $false `
+            -Expected '#smart-built-in and #smart-heuristic in the rail' -Actual 'one of them is missing' `
+            -Hint 'views/identifyrail.js smartMethods renders both inside .rail-toggle-pair.'
+        return
+    }
+    Assert-That -Name 'Built-in patterns and Heuristic discovery share one row' -Condition ($pair.sameRow -eq $true) `
+        -Expected 'the two checkboxes at the same y (within 2px)' `
+        -Actual "built-in at y=$($pair.builtInTop), heuristic at y=$($pair.heuristicTop)" `
+        -Hint 'style.css .rail-toggle-pair is a two-column grid. The rail height is its scarcest resource and these are its shortest labels.'
+    Assert-That -Name 'they are ordered left to right, not overlapping' -Condition ($pair.heuristicIsToTheRight -eq $true) `
+        -Expected 'Heuristic discovery starting after Built-in patterns ends' -Actual "$($pair.heuristicIsToTheRight)" `
+        -Hint 'Two switches at the same y that overlap are one unreadable control.'
+    Assert-That -Name 'halving the row did not truncate either label' -Condition ($pair.labelsFullyShown -eq $true) `
+        -Expected 'both .cat-label elements showing their whole text' `
+        -Actual "$($pair.labelsFullyShown) ($($pair.labelWidths -join '; '))" `
+        -Hint 'A pair of ellipses is worse than two rows. Below the rail measure the pair stacks instead.'
 }
 
 # A value card's controls must CHANGE something. This is the layer that sees

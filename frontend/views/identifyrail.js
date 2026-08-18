@@ -310,9 +310,11 @@ function smartSection(s) {
  * smartMethods(s) is Smart detection's three methods, at the top of the section
  * so they read as governing what follows.
  *
- * Two are plain switches. The third is a compact CHECKLIST rather than a switch,
- * because it is a SET of sources and one row per source would grow the panel
- * every time a source is added. Its closed summary is what keeps it one row.
+ * Two are plain switches and they share ONE row, side by side: they carry the
+ * shortest labels in the rail and the panel's height is its scarcest resource.
+ * The third is a compact CHECKLIST rather than a switch, because it is a SET of
+ * sources and one row per source would grow the panel every time a source is
+ * added; it keeps its own row because it expands.
  */
 function smartMethods(s) {
   const row = (id, checked, label, help) =>
@@ -324,10 +326,12 @@ function smartMethods(s) {
     helpTooltip(help, { label }) +
     `</div>`;
   return `<div class="rail-block">` +
+    `<div class="rail-toggle-pair">` +
     row("smart-built-in", s.settings.useBuiltInPatterns !== false,
       RAIL.builtInPatterns, RAIL.builtInPatternsHelp) +
     row("smart-heuristic", s.settings.useHeuristicDiscovery !== false,
       RAIL.heuristicDiscovery, RAIL.heuristicDiscoveryHelp) +
+    `</div>` +
     signalSourceControl(s) +
     `</div>`;
 }

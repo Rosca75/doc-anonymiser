@@ -210,6 +210,14 @@ type railResult struct {
 	LocalOn            *bool    `json:"localOn"`
 	Categories         int      `json:"categories"`
 	CategoriesWithSize int      `json:"categoriesWithSize"`
+	MethodPairRow      *struct {
+		BuiltInTop            int      `json:"builtInTop"`
+		HeuristicTop          int      `json:"heuristicTop"`
+		SameRow               *bool    `json:"sameRow"`
+		HeuristicIsToTheRight *bool    `json:"heuristicIsToTheRight"`
+		LabelWidths           []string `json:"labelWidths"`
+		LabelsFullyShown      *bool    `json:"labelsFullyShown"`
+	} `json:"methodPairRow"`
 }
 
 // checkConfigureRail asserts the rail is the two detection-route sections with
@@ -266,6 +274,37 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 		fmt.Sprintf("%d of %d have a height", got.CategoriesWithSize, got.Categories),
 		"A checkbox inside a folded group is in the DOM but not something the user can tick: the "+
 			"category groups open by default.")
+
+	// "Side by side" is a claim about geometry, so geometry is what answers it.
+	// Markup order proves nothing here: a column-flex parent stacks the same
+	// markup, which is exactly how these two spent two full rows on two words.
+	if got.MethodPairRow == nil {
+		r.assert("the two plain method switches render", false,
+			"#smart-built-in and #smart-heuristic in the rail", "one of them is missing",
+			"views/identifyrail.js smartMethods renders both inside .rail-toggle-pair.")
+		return
+	}
+	pair := got.MethodPairRow
+
+	r.assert("Built-in patterns and Heuristic discovery share one row",
+		boolIs(pair.SameRow, true),
+		"the two checkboxes at the same y (within 2px)",
+		fmt.Sprintf("built-in at y=%d, heuristic at y=%d", pair.BuiltInTop, pair.HeuristicTop),
+		"style.css .rail-toggle-pair is a two-column grid. The rail's height is its scarcest "+
+			"resource and these are its shortest labels.")
+
+	r.assert("they are ordered left to right, not overlapping",
+		boolIs(pair.HeuristicIsToTheRight, true),
+		"Heuristic discovery starting after Built-in patterns ends",
+		describeBool(pair.HeuristicIsToTheRight),
+		"Two switches at the same y that overlap are one unreadable control.")
+
+	r.assert("halving the row did not truncate either label",
+		boolIs(pair.LabelsFullyShown, true),
+		"both .cat-label elements showing their whole text",
+		fmt.Sprintf("%s (%s)", describeBool(pair.LabelsFullyShown), strings.Join(pair.LabelWidths, "; ")),
+		"A pair of ellipses is worse than two rows. Below the rail's measure the pair stacks "+
+			"instead, under the @media block beside the rule.")
 }
 
 // --- A value card's actions actually reach the store ------------------------
