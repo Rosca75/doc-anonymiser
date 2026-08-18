@@ -260,6 +260,7 @@ function Invoke-DevChecks {
                 Test-ImportPreview $cdp
                 Test-ConfigureRail $cdp
                 Test-ValueCardActions $cdp
+                Test-SignalDerivations $cdp
                 Test-ConfigurePanelFit $cdp
                 Test-StrictnessFields $cdp
                 Test-HelpTooltip $cdp
@@ -395,6 +396,19 @@ function Test-ConfigureRail([CdpSession]$cdp) {
         -Expected 'all of them laid out with a non-zero height' `
         -Actual "$($r.categoriesWithSize) of $($r.categories) have a height" `
         -Hint 'A checkbox inside a folded group is in the DOM but not something the user can tick.'
+    # The signal control is a tree, built from the frontend lists the Go parity guard
+    # holds to the engine. One group per signal, one master per group.
+    $signalGroups = @($r.signalGroups)
+    $signalMasters = @($r.signalMasters)
+    Assert-That -Name 'the signal control is one group per signal' -Condition ($signalGroups.Count -eq 1) `
+        -Expected '1 .checklist-group (one implemented signal source)' `
+        -Actual "$($signalGroups.Count): $($signalGroups -join ', ')" `
+        -Hint 'views/identifyrail.js builds the groups from state.js SIGNAL_SOURCES.'
+    Assert-That -Name 'every signal group has its own master switch' `
+        -Condition ($signalMasters.Count -eq $signalGroups.Count) `
+        -Expected 'one .checklist-master per group' `
+        -Actual "$($signalMasters.Count) masters for $($signalGroups.Count) groups" `
+        -Hint 'The master is what saves switching a whole signal off one reading at a time.'
     # "Side by side" is a claim about geometry, so geometry answers it: markup order
     # proves nothing, since a column-flex parent stacks the same markup.
     $pair = $r.methodPairRow
@@ -415,6 +429,41 @@ function Test-ConfigureRail([CdpSession]$cdp) {
         -Expected 'both .cat-label elements showing their whole text' `
         -Actual "$($pair.labelsFullyShown) ($($pair.labelWidths -join '; '))" `
         -Hint 'A pair of ellipses is worse than two rows. Below the rail measure the pair stacks instead.'
+}
+
+# Expanding a signal must REVEAL its readings, and each must be switchable on its
+# own. Collapsed the readings are in the DOM at zero height: present to a string
+# test and absent to the user, so only this layer can tell the two states apart.
+function Test-SignalDerivations([CdpSession]$cdp) {
+    Write-Step 'Expanding a signal reveals its readings, each switchable on its own'
+    $r = $cdp.Eval('__uiProbes.signalDerivations()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the signal-derivation probe runs' -Condition $false `
+            -Expected '#signal-sources in the Identify rail' -Actual $r.error `
+            -Hint 'views/identifyrail.js signalSourceControl renders ui.js expandableChecklist.'
+        return
+    }
+    Assert-That -Name 'a collapsed signal costs no vertical space' `
+        -Condition ($r.collapsedRows -gt 0 -and $r.collapsedVisible -eq 0) `
+        -Expected "$($r.collapsedRows) readings in the DOM, none of them laid out" `
+        -Actual "$($r.collapsedRows) readings, $($r.collapsedVisible) with a height" `
+        -Hint 'Collapsed the group is one row. That trade is what keeps the panel short as sources and readings are added.'
+    Assert-That -Name 'expanding it reveals every reading' -Condition ($r.openedVisible -eq $r.collapsedRows) `
+        -Expected "all $($r.collapsedRows) readings laid out with a height after one click" `
+        -Actual "$($r.openedVisible) of $($r.collapsedRows)" `
+        -Hint 'A checkbox in the DOM at zero height is not something the user can tick.'
+    Assert-That -Name 'ticking a reading reaches the store' -Condition ($r.readingWentOff -eq $true) `
+        -Expected "$($r.derivation) stored as off" -Actual "$($r.readingWentOff)" `
+        -Hint 'state.js setSignalDerivation writes the leaf, and that is what the next detection run reads.'
+    Assert-That -Name 'the other readings are untouched' -Condition ($r.otherReadingsStillOn -eq $true) `
+        -Expected 'every other reading of that signal still on' -Actual "$($r.otherReadingsStillOn)" `
+        -Hint 'The independence is the whole point of the per-reading switches; the engine honours each on its own.'
+    Assert-That -Name 'ticking a reading does not fold the group' -Condition ($r.groupStayedOpenAfterTicking -eq $true) `
+        -Expected 'the readings still laid out after the tick' -Actual "$($r.groupStayedOpenAfterTicking)" `
+        -Hint 'The checkbox stops the click reaching the head. A group that folds as you tick it makes switching two readings a four-click job.'
+    Assert-That -Name 'the master stays on while any reading is on' -Condition ($r.masterAfterTick -eq $true) `
+        -Expected "the group master still checked with one of two readings off" -Actual "$($r.masterAfterTick)" `
+        -Hint 'The master is DERIVED (state.js signalSourceOn): on when any reading is on.'
 }
 
 # A value card's controls must CHANGE something. This is the layer that sees

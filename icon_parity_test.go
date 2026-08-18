@@ -185,7 +185,7 @@ func TestEveryIconHasItsVendoredSourceFile(t *testing.T) {
 	const dir = "frontend/assets/icons"
 
 	onDisk := map[string]bool{}
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

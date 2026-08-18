@@ -158,12 +158,12 @@ func TestSessionSaveLoadEquality(t *testing.T) {
 		wantWrote string
 	}{
 		{version: 1, wantFix: "start a new session", wantWrote: "an older version"},
-		// The immediately previous version is refused too, not migrated. A v6
-		// file names entities, not Values, keys them on canonical rather than
-		// mainText, and states no discovery methods and no signal-source
-		// selection at all. Reading it field by field would mean guessing at
-		// every one of those, and each guess changes what the next run replaces.
-		{version: 6, wantFix: "start a new session", wantWrote: "an older version"},
+		// The immediately previous version is refused too, not migrated. A v7
+		// file's signalSuggestionSources holds one boolean per source, which
+		// cannot say which READING of a signal the user wanted: a reader
+		// guessing "both" would produce Suggestions the user had switched off,
+		// and a reader guessing "neither" would silently stop a whole method.
+		{version: 7, wantFix: "start a new session", wantWrote: "an older version"},
 		{version: 99, wantFix: "update the application", wantWrote: "a newer version"},
 	} {
 		badStr := strings.Replace(string(bad),
@@ -376,23 +376,59 @@ func TestSessionRoundTripsHeuristicDiscovery(t *testing.T) {
 	}
 }
 
-// TestSessionRoundTripsSignalSources: which built-in signals may derive
-// Suggestions is a user decision, and a file that cannot state it would silently
-// re-enable a source the user switched off.
+// TestSessionRoundTripsSignalSources: which READINGS of which built-in signals may
+// derive Suggestions is a user decision, and a file that cannot state it would
+// silently re-enable a reading the user switched off.
+//
+// Both readings off and one of two off are asserted, because the second is the
+// case a per-source boolean could not express: it is the reason the stored shape is
+// keyed by derivation and the reason SessionVersion moved to 8.
 func TestSessionRoundTripsSignalSources(t *testing.T) {
-	raw, err := SaveSession(Session{Settings: SessionSettings{
-		Level:                   "medium",
-		SignalSuggestionSources: SignalSourceSelection{SignalSourceEmail: false},
-	}})
-	if err != nil {
-		t.Fatalf("SaveSession: %v", err)
-	}
-	back, err := LoadSession(raw)
-	if err != nil {
-		t.Fatalf("LoadSession: %v", err)
-	}
-	if SignalSourceEnabled(back.Settings.SignalSuggestionSources, SignalSourceEmail) {
-		t.Errorf("a source switched off must reload off, got %+v",
-			back.Settings.SignalSuggestionSources)
-	}
+	t.Run("roundtrip/every_reading_off", func(t *testing.T) {
+		raw, err := SaveSession(Session{Settings: SessionSettings{
+			Level: "medium",
+			SignalSuggestionSources: SignalSourceSelection{SignalSourceEmail: {
+				DerivationEmailPerson:       false,
+				DerivationEmailOrganisation: false,
+			}},
+		}})
+		if err != nil {
+			t.Fatalf("SaveSession: %v", err)
+		}
+		back, err := LoadSession(raw)
+		if err != nil {
+			t.Fatalf("LoadSession: %v", err)
+		}
+		if SignalSourceEnabled(back.Settings.SignalSuggestionSources, SignalSourceEmail) {
+			t.Errorf("every reading switched off must reload off, got %+v",
+				back.Settings.SignalSuggestionSources)
+		}
+	})
+
+	t.Run("roundtrip/one_reading_off", func(t *testing.T) {
+		raw, err := SaveSession(Session{Settings: SessionSettings{
+			Level: "medium",
+			SignalSuggestionSources: SignalSourceSelection{SignalSourceEmail: {
+				DerivationEmailPerson:       false,
+				DerivationEmailOrganisation: true,
+			}},
+		}})
+		if err != nil {
+			t.Fatalf("SaveSession: %v", err)
+		}
+		back, err := LoadSession(raw)
+		if err != nil {
+			t.Fatalf("LoadSession: %v", err)
+		}
+		sel := back.Settings.SignalSuggestionSources
+		if SignalDerivationEnabled(sel, SignalSourceEmail, DerivationEmailPerson) {
+			t.Errorf("the cleared reading must reload cleared, got %+v", sel)
+		}
+		if !SignalDerivationEnabled(sel, SignalSourceEmail, DerivationEmailOrganisation) {
+			t.Errorf("the reading left on must reload on, got %+v", sel)
+		}
+		if !SignalSourceEnabled(sel, SignalSourceEmail) {
+			t.Errorf("the signal still derives something, so its master must read on, got %+v", sel)
+		}
+	})
 }

@@ -238,29 +238,45 @@ export const RAIL = {
   heuristicDiscovery: "Heuristic discovery",
   heuristicDiscoveryHelp: "Finds recurring names from spelling, context and frequency, and suggests them for review.",
 
-  // The compact signal-source control. It switches whether a built-in pattern
-  // match may be used as EVIDENCE to find related text, and nothing else.
+  // The signal-based control: one expandable row per signal, its individual
+  // READINGS underneath. It switches whether a built-in pattern match may be used
+  // as EVIDENCE to find related text, and nothing else.
   signalSuggestions: "Signal-based suggestions",
-  signalSuggestionsHelp: "A matched signal can also be evidence about text written elsewhere: an email address names a person and an organisation, and both may appear in prose in another file. Those become Suggestions you accept or reject. Clearing a source here stops the suggestions and does NOT stop the signal itself being anonymised, which is governed by Built-in patterns and the signal's own category.",
-  signalSuggestionSources: "Suggestion sources",
-  // One label and one "what it finds" per engine signal source. The checklist is
-  // built from the identifier list, so an unlabelled source would render as a
-  // checkbox named after a JSON key. Guarded by ../detection_parity_test.go
-  // through the WORKSPACE tables these mirror, so the two must agree.
+  signalSuggestionsHelp: "A matched signal can also be evidence about text written elsewhere: an email address names a person and an organisation, and both may appear in prose in another file. Those become Suggestions you accept or reject. Clearing a reading here stops those suggestions and does NOT stop the signal itself being anonymised, which is governed by Built-in patterns and the signal's own category.",
+  // One label per engine signal source, enforced by ../detection_parity_test.go.
+  // The control is built from the identifier list, so an unlabelled source would
+  // render as a checkbox named after a JSON key.
   signalSourceLabel: {
     email: "Email addresses",
   },
-  signalSourceFinds: {
-    email: "Names and organisations",
+  // One label, one "where it reads it from" and one explanation per engine
+  // DERIVATION, enforced by the same guard. The label says WHAT is suggested and
+  // the detail says WHERE the evidence comes from, because the two together are
+  // what the user is deciding between.
+  signalDerivationLabel: {
+    "email.person": "Person names",
+    "email.organisation": "Organisation names",
+  },
+  signalDerivationFinds: {
+    "email.person": "from the part before the @",
+    "email.organisation": "from the domain",
+  },
+  signalDerivationHelp: {
+    "email.person": "Reads the part before the @ as a person's name, and suggests that name where it appears in prose elsewhere in the batch. Role mailboxes such as info@ and single-token handles derive nothing. Switching this off stops those suggestions and does not stop the address itself being anonymised.",
+    "email.organisation": "Reads the domain as an organisation's name, and suggests that name where it appears in prose elsewhere in the batch. Public mail providers and public-suffix labels derive nothing. Switching this off stops those suggestions and does not stop the address itself being anonymised.",
   },
   signalSourcesOff: "Off",
-  /** signalSourcesSummary(names) is the closed control's read-out: "Off", the one
-   *  enabled source's name, or a count once there are several. A list of names
-   *  would grow the control back into the row it exists to avoid. */
-  signalSourcesSummary(names) {
+  /**
+   * signalDerivationSummary(names) is a collapsed signal row's read-out: "Off", the
+   * one reading that is on, or the readings joined. It names them rather than
+   * counting them, because the row is a question about WHICH reading and a count
+   * answers a different one; the list is short by construction, since a signal with
+   * many readings would be a signal whose row should not be one line.
+   */
+  signalDerivationSummary(names) {
     if (names.length === 0) return "Off";
     if (names.length === 1) return names[0];
-    return `${names.length} sources`;
+    return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
   },
   routeOn: "On",
   routeOff: "Off",
@@ -551,19 +567,6 @@ export const WORKSPACE = {
     local_ai_discovered: "Local AI",
   },
 
-  // WHICH built-in signals may derive Suggestions, one label per engine signal
-  // source, enforced by ../detection_parity_test.go. The checklist is built from
-  // the identifier list, so an unlabelled source would render as a checkbox named
-  // after a JSON key.
-  signalSourceLabel: {
-    email: "Email addresses",
-  },
-  // What each source can find, shown beside its checkbox. It is the answer to
-  // "what am I switching off", which the source name alone does not give.
-  signalSourceFinds: {
-    email: "Names and organisations",
-  },
-
   // WHY a discovery method produced a row, one entry per engine evidence kind,
   // enforced by ../detection_parity_test.go. The engine returns evidence
   // STRUCTURED and the sentence is assembled here, because an engine returning
@@ -715,6 +718,13 @@ export const WORKSPACE = {
   typeChangeDuplicate(v) {
     return `${v} already exists under that type. Use "Group with" to merge them instead.`;
   },
+  /**
+   * cardIdentityLost is what a value card says when its own markup no longer
+   * carries the category and main text its actions act on. It names a recovery
+   * the user can perform, because the alternative is a row of buttons that
+   * appear enabled and change nothing.
+   */
+  cardIdentityLost: "This value card lost its identity, so its actions are disabled. Leave the step and come back to rebuild the list.",
   /**
    * cardIdentityLost is what a value card says when its own markup no longer
    * carries the category and main text its actions act on. It names a recovery

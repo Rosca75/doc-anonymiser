@@ -7,7 +7,7 @@ import {
   button, icon,
   card, countBadge, tabbar, chipRow, sectionLabel, statTile,
   collapsibleGroup, stepFooter, toastHTML, modalHTML,
-  helpTooltip, wireHelpTooltips, dropdownChecklist,
+  helpTooltip, wireHelpTooltips, expandableChecklist,
 } from "./ui.js";
 import { ICONS } from "./icons.js";
 
@@ -861,44 +861,114 @@ test("the help trigger has a resting shape, so it is discoverable", () => {
   assert.match(rule[0], /background:\s*var\(--bg\)/);
 });
 
-// --- dropdownChecklist ---------------------------------------------------
+// --- expandableChecklist -------------------------------------------------
+//
+// The control answers a NESTED question: not "which signals may derive
+// Suggestions" but "what would this signal derive, and do I want each of those?".
+// So the shape is a list of groups, each a master over its rows, and these pin the
+// three things that shape has to get right: collapsed costs one row, the master and
+// the chevron are separate controls, and every string is escaped.
 
-test("dropdownChecklist is one row closed and a list open", () => {
-  const rows = [{ id: "email", label: "Email addresses", detail: "Names and organisations", checked: true }];
-  const closed = dropdownChecklist({
-    id: "sources", label: "Signal-based suggestions", summary: "Email addresses",
-    listLabel: "Suggestion sources", open: false, rows,
+/** oneGroup(over) is a single-group checklist, with the fields under test
+ *  overridable per case. */
+function oneGroup(over = {}) {
+  return expandableChecklist({
+    id: "sources",
+    label: "Signal-based suggestions",
+    groups: [{
+      id: "email",
+      label: "Email addresses",
+      summary: "Person and organisation names",
+      checked: true,
+      open: false,
+      rows: [
+        { id: "email.person", label: "Person names", detail: "from the part before the @", checked: true },
+        { id: "email.organisation", label: "Organisation names", detail: "from the domain", checked: false },
+      ],
+      ...over,
+    }],
   });
+}
+
+test("a collapsed group is one row, and its rows cost no vertical space", () => {
+  const closed = oneGroup({ open: false });
   assert.match(closed, /aria-expanded="false"/);
-  assert.match(closed, /class="checklist-list" id="sources-list" hidden/,
-    "the list is hidden while closed, so it costs no vertical space");
-  assert.match(closed, /<span class="checklist-summary">Email addresses<\/span>/);
+  assert.match(closed, /class="checklist-rows" id="sources-email-rows" hidden/,
+    "the readings are hidden while the group is collapsed");
+  assert.match(closed, /<span class="checklist-summary">Person and organisation names<\/span>/,
+    "and the collapsed row says what is on, so it is readable without expanding");
 
-  const open = dropdownChecklist({
-    id: "sources", label: "Signal-based suggestions", summary: "Email addresses",
-    listLabel: "Suggestion sources", open: true, rows,
-  });
+  const open = oneGroup({ open: true });
   assert.match(open, /data-open="true"/);
   assert.match(open, /aria-expanded="true"/);
-  assert.ok(!/checklist-list" id="sources-list" hidden/.test(open));
+  assert.ok(!/checklist-rows" id="sources-email-rows" hidden/.test(open),
+    "expanding reveals them");
 });
 
-test("dropdownChecklist carries one checkbox per row, keyed by its identifier", () => {
-  const html = dropdownChecklist({
-    id: "sources", label: "L", summary: "S", listLabel: "Rows", open: true,
-    rows: [
-      { id: "email", label: "Email addresses", checked: true },
-      { id: "phone", label: "Phone numbers", checked: false },
-    ],
+test("a group carries a master checkbox and one checkbox per row", () => {
+  const html = oneGroup({ open: true });
+  assert.match(html, /class="checklist-master" data-source="email"[^>]* checked/,
+    "the master is keyed by SOURCE and reflects the caller's derived value");
+  assert.match(html, /data-derivation="email\.person"[^>]* checked/);
+  assert.match(html, /data-derivation="email\.organisation"(?![^>]*checked)/,
+    "a reading that is off renders unchecked, so the two are independently switchable");
+});
+
+test("the chevron is a separate control from the master", () => {
+  // One control per intent: ticking the master must not fold the group, and folding
+  // it must not tick the master. Two jobs on one element is how a master ends up
+  // being switched by accident.
+  const html = oneGroup({ open: true });
+  const toggle = html.match(/<button[^>]*class="checklist-group-toggle"[^>]*>/);
+  assert.ok(toggle, "the group head has its own toggle button");
+  assert.ok(!toggle[0].includes("checkbox"), "and it is not the checkbox");
+  assert.match(toggle[0], /aria-controls="sources-email-rows"/,
+    "it names the region it expands, so a screen reader can follow it");
+});
+
+test("a collapsed group's rows are hidden by CSS, not only by the attribute", () => {
+  // An author `display` beats the `hidden` attribute's own display:none, so
+  // .checklist-rows needs an explicit rule or a collapsed group still spends its
+  // rows' height: hidden in the markup and visible on screen. A string test sees
+  // the attribute and stops there, which is why the rule itself is asserted.
+  const rule = styleCSS.match(/\n\.checklist-rows\[hidden\] \{[^}]*\}/);
+  assert.ok(rule, "the .checklist-rows[hidden] rule must exist");
+  assert.match(rule[0], /display:\s*none/);
+
+  const base = styleCSS.match(/\n\.checklist-rows \{[^}]*\}/);
+  assert.ok(base, "and the base rule that makes it necessary");
+  assert.match(base[0], /display:\s*flex/);
+});
+
+test("a row's help tooltip travels with it", () => {
+  // Each reading explains itself, because "Person names" alone does not say that
+  // clearing it leaves the address itself anonymised.
+  const html = expandableChecklist({
+    id: "sources", label: "L",
+    groups: [{
+      id: "email", label: "Email addresses", summary: "S", checked: true, open: true,
+      rows: [{
+        id: "email.person", label: "Person names", checked: true,
+        helpHTML: '<span class="help" data-help>marker</span>',
+      }],
+    }],
   });
-  assert.match(html, /data-checklist="email"[^>]* checked/);
-  assert.match(html, /data-checklist="phone"(?![^>]*checked)/);
+  assert.match(html, /class="help" data-help/);
 });
 
-test("dropdownChecklist escapes every string it is given", () => {
-  const html = dropdownChecklist({
-    id: "x", label: "<b>L</b>", summary: "<b>S</b>", listLabel: "<b>R</b>", open: true,
-    rows: [{ id: "a", label: "<b>A</b>", detail: "<b>D</b>", checked: false }],
+test("a checklist with no groups renders the label and nothing else", () => {
+  const html = expandableChecklist({ id: "sources", label: "Signal-based suggestions" });
+  assert.match(html, /Signal-based suggestions/);
+  assert.ok(!html.includes("checklist-group\""), "no empty group is invented");
+});
+
+test("expandableChecklist escapes every string it is given", () => {
+  const html = expandableChecklist({
+    id: "x", label: "<b>L</b>",
+    groups: [{
+      id: "a", label: "<b>A</b>", summary: "<b>S</b>", checked: false, open: true,
+      rows: [{ id: "r", label: "<b>R</b>", detail: "<b>D</b>", checked: false }],
+    }],
   });
   assert.ok(!html.includes("<b>"), "copy is escaped, never trusted as markup");
 });

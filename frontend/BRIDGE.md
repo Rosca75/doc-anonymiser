@@ -83,7 +83,7 @@ its own:
 |---|---|---|
 | `useBuiltInPatterns` | MASTER over the structured signal categories (email, VAT, IBAN, amount, date, …). Off means pass 1 is skipped and no signal category is replaced, whatever `categories` selects; the selection is left intact. Produces DIRECT MATCHES, never Suggestions. | on |
 | `useHeuristicDiscovery` | Heuristic discovery: spelling, context, frequency and deterministic gazetteers. Produces SUGGESTIONS. | on |
-| `signalSuggestionSources` | `{email: bool}` keyed by `engine.AllSignalSources`. Which built-in signals may be used as EVIDENCE to derive Suggestions. Produces SUGGESTIONS. | `{email: true}` |
+| `signalSuggestionSources` | `{email: {"email.person": bool, "email.organisation": bool}}`, keyed by `engine.AllSignalSources` and then by `engine.SignalDerivations[source]`. Which READINGS of which built-in signals may be used as EVIDENCE to derive Suggestions. Produces SUGGESTIONS. | every reading on |
 
 The section's on/off state is DERIVED (`state.js smartDetectionOn`): it is on when
 any of the three is on. There is deliberately no fourth persisted boolean, because
@@ -91,12 +91,24 @@ a stored section flag can disagree with the three methods it claims to summarise
 and a section reading "On" while every method is off lies about what a run does.
 The rail's header switch is a master that changes all three in one action.
 
-`signalSuggestionSources` does NOT govern whether a signal is matched and
-replaced. Clearing `email` stops email-DERIVED Suggestions and leaves email
-anonymisation exactly as it was, which is governed by `useBuiltInPatterns` and the
-`email` category. Conflating the two is the mistake the separate setting exists to
-prevent. A source key the object omits reads as its DEFAULT, never as off, on both
-sides: the safe reading of silence is the shipped behaviour.
+`signalSuggestionSources` is keyed by source AND by DERIVATION, because one signal
+supports several readings through several mechanisms: an address's local part is
+evidence for a person (`email.person`), its domain for an organisation
+(`email.organisation`), and wanting one without the other is a reasonable thing to
+want. Each reading is switched on its own; a source has no boolean of its own, and
+the rail DERIVES the signal's master state from its readings (on when any is on) for
+the same reason the Smart detection section derives its own.
+
+It does NOT govern whether a signal is matched and replaced. Clearing a reading
+stops the Suggestions THAT reading produces and leaves email anonymisation exactly
+as it was, which is governed by `useBuiltInPatterns` and the `email` category.
+Conflating the two is the mistake the separate setting exists to prevent. A key the
+object omits reads as its DEFAULT, never as off, at either level and on both sides:
+the safe reading of silence is the shipped behaviour.
+
+Go REFUSES an unknown source or an unknown derivation rather than storing it, and
+the refusal names the valid set: stored, it would be a switch nothing reads for the
+rest of the session.
 
 There is no cloud route and no `useCloudAI`, on either side.
 
@@ -264,7 +276,7 @@ review gate rather than enforce it.
 | `saveSession(request)` | request | persists the session (Values, the never-anonymise list, patterns, settings, registry, the removal list and the spent placeholder numbers). Warn the user first: the file contains the re-identification key |
 | `loadSession()` | — | the `Session` object, or `null` when the user cancels |
 
-The session file is **schema version 7** and nothing else is accepted. Its shape
+The session file is **schema version 8** and nothing else is accepted. Its shape
 is `{version, values, allowTerms, patterns, settings, registry,
 placeholderOverrides, removedValues, retiredPlaceholders}`. A file of any other
 version is REFUSED with an actionable message naming which direction the mismatch

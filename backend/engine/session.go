@@ -50,7 +50,13 @@ import (
 //	    switched signal-derived Suggestions off. Reading a v6 file field by field
 //	    would mean guessing at every one of those, and each guess changes what
 //	    the next run replaces.
-const SessionVersion = 7
+//	v8: signalSuggestionSources is keyed by source AND derivation, because one
+//	    signal supports several readings and each is switched on its own. A v7
+//	    file holds one boolean per source, which no longer describes what runs: a
+//	    v7 `{"email": true}` cannot say whether the user wanted people from local
+//	    parts, organisations from domains, or both, and a v8 reader guessing
+//	    "both" would produce Suggestions the user had switched off.
+const SessionVersion = 8
 
 // SessionSettings mirrors the app settings worth persisting. The engine does not
 // interpret them: they round-trip for app.go.
@@ -75,10 +81,11 @@ type SessionSettings struct {
 	// could disagree.
 	UseBuiltInPatterns    *bool `json:"useBuiltInPatterns,omitempty"`
 	UseHeuristicDiscovery *bool `json:"useHeuristicDiscovery,omitempty"`
-	// SignalSuggestionSources is Smart detection's third method: which built-in
-	// signals may DERIVE Suggestions (signals.go). It does not govern whether
-	// those signals are matched and replaced, which is what Built-in patterns
-	// and the category's own switch do.
+	// SignalSuggestionSources is Smart detection's third method: which readings of
+	// which built-in signals may DERIVE Suggestions (signals.go), keyed by source
+	// and then by derivation. It does not govern whether those signals are matched
+	// and replaced, which is what Built-in patterns and the category's own switch
+	// do.
 	SignalSuggestionSources SignalSourceSelection `json:"signalSuggestionSources,omitempty"`
 	// MinConfidence is the detection-confidence floor. Absent loads as 0, which
 	// is exactly the "keep every detection" default.

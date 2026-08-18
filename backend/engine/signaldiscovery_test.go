@@ -18,12 +18,13 @@ func batch(pairs ...string) []Document {
 	return docs
 }
 
-// discover runs signal-based discovery with email on and an empty allowlist.
+// discover runs signal-based discovery with every email reading on and an empty
+// allowlist.
 func discover(t *testing.T, docs []Document) []Suggestion {
 	t.Helper()
 	return DiscoverFromSignals(SignalDiscoveryInput{
 		Documents: docs,
-		Sources:   SignalSourceSelection{SignalSourceEmail: true},
+		Sources:   DefaultSignalSources(),
 		Allow:     NewEmptyAllowlist(),
 	})
 }
@@ -299,7 +300,7 @@ func TestAllowlistVetoesASignalSuggestion(t *testing.T) {
 	allow.Add("Pierre Dupont")
 	got := DiscoverFromSignals(SignalDiscoveryInput{
 		Documents: docs,
-		Sources:   SignalSourceSelection{SignalSourceEmail: true},
+		Sources:   DefaultSignalSources(),
 		Allow:     allow,
 	})
 	if s := find(got, "Pierre Dupont"); s != nil {
@@ -321,7 +322,7 @@ func TestARemovedValueIsNotSuggestedAgain(t *testing.T) {
 	}})
 	got := DiscoverFromSignals(SignalDiscoveryInput{
 		Documents: docs,
-		Sources:   SignalSourceSelection{SignalSourceEmail: true},
+		Sources:   DefaultSignalSources(),
 		Allow:     allow,
 	})
 	if s := find(got, "Pierre Dupont"); s != nil {
@@ -340,8 +341,11 @@ func TestDisablingTheEmailSourceStopsOnlyDiscovery(t *testing.T) {
 
 	off := DiscoverFromSignals(SignalDiscoveryInput{
 		Documents: docs,
-		Sources:   SignalSourceSelection{SignalSourceEmail: false},
-		Allow:     NewEmptyAllowlist(),
+		Sources: SignalSourceSelection{SignalSourceEmail: {
+			DerivationEmailPerson:       false,
+			DerivationEmailOrganisation: false,
+		}},
+		Allow: NewEmptyAllowlist(),
 	})
 	if len(off) != 0 {
 		t.Errorf("with the source off there must be no Suggestions, got %+v", off)
@@ -359,6 +363,93 @@ func TestDisablingTheEmailSourceStopsOnlyDiscovery(t *testing.T) {
 	if !found {
 		t.Error("switching off email-derived Suggestions must not stop email anonymisation")
 	}
+}
+
+// --- The per-reading switches -------------------------------------------
+
+// TestPersonDerivationOffKeepsOrganisationSuggestions: the two readings of an
+// address are produced by two separate mechanisms (personSeeds from the local
+// part, organisationSeeds from the domain), so clearing one must leave the other
+// producing its own rows. A gate on the SOURCE could only answer both at once,
+// which is why the selection is keyed by derivation.
+func TestPersonDerivationOffKeepsOrganisationSuggestions(t *testing.T) {
+	t.Run("detection/person_reading_off", func(t *testing.T) {
+		docs := batch(
+			"mail.md", "pierre.dupont@tpps.com\n",
+			"body.md", "Pierre Dupont signed for Tpps France.\n")
+
+		got := DiscoverFromSignals(SignalDiscoveryInput{
+			Documents: docs,
+			Sources: SignalSourceSelection{SignalSourceEmail: {
+				DerivationEmailPerson:       false,
+				DerivationEmailOrganisation: true,
+			}},
+			Allow: NewEmptyAllowlist(),
+		})
+		if s := find(got, "Pierre Dupont"); s != nil {
+			t.Errorf("the person reading is off, so it must suggest nothing, got %+v", s)
+		}
+		if find(got, "Tpps France") == nil {
+			t.Errorf("the organisation reading is on and must still produce its rows, got %+v", got)
+		}
+	})
+}
+
+// TestOrganisationDerivationOffKeepsPersonSuggestions is the mirror. Both
+// directions are asserted, because a gate wired to the wrong producer passes one
+// of them.
+func TestOrganisationDerivationOffKeepsPersonSuggestions(t *testing.T) {
+	t.Run("detection/organisation_reading_off", func(t *testing.T) {
+		docs := batch(
+			"mail.md", "pierre.dupont@tpps.com\n",
+			"body.md", "Pierre Dupont signed for Tpps France.\n")
+
+		got := DiscoverFromSignals(SignalDiscoveryInput{
+			Documents: docs,
+			Sources: SignalSourceSelection{SignalSourceEmail: {
+				DerivationEmailPerson:       true,
+				DerivationEmailOrganisation: false,
+			}},
+			Allow: NewEmptyAllowlist(),
+		})
+		if s := find(got, "Tpps France"); s != nil {
+			t.Errorf("the organisation reading is off, so it must suggest nothing, got %+v", s)
+		}
+		if find(got, "Pierre Dupont") == nil {
+			t.Errorf("the person reading is on and must still produce its rows, got %+v", got)
+		}
+	})
+}
+
+// TestClearingOneReadingKeepsEmailAnonymisation is the §5 invariant, now per
+// reading: clearing a reading stops the Suggestions THAT reading produces and must
+// never stop the address itself being anonymised. That is governed by Built-in
+// patterns and the signal's own category, and nothing in this file touches it.
+func TestClearingOneReadingKeepsEmailAnonymisation(t *testing.T) {
+	t.Run("detection/reading_off_keeps_the_signal", func(t *testing.T) {
+		const text = "Write to pierre.dupont@tpps.com. Pierre Dupont signed.\n"
+
+		for _, off := range []string{DerivationEmailPerson, DerivationEmailOrganisation} {
+			sel := DefaultSignalSources()
+			sel[SignalSourceEmail][off] = false
+			_ = DiscoverFromSignals(SignalDiscoveryInput{
+				Documents: batch("only.md", text),
+				Sources:   sel,
+				Allow:     NewEmptyAllowlist(),
+			})
+
+			spans := DetectPIISelected(text, PresetSelection(LevelMedium), CountryLU)
+			found := false
+			for _, s := range spans {
+				if s.Category == CatEmail && s.Original == "pierre.dupont@tpps.com" {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("with %s cleared the address itself must still be anonymised", off)
+			}
+		}
+	})
 }
 
 // TestNilSourcesMeansTheDefaults: a caller that has not reached the settings yet

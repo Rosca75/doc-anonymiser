@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 
 import { outputName, applySession, profileCard } from "./views/export.js";
 import {
-  resetState, getState, smartDetectionOn, enabledSignalSources, SIGNAL_SOURCES,
+  resetState, getState, smartDetectionOn, enabledSignalSources, signalDerivationOn, SIGNAL_SOURCES,
 } from "./state.js";
 import { one, exists, textOf } from "./testhtml.js";
 
@@ -62,18 +62,46 @@ test("applySession with every method off leaves the section reading off", () => 
   applySession({
     settings: {
       level: "medium", useBuiltInPatterns: false, useHeuristicDiscovery: false,
-      signalSuggestionSources: { email: false },
+      signalSuggestionSources: {
+        email: { "email.person": false, "email.organisation": false },
+      },
     },
   });
   assert.equal(smartDetectionOn(getState()), false);
   assert.deepEqual(enabledSignalSources(getState()), []);
 });
 
-test("applySession restores a signal source the user switched off", () => {
+test("applySession restores each signal READING the user switched off", () => {
   resetState();
-  applySession({ settings: { level: "medium", signalSuggestionSources: { email: false } } });
+  applySession({
+    settings: {
+      level: "medium",
+      signalSuggestionSources: {
+        email: { "email.person": false, "email.organisation": false },
+      },
+    },
+  });
   assert.deepEqual(enabledSignalSources(getState()), [],
-    "a source switched off must come back off, or the file did not save the decision");
+    "readings switched off must come back off, or the file did not save the decision");
+});
+
+test("applySession restores ONE reading off and leaves the other on", () => {
+  // The reason the shape is nested: a v7 file's one boolean per source could not
+  // say this, and a reader guessing "both on" would produce Suggestions the user
+  // had switched off.
+  resetState();
+  applySession({
+    settings: {
+      level: "medium",
+      signalSuggestionSources: { email: { "email.person": false } },
+    },
+  });
+  assert.equal(signalDerivationOn(getState(), "email", "email.person"), false,
+    "the reading the file cleared comes back cleared");
+  assert.equal(signalDerivationOn(getState(), "email", "email.organisation"), true,
+    "and the one it says nothing about lands on its default, not on off");
+  assert.deepEqual(enabledSignalSources(getState()), ["email"],
+    "so the signal still derives something, and its master still reads on");
 });
 
 test("profileCard renders as Profile with Save and NO Load button", () => {

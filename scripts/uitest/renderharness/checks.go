@@ -210,6 +210,8 @@ type railResult struct {
 	LocalOn            *bool    `json:"localOn"`
 	Categories         int      `json:"categories"`
 	CategoriesWithSize int      `json:"categoriesWithSize"`
+	SignalGroups       []string `json:"signalGroups"`
+	SignalMasters      []string `json:"signalMasters"`
 	MethodPairRow      *struct {
 		BuiltInTop            int      `json:"builtInTop"`
 		HeuristicTop          int      `json:"heuristicTop"`
@@ -274,6 +276,21 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 		fmt.Sprintf("%d of %d have a height", got.CategoriesWithSize, got.Categories),
 		"A checkbox inside a folded group is in the DOM but not something the user can tick: the "+
 			"category groups open by default.")
+
+	// The signal control is a tree, and it is built from the frontend's lists, which
+	// the Go parity guard holds to the engine's. One group per signal, one master per
+	// group: a master over nothing, or a group with no master, is a control that
+	// cannot say what it does.
+	r.assert("the signal control is one group per signal", len(got.SignalGroups) == 1,
+		"1 .checklist-group (one implemented signal source)",
+		fmt.Sprintf("%d: %v", len(got.SignalGroups), got.SignalGroups),
+		"views/identifyrail.js builds the groups from state.js SIGNAL_SOURCES.")
+
+	r.assert("every signal group has its own master switch",
+		len(got.SignalMasters) == len(got.SignalGroups),
+		"one .checklist-master per group",
+		fmt.Sprintf("%d masters for %d groups: %v", len(got.SignalMasters), len(got.SignalGroups), got.SignalMasters),
+		"The master is what saves switching a whole signal off one reading at a time.")
 
 	// "Side by side" is a claim about geometry, so geometry is what answers it.
 	// Markup order proves nothing here: a column-flex parent stacks the same
@@ -432,6 +449,83 @@ func checkConfigurePanelFit(c *cdpClient, r *reporter) {
 		describeBool(got.FootReachable),
 		"Prose under every control is what put the controls at the foot out of reach. Scrolling "+
 			"to the end must land on them.")
+}
+
+// --- Expanding a signal shows its readings ----------------------------------
+
+type signalDerivationResult struct {
+	Error                    string `json:"error"`
+	Source                   string `json:"source"`
+	CollapsedRows            int    `json:"collapsedRows"`
+	CollapsedVisible         int    `json:"collapsedVisible"`
+	OpenedVisible            int    `json:"openedVisible"`
+	Derivation               string `json:"derivation"`
+	ReadingWentOff           *bool  `json:"readingWentOff"`
+	OtherReadingsStillOn     *bool  `json:"otherReadingsStillOn"`
+	GroupStayedOpenAfterTick *bool  `json:"groupStayedOpenAfterTicking"`
+	MasterAfterTick          *bool  `json:"masterAfterTick"`
+}
+
+// checkSignalDerivations asserts that expanding a signal REVEALS its readings and
+// that each is independently switchable.
+//
+// Collapsed, the readings are in the DOM at zero height: present to a string test
+// and absent to the user. So "expanding shows them" is a claim about geometry, and
+// only this layer can answer it. It also drives the two controls that must stay
+// separate, since two jobs on one element is how a master gets switched by
+// accident: the chevron folds without ticking, and the master ticks without
+// folding.
+func checkSignalDerivations(c *cdpClient, r *reporter) {
+	r.step("Expanding a signal reveals its readings, each switchable on its own")
+
+	var got signalDerivationResult
+	if err := c.eval("__uiProbes.signalDerivations()", &got); err != nil {
+		r.assert("the signal-derivation probe runs", false, "a rendered signal control",
+			err.Error(),
+			"views/identifyrail.js signalSourceControl renders ui.js expandableChecklist.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the signal-derivation probe runs", false, "#signal-sources in the Identify rail",
+			got.Error, "The control is one of Smart detection's three methods.")
+		return
+	}
+
+	r.assert("a collapsed signal costs no vertical space",
+		got.CollapsedRows > 0 && got.CollapsedVisible == 0,
+		fmt.Sprintf("%d readings in the DOM, none of them laid out", got.CollapsedRows),
+		fmt.Sprintf("%d readings, %d with a height", got.CollapsedRows, got.CollapsedVisible),
+		"Collapsed the group is one row. That trade is what keeps the panel short as "+
+			"sources and readings are added, and a string test cannot tell the two states apart.")
+
+	r.assert("expanding it reveals every reading",
+		got.OpenedVisible == got.CollapsedRows,
+		fmt.Sprintf("all %d readings laid out with a height after one click", got.CollapsedRows),
+		fmt.Sprintf("%d of %d", got.OpenedVisible, got.CollapsedRows),
+		"A checkbox in the DOM at zero height is not something the user can tick.")
+
+	r.assert("ticking a reading reaches the store", boolIs(got.ReadingWentOff, true),
+		fmt.Sprintf("%s stored as off", got.Derivation), describeBool(got.ReadingWentOff),
+		"state.js setSignalDerivation writes the leaf, and that is what the next detection "+
+			"run reads. A checkbox that unticks itself proves nothing about the run.")
+
+	r.assert("the other readings are untouched", boolIs(got.OtherReadingsStillOn, true),
+		"every other reading of that signal still on", describeBool(got.OtherReadingsStillOn),
+		"The independence is the whole point of the per-reading switches; the engine "+
+			"honours each on its own (backend/engine/signaldiscovery.go).")
+
+	r.assert("ticking a reading does not fold the group",
+		boolIs(got.GroupStayedOpenAfterTick, true),
+		"the readings still laid out after the tick", describeBool(got.GroupStayedOpenAfterTick),
+		"The checkbox stops the click reaching the head. A group that folds as you tick it "+
+			"makes switching two readings a four-click job.")
+
+	r.assert("the master stays on while any reading is on",
+		boolIs(got.MasterAfterTick, true),
+		"the group's master still checked with one of two readings off",
+		describeBool(got.MasterAfterTick),
+		"The master is DERIVED (state.js signalSourceOn): on when any reading is on. A "+
+			"master that dropped with the first reading would misreport what the run does.")
 }
 
 // --- The Discovery strictness block's measure and inset ---------------------

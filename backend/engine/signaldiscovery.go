@@ -38,8 +38,9 @@ type SignalDiscoveryInput struct {
 	// Documents is the WHOLE imported batch. Signal-based discovery is a
 	// batch-level method by nature, so this is not optional.
 	Documents []Document
-	// Sources says which signals may derive Suggestions. Nil means the
-	// defaults (signals.go), never "none".
+	// Sources says which DERIVATIONS of which signals may derive Suggestions.
+	// Nil, or a missing key at either level, means the defaults (signals.go),
+	// never "none".
 	Sources SignalSourceSelection
 	// Country scopes nothing today, and is carried because the org-name rules a
 	// future source may need are country-scoped exactly as the keyword signal is.
@@ -59,7 +60,16 @@ type SignalDiscoveryInput struct {
 // @param in the batch, the enabled sources, and the allowlist veto
 // @return merged Suggestions, empty when nothing is enabled or nothing is found
 func DiscoverFromSignals(in SignalDiscoveryInput) []Suggestion {
-	if !SignalSourceEnabled(in.Sources, SignalSourceEmail) {
+	// Nothing to do when no reading of any signal is on. Asked source by source
+	// rather than as one flag, so adding a source cannot leave this behind.
+	any := false
+	for _, source := range AllSignalSources {
+		if SignalSourceEnabled(in.Sources, source) {
+			any = true
+			break
+		}
+	}
+	if !any {
 		return nil
 	}
 	return discoverFromEmails(in)
@@ -110,11 +120,18 @@ func discoverFromEmails(in SignalDiscoveryInput) []Suggestion {
 			if !ok {
 				continue
 			}
-			for _, seed := range personSeeds(local, address, doc.Name) {
-				addSeed(seeds, seed)
+			// Each reading is gated on its OWN derivation. Clearing one stops
+			// only its Suggestions: the address itself is still anonymised by
+			// pass 1, and the other reading still produces its own rows.
+			if SignalDerivationEnabled(in.Sources, SignalSourceEmail, DerivationEmailPerson) {
+				for _, seed := range personSeeds(local, address, doc.Name) {
+					addSeed(seeds, seed)
+				}
 			}
-			for _, seed := range organisationSeeds(domain, address, doc.Name) {
-				addSeed(seeds, seed)
+			if SignalDerivationEnabled(in.Sources, SignalSourceEmail, DerivationEmailOrganisation) {
+				for _, seed := range organisationSeeds(domain, address, doc.Name) {
+					addSeed(seeds, seed)
+				}
 			}
 		}
 	}

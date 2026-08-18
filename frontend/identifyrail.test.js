@@ -19,7 +19,8 @@ import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
 import {
   ALL_CATEGORIES, NAME_CATEGORIES, resetState, getState, setState, setUseLocalAI,
   setAIScope, setCategoryGroup, setUseBuiltInPatterns, setUseHeuristicDiscovery,
-  setSmartDetection, setSignalSource, SIGNAL_SOURCES,
+  setSmartDetection, setSignalSource, setSignalDerivation,
+  SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
 } from "./state.js";
 import { textOf, stripTags, all, one, exists } from "./testhtml.js";
 
@@ -259,35 +260,94 @@ test("the two plain method switches share one row, the expanding one does not", 
   }
 });
 
-test("the signal-source checklist is closed by default and summarises what is on", () => {
-  // Closed it is ONE row: that is what keeps the panel short as sources are
-  // added. The summary is the read-out, not a list of names.
+test("each signal is one collapsed row that says which readings are on", () => {
+  // Collapsed a signal costs ONE row, which is what keeps the panel short as
+  // sources and readings are added. The read-out names the readings rather than
+  // counting them: the row asks WHICH reading, and a count answers something else.
   resetState();
   const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  const control = one(smart, "#signal-sources");
-  assert.ok(!("data-open" in control.attrs), "it starts closed");
-  assert.equal(one(smart, ".checklist-toggle").attrs["aria-expanded"], "false");
-  assert.equal(textOf(smart, "span.checklist-summary"), RAIL.signalSourceLabel.email,
-    "one enabled source reads as its own name");
-  assert.ok("hidden" in one(smart, ".checklist-list").attrs, "the list is hidden while closed");
+  const groups = all(smart, ".checklist-group");
+  assert.deepEqual(groups.map((g) => g.attrs["data-group"]), SIGNAL_SOURCES,
+    "one group per signal that implements discovery, and no other");
+  assert.ok(!("data-open" in groups[0].attrs), "a signal starts collapsed");
+  assert.equal(one(smart, ".checklist-group-toggle").attrs["aria-expanded"], "false");
+  assert.equal(textOf(smart, "span.checklist-summary"),
+    RAIL.signalDerivationSummary([
+      RAIL.signalDerivationLabel["email.person"],
+      RAIL.signalDerivationLabel["email.organisation"],
+    ]),
+    "both readings on reads as both their names");
+  assert.ok("hidden" in one(smart, ".checklist-rows").attrs,
+    "the readings are hidden while the signal is collapsed");
 });
 
-test("the checklist lists only the sources that implement discovery", () => {
+test("a signal's rows are its implemented readings, each individually switchable", () => {
   // A row with nothing behind it is a control that appears to do something and
-  // does not, so the rows come from SIGNAL_SOURCES, which the Go parity guard
-  // holds to the engine's own list.
+  // does not, so the rows come from SIGNAL_DERIVATIONS, which the Go parity guard
+  // holds to the engine's own producers.
   resetState();
   const smart = all(railBody(getState()), "section.rail-section")[0].outer;
   const boxes = all(smart, "input.checklist-box");
-  assert.deepEqual(boxes.map((b) => b.attrs["data-checklist"]), SIGNAL_SOURCES);
-  assert.ok("checked" in boxes[0].attrs, "email-derived Suggestions default on");
+  assert.deepEqual(boxes.map((b) => b.attrs["data-derivation"]),
+    SIGNAL_DERIVATIONS.email);
+  assert.ok(boxes.every((b) => "checked" in b.attrs),
+    "every reading defaults on: the evidence is deterministic and deriving from it "
+    + "is why the feature exists");
+
+  // And the master is keyed by SOURCE, so the two levels cannot be confused.
+  const master = all(smart, "input.checklist-master");
+  assert.deepEqual(master.map((b) => b.attrs["data-source"]), SIGNAL_SOURCES);
 });
 
-test("the closed summary reads Off once every source is cleared", () => {
+test("every reading explains itself through a tooltip", () => {
+  // "Person names" alone does not say that clearing it leaves the address itself
+  // anonymised, which is the distinction the whole setting exists for.
+  resetState();
+  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
+  const rows = all(one(smart, "#signal-sources").outer, ".checklist-row");
+  assert.equal(rows.length, SIGNAL_DERIVATIONS.email.length);
+  for (const row of rows) {
+    assert.ok(exists(row.outer, "span.help"),
+      `a reading with no help tooltip: ${stripTags(row.inner).trim()}`);
+  }
+});
+
+test("the signal's own checkbox is a DERIVED master over its readings", () => {
+  // On when any reading is on, off only when all of them are. Never stored: a
+  // fourth flag beside the readings it summarises could disagree with them, and a
+  // row reading "on" over readings that are all off lies about what a run does.
+  resetState();
+  const railFor = () => all(railBody(getState()), "section.rail-section")[0].outer;
+
+  setSignalDerivation("email", "email.person", false);
+  let master = one(railFor(), "input.checklist-master");
+  assert.ok("checked" in master.attrs,
+    "one reading off leaves the signal reading on, because it still derives something");
+
+  setSignalDerivation("email", "email.organisation", false);
+  master = one(railFor(), "input.checklist-master");
+  assert.ok(!("checked" in master.attrs),
+    "every reading off is the only thing that reads as off");
+});
+
+test("the collapsed read-out reads Off once every reading is cleared", () => {
   resetState();
   for (const source of SIGNAL_SOURCES) setSignalSource(source, false);
   const smart = all(railBody(getState()), "section.rail-section")[0].outer;
   assert.equal(textOf(smart, "span.checklist-summary"), RAIL.signalSourcesOff);
+});
+
+test("clearing ONE reading leaves the other producing its own Suggestions", () => {
+  // The whole point of the per-reading switches: they are independent, and the
+  // engine honours each on its own (backend/engine/signaldiscovery_test.go).
+  resetState();
+  setSignalDerivation("email", "email.person", false);
+  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
+  const boxes = all(smart, "input.checklist-box");
+  const person = boxes.find((b) => b.attrs["data-derivation"] === "email.person");
+  const org = boxes.find((b) => b.attrs["data-derivation"] === "email.organisation");
+  assert.ok(!("checked" in person.attrs), "the cleared reading is off");
+  assert.ok("checked" in org.attrs, "and the other one is untouched");
 });
 
 test("clearing a signal source does not disable the signal's own category", () => {

@@ -22,8 +22,9 @@ import {
   detectionRoutesOn, llmEnabled,
   setUseBuiltInPatterns, setUseHeuristicDiscovery,
   addSuggestions, acceptSuggestion, rejectSuggestion, acceptAllShown,
-  DISCOVERY_METHODS, MATCH_CLASSES, SIGNAL_SOURCES,
+  DISCOVERY_METHODS, MATCH_CLASSES, SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
   signalSourceOn, enabledSignalSources, setSignalSource,
+  signalDerivationOn, enabledSignalDerivations, setSignalDerivation,
   markDetectionRan,
   moveSpelling, valueAutocomplete, reassignOriginal,
   applyImportResult,
@@ -1952,6 +1953,123 @@ test("a missing signal-source key reads as ON, never as off", () => {
   resetState();
   setState({ settings: { ...getState().settings, signalSuggestionSources: {} } });
   assert.equal(signalSourceOn(getState(), "email"), true);
+});
+
+// --- Per-reading signal switches -----------------------------------------
+//
+// A signal supports several READINGS through several mechanisms: an address's
+// local part is evidence for a person, its domain for an organisation. Wanting one
+// without the other is reasonable, so each is stored and switched on its own and
+// the signal above them is a derived master.
+
+test("SIGNAL_DERIVATIONS lists a signal's readings, and every source has some", () => {
+  // The tree the rail renders. A source with no readings would render as a master
+  // over nothing, which is a control that appears to do something and does not.
+  for (const source of SIGNAL_SOURCES) {
+    const derivations = SIGNAL_DERIVATIONS[source];
+    assert.ok(Array.isArray(derivations) && derivations.length > 0,
+      `${source} has no readings, so its row would be a master over nothing`);
+  }
+  assert.deepEqual(SIGNAL_DERIVATIONS.email, ["email.person", "email.organisation"]);
+});
+
+test("every reading is on by default and switchable on its own", () => {
+  resetState();
+  assert.equal(signalDerivationOn(getState(), "email", "email.person"), true);
+  assert.equal(signalDerivationOn(getState(), "email", "email.organisation"), true);
+
+  assert.equal(setSignalDerivation("email", "email.person", false), true);
+  assert.equal(signalDerivationOn(getState(), "email", "email.person"), false);
+  assert.equal(signalDerivationOn(getState(), "email", "email.organisation"), true,
+    "the other reading is untouched: that independence is the whole point");
+  assert.deepEqual(enabledSignalDerivations(getState(), "email"), ["email.organisation"]);
+});
+
+test("the signal's own state is DERIVED from its readings, never stored", () => {
+  // On when ANY reading is on. A stored flag beside the set it summarises could
+  // disagree with it, and a signal reading "on" over readings that are all off
+  // lies about what a run does.
+  resetState();
+  setSignalDerivation("email", "email.person", false);
+  assert.equal(signalSourceOn(getState(), "email"), true,
+    "one reading left on still derives something");
+  assert.deepEqual(enabledSignalSources(getState()), ["email"]);
+
+  setSignalDerivation("email", "email.organisation", false);
+  assert.equal(signalSourceOn(getState(), "email"), false,
+    "every reading off is the only thing that reads as off");
+  assert.deepEqual(enabledSignalSources(getState()), []);
+});
+
+test("setSignalSource is the MASTER: it writes every reading of that signal", () => {
+  resetState();
+  setSignalSource("email", false);
+  for (const derivation of SIGNAL_DERIVATIONS.email) {
+    assert.equal(signalDerivationOn(getState(), "email", derivation), false,
+      `${derivation} must follow the master, or switching a signal off is an N-click job`);
+  }
+  setSignalSource("email", true);
+  assert.deepEqual(enabledSignalDerivations(getState(), "email"), SIGNAL_DERIVATIONS.email);
+});
+
+test("an unknown source-and-reading pair is refused rather than stored", () => {
+  // A derivation identifier is only meaningful UNDER its source, so both halves are
+  // checked: a valid reading filed under the wrong source is just as dead as an
+  // invented one.
+  resetState();
+  assert.equal(setSignalDerivation("email", "email.telepathy", true), false);
+  assert.equal(setSignalDerivation("telepathy", "email.person", true), false);
+  assert.ok(!("email.telepathy" in getState().settings.signalSuggestionSources.email));
+  assert.ok(!("telepathy" in getState().settings.signalSuggestionSources));
+  assert.equal(signalDerivationOn(getState(), "email", "email.telepathy"), false,
+    "an unknown reading is never enabled, whatever the stored map says");
+});
+
+test("a missing reading key reads as ON at either level, never as off", () => {
+  resetState();
+  setState({ settings: { ...getState().settings, signalSuggestionSources: {} } });
+  assert.equal(signalDerivationOn(getState(), "email", "email.person"), true,
+    "no source key at all reads as the shipped default");
+
+  setState({ settings: { ...getState().settings, signalSuggestionSources: { email: {} } } });
+  assert.equal(signalDerivationOn(getState(), "email", "email.person"), true,
+    "a source present with no readings named reads as the shipped default too");
+
+  setState({ settings: { ...getState().settings,
+    signalSuggestionSources: { email: { "email.person": false } } } });
+  assert.equal(signalDerivationOn(getState(), "email", "email.organisation"), true,
+    "and a partial map fills the rest from the defaults, not from off");
+});
+
+test("setSmartDetection writes the NESTED shape, so the master keeps working", () => {
+  // The section master reaches signalSuggestionSources wholesale. Writing a boolean
+  // where a map belongs would leave the whole signal method reading as its default
+  // for the rest of the session, so the section switch would appear not to work.
+  resetState();
+  setSmartDetection(false);
+  assert.equal(smartDetectionOn(getState()), false);
+  for (const source of SIGNAL_SOURCES) {
+    for (const derivation of SIGNAL_DERIVATIONS[source]) {
+      assert.equal(signalDerivationOn(getState(), source, derivation), false,
+        `${derivation} must be off after the section master switched everything off`);
+    }
+  }
+
+  setSmartDetection(true);
+  assert.equal(smartDetectionOn(getState()), true);
+  assert.deepEqual(enabledSignalDerivations(getState(), "email"), SIGNAL_DERIVATIONS.email,
+    "switching the section back on restores every reading to its default");
+});
+
+test("switching ONE reading off leaves the category switch alone", () => {
+  // The invariant, now per reading: clearing a reading stops the Suggestions that
+  // reading produces and must not stop email addresses being anonymised.
+  resetState();
+  setSignalDerivation("email", "email.person", false);
+  assert.equal(getState().settings.categories.email, true,
+    "the email category must be untouched");
+  assert.equal(getState().settings.useBuiltInPatterns, true,
+    "built-in pattern matching must be untouched");
 });
 
 // --- Intersections: values another route also claims ---------------------

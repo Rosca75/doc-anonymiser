@@ -323,11 +323,30 @@ doc-anonymiser/
   an organisation that may appear in prose in another file.
 
   Only the second is switchable, through `signalSuggestionSources`
-  (`backend/engine/signals.go`, mirrored by `frontend/state.js SIGNAL_SOURCES`).
-  Clearing a source stops the Suggestions and must NEVER stop the signal being
-  anonymised: that is governed by Built-in patterns and the signal's own
-  category. Conflating the two is the mistake the separate setting exists to
-  prevent, and a test asserts it at both the engine and the bound-app level.
+  (`backend/engine/signals.go`, mirrored by `frontend/state.js SIGNAL_SOURCES`
+  and `SIGNAL_DERIVATIONS`). Clearing it stops the Suggestions and must NEVER stop
+  the signal being anonymised: that is governed by Built-in patterns and the
+  signal's own category. Conflating the two is the mistake the separate setting
+  exists to prevent, and a test asserts it at both the engine and the bound-app
+  level.
+
+  The second thing is not ONE question but several, because one signal supports
+  several readings through several mechanisms. `signalSuggestionSources` is keyed
+  by SOURCE and then by DERIVATION: an address's local part is evidence for a
+  person (`email.person`, `personSeeds`) and its domain is evidence for an
+  organisation (`email.organisation`, `organisationSeeds`), and a user who wants
+  organisations from domains but does not want "pierre.dupont" read as a person is
+  asking something the engine can answer. So each reading is gated on its own
+  derivation in `discoverFromEmails`, and the invariant above holds PER READING.
+
+  A source has no boolean of its own. `SignalSourceEnabled` DERIVES the signal's
+  state from its readings (on when any is on), for the reason `smartRouteOn`
+  already states: a stored flag beside the set it summarises can disagree with it.
+  The rail renders one expandable row per signal with its readings under it, and
+  the signal's own checkbox is a master over them, derived for display and never
+  stored. `SignalDerivations` is the ONE definition of that tree; only readings
+  with a producer behind them appear, because a row with nothing behind it is a
+  control that appears to do something and does not.
 
   Discovery reads the WHOLE imported batch, because the evidence is in one file
   and the text it points at is usually in another. It suggests nothing unless the
@@ -501,7 +520,7 @@ doc-anonymiser/
 - **Sensitive state stays in memory** by default. Saving a session (registry
   + Values + settings + the removal list + the spent placeholder numbers) to
   disk is an explicit user action with a warning that the file contains the
-  re-identification key. `SessionVersion` is **7**; a file of any other version
+  re-identification key. `SessionVersion` is **8**; a file of any other version
   is refused, never migrated, and the reasons for each bump are recorded beside
   the constant in `backend/engine/session.go`. There is no migration table and no
   compatibility alias anywhere in the loader: a session file holds the

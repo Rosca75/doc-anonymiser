@@ -130,21 +130,27 @@ Windows it steals focus from the window it belongs to.
   per-screen footer (markup plus wiring).
 - `api.js` — THE ONLY bridge caller (see above and `BRIDGE.md`).
 - `state.js` — the store; single source of truth for frontend state. It also
-  holds the three vocabularies the two sides SHARE, each mirroring an engine
+  holds the four vocabularies the two sides SHARE, each mirroring an engine
   list and each guarded by `../detection_parity_test.go`:
   `DISCOVERY_METHODS` (provenance: which methods found a Value, a SET),
   `MATCH_CLASSES` (precedence, in order; read only to NAME the winning method in
-  an intersection warning, never written onto a Value) and `SIGNAL_SOURCES`
-  (which built-in signals may derive Suggestions).
+  an intersection warning, never written onto a Value), `SIGNAL_SOURCES`
+  (which built-in signals may derive Suggestions) and `SIGNAL_DERIVATIONS`
+  (per signal, the READINGS it supports, in display order). A signal's own state
+  is DERIVED from its readings by `signalSourceOn`, never stored, for the same
+  reason `smartDetectionOn` is derived; `setSignalSource` is the MASTER that
+  writes them all, and `setSignalDerivation` writes one.
 - `copy.js` — all user-visible strings + `CATEGORY_LABELS`.
 - `ui.js` — shared UI toolkit: the card kit (`card`, `tabbar`, `countBadge`,
   `chipRow`, `sectionLabel`, `statTile`, `collapsibleGroup`, `stepFooter`,
   `toastHTML`, `modalHTML`), the explanation kit (`helpTooltip`,
-  `wireHelpTooltips`, `dropdownChecklist`) plus `button` and `icon`. There is
+  `wireHelpTooltips`, `expandableChecklist`) plus `button` and `icon`. There is
   exactly ONE way to draw each thing: `card` is the fixed-height surface,
   `collapsibleGroup` the foldable block, `helpTooltip` the explanation,
-  `dropdownChecklist` a set of switches that must not spend a permanent row
-  each.
+  `expandableChecklist` a set of switches that must not spend a permanent row
+  each, grouped where the question they answer is nested (a master over its rows,
+  the master derived for display and never stored). A second builder for the same
+  control is the next inconsistency, so a replaced one is DELETED, not kept.
 - `html.js` — tiny shared HTML helpers (`escapeHTML`).
 - `icons.js` — vendored Material Symbols SVG map. It holds exactly the icons
   the interface draws, no more and no fewer: `ui.js icon(name)` returns the

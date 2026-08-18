@@ -135,7 +135,10 @@ func TestDetectionAlwaysEndsWithATerminalEvent(t *testing.T) {
 func TestBuiltInPatternsAloneRunsNoSmartPhase(t *testing.T) {
 	app := detectionApp()
 	app.settings.UseHeuristicDiscovery = false
-	app.settings.SignalSuggestionSources = engine.SignalSourceSelection{engine.SignalSourceEmail: false}
+	app.settings.SignalSuggestionSources = engine.SignalSourceSelection{engine.SignalSourceEmail: {
+		engine.DerivationEmailPerson:       false,
+		engine.DerivationEmailOrganisation: false,
+	}}
 	app.settings.UseBuiltInPatterns = true // on, and still not a discovery method
 	app.settings.UseLocalAI = false
 	withRecorder(t, app)
@@ -160,7 +163,10 @@ func TestBuiltInPatternsAloneRunsNoSmartPhase(t *testing.T) {
 func TestDetectionWithNoRouteOnStillEnds(t *testing.T) {
 	app := detectionApp()
 	app.settings.UseHeuristicDiscovery = false
-	app.settings.SignalSuggestionSources = engine.SignalSourceSelection{engine.SignalSourceEmail: false}
+	app.settings.SignalSuggestionSources = engine.SignalSourceSelection{engine.SignalSourceEmail: {
+		engine.DerivationEmailPerson:       false,
+		engine.DerivationEmailOrganisation: false,
+	}}
 	app.settings.UseLocalAI = false
 	rec := withRecorder(t, app)
 
@@ -704,7 +710,10 @@ func TestSignalFindingsAreSuggestionsNeverValues(t *testing.T) {
 func TestDisablingTheEmailSourceKeepsEmailAnonymisation(t *testing.T) {
 	app := signalApp()
 	app.settings.SignalSuggestionSources = engine.SignalSourceSelection{
-		engine.SignalSourceEmail: false,
+		engine.SignalSourceEmail: {
+			engine.DerivationEmailPerson:       false,
+			engine.DerivationEmailOrganisation: false,
+		},
 	}
 	withRecorder(t, app)
 

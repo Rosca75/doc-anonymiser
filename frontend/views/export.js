@@ -28,7 +28,7 @@ import {
 import {
   getState, setState, buildRunRequest, addValues, presetCategories,
   setMetaReview, setExportDir, startNewBatch, setDocumentCountry,
-  HEURISTIC_DISCOVERY_DEFAULTS, SIGNAL_SOURCES,
+  HEURISTIC_DISCOVERY_DEFAULTS, SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { button, card, collapsibleGroup, wireGroups, sectionLabel, toastHTML } from "../ui.js";
@@ -468,10 +468,12 @@ export function applySession(session) {
       // state is derived from these.
       useBuiltInPatterns: settings.useBuiltInPatterns !== false,
       useHeuristicDiscovery: settings.useHeuristicDiscovery !== false,
-      // Same rule per SOURCE: a key the file omits falls back to the default
-      // rather than to off, so a source cannot be silently disabled by silence.
+      // Same rule per READING: a key the file omits falls back to the default
+      // rather than to off, at either level, so a reading cannot be silently
+      // disabled by silence.
       signalSuggestionSources: Object.fromEntries(SIGNAL_SOURCES.map((source) =>
-        [source, settings.signalSuggestionSources?.[source] !== false])),
+        [source, Object.fromEntries((SIGNAL_DERIVATIONS[source] ?? []).map((d) =>
+          [d, settings.signalSuggestionSources?.[source]?.[d] !== false]))])),
       minConfidence: settings.minConfidence ?? 0,
       // A session that deliberately turned every heuristic filter off writes
       // zeroes, which must be obeyed; one that says nothing about them gets the

@@ -360,6 +360,15 @@
         // not assumed.
         categoriesWithSize: [...rail.querySelectorAll(".cat-toggle")]
           .filter((c) => c.getBoundingClientRect().height > 0).length,
+        // The signal control is a tree: one group per signal, its readings one
+        // click below. Collapsed the readings are in the DOM at zero height, which
+        // a string test reads as "present" and a user reads as absent, so both
+        // states are measured. The expanding half is done in its own probe below,
+        // because it has to click.
+        signalGroups: [...rail.querySelectorAll("#signal-sources .checklist-group")]
+          .map((g) => g.dataset.group),
+        signalMasters: [...rail.querySelectorAll("#signal-sources .checklist-master")]
+          .map((b) => b.dataset.source),
         // The two plain Smart-detection methods share ONE row. "Side by side" is a
         // claim about geometry, so it is answered with geometry: equal tops, and
         // one to the left of the other. Markup order proves neither, since a
@@ -514,6 +523,75 @@
         proseParagraphs: prose.length,
         proseHeight: Math.round(prose.reduce((sum, el) => sum + el.getBoundingClientRect().height, 0)),
         helpTooltips: rail.querySelectorAll("span.help").length,
+      };
+    },
+
+    /**
+     * signalDerivations() expands a signal row and measures what appears.
+     *
+     * Collapsed, a signal's readings are in the DOM with zero height: present to a
+     * string test and absent to the user. So "expanding shows them" is a claim
+     * about geometry, and this answers it with geometry, by clicking the chevron
+     * the user clicks and measuring the rows before and after.
+     *
+     * It also drives the two switches that must NOT be the same control: the
+     * chevron folds without ticking, and the master ticks without folding. Two jobs
+     * on one element is how a master gets switched by accident.
+     */
+    async signalDerivations() {
+      const s = await store();
+      await seed("identify");
+      const control = document.querySelector("#signal-sources");
+      if (!control) return { error: "no #signal-sources control in the Identify rail" };
+
+      const group = control.querySelector(".checklist-group");
+      if (!group) return { error: "no .checklist-group in the signal control" };
+      const source = group.dataset.group;
+
+      const rowBoxes = () => [...group.querySelectorAll("input.checklist-box")];
+      const visibleRows = () => rowBoxes()
+        .filter((b) => b.getBoundingClientRect().height > 0).length;
+
+      const collapsedRows = rowBoxes().length;
+      const collapsedVisible = visibleRows();
+
+      const toggle = group.querySelector(".checklist-group-toggle");
+      if (!toggle) return { error: "the signal group has no chevron to expand it" };
+      toggle.click();
+      await settle();
+
+      // The repaint replaced the nodes, so everything below is re-queried.
+      const opened = document.querySelector("#signal-sources .checklist-group");
+      const openedBoxes = [...opened.querySelectorAll("input.checklist-box")];
+      const openedVisible = openedBoxes
+        .filter((b) => b.getBoundingClientRect().height > 0).length;
+
+      // Ticking a reading must not fold the group: the checkbox stops the click
+      // reaching the head. Measured through the STORE, because a checkbox visually
+      // unticking itself proves nothing about what the next run reads.
+      const first = openedBoxes[0];
+      const derivation = first?.dataset.derivation;
+      first?.click();
+      await settle();
+
+      const afterTick = document.querySelector("#signal-sources .checklist-group");
+      const stillOpen = [...afterTick.querySelectorAll("input.checklist-box")]
+        .filter((b) => b.getBoundingClientRect().height > 0).length > 0;
+      const stored = s.getState().settings?.signalSuggestionSources?.[source] ?? {};
+      const masterAfterTick = afterTick.querySelector(".checklist-master")?.checked ?? null;
+
+      return {
+        source,
+        collapsedRows,
+        collapsedVisible,
+        openedVisible,
+        derivation,
+        readingWentOff: stored[derivation] === false,
+        otherReadingsStillOn: Object.entries(stored)
+          .filter(([key]) => key !== derivation).every(([, on]) => on !== false),
+        groupStayedOpenAfterTicking: stillOpen,
+        // The master is DERIVED: one reading off out of two leaves it on.
+        masterAfterTick,
       };
     },
 
