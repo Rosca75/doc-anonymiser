@@ -34,7 +34,148 @@ Ground rules for this change order (unchanged from `CLAUDE.md`):
 
 ---
 
-## 0. Why the suite did not catch any of this
+## 0. Cold-start context for the implementing session
+
+Read this section first if you are picking this document up with no
+conversation history. It is everything the diagnosing session knew.
+
+### Where the work stands
+
+| Fact | Value |
+|---|---|
+| Repository | `Rosca75/doc-anonymiser`, module path `doc-anonymiser` |
+| Branch to develop and push on | `claude/pr46-regressions-fix-fypk5n` |
+| Its current head | this document, and nothing else. No code has changed yet. |
+| Base | `b8798f5`, the merge of PR#46 (`docs/CHANGE-04.md`) into the default branch |
+| Suites | `go test ./...` and `node --test "frontend/**/*.test.js"`, both must be green |
+| Audit | `task audit` (go-task, no make) |
+| Real-rendering harness | `docs/UITESTING.md`; the Linux Chromium harness is a BLOCKING CI step |
+
+The five items below were reported by the owner against the BUILT Windows
+application after PR#46 merged. Every one of them passed a green suite, so
+treat "the tests pass" as no evidence at all until the new guards in CR5 exist.
+
+### The owner's report, verbatim in substance
+
+Step 2 Identify, left "Configure" panel:
+
+1. The "Heuristic discovery" tick box must sit immediately to the right of
+   "Built-in patterns", aligned horizontally.
+2. The "Signal-based suggestions" card with "Suggestion sources" is not what was
+   wanted. What is wanted is expand and collapse per SIGNAL, so the user opens a
+   signal, sees which suggestions can be derived from it, and switches each on or
+   off.
+3. In "Discovery strictness" the parameters must be indented to line up with the
+   section labels above them, and the "How much to trust" dropdown is too narrow
+   to read: about three times wider.
+4. The helpers that should appear on hovering a label never appear.
+
+Step 2 Identify, right "Identify" panel:
+
+5. Most of the "My values" tab controls do nothing, as if broken: editing a
+   Value's main text, "Stop replacing this spelling here", "Merge with [...]",
+   and the remove control at the top right of a card.
+
+The owner also confirmed: **no retro-compatibility is required**, and the fix
+order is the implementer's call.
+
+### What was already established by diagnosis (do not re-derive)
+
+Each root cause below was read out of the code, not guessed. File and
+approximate line are given so the first edit can be verified rather than
+searched for.
+
+- **Item 5 is one bug with seven symptoms.** `frontend/views/identifyworkspace.js`
+  ~713 renders `data-mainText="..."`. HTML parsers lower-case attribute NAMES, so
+  the DOM carries `data-maintext` and `dataset.mainText` is `undefined` in every
+  handler. Before PR#46 the attribute was `data-canonical`, all lower case, which
+  is why the rename to `mainText` broke it. `data-key` and `data-category` stayed
+  lower case, so the panels still OPEN and only the actions inside fail. Same
+  emission at `identifyworkspace.js` ~742 (the group-pick checkbox) and
+  `frontend/views/anonymise.js` ~288. See CR4.
+- **Item 4 is a missing icon, not a missing behaviour.** `ui.js helpTooltip()`
+  renders `icon("info")`; `frontend/icons.js ICONS` has no `"info"` key; and
+  `ui.js icon(name)` (~22) returns the EMPTY STRING for an unknown name. So every
+  help trigger in the application is an invisible 1.15rem hit area and there is
+  nothing on screen to hover. Separately, `.help[data-open] .help-bubble`
+  (`style.css` ~1553) overrides the deliberate `position: fixed` back to
+  `absolute`, and `.cgroup` is `overflow: hidden` (~364), so an open bubble is
+  clipped. See CR3a and CR3b.
+- **Item 3 is two CSS facts.** `.rail-section > .cgroup-body` has
+  `padding: 0.9rem 1.1rem` (~748) but `.rail-subgroup` has no equivalent, so the
+  nested strictness fields sit at zero inset. `.rail-field` is
+  `grid-template-columns: 1fr 6rem` (~780), which is what makes the dropdown
+  6rem wide. See CR3c.
+- **Item 1 is `smartMethods(s)`** in `frontend/views/identifyrail.js`: three
+  stacked `div.rail-toggle` rows inside a column-flex `.rail-block`. See CR1.
+- **Item 2 needs the engine, not only the rail.** The rail's checklist is keyed
+  by SIGNAL (`settings.signalSuggestionSources = { email: true }`), while the two
+  things an email derives are produced by two separate functions in
+  `backend/engine/signaldiscovery.go` (`personSeeds` from the local part,
+  `organisationSeeds` from the domain). Switching them independently is only
+  truthful if the engine honours it, so the selection type changes. See CR2.
+
+### Why the suite missed all of it, and what that means for you
+
+- `frontend/testhtml.js` and the view tests assert HTML **strings**, and they
+  preserve attribute case. A camel-case `data-` attribute therefore passes every
+  frontend test and fails in every browser. Assertions about strings can never
+  catch this class; only the guard in CR5a and the real-browser harness can.
+- `icon()` failing soft to `""` means a missing glyph is invisible to tests that
+  assert a wrapper element exists. `frontend/ui.test.js` asserts
+  `<button class="help-icon"` and passes on an empty button.
+- The rendering harness measures the rail's SHAPE but never drives a value
+  card's actions, so item 5 was outside every layer.
+
+**Consequence for this change order:** write the two guards early (CR5) and
+watch them FAIL on the unfixed tree before fixing anything. A guard that has
+never been seen red is not known to work.
+
+### Decisions the owner has already approved
+
+1. Item 2 becomes one expandable row per signal, with the derivations under it
+   switchable individually, and the signal's own checkbox acting as a master
+   over them, derived for display and never stored. For email the two
+   derivations are "Person names, from the part before the @" and
+   "Organisation names, from the domain".
+2. `SessionVersion` may be bumped (7 to 8) and version 7 files refused, never
+   migrated.
+3. The recommended order is CR4 and the guards first, then the tooltip and
+   layout work, then CR2 last because it changes a contract. Any order that
+   keeps both suites green at each step is acceptable.
+
+### Recommended session setup
+
+- Model **Opus 5** (`claude-opus-5`), reasoning effort **high** for CR1, CR3,
+  CR4 and CR5, and **xhigh** for CR2. CR2 changes an engine type that flows
+  through `app.go`, `app_detect.go`, `app_export.go`, `session.go`, the rail, the
+  store, the copy and three parity guards at once, and a partial rename there
+  leaves the build broken in a way that is tedious to unwind.
+- Do NOT split the CRs across parallel sessions. Five of the seven files they
+  touch are shared (see the conflict analysis), and `scripts/uitest/probes.js` is
+  a single file both harnesses read by contract (`uitest_parity_test.go`).
+- Commit per CR, with the CR number in the message body but never in a code
+  comment (`CLAUDE.md` §6: comments explain intent, not change history).
+
+### Paste-ready opening prompt for the fresh session
+
+> Read `CLAUDE.md`, `frontend/CLAUDE.md`, `backend/CLAUDE.md`,
+> `frontend/BRIDGE.md`, `docs/UITESTING.md` and then `docs/CHANGE-05.md` in full.
+> You are on branch `claude/pr46-regressions-fix-fypk5n`, which currently holds
+> only that plan. Implement CHANGE-05 in the order its "Recommended order"
+> section gives, one commit per CR. For each CR: write or update the tests named
+> in the CR in the SAME commit as the behaviour, run `go test ./...` and
+> `node --test "frontend/**/*.test.js"`, and run the Linux rendering harness
+> (`docs/UITESTING.md`) for the CRs that add a probe. Write the two new guards
+> (`dataset_parity_test.go`, `icon_parity_test.go`) BEFORE their fixes and
+> confirm they fail on the unfixed tree, then fix and confirm they pass. Push to
+> `claude/pr46-regressions-fix-fypk5n`. Do not open a pull request unless I ask.
+> If a decision in the plan turns out to be wrong once you are in the code, stop
+> and tell me rather than inventing a third option.
+
+---
+
+## 0.1 Why the suite did not catch any of this
 
 Three distinct blind spots, and every CR closes the one it fell through:
 
