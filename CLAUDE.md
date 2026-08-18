@@ -60,6 +60,8 @@ doc-anonymiser/
 │                              #   signal-source parity guards (package main)
 ├── dataset_parity_test.go     # no camel-case data attribute is rendered: a browser
 │                              #   lower-cases attribute NAMES, so dataset.x is dead
+├── icon_parity_test.go        # every icon name used exists in ICONS and every ICONS
+│                              #   entry is drawn: icon() fails soft to ""
 ├── value_shape_test.go        # the Value wire shape: no retired key comes back,
 │                              #   and every current field is present
 ├── copy_guard_test.go         # no em dashes in Go user-facing strings (package main)

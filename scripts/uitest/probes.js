@@ -518,6 +518,21 @@
 
       const closedVisible = bubble.getBoundingClientRect().height > 0;
 
+      // The TRIGGER itself, measured before anything is opened. A trigger with no
+      // glyph is the defect that made every tooltip in the application
+      // undiscoverable: ui.js icon() returns the empty string for a name absent
+      // from ICONS, so helpTooltip rendered a button with nothing in it and the
+      // whole mechanism worked on an invisible hit area.
+      const triggerBox = iconBtn.getBoundingClientRect();
+      const glyph = iconBtn.querySelector("svg");
+      const trigger = {
+        width: Math.round(triggerBox.width),
+        height: Math.round(triggerBox.height),
+        hasGlyph: !!glyph,
+        glyphWidth: glyph ? Math.round(glyph.getBoundingClientRect().width) : 0,
+        glyphHeight: glyph ? Math.round(glyph.getBoundingClientRect().height) : 0,
+      };
+
       help.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
       await new Promise((r) => requestAnimationFrame(() => r()));
       const box = bubble.getBoundingClientRect();
@@ -525,6 +540,7 @@
       const clip = scroller.getBoundingClientRect();
 
       const opened = {
+        trigger,
         closedVisible,
         openedOnHover: box.height > 0 && box.width > 0,
         // Inside the viewport on every side.

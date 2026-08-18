@@ -1528,16 +1528,29 @@ mark[data-original]:focus-visible { outline: 2px solid var(--accent); outline-of
    bubble inside the rail's `overflow: auto` body is CLIPPED at the container's
    edge, which is the one failure the rendering harness exists to catch. */
 .help { position: relative; display: inline-flex; align-items: center; flex: none; }
+/* The trigger has a RESTING shape, a bordered circle, rather than appearing only
+   under the pointer. An explanation nobody can see the entry point for is an
+   explanation nobody reads, and a borderless glyph in the muted colour reads as
+   decoration beside a label. */
 .help-icon {
   display: inline-flex; align-items: center; justify-content: center;
   width: 1.15rem; height: 1.15rem; padding: 0;
-  border: 0; border-radius: 50%;
-  background: none; color: var(--muted); cursor: help;
+  border: 1px solid var(--gray-4); border-radius: 50%;
+  background: var(--bg); color: var(--muted); cursor: help;
 }
-.help-icon:hover, .help-icon:focus-visible { color: var(--accent); }
-.help-icon svg { width: 1.05rem; height: 1.05rem; }
+.help-icon:hover, .help-icon:focus-visible { border-color: var(--accent); color: var(--accent); }
+.help-icon svg { width: 0.9rem; height: 0.9rem; }
 /* Hidden by DEFAULT and revealed by the wrapper's data-open, so the open state
-   is one attribute JavaScript owns and CSS only reacts to. */
+   is one attribute JavaScript owns and CSS only reacts to.
+
+   ONE positioning model, the fixed one: an absolutely positioned bubble inside
+   the rail's `overflow: auto` body, or inside a `.cgroup` (which is
+   `overflow: hidden`), is CLIPPED at the container's edge, and near the foot of a
+   group nothing readable is left. Fixed takes it out of every clipping ancestor,
+   which is why the coordinates cannot come from CSS: `wireHelpTooltips` measures
+   the trigger when the bubble opens and writes --help-x / --help-y. So the
+   data-open rule may only reveal the bubble; anything it added about position
+   would fight the measurement and win. */
 .help-bubble {
   position: fixed; z-index: 60;
   left: var(--help-x, auto); top: var(--help-y, auto);
@@ -1548,14 +1561,7 @@ mark[data-original]:focus-visible { outline: 2px solid var(--accent); outline-of
   font-size: 0.8rem; line-height: 1.5;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
 }
-/* The bubble sits BELOW and LEFT of the icon by default, which keeps it inside
-   the rail's width; the fixed positioning means the rail cannot clip it. */
-.help[data-open] .help-bubble {
-  display: block;
-  inset: auto auto auto auto;
-  position: absolute; top: calc(100% + 0.35rem); right: 0;
-  z-index: 60;
-}
+.help[data-open] .help-bubble { display: block; }
 
 /* --- The compact checklist ----------------------------------------------
 

@@ -395,16 +395,27 @@ func checkConfigurePanelFit(c *cdpClient, r *reporter) {
 			"to the end must land on them.")
 }
 
+// helpTrigger is the icon the user has to FIND before any of the behaviour below
+// matters.
+type helpTrigger struct {
+	Width       int   `json:"width"`
+	Height      int   `json:"height"`
+	HasGlyph    *bool `json:"hasGlyph"`
+	GlyphWidth  int   `json:"glyphWidth"`
+	GlyphHeight int   `json:"glyphHeight"`
+}
+
 type helpTooltipResult struct {
-	Error             string `json:"error"`
-	ClosedVisible     *bool  `json:"closedVisible"`
-	OpenedOnHover     *bool  `json:"openedOnHover"`
-	OnScreen          *bool  `json:"onScreen"`
-	NotClipped        *bool  `json:"notClipped"`
-	OverflowsScroller *bool  `json:"overflowsScroller"`
-	ClosedOnLeave     *bool  `json:"closedOnLeave"`
-	OpenedOnFocus     *bool  `json:"openedOnFocus"`
-	ClosedOnEscape    *bool  `json:"closedOnEscape"`
+	Error             string      `json:"error"`
+	Trigger           helpTrigger `json:"trigger"`
+	ClosedVisible     *bool       `json:"closedVisible"`
+	OpenedOnHover     *bool       `json:"openedOnHover"`
+	OnScreen          *bool       `json:"onScreen"`
+	NotClipped        *bool       `json:"notClipped"`
+	OverflowsScroller *bool       `json:"overflowsScroller"`
+	ClosedOnLeave     *bool       `json:"closedOnLeave"`
+	OpenedOnFocus     *bool       `json:"openedOnFocus"`
+	ClosedOnEscape    *bool       `json:"closedOnEscape"`
 }
 
 // checkHelpTooltip asserts a help tooltip opens, is PAINTED rather than clipped,
@@ -429,6 +440,28 @@ func checkHelpTooltip(c *cdpClient, r *reporter) {
 			got.Error, "Every explained label in the rail carries one.")
 		return
 	}
+
+	// Before any behaviour: is there anything on screen to hover? Every help
+	// trigger in the application was an invisible hit area, because ui.js icon()
+	// returns the empty string for a name absent from ICONS and helpTooltip asks
+	// for "info". The mechanism below all worked; there was no glyph.
+	r.assert("the help trigger has a glyph in it", boolIs(got.Trigger.HasGlyph, true),
+		"an <svg> inside button.help-icon", describeBool(got.Trigger.HasGlyph),
+		"ui.js helpTooltip renders icon(\"info\"), and icon() returns the EMPTY STRING for a "+
+			"name absent from frontend/icons.js ICONS. icon_parity_test.go is the cheap guard; "+
+			"this is the one that sees the result.")
+
+	r.assert("the trigger is big enough to aim at",
+		got.Trigger.Width >= 14 && got.Trigger.Height >= 14,
+		"a trigger at least 14x14 CSS pixels",
+		fmt.Sprintf("%dx%d", got.Trigger.Width, got.Trigger.Height),
+		"style.css .help-icon sizes it; a trigger smaller than this is a target nobody hits.")
+
+	r.assert("the glyph is painted at a readable size",
+		got.Trigger.GlyphWidth >= 10 && got.Trigger.GlyphHeight >= 10,
+		"a glyph at least 10x10 CSS pixels",
+		fmt.Sprintf("%dx%d", got.Trigger.GlyphWidth, got.Trigger.GlyphHeight),
+		"An svg present in the DOM at zero size is the same invisible control with extra markup.")
 
 	r.assert("the bubble is hidden until asked for", boolIs(got.ClosedVisible, false),
 		"a zero-height bubble before any interaction", describeBool(got.ClosedVisible),

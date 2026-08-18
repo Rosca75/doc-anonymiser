@@ -74,6 +74,15 @@ shows, render into `frontend/testdom.js`'s `container()` and drive it with
 for the reason it fails in the application. `frontend/identifyactions.test.js`
 is the worked example, and `../dataset_parity_test.go` is the permanent guard.
 
+A second silence has the same shape: `ui.js icon(name)` returns the EMPTY STRING
+for a name absent from `frontend/icons.js ICONS`, so a control renders with no
+glyph and every test asserting the wrapper element still passes. That is how
+every help tooltip in the application became an invisible hit area.
+`../icon_parity_test.go` holds the two lists to each other in both directions,
+and the harness's `helpTooltipVisibility()` probe measures the trigger and its
+glyph in pixels, because "an svg is in the DOM" and "the user can see it" are
+different claims.
+
 ### These tests move with the code, in the same change
 
 A frontend test that passes while asserting what a view USED to render is worse

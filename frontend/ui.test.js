@@ -9,6 +9,7 @@ import {
   collapsibleGroup, stepFooter, toastHTML, modalHTML,
   helpTooltip, wireHelpTooltips, dropdownChecklist,
 } from "./ui.js";
+import { ICONS } from "./icons.js";
 
 // --- button --------------------------------------------------------------
 
@@ -56,8 +57,32 @@ test("button renders data attributes escaped", () => {
 // --- icon ----------------------------------------------------------------
 
 test("icon returns svg for known names and empty string for unknown", () => {
-  assert.ok(icon("home").includes("<svg"));
+  assert.ok(icon("info").includes("<svg"));
   assert.equal(icon("no_such_icon"), "");
+});
+
+test("every icon name in ICONS renders an svg coloured by CSS", () => {
+  // The empty string for an unknown name is deliberate (a missing glyph must not
+  // break a button render) and it is also what hid a missing icon for a whole
+  // release: every help trigger rendered as an empty circle. ../icon_parity_test.go
+  // is the guard that no name reaching icon() is unknown; this pins the other
+  // half, that a name it DOES know produces markup CSS can colour.
+  const names = Object.keys(ICONS);
+  assert.ok(names.length > 0, "the vendored icon map is not empty");
+  for (const name of names) {
+    const html = icon(name);
+    assert.match(html, /<svg/, `icon(${name}) renders an svg`);
+    assert.match(html, /fill="currentColor"/,
+      `icon(${name}) must be coloured by CSS, not by a baked-in fill`);
+  }
+});
+
+test("ICONS carries the info glyph the help tooltip renders", () => {
+  // helpTooltip() renders icon("info"). With no "info" entry, icon() returned the
+  // empty string and every help trigger in the application was an invisible
+  // 1.15rem hit area: the tooltip worked and there was nothing to hover.
+  assert.ok(ICONS.info, "ICONS must hold an info glyph");
+  assert.match(ICONS.info, /fill="currentColor"/);
 });
 
 // --- Icon alignment contract ---------------------------------------------
@@ -75,8 +100,8 @@ const staticDir = path.dirname(fileURLToPath(import.meta.url));
 const styleCSS = fs.readFileSync(path.join(staticDir, "style.css"), "utf8");
 
 test("icon() emits a span carrying the .icon class", () => {
-  assert.match(icon("home"), /^<span class="icon" aria-hidden="true">/);
-  assert.match(button("Home", { icon: "home" }), /<span class="icon"/);
+  assert.match(icon("info"), /^<span class="icon" aria-hidden="true">/);
+  assert.match(button("Home", { icon: "info" }), /<span class="icon"/);
 });
 
 test("buttons centre their icon and label on the cross axis", () => {
@@ -614,6 +639,20 @@ test("every functional tint the kit references is declared in brand.css", () => 
 // its accessible description) and the OPEN state living in one data attribute so
 // CSS owns appearance and JavaScript owns only when.
 
+/** boxNode(rect) is an element that only has to be measurable: a trigger or a
+ *  bubble as placeHelpBubble sees it. `style` records the two custom properties
+ *  the placement writes, which is what the .help-bubble rule reads back. */
+function boxNode(rect) {
+  const props = new Map();
+  return {
+    props,
+    getBoundingClientRect: () => ({ width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0, ...rect }),
+    style: { setProperty: (k, v) => props.set(k, v) },
+    blurred: false,
+    blur() { this.blurred = true; },
+  };
+}
+
 /** fakeNode(tag) is a minimal element stand-in with the four APIs
  *  wireHelpTooltips touches: listeners, attributes and one query. */
 function fakeNode(children = {}) {
@@ -630,6 +669,29 @@ function fakeNode(children = {}) {
   };
 }
 
+/** helpWithBoxes(triggerRect, bubbleSize) is a wrapper whose trigger and bubble
+ *  are measurable, plus a window big enough to place them in. */
+function helpWithBoxes(triggerRect, bubbleSize) {
+  const trigger = boxNode(triggerRect);
+  const bubble = boxNode(bubbleSize);
+  const help = fakeNode({ ".help-icon": trigger, ".help-bubble": bubble });
+  return { help, trigger, bubble };
+}
+
+/** withWindow(size, fn) lends the module a viewport. The frontend suite has no
+ *  DOM, and placeHelpBubble reads window.innerWidth/innerHeight, so the test has
+ *  to supply one and put it back afterwards. */
+function withWindow(size, fn) {
+  const previous = globalThis.window;
+  globalThis.window = { innerWidth: size.width, innerHeight: size.height };
+  try {
+    fn();
+  } finally {
+    if (previous === undefined) delete globalThis.window;
+    else globalThis.window = previous;
+  }
+}
+
 /** wireOne(help) runs wireHelpTooltips over a container holding just `help`. */
 function wireOne(help) {
   wireHelpTooltips({ querySelectorAll: () => [help] });
@@ -642,6 +704,17 @@ test("helpTooltip renders a focusable icon that describes its bubble", () => {
   assert.match(html, /aria-label="About the floor"/);
   assert.match(html, /aria-describedby="help-x"/);
   assert.match(html, /<span class="help-bubble" id="help-x" role="tooltip">Why this matters<\/span>/);
+});
+
+test("helpTooltip renders a VISIBLE glyph, not an empty hit area", () => {
+  // This is the assertion that was missing. The suite asserted the wrapper
+  // (`<button class="help-icon"`) and passed on an empty button: icon("info")
+  // returned "" because ICONS had no "info" entry, so every help trigger in the
+  // application was 1.15rem of invisible hit area with nothing to hover.
+  const html = helpTooltip("Why this matters");
+  assert.match(html, /<button type="button" class="help-icon"[^>]*><span class="icon"/,
+    "the trigger's first child is the icon span, so the button is not empty");
+  assert.match(html, /<svg/, "and the span holds real vendored markup");
 });
 
 test("helpTooltip escapes its text and derives a stable id", () => {
@@ -705,6 +778,87 @@ test("Escape closes the tooltip and gives up the hover with it", () => {
   // not bring the bubble straight back.
   help.fire("pointerleave");
   assert.ok(!help.isOpen());
+});
+
+// --- The bubble's placement ----------------------------------------------
+//
+// The bubble is `position: fixed` so no clipping ancestor can cut it off: the
+// rail's body is `overflow-y: auto` and a .cgroup is `overflow: hidden`, so an
+// absolutely positioned bubble is trimmed at the group's edge. Fixed coordinates
+// are measured from the viewport, which CSS cannot know from inside the trigger,
+// so wireHelpTooltips computes them. These pin that it does, and that the CSS
+// keeps exactly one positioning model.
+
+test("opening a tooltip writes the bubble's viewport coordinates", () => {
+  withWindow({ width: 1440, height: 900 }, () => {
+    const { help, bubble } = helpWithBoxes(
+      { top: 300, bottom: 318, left: 400, right: 418 },
+      { width: 320, height: 120 });
+    wireOne(help);
+
+    help.fire("pointerenter");
+    assert.ok(help.isOpen(), "the wrapper opens");
+    // Below the trigger, right-aligned to it: 418 - 320 = 98, 318 + 6 = 324.
+    assert.equal(bubble.props.get("--help-x"), "98px");
+    assert.equal(bubble.props.get("--help-y"), "324px");
+  });
+});
+
+test("a bubble with no room below flips above the trigger", () => {
+  withWindow({ width: 1440, height: 900 }, () => {
+    const { help, bubble } = helpWithBoxes(
+      { top: 840, bottom: 858, left: 400, right: 418 },
+      { width: 320, height: 120 });
+    wireOne(help);
+
+    help.fire("focusin");
+    // 858 + 6 + 120 would end at 984, past the 900 viewport, so it flips:
+    // 840 - 120 - 6 = 714.
+    assert.equal(bubble.props.get("--help-y"), "714px");
+  });
+});
+
+test("a bubble is clamped into the viewport rather than hanging off its edge", () => {
+  withWindow({ width: 1440, height: 900 }, () => {
+    const { help, bubble } = helpWithBoxes(
+      { top: 300, bottom: 318, left: 20, right: 38 },
+      { width: 320, height: 120 });
+    wireOne(help);
+
+    help.fire("pointerenter");
+    // Right-aligning would put it at 38 - 320 = -282, off screen: clamped to the
+    // 8px margin instead.
+    assert.equal(bubble.props.get("--help-x"), "8px");
+  });
+});
+
+test("the open rule only reveals the bubble, it does not reposition it", () => {
+  // Two positioning models is how the bubble got clipped: .help-bubble declares
+  // `position: fixed` precisely so the rail cannot trim it, and a data-open rule
+  // that set `position: absolute` put it straight back inside the clipping
+  // ancestor. The measurement above is the only thing that may place it.
+  const base = styleCSS.match(/\n\.help-bubble \{[^}]*\}/);
+  assert.ok(base, "the .help-bubble rule must exist");
+  assert.match(base[0], /position:\s*fixed/);
+  assert.match(base[0], /left:\s*var\(--help-x/);
+  assert.match(base[0], /top:\s*var\(--help-y/);
+
+  const open = styleCSS.match(/\n\.help\[data-open\] \.help-bubble \{[^}]*\}/);
+  assert.ok(open, "the open rule must exist");
+  assert.ok(!/position:/.test(open[0]),
+    `the open rule must not restate position: ${open[0]}`);
+  for (const prop of ["top:", "left:", "right:", "bottom:", "inset:"]) {
+    assert.ok(!open[0].includes(prop),
+      `the open rule must not set ${prop} it would override the measured placement`);
+  }
+});
+
+test("the help trigger has a resting shape, so it is discoverable", () => {
+  // A borderless glyph in the muted colour reads as decoration beside a label.
+  const rule = styleCSS.match(/\n\.help-icon \{[^}]*\}/);
+  assert.ok(rule, "the .help-icon rule must exist");
+  assert.match(rule[0], /border:\s*1px solid/);
+  assert.match(rule[0], /background:\s*var\(--bg\)/);
 });
 
 // --- dropdownChecklist ---------------------------------------------------

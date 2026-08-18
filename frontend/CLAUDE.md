@@ -146,7 +146,11 @@ Windows it steals focus from the window it belongs to.
   `dropdownChecklist` a set of switches that must not spend a permanent row
   each.
 - `html.js` — tiny shared HTML helpers (`escapeHTML`).
-- `icons.js` — vendored Material Symbols SVG map.
+- `icons.js` — vendored Material Symbols SVG map. It holds exactly the icons
+  the interface draws, no more and no fewer: `ui.js icon(name)` returns the
+  EMPTY STRING for a name it does not know, so a missing glyph is a control
+  that renders with nothing in it and fails no test. `../icon_parity_test.go`
+  holds the map, the call sites and `assets/icons/*.svg` to each other.
 - `highlight.js` — renders placeholders as category-coloured `<mark>` with
   hover tooltips, and optionally the Compare search's hits (fourth argument).
   A hit STRADDLING a mark boundary is deliberately not highlighted: splitting

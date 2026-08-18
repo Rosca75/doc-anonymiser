@@ -337,6 +337,59 @@ function hashText(text) {
   return Math.abs(h).toString(36);
 }
 
+// The gap between the trigger and the bubble, and the margin the bubble keeps
+// from the viewport edge, both in CSS pixels. Named because the placement maths
+// below reads them three times each and a bare 8 explains nothing.
+const HELP_GAP = 6;
+const HELP_MARGIN = 8;
+
+/**
+ * placeHelpBubble(help) writes the open bubble's viewport coordinates to the
+ * --help-x / --help-y custom properties the .help-bubble rule reads.
+ *
+ * The bubble is `position: fixed` so that no clipping ancestor can cut it off:
+ * the rail's body is `overflow-y: auto` and a `.cgroup` is `overflow: hidden`, so
+ * an absolutely positioned bubble is trimmed at the group's edge and near the
+ * foot of a group nothing readable survives. Fixed positioning is measured from
+ * the VIEWPORT, which CSS alone cannot know from inside the trigger, so the
+ * measuring happens here, when the bubble opens.
+ *
+ * Placement: below the trigger, right-aligned to it so the bubble grows back into
+ * the panel rather than off its edge, clamped into the viewport, and flipped above
+ * when there is not enough room below.
+ *
+ * @param {HTMLElement} help the [data-help] wrapper
+ */
+function placeHelpBubble(help) {
+  const trigger = help.querySelector(".help-icon");
+  const bubble = help.querySelector(".help-bubble");
+  if (!trigger || !bubble) return;
+
+  const anchor = trigger.getBoundingClientRect();
+  // The bubble has to be laid out before it can be measured, and it is `display:
+  // none` until the wrapper is open. The caller sets data-open first, so by here
+  // the box exists.
+  const box = bubble.getBoundingClientRect();
+  const viewWidth = window.innerWidth;
+  const viewHeight = window.innerHeight;
+
+  let left = anchor.right - box.width;
+  const maxLeft = viewWidth - box.width - HELP_MARGIN;
+  if (left > maxLeft) left = maxLeft;
+  if (left < HELP_MARGIN) left = HELP_MARGIN;
+
+  let top = anchor.bottom + HELP_GAP;
+  if (top + box.height > viewHeight - HELP_MARGIN) {
+    // Not enough room below: flip above the trigger, and if there is no room
+    // there either, sit at the top margin rather than off screen.
+    top = anchor.top - box.height - HELP_GAP;
+    if (top < HELP_MARGIN) top = HELP_MARGIN;
+  }
+
+  bubble.style.setProperty("--help-x", `${Math.round(left)}px`);
+  bubble.style.setProperty("--help-y", `${Math.round(top)}px`);
+}
+
 /**
  * wireHelpTooltips(container) attaches the open/close behaviour to every
  * helpTooltip in the container.
@@ -354,8 +407,14 @@ export function wireHelpTooltips(container) {
     let hovered = false;
     let focused = false;
     const sync = () => {
-      if (hovered || focused) help.setAttribute("data-open", "true");
-      else help.removeAttribute("data-open");
+      if (hovered || focused) {
+        // Open FIRST, then measure: the bubble is display:none while closed and a
+        // hidden element has no box to place.
+        help.setAttribute("data-open", "true");
+        placeHelpBubble(help);
+      } else {
+        help.removeAttribute("data-open");
+      }
     };
     help.addEventListener("pointerenter", () => { hovered = true; sync(); });
     help.addEventListener("pointerleave", () => { hovered = false; sync(); });

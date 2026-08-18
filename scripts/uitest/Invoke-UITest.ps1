@@ -504,6 +504,17 @@ function Test-HelpTooltip([CdpSession]$cdp) {
             -Hint 'views/identifyrail.js renders ui.js helpTooltip beside each explained label.'
         return
     }
+    Assert-That -Name 'the help trigger has a glyph in it' -Condition ($r.trigger.hasGlyph -eq $true) `
+        -Expected 'an <svg> inside button.help-icon' -Actual "$($r.trigger.hasGlyph)" `
+        -Hint 'ui.js helpTooltip renders icon("info"), and icon() returns the EMPTY STRING for a name absent from frontend/icons.js ICONS, so the trigger is an invisible hit area. icon_parity_test.go is the cheap guard; this is the one that sees the result.'
+    Assert-That -Name 'the trigger is big enough to aim at' `
+        -Condition ($r.trigger.width -ge 14 -and $r.trigger.height -ge 14) `
+        -Expected 'a trigger at least 14x14 CSS pixels' -Actual "$($r.trigger.width)x$($r.trigger.height)" `
+        -Hint 'style.css .help-icon sizes it; a trigger smaller than this is a target nobody hits.'
+    Assert-That -Name 'the glyph is painted at a readable size' `
+        -Condition ($r.trigger.glyphWidth -ge 10 -and $r.trigger.glyphHeight -ge 10) `
+        -Expected 'a glyph at least 10x10 CSS pixels' -Actual "$($r.trigger.glyphWidth)x$($r.trigger.glyphHeight)" `
+        -Hint 'An svg present in the DOM at zero size is the same invisible control with extra markup.'
     Assert-That -Name 'the bubble is hidden until asked for' -Condition ($r.closedVisible -eq $false) `
         -Expected 'a zero-height bubble before any interaction' -Actual "$($r.closedVisible)" `
         -Hint 'An always-visible bubble is the paragraph the tooltip replaced, with extra steps.'
