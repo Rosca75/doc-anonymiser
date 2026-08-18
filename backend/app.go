@@ -73,11 +73,13 @@ type Settings struct {
 	// its own that could disagree with them.
 	UseBuiltInPatterns    bool `json:"useBuiltInPatterns"`
 	UseHeuristicDiscovery bool `json:"useHeuristicDiscovery"`
-	// SignalSuggestionSources is Smart detection's third method: which built-in
-	// signals may DERIVE Suggestions (engine/signals.go).
+	// SignalSuggestionSources is Smart detection's third method: which readings of
+	// which built-in signals may DERIVE Suggestions (engine/signals.go). It is
+	// keyed by source and then by derivation, because one signal supports several
+	// readings through several mechanisms and each is switched on its own.
 	//
 	// It does NOT govern whether those signals are matched and replaced. Clearing
-	// "Email addresses" here stops email-derived Suggestions and leaves email
+	// any reading here stops the Suggestions that reading produces and leaves email
 	// anonymisation exactly as it was, which is the whole reason the setting is
 	// separate from the category switch.
 	SignalSuggestionSources engine.SignalSourceSelection `json:"signalSuggestionSources"`
@@ -578,22 +580,31 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 			"invalid heuristic discovery limits (minimum length %d, minimum occurrences %d), both must be zero or a positive number",
 			s.HeuristicDiscovery.MinLength, s.HeuristicDiscovery.MinOccurrences)
 	}
-	// An unknown signal source is REFUSED rather than stored. Storing it would be a
-	// key nothing reads for the rest of the session: a control that appears to do
-	// something and does not, which is exactly what the identifier list exists to
-	// prevent.
-	for source := range s.SignalSuggestionSources {
+	// An unknown signal source or derivation is REFUSED rather than stored. Storing
+	// one would be a key nothing reads for the rest of the session: a control that
+	// appears to do something and does not, which is exactly what the identifier
+	// lists exist to prevent. Both levels are checked, because a valid derivation
+	// filed under the wrong source is just as dead as an invented one.
+	for source, derivations := range s.SignalSuggestionSources {
 		if !engine.ValidSignalSource(source) {
 			return ollama.OllamaStatus{}, fmt.Errorf(
 				"unknown signal suggestion source %q, expected one of %v",
 				source, engine.AllSignalSources)
 		}
+		for derivation := range derivations {
+			if !engine.ValidSignalDerivation(source, derivation) {
+				return ollama.OllamaStatus{}, fmt.Errorf(
+					"unknown signal derivation %q for source %q, expected one of %v",
+					derivation, source, engine.SignalDerivations[source])
+			}
+		}
 	}
 
 	a.mu.Lock()
-	// Filled out to the complete set of known sources, so a payload that omitted
-	// one lands on its DEFAULT rather than on Go's zero value. Reading an absent
-	// key as "off" would silently disable a source the user never touched.
+	// Filled out to the complete set of known sources and derivations, so a payload
+	// that omitted one lands on its DEFAULT rather than on Go's zero value. Reading
+	// an absent key as "off" would silently disable a reading the user never
+	// touched.
 	s.SignalSuggestionSources = engine.NormaliseSignalSources(s.SignalSuggestionSources)
 	a.settings = s
 	a.llm = ollama.New(fmt.Sprintf("http://127.0.0.1:%d", s.OllamaPort))

@@ -16,7 +16,7 @@ import {
   relatedTo,
 } from "./state.js";
 import { valuesTab, suggestionsTab, visibleValues } from "./views/identifyworkspace.js";
-import { all, one, exists, textOf, stripTags } from "./testhtml.js";
+import { all, one, exists, textOf, stripTags, attr } from "./testhtml.js";
 import { WORKSPACE } from "./copy.js";
 
 /** seed(category, mainText, derivedSpellings) adds one accepted value with a settled
@@ -412,4 +412,42 @@ test("an accepted Value keeps naming the Values that share its evidence", () => 
   const notes = all(valuesTab(getState()), "span.related-note").map((n) => stripTags(n.inner));
   assert.equal(notes.length, 2);
   assert.match(notes[0], /Tpps Holdings/);
+});
+
+test("a value card names itself through data-main-text, all lower case", () => {
+  // A browser lower-cases attribute NAMES while parsing, so a camel-case data
+  // attribute reaches the DOM under a key no handler reads: every action on the
+  // card then resolves against `undefined` and silently does nothing. The
+  // dash form is the only spelling that survives the parser as dataset.mainText.
+  resetState();
+  seed("person_names", "Marie Duval", ["Marie Duval"]);
+  const html = valuesTab(getState());
+
+  assert.equal(attr(html, ".value-card", "data-main-text"), "Marie Duval",
+    "the card carries its main text under the dash-cased name");
+  assert.equal(attr(html, ".value-card", "data-mainText"), undefined,
+    "the camel-case spelling must not be rendered at all");
+});
+
+test("no attribute name in the values tab carries an upper-case letter", () => {
+  // The local half of dataset_parity_test.go: this tab is the one that broke, so
+  // it asserts the rule on its own output too, where a failure names the tab.
+  resetState();
+  seed("entity_names", "Acme", ["Acme"]);
+  seed("person_names", "Marie Duval", ["Marie Duval"]);
+  const html = valuesTab(getState());
+
+  const offenders = [];
+  for (const el of all(html, "div")) {
+    for (const name of Object.keys(el.attrs)) {
+      if (/[A-Z]/.test(name)) offenders.push(`${el.tag}[${name}]`);
+    }
+  }
+  for (const el of all(html, "input")) {
+    for (const name of Object.keys(el.attrs)) {
+      if (/[A-Z]/.test(name)) offenders.push(`${el.tag}[${name}]`);
+    }
+  }
+  assert.deepEqual(offenders, [],
+    `these rendered attribute names carry an upper-case letter and are unreachable through dataset: ${offenders.join(", ")}`);
 });

@@ -31,7 +31,9 @@ import {
   applyPreset, toggleCategory, selectionPresetName, setUseLocalAI,
   setUseBuiltInPatterns, setUseHeuristicDiscovery,
   setSmartDetection, smartDetectionOn,
-  SIGNAL_SOURCES, signalSourceOn, enabledSignalSources, setSignalSource,
+  SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
+  signalSourceOn, signalDerivationOn, enabledSignalDerivations,
+  setSignalSource, setSignalDerivation,
   setCategoryGroup, setMinConfidence, setDocumentCountry,
   setHeuristicDiscoveryOptions, heuristicDiscoveryOptions,
   setAIScope,
@@ -43,7 +45,7 @@ import {
 import { escapeHTML } from "../html.js";
 import {
   button, chipRow, sectionLabel, collapsibleGroup, wireGroups,
-  helpTooltip, wireHelpTooltips, dropdownChecklist,
+  helpTooltip, wireHelpTooltips, expandableChecklist,
 } from "../ui.js";
 import { CARDS, CONFIGURE, RAIL, VALUES, categoryLabels } from "../copy.js";
 import { examplesFor, countryOptions } from "../countries.js";
@@ -95,11 +97,11 @@ export const RAIL_SECTIONS = [
 // noise above the settings that ARE in use.
 const collapsedGroups = new Set(["rail-local", "rail-profile"]);
 
-// Whether the signal-source checklist is showing. A VIEW preference, like the
-// folded sections: nothing downstream reads it, it must not travel in a session
-// file, and putting it in the store would mean every open and close went through
-// a reducer.
-let signalSourcesOpen = false;
+// Which signal rows are EXPANDED to show their individual readings. A VIEW
+// preference, like the folded sections: nothing downstream reads it, it must not
+// travel in a session file, and putting it in the store would mean every open and
+// close went through a reducer.
+const openSignalSources = new Set();
 
 // PRESETS: engine level → user-facing label. "soft/medium/advanced" reads too
 // technical; Standard and Thorough say what they mean.
@@ -310,9 +312,11 @@ function smartSection(s) {
  * smartMethods(s) is Smart detection's three methods, at the top of the section
  * so they read as governing what follows.
  *
- * Two are plain switches. The third is a compact CHECKLIST rather than a switch,
- * because it is a SET of sources and one row per source would grow the panel
- * every time a source is added. Its closed summary is what keeps it one row.
+ * Two are plain switches and they share ONE row, side by side: they carry the
+ * shortest labels in the rail and the panel's height is its scarcest resource.
+ * The third is a compact CHECKLIST rather than a switch, because it is a SET of
+ * sources and one row per source would grow the panel every time a source is
+ * added; it keeps its own row because it expands.
  */
 function smartMethods(s) {
   const row = (id, checked, label, help) =>
@@ -324,40 +328,64 @@ function smartMethods(s) {
     helpTooltip(help, { label }) +
     `</div>`;
   return `<div class="rail-block">` +
+    `<div class="rail-toggle-pair">` +
     row("smart-built-in", s.settings.useBuiltInPatterns !== false,
       RAIL.builtInPatterns, RAIL.builtInPatternsHelp) +
     row("smart-heuristic", s.settings.useHeuristicDiscovery !== false,
       RAIL.heuristicDiscovery, RAIL.heuristicDiscoveryHelp) +
+    `</div>` +
     signalSourceControl(s) +
     `</div>`;
 }
 
 /**
- * signalSourceControl(s) is the compact "Signal-based suggestions" control.
+ * signalSourceControl(s) is the "Signal-based suggestions" control: one
+ * expandable row per signal, with that signal's individual READINGS under it.
  *
- * Only sources that ACTUALLY implement discovery appear (SIGNAL_SOURCES mirrors
- * the engine's list, guarded by ../detection_parity_test.go): a row with nothing
- * behind it is a control that appears to do something and does not.
+ * The shape follows the question. In front of a signal a user does not ask
+ * "may this derive Suggestions" but "what would this derive, and do I want each
+ * of those?": an address's local part is evidence for a person and its domain is
+ * evidence for an organisation, through two separate mechanisms, and wanting one
+ * without the other is a reasonable thing to want. So each reading is its own
+ * switch and the signal's own checkbox is a MASTER over them, derived for display
+ * (on when any reading is on) exactly as the Smart detection section's is.
  *
- * Clearing a source stops signal-DERIVED Suggestions and leaves the signal's own
- * anonymisation alone. That distinction is the whole reason the control exists,
- * and it is in the help tooltip rather than in a paragraph under the row.
+ * Only sources and readings that ACTUALLY implement discovery appear
+ * (SIGNAL_SOURCES and SIGNAL_DERIVATIONS mirror the engine's, guarded by
+ * ../detection_parity_test.go): a row with nothing behind it is a control that
+ * appears to do something and does not.
+ *
+ * Clearing a reading stops the Suggestions THAT reading produces and leaves the
+ * signal's own anonymisation alone. That distinction is the whole reason the
+ * control exists, and it is in the help tooltip rather than in a paragraph.
  */
 function signalSourceControl(s) {
-  const names = enabledSignalSources(s).map((id) => RAIL.signalSourceLabel[id] ?? id);
-  return dropdownChecklist({
+  return expandableChecklist({
     id: "signal-sources",
     label: RAIL.signalSuggestions,
-    summary: RAIL.signalSourcesSummary(names),
-    listLabel: RAIL.signalSuggestionSources,
-    open: signalSourcesOpen,
     helpHTML: helpTooltip(RAIL.signalSuggestionsHelp, { label: RAIL.signalSuggestions }),
-    rows: SIGNAL_SOURCES.map((id) => ({
-      id,
-      label: RAIL.signalSourceLabel[id] ?? id,
-      detail: RAIL.signalSourceFinds[id] ?? "",
-      checked: signalSourceOn(s, id),
-    })),
+    groups: SIGNAL_SOURCES.map((source) => {
+      const label = RAIL.signalSourceLabel[source] ?? source;
+      const onNames = enabledSignalDerivations(s, source)
+        .map((d) => RAIL.signalDerivationLabel[d] ?? d);
+      return {
+        id: source,
+        label,
+        summary: RAIL.signalDerivationSummary(onNames),
+        checked: signalSourceOn(s, source),
+        open: openSignalSources.has(source),
+        rows: (SIGNAL_DERIVATIONS[source] ?? []).map((d) => {
+          const rowLabel = RAIL.signalDerivationLabel[d] ?? d;
+          return {
+            id: d,
+            label: rowLabel,
+            detail: RAIL.signalDerivationFinds[d] ?? "",
+            helpHTML: helpTooltip(RAIL.signalDerivationHelp[d], { label: rowLabel }),
+            checked: signalDerivationOn(s, source, d),
+          };
+        }),
+      };
+    }),
   });
 }
 
@@ -591,7 +619,9 @@ function wireScope(container) {
 
 // --- Smart detection ------------------------------------------------------
 
-/** smartTuning(s) is the offline heuristic pass's strictness (BUILD-04 CR13). */
+/** smartTuning(s) is the offline heuristic pass's strictness: the four fields a
+ *  user changes when the suggestions themselves are wrong, rather than when the
+ *  scope is. */
 function smartTuning(s) {
   const opts = heuristicDiscoveryOptions(s);
   const fieldRow = (id, label, help, controlHTML) =>
@@ -630,34 +660,56 @@ function smartTuning(s) {
 }
 
 /**
- * wireSignalSources(container) wires the compact checklist: its open/close
- * toggle, one listener per row, and Escape to close.
+ * wireSignalSources(container) wires the expandable checklist: per group, the
+ * chevron, the master checkbox and each reading's own checkbox, plus Escape to
+ * fold the open groups.
  *
- * Escape closes it for the same reason the help tooltip closes on Escape: a
- * dropdown that can only be dismissed by clicking elsewhere is a keyboard trap.
+ * Escape folds them for the same reason the help tooltip closes on Escape: a
+ * control that can only be dismissed by clicking elsewhere is a keyboard trap.
  */
 function wireSignalSources(container) {
   const control = container.querySelector("#signal-sources");
   if (!control) return;
 
-  control.querySelector(".checklist-toggle")?.addEventListener("click", () => {
-    signalSourcesOpen = !signalSourcesOpen;
-    setState({}); // repaint; the open state is view state
-  });
-  control.addEventListener("keydown", (ev) => {
-    if (ev.key !== "Escape" || !signalSourcesOpen) return;
-    ev.stopPropagation();
-    signalSourcesOpen = false;
-    setState({});
-  });
-  for (const box of control.querySelectorAll(".checklist-box")) {
-    box.addEventListener("change", (ev) => {
-      setSignalSource(box.dataset.checklist, ev.target.checked);
-      // Pushed to Go like every other setting: which sources may derive
-      // Suggestions is what the next detection run reads.
+  for (const group of control.querySelectorAll(".checklist-group")) {
+    const source = group.dataset.group;
+    if (!source) continue;
+
+    group.querySelector(".checklist-group-toggle")?.addEventListener("click", () => {
+      if (openSignalSources.has(source)) openSignalSources.delete(source);
+      else openSignalSources.add(source);
+      setState({}); // repaint; the expanded state is view state
+    });
+
+    // The master writes every reading of this signal in one action, which is what
+    // saves the user N clicks to switch a whole signal off. stopPropagation for
+    // the same reason wireSectionSwitches carries it: a checkbox inside a
+    // foldable head must not also fold the head.
+    group.querySelector(".checklist-master")?.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+    });
+    group.querySelector(".checklist-master")?.addEventListener("change", (ev) => {
+      setSignalSource(source, ev.target.checked);
       pushSettings(container);
     });
+
+    for (const box of group.querySelectorAll(".checklist-box")) {
+      box.addEventListener("click", (ev) => { ev.stopPropagation(); });
+      box.addEventListener("change", (ev) => {
+        setSignalDerivation(source, box.dataset.derivation, ev.target.checked);
+        // Pushed to Go like every other setting: which readings may derive
+        // Suggestions is what the next detection run reads.
+        pushSettings(container);
+      });
+    }
   }
+
+  control.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Escape" || openSignalSources.size === 0) return;
+    ev.stopPropagation();
+    openSignalSources.clear();
+    setState({});
+  });
 }
 
 /** strictnessOption renders one <option>, marked selected when it is current. */
@@ -946,11 +998,14 @@ async function pushSettings(container) {
     useLocalAI: !!s.settings.useLocalAI,
     useBuiltInPatterns: s.settings.useBuiltInPatterns !== false,
     useHeuristicDiscovery: s.settings.useHeuristicDiscovery !== false,
-    // Which built-in signals may DERIVE Suggestions. Sent as a complete map of
-    // the known sources rather than a patch, so Go and the store cannot end up
-    // disagreeing about a key one of them has never seen.
+    // Which READINGS of which built-in signals may DERIVE Suggestions. Sent as a
+    // complete map of the known sources and their derivations rather than a patch,
+    // so Go and the store cannot end up disagreeing about a key one of them has
+    // never seen.
     signalSuggestionSources: Object.fromEntries(
-      SIGNAL_SOURCES.map((source) => [source, signalSourceOn(s, source)])),
+      SIGNAL_SOURCES.map((source) => [source, Object.fromEntries(
+        (SIGNAL_DERIVATIONS[source] ?? [])
+          .map((d) => [d, signalDerivationOn(s, source, d)]))])),
     // Read from the store, not the input: setMinConfidence already validated and
     // stored it, and the block may not be rendered at all.
     minConfidence: s.settings.minConfidence ?? 0,

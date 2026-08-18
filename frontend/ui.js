@@ -337,6 +337,59 @@ function hashText(text) {
   return Math.abs(h).toString(36);
 }
 
+// The gap between the trigger and the bubble, and the margin the bubble keeps
+// from the viewport edge, both in CSS pixels. Named because the placement maths
+// below reads them three times each and a bare 8 explains nothing.
+const HELP_GAP = 6;
+const HELP_MARGIN = 8;
+
+/**
+ * placeHelpBubble(help) writes the open bubble's viewport coordinates to the
+ * --help-x / --help-y custom properties the .help-bubble rule reads.
+ *
+ * The bubble is `position: fixed` so that no clipping ancestor can cut it off:
+ * the rail's body is `overflow-y: auto` and a `.cgroup` is `overflow: hidden`, so
+ * an absolutely positioned bubble is trimmed at the group's edge and near the
+ * foot of a group nothing readable survives. Fixed positioning is measured from
+ * the VIEWPORT, which CSS alone cannot know from inside the trigger, so the
+ * measuring happens here, when the bubble opens.
+ *
+ * Placement: below the trigger, right-aligned to it so the bubble grows back into
+ * the panel rather than off its edge, clamped into the viewport, and flipped above
+ * when there is not enough room below.
+ *
+ * @param {HTMLElement} help the [data-help] wrapper
+ */
+function placeHelpBubble(help) {
+  const trigger = help.querySelector(".help-icon");
+  const bubble = help.querySelector(".help-bubble");
+  if (!trigger || !bubble) return;
+
+  const anchor = trigger.getBoundingClientRect();
+  // The bubble has to be laid out before it can be measured, and it is `display:
+  // none` until the wrapper is open. The caller sets data-open first, so by here
+  // the box exists.
+  const box = bubble.getBoundingClientRect();
+  const viewWidth = window.innerWidth;
+  const viewHeight = window.innerHeight;
+
+  let left = anchor.right - box.width;
+  const maxLeft = viewWidth - box.width - HELP_MARGIN;
+  if (left > maxLeft) left = maxLeft;
+  if (left < HELP_MARGIN) left = HELP_MARGIN;
+
+  let top = anchor.bottom + HELP_GAP;
+  if (top + box.height > viewHeight - HELP_MARGIN) {
+    // Not enough room below: flip above the trigger, and if there is no room
+    // there either, sit at the top margin rather than off screen.
+    top = anchor.top - box.height - HELP_GAP;
+    if (top < HELP_MARGIN) top = HELP_MARGIN;
+  }
+
+  bubble.style.setProperty("--help-x", `${Math.round(left)}px`);
+  bubble.style.setProperty("--help-y", `${Math.round(top)}px`);
+}
+
 /**
  * wireHelpTooltips(container) attaches the open/close behaviour to every
  * helpTooltip in the container.
@@ -354,8 +407,14 @@ export function wireHelpTooltips(container) {
     let hovered = false;
     let focused = false;
     const sync = () => {
-      if (hovered || focused) help.setAttribute("data-open", "true");
-      else help.removeAttribute("data-open");
+      if (hovered || focused) {
+        // Open FIRST, then measure: the bubble is display:none while closed and a
+        // hidden element has no box to place.
+        help.setAttribute("data-open", "true");
+        placeHelpBubble(help);
+      } else {
+        help.removeAttribute("data-open");
+      }
     };
     help.addEventListener("pointerenter", () => { hovered = true; sync(); });
     help.addEventListener("pointerleave", () => { hovered = false; sync(); });
@@ -375,48 +434,73 @@ export function wireHelpTooltips(container) {
 }
 
 /**
- * dropdownChecklist(opts) is a compact summary control that opens a small list of
- * checkboxes.
+ * expandableChecklist(opts) is a list of expandable GROUPS, each a master switch
+ * over the rows it holds.
  *
- * It exists so a set of switches can live in the rail without spending one row
- * per switch forever. The CLOSED state is a summary the user can read at a
- * glance; the open state is the list. That trade is what keeps the panel short as
- * sources are added.
+ * It answers a nested question, which a flat checklist cannot: not "which signals
+ * may derive Suggestions" but "what would this signal derive, and do I want each of
+ * those?". Collapsed, a group is one row: its own checkbox and a read-out of what
+ * is on. Expanded, it is the individual switches. That trade is what keeps the
+ * panel short as sources and readings are added.
  *
- * It is DATA-DRIVEN: the rows come from the caller's list, so a new entry needs
- * no new markup and no new persisted flag.
+ * The group checkbox is a MASTER over its rows, and it is DERIVED for display (on
+ * when any row is on) rather than stored: a flag beside the set it summarises can
+ * disagree with it, and a group reading "on" while every row under it is off lies
+ * about what a run does. The caller computes `checked`; this builder only draws it.
+ *
+ * It is DATA-DRIVEN: the groups and rows come from the caller's lists, so a new
+ * entry needs no new markup and no new persisted flag.
  *
  * @param {object} opts
  * @param {string} opts.id the control's element id
- * @param {string} opts.label the label beside the summary
- * @param {string} opts.summary the closed read-out ("Off", a name, "N sources")
- * @param {string} opts.listLabel the heading over the open list
- * @param {boolean} opts.open whether the list is showing
- * @param {Array<{id: string, label: string, detail?: string, checked: boolean}>} opts.rows
- * @param {string} [opts.helpHTML] a helpTooltip to sit beside the label
+ * @param {string} opts.label the label over the whole control
+ * @param {Array<object>} opts.groups one per switchable group:
+ *   {id, label, summary, checked, open,
+ *    rows: Array<{id, label, detail?, checked, helpHTML?}>, helpHTML?}
+ * @param {string} [opts.helpHTML] a helpTooltip to sit beside the control's label
  * @returns {string} safe HTML
  */
-export function dropdownChecklist(opts) {
-  const rows = (opts.rows ?? []).map((row) =>
-    `<label class="checklist-row">` +
-    `<input type="checkbox" class="checklist-box" data-checklist="${escapeHTML(row.id)}"` +
-    `${row.checked ? " checked" : ""}/>` +
-    `<span class="checklist-label">${escapeHTML(row.label)}</span>` +
-    (row.detail ? `<span class="checklist-detail">${escapeHTML(row.detail)}</span>` : "") +
-    `</label>`).join("");
+export function expandableChecklist(opts) {
+  const groups = (opts.groups ?? []).map((group) => {
+    const rows = (group.rows ?? []).map((row) =>
+      `<div class="checklist-row">` +
+      `<label class="checklist-row-label">` +
+      `<input type="checkbox" class="checklist-box" data-derivation="${escapeHTML(row.id)}"` +
+      `${row.checked ? " checked" : ""}/>` +
+      `<span class="checklist-label">${escapeHTML(row.label)}</span>` +
+      (row.detail ? `<span class="checklist-detail">${escapeHTML(row.detail)}</span>` : "") +
+      `</label>` +
+      (row.helpHTML ?? "") +
+      `</div>`).join("");
 
-  return `<div class="checklist" id="${escapeHTML(opts.id)}"${opts.open ? ` data-open="true"` : ""}>` +
+    const listId = `${opts.id}-${group.id}-rows`;
+    return `<div class="checklist-group" data-group="${escapeHTML(group.id)}"` +
+      `${group.open ? ` data-open="true"` : ""}>` +
+      `<div class="checklist-group-head">` +
+      // The chevron is its own button, so ticking the master does not fold the
+      // group and folding it does not tick the master. One control per intent.
+      `<button type="button" class="checklist-group-toggle"` +
+      ` aria-expanded="${group.open ? "true" : "false"}" aria-controls="${escapeHTML(listId)}"` +
+      ` aria-label="${escapeHTML(group.label)}">${icon("expand_more")}</button>` +
+      `<label class="checklist-group-label">` +
+      `<input type="checkbox" class="checklist-master" data-source="${escapeHTML(group.id)}"` +
+      `${group.checked ? " checked" : ""}/>` +
+      `<span class="checklist-label">${escapeHTML(group.label)}</span>` +
+      `</label>` +
+      `<span class="checklist-summary">${escapeHTML(group.summary ?? "")}</span>` +
+      (group.helpHTML ?? "") +
+      `</div>` +
+      `<div class="checklist-rows" id="${escapeHTML(listId)}"${group.open ? "" : " hidden"}>` +
+      rows +
+      `</div></div>`;
+  }).join("");
+
+  return `<div class="checklist" id="${escapeHTML(opts.id)}">` +
     `<div class="checklist-head">` +
     `<span class="checklist-title">${escapeHTML(opts.label)}${opts.helpHTML ?? ""}</span>` +
-    `<button type="button" class="checklist-toggle" aria-expanded="${opts.open ? "true" : "false"}"` +
-    ` aria-controls="${escapeHTML(opts.id)}-list">` +
-    `<span class="checklist-summary">${escapeHTML(opts.summary)}</span>${icon("expand_more")}` +
-    `</button>` +
     `</div>` +
-    `<div class="checklist-list" id="${escapeHTML(opts.id)}-list"${opts.open ? "" : " hidden"}>` +
-    sectionLabel(opts.listLabel, { mini: true }) +
-    rows +
-    `</div></div>`;
+    `<div class="checklist-groups">${groups}</div>` +
+    `</div>`;
 }
 
 /**

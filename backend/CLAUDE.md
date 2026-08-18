@@ -113,17 +113,27 @@ be enforced anywhere else:
   replacement instead of an error. `ResolveOverlaps` compares the class FIRST.
   Mirrored by `frontend/state.js DISCOVERY_METHODS` and `MATCH_CLASSES`, guarded
   by `../detection_parity_test.go`.
-- `engine/signals.go` — `AllSignalSources` and `SignalSourceSelection`: which
-  built-in signals may DERIVE Suggestions. Data-driven on purpose, so a new
-  source is one constant and one implementation rather than a new field, a new
-  rail row and a new persisted flag. It does NOT govern whether a signal is
-  matched and replaced, and conflating the two is the mistake the separate
-  setting exists to prevent. A nil selection reads as the defaults, never as
-  "none".
+- `engine/signals.go` — `AllSignalSources`, `SignalDerivations` and
+  `SignalSourceSelection`: which READINGS of which built-in signals may DERIVE
+  Suggestions. The selection is `map[source]map[derivation]bool`, because the two
+  questions are nested: a source is a signal the pattern pass matched, a
+  derivation is one reading of it through one mechanism, and a flat map of dotted
+  keys would let a reading exist with no source above it. Data-driven on purpose,
+  so a new reading is one constant and one implementation rather than a new field,
+  a new rail row and a new persisted flag. `SignalDerivationEnabled` is the leaf
+  question the discovery pass asks; `SignalSourceEnabled` DERIVES the signal's own
+  state from its readings (on when any is on) and is never stored, for the reason
+  the Smart detection section's state is never stored either. It does NOT govern
+  whether a signal is matched and replaced, and conflating the two is the mistake
+  the separate setting exists to prevent. A nil selection, or a key missing at
+  either level, reads as the defaults, never as "none". Mirrored by
+  `frontend/state.js SIGNAL_SOURCES` and `SIGNAL_DERIVATIONS`, guarded by
+  `../detection_parity_test.go`.
 - `engine/signaldiscovery.go` — signal-based discovery: an email's local part
-  seeds a person and its domain seeds an organisation, and each seed is searched
-  for across the WHOLE BATCH, because the address is in one file and the text it
-  points at is usually in another. Three rules shape every decision: whole
+  seeds a person and its domain seeds an organisation, each gated on its OWN
+  derivation so clearing one leaves the other producing its rows, and each seed is
+  searched for across the WHOLE BATCH, because the address is in one file and the
+  text it points at is usually in another. Three rules shape every decision: whole
   batch; nothing suggested from text found only INSIDE the source signal; and
   the DOCUMENT's own casing and accents are what gets suggested. A domain seed
   extends over the capitalised name built on it, and the bare stem is then
@@ -205,10 +215,10 @@ an override took. The renames a user made are recorded rather than inferred
 (`Registry.Overrides`) and persist in the session file; **session files are read
 only by the version that wrote them**, so a file whose `SessionVersion` this
 build does not know is refused with an actionable message instead of
-half-migrated. The current version is **7**, and version 6 is refused like any
-other: nearly every field a v6 file carries is renamed or gone, so reading it
-would mean guessing at each one and each guess changes what the next run
-replaces. A corrupt
+half-migrated. The current version is **8**, and version 7 is refused like any
+other: a v7 file's `signalSuggestionSources` holds one boolean per source, which
+cannot say which READING of a signal the user wanted, so reading it would mean
+guessing, and the guess changes what the next run suggests. A corrupt
 key (two entries claiming one value) is refused the same way, as an ERROR:
 these functions run behind bound methods on a file the user picked, so
 panicking would take the application down on a bad file.

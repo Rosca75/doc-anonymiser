@@ -19,7 +19,8 @@ import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
 import {
   ALL_CATEGORIES, NAME_CATEGORIES, resetState, getState, setState, setUseLocalAI,
   setAIScope, setCategoryGroup, setUseBuiltInPatterns, setUseHeuristicDiscovery,
-  setSmartDetection, setSignalSource, SIGNAL_SOURCES,
+  setSmartDetection, setSignalSource, setSignalDerivation,
+  SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
 } from "./state.js";
 import { textOf, stripTags, all, one, exists } from "./testhtml.js";
 
@@ -236,35 +237,117 @@ test("Smart detection's three methods lead the section", () => {
   assert.ok(smart.includes(RAIL.signalSuggestions), "the Signal-based suggestions label renders");
 });
 
-test("the signal-source checklist is closed by default and summarises what is on", () => {
-  // Closed it is ONE row: that is what keeps the panel short as sources are
-  // added. The summary is the read-out, not a list of names.
-  resetState();
-  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  const control = one(smart, "#signal-sources");
-  assert.ok(!("data-open" in control.attrs), "it starts closed");
-  assert.equal(one(smart, ".checklist-toggle").attrs["aria-expanded"], "false");
-  assert.equal(textOf(smart, "span.checklist-summary"), RAIL.signalSourceLabel.email,
-    "one enabled source reads as its own name");
-  assert.ok("hidden" in one(smart, ".checklist-list").attrs, "the list is hidden while closed");
+test("the two plain method switches share one row, the expanding one does not", () => {
+  // The panel's height is its scarcest resource and these two carry the shortest
+  // labels in the rail, so they are one row of two rather than two rows of one.
+  // The signal control keeps its own row because it EXPANDS: rows appearing under
+  // one half of a two-column pair would shove the other half's label off its line.
+  const smart = all(railHTML(), "section.rail-section")[0].outer;
+  const pairs = all(smart, ".rail-toggle-pair");
+  assert.equal(pairs.length, 1, "exactly one pair, so nothing else is quietly folded into it");
+
+  const pair = pairs[0].outer;
+  assert.ok(exists(pair, "#smart-built-in"), "Built-in patterns is one half of the pair");
+  assert.ok(exists(pair, "#smart-heuristic"), "Heuristic discovery is the other");
+  assert.ok(!exists(pair, "#signal-sources"),
+    "the signal control must NOT be inside the pair: it expands, so it needs its own row");
+
+  // Each half keeps its own help icon: pairing them is a layout change, not a
+  // reason for either to stop explaining itself.
+  for (const half of all(pair, ".rail-toggle")) {
+    assert.ok(exists(half.outer, "span.help"),
+      `a paired method switch with no help tooltip: ${stripTags(half.inner).trim()}`);
+  }
 });
 
-test("the checklist lists only the sources that implement discovery", () => {
+test("each signal is one collapsed row that says which readings are on", () => {
+  // Collapsed a signal costs ONE row, which is what keeps the panel short as
+  // sources and readings are added. The read-out names the readings rather than
+  // counting them: the row asks WHICH reading, and a count answers something else.
+  resetState();
+  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
+  const groups = all(smart, ".checklist-group");
+  assert.deepEqual(groups.map((g) => g.attrs["data-group"]), SIGNAL_SOURCES,
+    "one group per signal that implements discovery, and no other");
+  assert.ok(!("data-open" in groups[0].attrs), "a signal starts collapsed");
+  assert.equal(one(smart, ".checklist-group-toggle").attrs["aria-expanded"], "false");
+  assert.equal(textOf(smart, "span.checklist-summary"),
+    RAIL.signalDerivationSummary([
+      RAIL.signalDerivationLabel["email.person"],
+      RAIL.signalDerivationLabel["email.organisation"],
+    ]),
+    "both readings on reads as both their names");
+  assert.ok("hidden" in one(smart, ".checklist-rows").attrs,
+    "the readings are hidden while the signal is collapsed");
+});
+
+test("a signal's rows are its implemented readings, each individually switchable", () => {
   // A row with nothing behind it is a control that appears to do something and
-  // does not, so the rows come from SIGNAL_SOURCES, which the Go parity guard
-  // holds to the engine's own list.
+  // does not, so the rows come from SIGNAL_DERIVATIONS, which the Go parity guard
+  // holds to the engine's own producers.
   resetState();
   const smart = all(railBody(getState()), "section.rail-section")[0].outer;
   const boxes = all(smart, "input.checklist-box");
-  assert.deepEqual(boxes.map((b) => b.attrs["data-checklist"]), SIGNAL_SOURCES);
-  assert.ok("checked" in boxes[0].attrs, "email-derived Suggestions default on");
+  assert.deepEqual(boxes.map((b) => b.attrs["data-derivation"]),
+    SIGNAL_DERIVATIONS.email);
+  assert.ok(boxes.every((b) => "checked" in b.attrs),
+    "every reading defaults on: the evidence is deterministic and deriving from it "
+    + "is why the feature exists");
+
+  // And the master is keyed by SOURCE, so the two levels cannot be confused.
+  const master = all(smart, "input.checklist-master");
+  assert.deepEqual(master.map((b) => b.attrs["data-source"]), SIGNAL_SOURCES);
 });
 
-test("the closed summary reads Off once every source is cleared", () => {
+test("every reading explains itself through a tooltip", () => {
+  // "Person names" alone does not say that clearing it leaves the address itself
+  // anonymised, which is the distinction the whole setting exists for.
+  resetState();
+  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
+  const rows = all(one(smart, "#signal-sources").outer, ".checklist-row");
+  assert.equal(rows.length, SIGNAL_DERIVATIONS.email.length);
+  for (const row of rows) {
+    assert.ok(exists(row.outer, "span.help"),
+      `a reading with no help tooltip: ${stripTags(row.inner).trim()}`);
+  }
+});
+
+test("the signal's own checkbox is a DERIVED master over its readings", () => {
+  // On when any reading is on, off only when all of them are. Never stored: a
+  // fourth flag beside the readings it summarises could disagree with them, and a
+  // row reading "on" over readings that are all off lies about what a run does.
+  resetState();
+  const railFor = () => all(railBody(getState()), "section.rail-section")[0].outer;
+
+  setSignalDerivation("email", "email.person", false);
+  let master = one(railFor(), "input.checklist-master");
+  assert.ok("checked" in master.attrs,
+    "one reading off leaves the signal reading on, because it still derives something");
+
+  setSignalDerivation("email", "email.organisation", false);
+  master = one(railFor(), "input.checklist-master");
+  assert.ok(!("checked" in master.attrs),
+    "every reading off is the only thing that reads as off");
+});
+
+test("the collapsed read-out reads Off once every reading is cleared", () => {
   resetState();
   for (const source of SIGNAL_SOURCES) setSignalSource(source, false);
   const smart = all(railBody(getState()), "section.rail-section")[0].outer;
   assert.equal(textOf(smart, "span.checklist-summary"), RAIL.signalSourcesOff);
+});
+
+test("clearing ONE reading leaves the other producing its own Suggestions", () => {
+  // The whole point of the per-reading switches: they are independent, and the
+  // engine honours each on its own (backend/engine/signaldiscovery_test.go).
+  resetState();
+  setSignalDerivation("email", "email.person", false);
+  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
+  const boxes = all(smart, "input.checklist-box");
+  const person = boxes.find((b) => b.attrs["data-derivation"] === "email.person");
+  const org = boxes.find((b) => b.attrs["data-derivation"] === "email.organisation");
+  assert.ok(!("checked" in person.attrs), "the cleared reading is off");
+  assert.ok("checked" in org.attrs, "and the other one is untouched");
 });
 
 test("clearing a signal source does not disable the signal's own category", () => {
@@ -353,6 +436,39 @@ test("the strictness lever is a select of the three levels, balanced by default"
     "the three engine strictness levels, in order");
   const selected = all(select.outer, "option").find((o) => "selected" in o.attrs);
   assert.equal(selected.attrs.value, "balanced", "balanced is the default selection");
+});
+
+test("the strictness block is a nested subgroup, so CSS can inset it", () => {
+  // The inset is a CSS rule keyed on this class (.rail-subgroup > .cgroup-body).
+  // .cgroup-body carries no padding of its own, so a strictness block that stopped
+  // being a .rail-subgroup would silently sit flush against its border again,
+  // hanging left of every label above it. The pixels are the harness's job; the
+  // hook the rule needs is this one's.
+  const smart = all(railHTML(), "section.rail-section")[0].outer;
+  const subgroups = all(smart, ".rail-subgroup");
+  assert.equal(subgroups.length, 1, "Smart detection nests exactly one subgroup");
+  assert.ok(exists(subgroups[0].outer, "#smart-strictness"),
+    "and it is the one holding the strictness lever");
+});
+
+test("every strictness field explains itself through a tooltip", () => {
+  // The Configure panel explains itself through tooltips, never prose: a field
+  // with no tooltip is a control whose only explanation would have to be a
+  // paragraph, and a paragraph is what put the controls at the foot of the panel
+  // out of reach.
+  const smart = all(railHTML(), "section.rail-section")[0].outer;
+  const block = all(smart, ".rail-subgroup")[0].outer;
+  const rows = all(block, ".rail-field-row");
+  assert.ok(rows.length >= 4, `the block has its four fields, got ${rows.length}`);
+  for (const row of rows) {
+    assert.ok(exists(row.outer, "span.help"),
+      `a strictness field with no help tooltip: ${stripTags(row.inner).trim()}`);
+  }
+  // The block's own switch is explained too, so nothing in it is unexplained.
+  for (const toggle of all(block, ".rail-toggle")) {
+    assert.ok(exists(toggle.outer, "span.help"),
+      `a strictness switch with no help tooltip: ${stripTags(toggle.inner).trim()}`);
+  }
 });
 
 test("the strictness select reflects a non-default stored value", () => {

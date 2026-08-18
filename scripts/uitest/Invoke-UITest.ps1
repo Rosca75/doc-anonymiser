@@ -259,7 +259,10 @@ function Invoke-DevChecks {
                 Test-Layout $cdp
                 Test-ImportPreview $cdp
                 Test-ConfigureRail $cdp
+                Test-ValueCardActions $cdp
+                Test-SignalDerivations $cdp
                 Test-ConfigurePanelFit $cdp
+                Test-StrictnessFields $cdp
                 Test-HelpTooltip $cdp
                 Test-ScrollRetention $cdp
                 Test-TooltipVisibility $cdp
@@ -393,6 +396,108 @@ function Test-ConfigureRail([CdpSession]$cdp) {
         -Expected 'all of them laid out with a non-zero height' `
         -Actual "$($r.categoriesWithSize) of $($r.categories) have a height" `
         -Hint 'A checkbox inside a folded group is in the DOM but not something the user can tick.'
+    # The signal control is a tree, built from the frontend lists the Go parity guard
+    # holds to the engine. One group per signal, one master per group.
+    $signalGroups = @($r.signalGroups)
+    $signalMasters = @($r.signalMasters)
+    Assert-That -Name 'the signal control is one group per signal' -Condition ($signalGroups.Count -eq 1) `
+        -Expected '1 .checklist-group (one implemented signal source)' `
+        -Actual "$($signalGroups.Count): $($signalGroups -join ', ')" `
+        -Hint 'views/identifyrail.js builds the groups from state.js SIGNAL_SOURCES.'
+    Assert-That -Name 'every signal group has its own master switch' `
+        -Condition ($signalMasters.Count -eq $signalGroups.Count) `
+        -Expected 'one .checklist-master per group' `
+        -Actual "$($signalMasters.Count) masters for $($signalGroups.Count) groups" `
+        -Hint 'The master is what saves switching a whole signal off one reading at a time.'
+    # "Side by side" is a claim about geometry, so geometry answers it: markup order
+    # proves nothing, since a column-flex parent stacks the same markup.
+    $pair = $r.methodPairRow
+    if ($null -eq $pair) {
+        Assert-That -Name 'the two plain method switches render' -Condition $false `
+            -Expected '#smart-built-in and #smart-heuristic in the rail' -Actual 'one of them is missing' `
+            -Hint 'views/identifyrail.js smartMethods renders both inside .rail-toggle-pair.'
+        return
+    }
+    Assert-That -Name 'Built-in patterns and Heuristic discovery share one row' -Condition ($pair.sameRow -eq $true) `
+        -Expected 'the two checkboxes at the same y (within 2px)' `
+        -Actual "built-in at y=$($pair.builtInTop), heuristic at y=$($pair.heuristicTop)" `
+        -Hint 'style.css .rail-toggle-pair is a two-column grid. The rail height is its scarcest resource and these are its shortest labels.'
+    Assert-That -Name 'they are ordered left to right, not overlapping' -Condition ($pair.heuristicIsToTheRight -eq $true) `
+        -Expected 'Heuristic discovery starting after Built-in patterns ends' -Actual "$($pair.heuristicIsToTheRight)" `
+        -Hint 'Two switches at the same y that overlap are one unreadable control.'
+    Assert-That -Name 'halving the row did not truncate either label' -Condition ($pair.labelsFullyShown -eq $true) `
+        -Expected 'both .cat-label elements showing their whole text' `
+        -Actual "$($pair.labelsFullyShown) ($($pair.labelWidths -join '; '))" `
+        -Hint 'A pair of ellipses is worse than two rows. Below the rail measure the pair stacks instead.'
+}
+
+# Expanding a signal must REVEAL its readings, and each must be switchable on its
+# own. Collapsed the readings are in the DOM at zero height: present to a string
+# test and absent to the user, so only this layer can tell the two states apart.
+function Test-SignalDerivations([CdpSession]$cdp) {
+    Write-Step 'Expanding a signal reveals its readings, each switchable on its own'
+    $r = $cdp.Eval('__uiProbes.signalDerivations()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the signal-derivation probe runs' -Condition $false `
+            -Expected '#signal-sources in the Identify rail' -Actual $r.error `
+            -Hint 'views/identifyrail.js signalSourceControl renders ui.js expandableChecklist.'
+        return
+    }
+    Assert-That -Name 'a collapsed signal costs no vertical space' `
+        -Condition ($r.collapsedRows -gt 0 -and $r.collapsedVisible -eq 0) `
+        -Expected "$($r.collapsedRows) readings in the DOM, none of them laid out" `
+        -Actual "$($r.collapsedRows) readings, $($r.collapsedVisible) with a height" `
+        -Hint 'Collapsed the group is one row. That trade is what keeps the panel short as sources and readings are added.'
+    Assert-That -Name 'expanding it reveals every reading' -Condition ($r.openedVisible -eq $r.collapsedRows) `
+        -Expected "all $($r.collapsedRows) readings laid out with a height after one click" `
+        -Actual "$($r.openedVisible) of $($r.collapsedRows)" `
+        -Hint 'A checkbox in the DOM at zero height is not something the user can tick.'
+    Assert-That -Name 'ticking a reading reaches the store' -Condition ($r.readingWentOff -eq $true) `
+        -Expected "$($r.derivation) stored as off" -Actual "$($r.readingWentOff)" `
+        -Hint 'state.js setSignalDerivation writes the leaf, and that is what the next detection run reads.'
+    Assert-That -Name 'the other readings are untouched' -Condition ($r.otherReadingsStillOn -eq $true) `
+        -Expected 'every other reading of that signal still on' -Actual "$($r.otherReadingsStillOn)" `
+        -Hint 'The independence is the whole point of the per-reading switches; the engine honours each on its own.'
+    Assert-That -Name 'ticking a reading does not fold the group' -Condition ($r.groupStayedOpenAfterTicking -eq $true) `
+        -Expected 'the readings still laid out after the tick' -Actual "$($r.groupStayedOpenAfterTicking)" `
+        -Hint 'The checkbox stops the click reaching the head. A group that folds as you tick it makes switching two readings a four-click job.'
+    Assert-That -Name 'the master stays on while any reading is on' -Condition ($r.masterAfterTick -eq $true) `
+        -Expected "the group master still checked with one of two readings off" -Actual "$($r.masterAfterTick)" `
+        -Hint 'The master is DERIVED (state.js signalSourceOn): on when any reading is on.'
+}
+
+# A value card's controls must CHANGE something. This is the layer that sees
+# attribute lower-casing: a card names the Value its handlers act on through
+# data- attributes, and a browser lower-cases attribute NAMES while a string test
+# preserves them, so a camel-case data-mainText renders, matches every string
+# assertion, and reaches the handler as an undefined dataset.mainText. Rename,
+# remove, drop-a-spelling and merge then all silently do nothing.
+function Test-ValueCardActions([CdpSession]$cdp) {
+    Write-Step "A value card's actions reach the store"
+    $r = $cdp.Eval('__uiProbes.valueCardActions()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the value-card probe runs' -Condition $false `
+            -Expected 'value cards on the My values tab' -Actual $r.error `
+            -Hint 'views/identifyworkspace.js renders one .value-card per accepted Value.'
+        return
+    }
+    Assert-That -Name 'the seeded values render as cards' -Condition ($r.cards -eq 2) `
+        -Expected '2 .value-card elements' -Actual "$($r.cards)" `
+        -Hint 'The probe seeds two accepted Values, one per card.'
+    Assert-That -Name 'every card carries its own identity' `
+        -Condition ($r.cards -gt 0 -and $r.cardsWithIdentity -eq $r.cards) `
+        -Expected 'every card readable as dataset.category + dataset.mainText' `
+        -Actual "$($r.cardsWithIdentity) of $($r.cards)" `
+        -Hint 'The card renders data-category and data-main-text. A camel-case data-mainText is lower-cased by the parser, so dataset.mainText is undefined and every action on the card resolves against it.'
+    Assert-That -Name 'clicking the name reveals an inline input' -Condition ($r.inlineInputAppeared -eq $true) `
+        -Expected 'a .value-name-input in place of the name button' -Actual "$($r.inlineInputAppeared)" `
+        -Hint 'revealNameInput replaces the name button; native dialogs are banned.'
+    Assert-That -Name 'committing the input renames the Value' -Condition ($r.renamed -eq $true) `
+        -Expected 'the new name in state.values' -Actual "$($r.renamed)" `
+        -Hint 'revealNameInput commits through renameValue, which needs the card mainText.'
+    Assert-That -Name "the card's remove control deletes the Value" -Condition ($r.removedOne -eq $true) `
+        -Expected 'one fewer value in the store' -Actual "$($r.removedOne), values now: $($r.valuesAfter -join ', ')" `
+        -Hint 'The .value-remove handler calls deleteValue(category, mainText) from the card dataset.'
 }
 
 # A scrolled panel keeps its position across a repaint. This is a visible-only
@@ -424,6 +529,43 @@ function Test-ScrollRetention([CdpSession]$cdp) {
     Assert-That -Name 'the scroll position survives a repaint' -Condition ($r.after -eq $r.before) `
         -Expected "scrollTop still $($r.before) after ticking a category" -Actual "$($r.after)" `
         -Hint 'frontend/scroll.js snapshotScrollPositions/restoreScrollPositions must bracket main.js paint(), so a scrolled panel is not thrown back to the top by root.innerHTML.'
+}
+
+# The Discovery strictness block must be readable and aligned. .rail-field gave
+# the control column 6rem, narrower than the strictness select's own longest
+# option, and .cgroup-body carries no padding of its own, so a nested subgroup's
+# fields sat flush against its border while every label above them was inset.
+function Test-StrictnessFields([CdpSession]$cdp) {
+    Write-Step 'The Discovery strictness fields are readable and aligned'
+    $r = $cdp.Eval('__uiProbes.strictnessFields()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the strictness probe runs' -Condition $false `
+            -Expected 'the Discovery strictness block in the rail' -Actual $r.error `
+            -Hint 'views/identifyrail.js smartSection nests it under Smart detection.'
+        return
+    }
+    Assert-That -Name 'the strictness select shows its longest option in full' `
+        -Condition ($r.selectFitsWidestOption -eq $true) `
+        -Expected "a box at least as wide as '$($r.widestText)' ($($r.widestOption)px)" `
+        -Actual "$($r.selectWidth)px of box for $($r.widestOption)px of text" `
+        -Hint 'style.css .rail-field sizes the control column. A column narrower than the widest option truncates it to an unreadable stub.'
+    Assert-That -Name 'the nested fields are inset like the labels above them' `
+        -Condition ($null -ne $r.nestedLabelLeft -and $null -ne $r.sectionLabelLeft -and $r.nestedLabelLeft -ge $r.sectionLabelLeft) `
+        -Expected "a nested label at x >= $($r.sectionLabelLeft)px" -Actual "x = $($r.nestedLabelLeft)px" `
+        -Hint 'style.css .rail-subgroup > .cgroup-body carries the inset; .cgroup-body has no padding of its own.'
+    $lefts = @($r.fieldLabelLefts)
+    Assert-That -Name 'every field in the block shares one inset' `
+        -Condition ($lefts.Count -gt 0 -and (($lefts | Select-Object -Unique).Count -eq 1)) `
+        -Expected 'all .rail-field-label left offsets equal' -Actual "$($lefts -join ', ')" `
+        -Hint 'They are one form. A field at a different offset reads as a mistake.'
+    $wrapped = @($r.labels | Where-Object { $_.lineHeight -gt 0 -and $_.height -gt ($_.lineHeight * 1.5) })
+    Assert-That -Name 'no field label wraps to a second line' -Condition ($wrapped.Count -eq 0) `
+        -Expected 'every .rail-field-label on one line' `
+        -Actual "$($wrapped.Count) wrapped: $(($wrapped | ForEach-Object { $_.text }) -join ', ')" `
+        -Hint 'style.css .rail-field splits the row between the label and the control. Widening the control column narrows the label, and the labels are where that trade shows first.'
+    Assert-That -Name 'widening the control did not widen the rail' -Condition ($r.railOverflowsX -eq $false) `
+        -Expected 'a rail no wider than its column' -Actual "$($r.railOverflowsX)" `
+        -Hint 'The fixed-height layout contract: wide content scrolls inside its own container and never widens the page.'
 }
 
 # The Configure panel must FIT, and its explanations must be tooltips rather than
@@ -469,6 +611,17 @@ function Test-HelpTooltip([CdpSession]$cdp) {
             -Hint 'views/identifyrail.js renders ui.js helpTooltip beside each explained label.'
         return
     }
+    Assert-That -Name 'the help trigger has a glyph in it' -Condition ($r.trigger.hasGlyph -eq $true) `
+        -Expected 'an <svg> inside button.help-icon' -Actual "$($r.trigger.hasGlyph)" `
+        -Hint 'ui.js helpTooltip renders icon("info"), and icon() returns the EMPTY STRING for a name absent from frontend/icons.js ICONS, so the trigger is an invisible hit area. icon_parity_test.go is the cheap guard; this is the one that sees the result.'
+    Assert-That -Name 'the trigger is big enough to aim at' `
+        -Condition ($r.trigger.width -ge 14 -and $r.trigger.height -ge 14) `
+        -Expected 'a trigger at least 14x14 CSS pixels' -Actual "$($r.trigger.width)x$($r.trigger.height)" `
+        -Hint 'style.css .help-icon sizes it; a trigger smaller than this is a target nobody hits.'
+    Assert-That -Name 'the glyph is painted at a readable size' `
+        -Condition ($r.trigger.glyphWidth -ge 10 -and $r.trigger.glyphHeight -ge 10) `
+        -Expected 'a glyph at least 10x10 CSS pixels' -Actual "$($r.trigger.glyphWidth)x$($r.trigger.glyphHeight)" `
+        -Hint 'An svg present in the DOM at zero size is the same invisible control with extra markup.'
     Assert-That -Name 'the bubble is hidden until asked for' -Condition ($r.closedVisible -eq $false) `
         -Expected 'a zero-height bubble before any interaction' -Actual "$($r.closedVisible)" `
         -Hint 'An always-visible bubble is the paragraph the tooltip replaced, with extra steps.'

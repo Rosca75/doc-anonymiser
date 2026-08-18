@@ -163,6 +163,25 @@
     await settle();
   }
 
+  // The two accepted Values the value-card probe acts on. Their spellings are
+  // already settled (derivedSpellings set, so nothing is "pending"), because the
+  // bridge is absent here and a value awaiting expansion would render a spinner
+  // instead of the controls under test.
+  const CARD_VALUES = [
+    {
+      category: "person_names", mainText: "Marie Duval",
+      spellings: [], derivedSpellings: ["Marie Duval", "Marie"],
+      spellingsError: null, discoveryMethods: ["manual"], evidence: [],
+      spellingPolicy: "automatic", status: "accepted",
+    },
+    {
+      category: "entity_names", mainText: "Meridian Consulting",
+      spellings: [], derivedSpellings: ["Meridian Consulting"],
+      spellingsError: null, discoveryMethods: ["manual"], evidence: [],
+      spellingPolicy: "automatic", status: "accepted",
+    },
+  ];
+
   /** rect(el) is getBoundingClientRect as plain, transferable numbers. */
   const rect = (el) => {
     const r = el.getBoundingClientRect();
@@ -341,6 +360,107 @@
         // not assumed.
         categoriesWithSize: [...rail.querySelectorAll(".cat-toggle")]
           .filter((c) => c.getBoundingClientRect().height > 0).length,
+        // The signal control is a tree: one group per signal, its readings one
+        // click below. Collapsed the readings are in the DOM at zero height, which
+        // a string test reads as "present" and a user reads as absent, so both
+        // states are measured. The expanding half is done in its own probe below,
+        // because it has to click.
+        signalGroups: [...rail.querySelectorAll("#signal-sources .checklist-group")]
+          .map((g) => g.dataset.group),
+        signalMasters: [...rail.querySelectorAll("#signal-sources .checklist-master")]
+          .map((b) => b.dataset.source),
+        // The two plain Smart-detection methods share ONE row. "Side by side" is a
+        // claim about geometry, so it is answered with geometry: equal tops, and
+        // one to the left of the other. Markup order proves neither, since a
+        // column-flex parent stacks the same markup.
+        methodPairRow: (() => {
+          const builtIn = rail.querySelector("#smart-built-in");
+          const heuristic = rail.querySelector("#smart-heuristic");
+          if (!builtIn || !heuristic) return null;
+          const a = builtIn.getBoundingClientRect();
+          const b = heuristic.getBoundingClientRect();
+          return {
+            builtInTop: Math.round(a.top),
+            heuristicTop: Math.round(b.top),
+            sameRow: Math.abs(a.top - b.top) <= 2,
+            heuristicIsToTheRight: b.left > a.right,
+            // Neither label may be truncated to nothing by the halving: a pair of
+            // ellipses is worse than two rows.
+            labelWidths: [...rail.querySelectorAll(".rail-toggle-pair .cat-label")]
+              .map((el) => `${(el.textContent ?? "").trim()}: ${el.clientWidth} of ${el.scrollWidth}px`),
+            labelsFullyShown: [...rail.querySelectorAll(".rail-toggle-pair .cat-label")]
+              .every((el) => el.scrollWidth <= el.clientWidth + 1),
+          };
+        })(),
+      };
+    },
+
+    /**
+     * valueCardActions() drives a value card's controls in the real browser and
+     * reports what reached the store.
+     *
+     * This is the only layer that can see the defect it exists for. A card names
+     * the Value its handlers act on through `data-` attributes, and the BROWSER
+     * lower-cases attribute names while a string test preserves them: a
+     * camel-case `data-mainText` renders, satisfies every string assertion, and
+     * arrives as `dataset.maintext`, so `dataset.mainText` is undefined and
+     * renaming, removing, dropping a spelling and merging all silently do
+     * nothing. Nothing throws, so nothing anywhere else notices.
+     *
+     * It reports the store's own answer after each action, never the markup: the
+     * markup rendering correctly is exactly the state the bug leaves it in.
+     */
+    async valueCardActions() {
+      const s = await store();
+      await seed("identify");
+      s.setState({ values: CARD_VALUES.map((v) => ({ ...v })) });
+      await settle();
+
+      // The workspace opens on Suggestions; My values is a click away, and view
+      // state inside the module, so it is only reachable the way a user reaches
+      // it.
+      const tab = document.querySelector('[data-wstab="values"]');
+      if (!tab) return { error: "no [data-wstab] tabs rendered in the Identify workspace" };
+      tab.click();
+      await settle();
+
+      const cardFor = (mainText) => [...document.querySelectorAll(".value-card")]
+        .find((c) => c.dataset.mainText === mainText) ?? null;
+
+      const before = [...document.querySelectorAll(".value-card")];
+      const identified = before.filter((c) => c.dataset.category && c.dataset.mainText).length;
+      if (before.length === 0) return { error: "the My values tab rendered no .value-card" };
+
+      // 1. Rename. Clicking the name reveals an inline input; typing and blurring
+      // commits it.
+      let renamed = null;
+      const target = cardFor("Marie Duval");
+      if (target) {
+        target.querySelector(".value-name")?.click();
+        await settle(80);
+        const input = target.querySelector(".value-name-input");
+        if (input) {
+          input.value = "Marie Dupont";
+          input.dispatchEvent(new Event("blur"));
+          await settle();
+          renamed = s.getState().values.some((v) => v.mainText === "Marie Dupont");
+        }
+      }
+
+      // 2. Remove. The count in the store is the answer; the card disappearing
+      // is not, because a repaint reads the store either way.
+      const countBeforeRemove = s.getState().values.length;
+      const removable = cardFor("Meridian Consulting");
+      removable?.querySelector(".value-remove")?.click();
+      await settle();
+
+      return {
+        cards: before.length,
+        cardsWithIdentity: identified,
+        inlineInputAppeared: !!target && !!document.querySelector(".value-card") && renamed !== null,
+        renamed,
+        removedOne: s.getState().values.length === countBeforeRemove - 1,
+        valuesAfter: s.getState().values.map((v) => v.mainText),
       };
     },
 
@@ -407,6 +527,157 @@
     },
 
     /**
+     * signalDerivations() expands a signal row and measures what appears.
+     *
+     * Collapsed, a signal's readings are in the DOM with zero height: present to a
+     * string test and absent to the user. So "expanding shows them" is a claim
+     * about geometry, and this answers it with geometry, by clicking the chevron
+     * the user clicks and measuring the rows before and after.
+     *
+     * It also drives the two switches that must NOT be the same control: the
+     * chevron folds without ticking, and the master ticks without folding. Two jobs
+     * on one element is how a master gets switched by accident.
+     */
+    async signalDerivations() {
+      const s = await store();
+      await seed("identify");
+      const control = document.querySelector("#signal-sources");
+      if (!control) return { error: "no #signal-sources control in the Identify rail" };
+
+      const group = control.querySelector(".checklist-group");
+      if (!group) return { error: "no .checklist-group in the signal control" };
+      const source = group.dataset.group;
+
+      const rowBoxes = () => [...group.querySelectorAll("input.checklist-box")];
+      const visibleRows = () => rowBoxes()
+        .filter((b) => b.getBoundingClientRect().height > 0).length;
+
+      const collapsedRows = rowBoxes().length;
+      const collapsedVisible = visibleRows();
+
+      const toggle = group.querySelector(".checklist-group-toggle");
+      if (!toggle) return { error: "the signal group has no chevron to expand it" };
+      toggle.click();
+      await settle();
+
+      // The repaint replaced the nodes, so everything below is re-queried.
+      const opened = document.querySelector("#signal-sources .checklist-group");
+      const openedBoxes = [...opened.querySelectorAll("input.checklist-box")];
+      const openedVisible = openedBoxes
+        .filter((b) => b.getBoundingClientRect().height > 0).length;
+
+      // Ticking a reading must not fold the group: the checkbox stops the click
+      // reaching the head. Measured through the STORE, because a checkbox visually
+      // unticking itself proves nothing about what the next run reads.
+      const first = openedBoxes[0];
+      const derivation = first?.dataset.derivation;
+      first?.click();
+      await settle();
+
+      const afterTick = document.querySelector("#signal-sources .checklist-group");
+      const stillOpen = [...afterTick.querySelectorAll("input.checklist-box")]
+        .filter((b) => b.getBoundingClientRect().height > 0).length > 0;
+      const stored = s.getState().settings?.signalSuggestionSources?.[source] ?? {};
+      const masterAfterTick = afterTick.querySelector(".checklist-master")?.checked ?? null;
+
+      return {
+        source,
+        collapsedRows,
+        collapsedVisible,
+        openedVisible,
+        derivation,
+        readingWentOff: stored[derivation] === false,
+        otherReadingsStillOn: Object.entries(stored)
+          .filter(([key]) => key !== derivation).every(([, on]) => on !== false),
+        groupStayedOpenAfterTicking: stillOpen,
+        // The master is DERIVED: one reading off out of two leaves it on.
+        masterAfterTick,
+      };
+    },
+
+    /**
+     * strictnessFields() measures the Discovery strictness block: how wide its
+     * select is, and how far its fields are inset.
+     *
+     * Both were reported against the built application and neither is visible to
+     * a string test. `.rail-field` gave the control column 6rem, which is
+     * narrower than the select's own longest option, so "How much to trust" read
+     * as a truncated stub; and `.cgroup-body` carries no padding of its own, so a
+     * subgroup's fields sat flush against its border while everything above them
+     * was inset. Pixels are the only way to say either.
+     */
+    async strictnessFields() {
+      await seed("identify");
+      const rail = document.querySelector("#identify-rail");
+      if (!rail) return { error: "no #identify-rail rendered on the Identify screen" };
+
+      const subgroup = rail.querySelector(".rail-subgroup");
+      if (!subgroup) return { error: "no .rail-subgroup (the Discovery strictness block) in the rail" };
+      // The block folds; open it the way the user does, through its own head.
+      if (subgroup.dataset.open === "false") {
+        subgroup.querySelector(".cgroup-title")?.click();
+        await settle();
+      }
+
+      const select = document.querySelector("#smart-strictness");
+      if (!select) return { error: "no #smart-strictness select in the strictness block" };
+
+      // The widest option decides whether the box is readable. Measured by
+      // rendering the option text into a span that inherits the select's font,
+      // because a <option>'s own box is drawn by the platform and has no useful
+      // rect.
+      const probeSpan = document.createElement("span");
+      const style = window.getComputedStyle(select);
+      probeSpan.style.font = style.font || `${style.fontSize} ${style.fontFamily}`;
+      probeSpan.style.position = "fixed";
+      probeSpan.style.visibility = "hidden";
+      probeSpan.style.whiteSpace = "pre";
+      document.body.appendChild(probeSpan);
+      let widestOption = 0;
+      let widestText = "";
+      for (const option of select.options) {
+        probeSpan.textContent = option.textContent;
+        const w = probeSpan.getBoundingClientRect().width;
+        if (w > widestOption) {
+          widestOption = w;
+          widestText = option.textContent;
+        }
+      }
+      probeSpan.remove();
+
+      // The indentation: a nested field's label against a label of the section
+      // ABOVE it. Both are read as viewport x, so the comparison is the one the
+      // eye makes.
+      const nestedLabel = subgroup.querySelector(".rail-field-label");
+      const sectionLabel = rail.querySelector(".rail-section > .cgroup-body .section-label");
+
+      return {
+        selectWidth: Math.round(select.getBoundingClientRect().width),
+        widestOption: Math.round(widestOption),
+        widestText,
+        // A select's own padding and its dropdown arrow both eat into the text
+        // room, so the box has to be WIDER than the text, not merely equal.
+        selectFitsWidestOption: select.getBoundingClientRect().width >= widestOption,
+        nestedLabelLeft: nestedLabel ? Math.round(nestedLabel.getBoundingClientRect().left) : null,
+        sectionLabelLeft: sectionLabel ? Math.round(sectionLabel.getBoundingClientRect().left) : null,
+        // Every field in the block, so a stray one that escaped the inset shows.
+        fieldLabelLefts: [...subgroup.querySelectorAll(".rail-field-label")]
+          .map((el) => Math.round(el.getBoundingClientRect().left)),
+        // Widening the control column narrows the label column, so the labels are
+        // where that trade shows first. A label wrapping to two lines is what
+        // "make the dropdown wider" costs if it is taken too far, and it is
+        // invisible to everything but a measurement.
+        labels: [...subgroup.querySelectorAll(".rail-field-label")].map((el) => ({
+          text: (el.textContent ?? "").trim(),
+          height: Math.round(el.getBoundingClientRect().height),
+          lineHeight: Math.round(parseFloat(window.getComputedStyle(el).lineHeight) || 0),
+        })),
+        // The rail must not have been widened past its column to fit any of this.
+        railOverflowsX: rail.scrollWidth > rail.clientWidth + 1,
+      };
+    },
+
+    /**
      * helpTooltipVisibility() opens one help tooltip and measures where the
      * bubble actually lands.
      *
@@ -430,6 +701,21 @@
 
       const closedVisible = bubble.getBoundingClientRect().height > 0;
 
+      // The TRIGGER itself, measured before anything is opened. A trigger with no
+      // glyph is the defect that made every tooltip in the application
+      // undiscoverable: ui.js icon() returns the empty string for a name absent
+      // from ICONS, so helpTooltip rendered a button with nothing in it and the
+      // whole mechanism worked on an invisible hit area.
+      const triggerBox = iconBtn.getBoundingClientRect();
+      const glyph = iconBtn.querySelector("svg");
+      const trigger = {
+        width: Math.round(triggerBox.width),
+        height: Math.round(triggerBox.height),
+        hasGlyph: !!glyph,
+        glyphWidth: glyph ? Math.round(glyph.getBoundingClientRect().width) : 0,
+        glyphHeight: glyph ? Math.round(glyph.getBoundingClientRect().height) : 0,
+      };
+
       help.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
       await new Promise((r) => requestAnimationFrame(() => r()));
       const box = bubble.getBoundingClientRect();
@@ -437,6 +723,7 @@
       const clip = scroller.getBoundingClientRect();
 
       const opened = {
+        trigger,
         closedVisible,
         openedOnHover: box.height > 0 && box.width > 0,
         // Inside the viewport on every side.

@@ -117,9 +117,12 @@ const initialState = {
     level: "medium", categories: null, ollamaPort: 11434, model: "", country: DEFAULT_COUNTRY,
     contextSize: 8192, useLocalAI: false,
     useBuiltInPatterns: true, useHeuristicDiscovery: true,
-    // Which built-in signals may DERIVE Suggestions. Data-driven, keyed by
-    // SIGNAL_SOURCES: a new source needs no new field here.
-    signalSuggestionSources: { email: true },
+    // Which READINGS of which built-in signals may DERIVE Suggestions.
+    // Data-driven, keyed by SIGNAL_SOURCES and then by SIGNAL_DERIVATIONS: a new
+    // source or reading needs no new field here.
+    signalSuggestionSources: {
+      email: { "email.person": true, "email.organisation": true },
+    },
     minConfidence: 0,
     // heuristicDiscovery is the tuning for the offline Smart
     // detection pass, matching engine.SmartDetectOptions field for field.
@@ -321,26 +324,70 @@ export const MATCH_CLASSES = [
 // row, a new field and a new persisted flag.
 export const SIGNAL_SOURCES = ["email"];
 
+// SIGNAL_DERIVATIONS mirrors engine.SignalDerivations exactly and is checked by
+// the same guard. Each entry lists, per signal, the READINGS that signal supports,
+// in display order: a source is a signal the pattern pass matched, a derivation is
+// one reading of it through one mechanism. The rail renders this tree, so a new
+// reading is one entry here and one producer in Go.
+export const SIGNAL_DERIVATIONS = {
+  email: ["email.person", "email.organisation"],
+};
+
 /**
- * signalSourceOn(s, source) reports whether a built-in signal may derive
- * Suggestions.
+ * signalDerivationOn(s, source, derivation) reports whether ONE reading of a
+ * signal may derive Suggestions. This is the leaf question, and the only one
+ * stored.
  *
- * A MISSING key reads as ON, mirroring engine.SignalSourceEnabled: a settings
- * object that has not been filled in yet must behave like the shipped default,
- * not like a user who switched everything off. Only an explicit false is off.
+ * A MISSING key reads as ON at either level, mirroring
+ * engine.SignalDerivationEnabled: a settings object that has not been filled in
+ * yet must behave like the shipped default, not like a user who switched
+ * everything off. Only an explicit false is off.
+ *
+ * @param {object} s the state
+ * @param {string} source one of SIGNAL_SOURCES
+ * @param {string} derivation one of SIGNAL_DERIVATIONS[source]
+ * @returns {boolean} whether that reading may produce Suggestions
+ */
+export function signalDerivationOn(s = state, source, derivation) {
+  if (!(SIGNAL_DERIVATIONS[source] ?? []).includes(derivation)) return false;
+  return s.settings?.signalSuggestionSources?.[source]?.[derivation] !== false;
+}
+
+/**
+ * signalSourceOn(s, source) reports whether a signal may derive anything at all,
+ * which is true when ANY of its readings is on.
+ *
+ * DERIVED, never stored. It is the master the rail shows on the signal's own row,
+ * and a persisted fourth flag beside the readings it summarises could disagree
+ * with them: a row reading "on" while every reading under it is off lies about
+ * what a run does. Same reasoning as smartDetectionOn.
  *
  * @param {object} s the state
  * @param {string} source one of SIGNAL_SOURCES
  * @returns {boolean} whether signal-based discovery may use this source
  */
 export function signalSourceOn(s = state, source) {
-  return s.settings?.signalSuggestionSources?.[source] !== false;
+  return (SIGNAL_DERIVATIONS[source] ?? [])
+    .some((derivation) => signalDerivationOn(s, source, derivation));
 }
 
 /**
- * enabledSignalSources(s) lists the sources currently switched on, in
- * SIGNAL_SOURCES order. The compact summary control reads it to say "Off", the
- * sole source's name, or "N sources".
+ * enabledSignalDerivations(s, source) lists that source's readings currently
+ * switched on, in SIGNAL_DERIVATIONS order. The collapsed signal row reads it to
+ * say "Off" or to name what is on.
+ *
+ * @param {object} s the state
+ * @param {string} source one of SIGNAL_SOURCES
+ * @returns {string[]} the enabled derivation identifiers
+ */
+export function enabledSignalDerivations(s = state, source) {
+  return (SIGNAL_DERIVATIONS[source] ?? [])
+    .filter((derivation) => signalDerivationOn(s, source, derivation));
+}
+
+/**
+ * enabledSignalSources(s) lists the sources with at least one reading on, in
+ * SIGNAL_SOURCES order.
  *
  * @param {object} s the state
  * @returns {string[]} the enabled source identifiers
@@ -350,26 +397,59 @@ export function enabledSignalSources(s = state) {
 }
 
 /**
- * setSignalSource(source, on) switches one signal source.
+ * setSignalDerivation(source, derivation, on) switches ONE reading of one signal.
  *
- * It writes ONLY that key. There is deliberately no master boolean over the map:
- * "every source off" is already expressible, so a second way of saying it would
- * be a second thing to keep in agreement. Clearing a source stops
- * signal-DERIVED Suggestions and leaves the signal's own anonymisation alone,
- * which is governed by Built-in patterns and the category's own switch.
+ * It writes only that leaf. Clearing a reading stops the Suggestions THAT reading
+ * produces and leaves the signal's own anonymisation alone, which is governed by
+ * Built-in patterns and the category's own switch. That distinction is the whole
+ * reason this setting is separate, and it now holds per reading.
  *
  * @param {string} source one of SIGNAL_SOURCES
+ * @param {string} derivation one of SIGNAL_DERIVATIONS[source]
  * @param {boolean} on whether it may derive Suggestions
- * @returns {boolean} whether the source is a known one and was written
+ * @returns {boolean} whether the pair is a known one and was written
  */
-export function setSignalSource(source, on) {
-  if (!SIGNAL_SOURCES.includes(source)) return false;
+export function setSignalDerivation(source, derivation, on) {
+  if (!(SIGNAL_DERIVATIONS[source] ?? []).includes(derivation)) return false;
   setState({
     settings: {
       ...state.settings,
       signalSuggestionSources: {
         ...state.settings.signalSuggestionSources,
-        [source]: !!on,
+        [source]: {
+          ...state.settings.signalSuggestionSources?.[source],
+          [derivation]: !!on,
+        },
+      },
+    },
+  });
+  return true;
+}
+
+/**
+ * setSignalSource(source, on) is the MASTER over one signal's readings: it writes
+ * EVERY derivation of that source at once.
+ *
+ * It is not a flag of its own (signalSourceOn derives that for display); it is the
+ * one gesture that saves the user N clicks to switch a whole signal off, and the
+ * gesture the Smart detection section's own master reaches through.
+ *
+ * @param {string} source one of SIGNAL_SOURCES
+ * @param {boolean} on whether its readings may derive Suggestions
+ * @returns {boolean} whether the source is a known one and was written
+ */
+export function setSignalSource(source, on) {
+  if (!SIGNAL_SOURCES.includes(source)) return false;
+  const derivations = {};
+  for (const derivation of SIGNAL_DERIVATIONS[source] ?? []) {
+    derivations[derivation] = !!on;
+  }
+  setState({
+    settings: {
+      ...state.settings,
+      signalSuggestionSources: {
+        ...state.settings.signalSuggestionSources,
+        [source]: derivations,
       },
     },
   });
@@ -993,8 +1073,16 @@ export function smartDetectionOn(s = state) {
  */
 export function setSmartDetection(on) {
   const value = !!on;
+  // Every source's every READING, not one flag per source: the stored shape is the
+  // nested one, and writing a boolean where a map belongs would leave the whole
+  // signal method reading as its default for the rest of the session.
   const sources = {};
-  for (const source of SIGNAL_SOURCES) sources[source] = value;
+  for (const source of SIGNAL_SOURCES) {
+    sources[source] = {};
+    for (const derivation of SIGNAL_DERIVATIONS[source] ?? []) {
+      sources[source][derivation] = value;
+    }
+  }
   setState({
     settings: {
       ...state.settings,

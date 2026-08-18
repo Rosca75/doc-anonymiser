@@ -123,7 +123,9 @@ func TestSessionSettingsRoundTrip(t *testing.T) {
 func TestApplySettingsRefusesAnUnknownSignalSource(t *testing.T) {
 	app := NewApp()
 	s := app.GetSettings()
-	s.SignalSuggestionSources = engine.SignalSourceSelection{"telepathy": true}
+	s.SignalSuggestionSources = engine.SignalSourceSelection{
+		"telepathy": {engine.DerivationEmailPerson: true},
+	}
 
 	if _, err := app.ApplySettings(s); err == nil {
 		t.Fatal("an unknown signal source must be refused")
@@ -132,6 +134,27 @@ func TestApplySettingsRefusesAnUnknownSignalSource(t *testing.T) {
 	}
 	if _, ok := app.GetSettings().SignalSuggestionSources["telepathy"]; ok {
 		t.Error("a refused source must not be stored")
+	}
+}
+
+// TestApplySettingsRefusesAnUnknownSignalDerivation is the same rule one level
+// down. A derivation is only meaningful UNDER its source, so a reading this build
+// does not produce, or a real reading filed under the wrong source, is refused for
+// the same reason: stored, it is a switch nothing reads.
+func TestApplySettingsRefusesAnUnknownSignalDerivation(t *testing.T) {
+	app := NewApp()
+	s := app.GetSettings()
+	s.SignalSuggestionSources = engine.SignalSourceSelection{
+		engine.SignalSourceEmail: {"email.telepathy": true},
+	}
+
+	if _, err := app.ApplySettings(s); err == nil {
+		t.Fatal("an unknown signal derivation must be refused")
+	} else if !strings.Contains(err.Error(), "email.telepathy") {
+		t.Errorf("the refusal must name the derivation it rejected, got: %v", err)
+	}
+	if _, ok := app.GetSettings().SignalSuggestionSources[engine.SignalSourceEmail]["email.telepathy"]; ok {
+		t.Error("a refused derivation must not be stored")
 	}
 }
 
@@ -161,12 +184,41 @@ func TestApplySettingsFillsAnOmittedSignalSource(t *testing.T) {
 func TestApplySettingsObeysAnExplicitlyDisabledSource(t *testing.T) {
 	app := NewApp()
 	s := app.GetSettings()
-	s.SignalSuggestionSources = engine.SignalSourceSelection{engine.SignalSourceEmail: false}
+	s.SignalSuggestionSources = engine.SignalSourceSelection{engine.SignalSourceEmail: {
+		engine.DerivationEmailPerson:       false,
+		engine.DerivationEmailOrganisation: false,
+	}}
 
 	if _, err := app.ApplySettings(s); err != nil {
 		t.Fatalf("ApplySettings: %v", err)
 	}
 	if engine.SignalSourceEnabled(app.GetSettings().SignalSuggestionSources, engine.SignalSourceEmail) {
 		t.Error("an explicit false must be obeyed, not filled back in from the defaults")
+	}
+}
+
+// TestApplySettingsKeepsOneReadingWhenTheOtherIsCleared: the readings are
+// independent through the bound layer too, not only inside the engine. A
+// normalisation that filled both from the defaults, or cleared both together,
+// would make the per-reading switches decoration.
+func TestApplySettingsKeepsOneReadingWhenTheOtherIsCleared(t *testing.T) {
+	app := NewApp()
+	s := app.GetSettings()
+	s.SignalSuggestionSources = engine.SignalSourceSelection{engine.SignalSourceEmail: {
+		engine.DerivationEmailPerson: false,
+	}}
+
+	if _, err := app.ApplySettings(s); err != nil {
+		t.Fatalf("ApplySettings: %v", err)
+	}
+	got := app.GetSettings().SignalSuggestionSources
+	if engine.SignalDerivationEnabled(got, engine.SignalSourceEmail, engine.DerivationEmailPerson) {
+		t.Errorf("the cleared reading must stay cleared, got %+v", got)
+	}
+	if !engine.SignalDerivationEnabled(got, engine.SignalSourceEmail, engine.DerivationEmailOrganisation) {
+		t.Errorf("the omitted reading must fill from the DEFAULTS, not from off, got %+v", got)
+	}
+	if !engine.SignalSourceEnabled(got, engine.SignalSourceEmail) {
+		t.Errorf("the signal still derives something, so its master must read on, got %+v", got)
 	}
 }

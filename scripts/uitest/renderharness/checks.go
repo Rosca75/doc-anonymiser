@@ -210,6 +210,16 @@ type railResult struct {
 	LocalOn            *bool    `json:"localOn"`
 	Categories         int      `json:"categories"`
 	CategoriesWithSize int      `json:"categoriesWithSize"`
+	SignalGroups       []string `json:"signalGroups"`
+	SignalMasters      []string `json:"signalMasters"`
+	MethodPairRow      *struct {
+		BuiltInTop            int      `json:"builtInTop"`
+		HeuristicTop          int      `json:"heuristicTop"`
+		SameRow               *bool    `json:"sameRow"`
+		HeuristicIsToTheRight *bool    `json:"heuristicIsToTheRight"`
+		LabelWidths           []string `json:"labelWidths"`
+		LabelsFullyShown      *bool    `json:"labelsFullyShown"`
+	} `json:"methodPairRow"`
 }
 
 // checkConfigureRail asserts the rail is the two detection-route sections with
@@ -266,6 +276,113 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 		fmt.Sprintf("%d of %d have a height", got.CategoriesWithSize, got.Categories),
 		"A checkbox inside a folded group is in the DOM but not something the user can tick: the "+
 			"category groups open by default.")
+
+	// The signal control is a tree, and it is built from the frontend's lists, which
+	// the Go parity guard holds to the engine's. One group per signal, one master per
+	// group: a master over nothing, or a group with no master, is a control that
+	// cannot say what it does.
+	r.assert("the signal control is one group per signal", len(got.SignalGroups) == 1,
+		"1 .checklist-group (one implemented signal source)",
+		fmt.Sprintf("%d: %v", len(got.SignalGroups), got.SignalGroups),
+		"views/identifyrail.js builds the groups from state.js SIGNAL_SOURCES.")
+
+	r.assert("every signal group has its own master switch",
+		len(got.SignalMasters) == len(got.SignalGroups),
+		"one .checklist-master per group",
+		fmt.Sprintf("%d masters for %d groups: %v", len(got.SignalMasters), len(got.SignalGroups), got.SignalMasters),
+		"The master is what saves switching a whole signal off one reading at a time.")
+
+	// "Side by side" is a claim about geometry, so geometry is what answers it.
+	// Markup order proves nothing here: a column-flex parent stacks the same
+	// markup, which is exactly how these two spent two full rows on two words.
+	if got.MethodPairRow == nil {
+		r.assert("the two plain method switches render", false,
+			"#smart-built-in and #smart-heuristic in the rail", "one of them is missing",
+			"views/identifyrail.js smartMethods renders both inside .rail-toggle-pair.")
+		return
+	}
+	pair := got.MethodPairRow
+
+	r.assert("Built-in patterns and Heuristic discovery share one row",
+		boolIs(pair.SameRow, true),
+		"the two checkboxes at the same y (within 2px)",
+		fmt.Sprintf("built-in at y=%d, heuristic at y=%d", pair.BuiltInTop, pair.HeuristicTop),
+		"style.css .rail-toggle-pair is a two-column grid. The rail's height is its scarcest "+
+			"resource and these are its shortest labels.")
+
+	r.assert("they are ordered left to right, not overlapping",
+		boolIs(pair.HeuristicIsToTheRight, true),
+		"Heuristic discovery starting after Built-in patterns ends",
+		describeBool(pair.HeuristicIsToTheRight),
+		"Two switches at the same y that overlap are one unreadable control.")
+
+	r.assert("halving the row did not truncate either label",
+		boolIs(pair.LabelsFullyShown, true),
+		"both .cat-label elements showing their whole text",
+		fmt.Sprintf("%s (%s)", describeBool(pair.LabelsFullyShown), strings.Join(pair.LabelWidths, "; ")),
+		"A pair of ellipses is worse than two rows. Below the rail's measure the pair stacks "+
+			"instead, under the @media block beside the rule.")
+}
+
+// --- A value card's actions actually reach the store ------------------------
+
+type valueCardResult struct {
+	Error               string   `json:"error"`
+	Cards               int      `json:"cards"`
+	CardsWithIdentity   int      `json:"cardsWithIdentity"`
+	InlineInputAppeared *bool    `json:"inlineInputAppeared"`
+	Renamed             *bool    `json:"renamed"`
+	RemovedOne          *bool    `json:"removedOne"`
+	ValuesAfter         []string `json:"valuesAfter"`
+}
+
+// checkValueCardActions asserts a value card's controls CHANGE something.
+//
+// This is the layer that sees attribute lower-casing, and it is the only one
+// that can. A card names the Value its handlers act on through `data-`
+// attributes; a browser lower-cases attribute NAMES while a string test
+// preserves them, so a camel-case `data-mainText` renders, matches every string
+// assertion, and reaches the handler as an undefined `dataset.mainText`. Rename,
+// remove, drop-a-spelling and merge then all silently do nothing, which is
+// indistinguishable from a button that was never wired.
+func checkValueCardActions(c *cdpClient, r *reporter) {
+	r.step("A value card's actions reach the store")
+
+	var got valueCardResult
+	if err := c.eval("__uiProbes.valueCardActions()", &got); err != nil {
+		r.assert("the value-card probe runs", false, "a rendered My values tab", err.Error(),
+			"views/identifyworkspace.js valuesTab must render from a seeded values list.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the value-card probe runs", false, "value cards on the My values tab", got.Error,
+			"views/identifyworkspace.js renders one .value-card per accepted Value.")
+		return
+	}
+
+	r.assert("the seeded values render as cards", got.Cards == 2,
+		"2 .value-card elements", fmt.Sprintf("%d", got.Cards),
+		"The probe seeds two accepted Values, one per card.")
+
+	r.assert("every card carries its own identity", got.Cards > 0 && got.CardsWithIdentity == got.Cards,
+		"every card readable as dataset.category + dataset.mainText",
+		fmt.Sprintf("%d of %d", got.CardsWithIdentity, got.Cards),
+		"The card renders data-category and data-main-text. A camel-case data-mainText is "+
+			"lower-cased by the parser, so dataset.mainText is undefined and every action on the "+
+			"card resolves against it.")
+
+	r.assert("clicking the name reveals an inline input", boolIs(got.InlineInputAppeared, true),
+		"a .value-name-input in place of the name button", describeBool(got.InlineInputAppeared),
+		"revealNameInput replaces the name button; native dialogs are banned.")
+
+	r.assert("committing the input renames the Value", boolIs(got.Renamed, true),
+		"the new name in state.values", describeBool(got.Renamed),
+		"revealNameInput commits through renameValue, which needs the card's mainText.")
+
+	r.assert("the card's remove control deletes the Value", boolIs(got.RemovedOne, true),
+		"one fewer value in the store",
+		fmt.Sprintf("%s, values now: %s", describeBool(got.RemovedOne), strings.Join(got.ValuesAfter, ", ")),
+		"The .value-remove handler calls deleteValue(category, mainText) from the card's dataset.")
 }
 
 // --- The Configure panel's height and its help tooltips ---------------------
@@ -334,16 +451,204 @@ func checkConfigurePanelFit(c *cdpClient, r *reporter) {
 			"to the end must land on them.")
 }
 
+// --- Expanding a signal shows its readings ----------------------------------
+
+type signalDerivationResult struct {
+	Error                    string `json:"error"`
+	Source                   string `json:"source"`
+	CollapsedRows            int    `json:"collapsedRows"`
+	CollapsedVisible         int    `json:"collapsedVisible"`
+	OpenedVisible            int    `json:"openedVisible"`
+	Derivation               string `json:"derivation"`
+	ReadingWentOff           *bool  `json:"readingWentOff"`
+	OtherReadingsStillOn     *bool  `json:"otherReadingsStillOn"`
+	GroupStayedOpenAfterTick *bool  `json:"groupStayedOpenAfterTicking"`
+	MasterAfterTick          *bool  `json:"masterAfterTick"`
+}
+
+// checkSignalDerivations asserts that expanding a signal REVEALS its readings and
+// that each is independently switchable.
+//
+// Collapsed, the readings are in the DOM at zero height: present to a string test
+// and absent to the user. So "expanding shows them" is a claim about geometry, and
+// only this layer can answer it. It also drives the two controls that must stay
+// separate, since two jobs on one element is how a master gets switched by
+// accident: the chevron folds without ticking, and the master ticks without
+// folding.
+func checkSignalDerivations(c *cdpClient, r *reporter) {
+	r.step("Expanding a signal reveals its readings, each switchable on its own")
+
+	var got signalDerivationResult
+	if err := c.eval("__uiProbes.signalDerivations()", &got); err != nil {
+		r.assert("the signal-derivation probe runs", false, "a rendered signal control",
+			err.Error(),
+			"views/identifyrail.js signalSourceControl renders ui.js expandableChecklist.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the signal-derivation probe runs", false, "#signal-sources in the Identify rail",
+			got.Error, "The control is one of Smart detection's three methods.")
+		return
+	}
+
+	r.assert("a collapsed signal costs no vertical space",
+		got.CollapsedRows > 0 && got.CollapsedVisible == 0,
+		fmt.Sprintf("%d readings in the DOM, none of them laid out", got.CollapsedRows),
+		fmt.Sprintf("%d readings, %d with a height", got.CollapsedRows, got.CollapsedVisible),
+		"Collapsed the group is one row. That trade is what keeps the panel short as "+
+			"sources and readings are added, and a string test cannot tell the two states apart.")
+
+	r.assert("expanding it reveals every reading",
+		got.OpenedVisible == got.CollapsedRows,
+		fmt.Sprintf("all %d readings laid out with a height after one click", got.CollapsedRows),
+		fmt.Sprintf("%d of %d", got.OpenedVisible, got.CollapsedRows),
+		"A checkbox in the DOM at zero height is not something the user can tick.")
+
+	r.assert("ticking a reading reaches the store", boolIs(got.ReadingWentOff, true),
+		fmt.Sprintf("%s stored as off", got.Derivation), describeBool(got.ReadingWentOff),
+		"state.js setSignalDerivation writes the leaf, and that is what the next detection "+
+			"run reads. A checkbox that unticks itself proves nothing about the run.")
+
+	r.assert("the other readings are untouched", boolIs(got.OtherReadingsStillOn, true),
+		"every other reading of that signal still on", describeBool(got.OtherReadingsStillOn),
+		"The independence is the whole point of the per-reading switches; the engine "+
+			"honours each on its own (backend/engine/signaldiscovery.go).")
+
+	r.assert("ticking a reading does not fold the group",
+		boolIs(got.GroupStayedOpenAfterTick, true),
+		"the readings still laid out after the tick", describeBool(got.GroupStayedOpenAfterTick),
+		"The checkbox stops the click reaching the head. A group that folds as you tick it "+
+			"makes switching two readings a four-click job.")
+
+	r.assert("the master stays on while any reading is on",
+		boolIs(got.MasterAfterTick, true),
+		"the group's master still checked with one of two readings off",
+		describeBool(got.MasterAfterTick),
+		"The master is DERIVED (state.js signalSourceOn): on when any reading is on. A "+
+			"master that dropped with the first reading would misreport what the run does.")
+}
+
+// --- The Discovery strictness block's measure and inset ---------------------
+
+type strictnessResult struct {
+	Error                  string `json:"error"`
+	SelectWidth            int    `json:"selectWidth"`
+	WidestOption           int    `json:"widestOption"`
+	WidestText             string `json:"widestText"`
+	SelectFitsWidestOption *bool  `json:"selectFitsWidestOption"`
+	NestedLabelLeft        *int   `json:"nestedLabelLeft"`
+	SectionLabelLeft       *int   `json:"sectionLabelLeft"`
+	FieldLabelLefts        []int  `json:"fieldLabelLefts"`
+	Labels                 []struct {
+		Text       string `json:"text"`
+		Height     int    `json:"height"`
+		LineHeight int    `json:"lineHeight"`
+	} `json:"labels"`
+	RailOverflowsX *bool `json:"railOverflowsX"`
+}
+
+// checkStrictnessFields asserts the Discovery strictness block is readable and
+// aligned.
+//
+// Two reported defects, neither visible to a string test. `.rail-field` gave the
+// control column 6rem, narrower than the strictness select's own longest option,
+// so the control read as a truncated stub. And `.cgroup-body` carries no padding
+// of its own, so a nested subgroup's fields sat flush against its border while
+// every label above them was inset. Only pixels can say either.
+func checkStrictnessFields(c *cdpClient, r *reporter) {
+	r.step("The Discovery strictness fields are readable and aligned")
+
+	var got strictnessResult
+	if err := c.eval("__uiProbes.strictnessFields()", &got); err != nil {
+		r.assert("the strictness probe runs", false, "a rendered strictness block", err.Error(),
+			"views/identifyrail.js smartTuning renders it as a .rail-subgroup inside Smart detection.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the strictness probe runs", false, "the Discovery strictness block in the rail",
+			got.Error, "views/identifyrail.js smartSection nests it under Smart detection.")
+		return
+	}
+
+	r.assert("the strictness select shows its longest option in full",
+		boolIs(got.SelectFitsWidestOption, true),
+		fmt.Sprintf("a box at least as wide as %q (%dpx)", got.WidestText, got.WidestOption),
+		fmt.Sprintf("%dpx of box for %dpx of text", got.SelectWidth, got.WidestOption),
+		"style.css .rail-field sizes the control column. A column narrower than the widest "+
+			"option truncates it to an unreadable stub, and no string test can see that.")
+
+	if got.NestedLabelLeft == nil || got.SectionLabelLeft == nil {
+		r.assert("the strictness block has a label to align", false,
+			"a .rail-field-label in the subgroup and a .section-label above it",
+			"one of them is missing",
+			"The comparison needs both; if the rail's markup changed, update the probe.")
+		return
+	}
+
+	// Indented, not flush and not hanging left: a nested field sits at least as
+	// far in as the labels of the section that contains it.
+	r.assert("the nested fields are inset like the labels above them",
+		*got.NestedLabelLeft >= *got.SectionLabelLeft,
+		fmt.Sprintf("a nested label at x >= %dpx (the section labels' own inset)", *got.SectionLabelLeft),
+		fmt.Sprintf("x = %dpx", *got.NestedLabelLeft),
+		"style.css .rail-subgroup > .cgroup-body carries the inset. .cgroup-body has no padding "+
+			"of its own, so a subgroup that matches no such rule sits flush against its border.")
+
+	// One inset for the whole block: a single field left behind reads as a
+	// misprint rather than as a hierarchy.
+	sameInset := len(got.FieldLabelLefts) > 0
+	for _, left := range got.FieldLabelLefts {
+		if left != got.FieldLabelLefts[0] {
+			sameInset = false
+		}
+	}
+	r.assert("every field in the block shares one inset", sameInset,
+		"all .rail-field-label left offsets equal",
+		fmt.Sprintf("%v", got.FieldLabelLefts),
+		"They are one form. A field at a different offset reads as a mistake.")
+
+	// The other half of widening the control: the label column pays for it. A label
+	// on two lines is the cost of taking "make the dropdown wider" too far, and
+	// nothing but a measurement can see it.
+	var wrapped []string
+	for _, l := range got.Labels {
+		if l.LineHeight > 0 && l.Height > l.LineHeight*3/2 {
+			wrapped = append(wrapped, fmt.Sprintf("%q (%dpx over a %dpx line)", l.Text, l.Height, l.LineHeight))
+		}
+	}
+	r.assert("no field label wraps to a second line", len(wrapped) == 0,
+		"every .rail-field-label on one line",
+		fmt.Sprintf("%d wrapped: %s", len(wrapped), strings.Join(wrapped, ", ")),
+		"style.css .rail-field splits the row between the label and the control. Widening the "+
+			"control column narrows the label's, and the labels are where that trade shows first.")
+
+	r.assert("widening the control did not widen the rail", boolIs(got.RailOverflowsX, false),
+		"a rail no wider than its column", describeBool(got.RailOverflowsX),
+		"The fixed-height layout contract: wide content scrolls inside its own container and "+
+			"never widens the page.")
+}
+
+// helpTrigger is the icon the user has to FIND before any of the behaviour below
+// matters.
+type helpTrigger struct {
+	Width       int   `json:"width"`
+	Height      int   `json:"height"`
+	HasGlyph    *bool `json:"hasGlyph"`
+	GlyphWidth  int   `json:"glyphWidth"`
+	GlyphHeight int   `json:"glyphHeight"`
+}
+
 type helpTooltipResult struct {
-	Error             string `json:"error"`
-	ClosedVisible     *bool  `json:"closedVisible"`
-	OpenedOnHover     *bool  `json:"openedOnHover"`
-	OnScreen          *bool  `json:"onScreen"`
-	NotClipped        *bool  `json:"notClipped"`
-	OverflowsScroller *bool  `json:"overflowsScroller"`
-	ClosedOnLeave     *bool  `json:"closedOnLeave"`
-	OpenedOnFocus     *bool  `json:"openedOnFocus"`
-	ClosedOnEscape    *bool  `json:"closedOnEscape"`
+	Error             string      `json:"error"`
+	Trigger           helpTrigger `json:"trigger"`
+	ClosedVisible     *bool       `json:"closedVisible"`
+	OpenedOnHover     *bool       `json:"openedOnHover"`
+	OnScreen          *bool       `json:"onScreen"`
+	NotClipped        *bool       `json:"notClipped"`
+	OverflowsScroller *bool       `json:"overflowsScroller"`
+	ClosedOnLeave     *bool       `json:"closedOnLeave"`
+	OpenedOnFocus     *bool       `json:"openedOnFocus"`
+	ClosedOnEscape    *bool       `json:"closedOnEscape"`
 }
 
 // checkHelpTooltip asserts a help tooltip opens, is PAINTED rather than clipped,
@@ -368,6 +673,28 @@ func checkHelpTooltip(c *cdpClient, r *reporter) {
 			got.Error, "Every explained label in the rail carries one.")
 		return
 	}
+
+	// Before any behaviour: is there anything on screen to hover? Every help
+	// trigger in the application was an invisible hit area, because ui.js icon()
+	// returns the empty string for a name absent from ICONS and helpTooltip asks
+	// for "info". The mechanism below all worked; there was no glyph.
+	r.assert("the help trigger has a glyph in it", boolIs(got.Trigger.HasGlyph, true),
+		"an <svg> inside button.help-icon", describeBool(got.Trigger.HasGlyph),
+		"ui.js helpTooltip renders icon(\"info\"), and icon() returns the EMPTY STRING for a "+
+			"name absent from frontend/icons.js ICONS. icon_parity_test.go is the cheap guard; "+
+			"this is the one that sees the result.")
+
+	r.assert("the trigger is big enough to aim at",
+		got.Trigger.Width >= 14 && got.Trigger.Height >= 14,
+		"a trigger at least 14x14 CSS pixels",
+		fmt.Sprintf("%dx%d", got.Trigger.Width, got.Trigger.Height),
+		"style.css .help-icon sizes it; a trigger smaller than this is a target nobody hits.")
+
+	r.assert("the glyph is painted at a readable size",
+		got.Trigger.GlyphWidth >= 10 && got.Trigger.GlyphHeight >= 10,
+		"a glyph at least 10x10 CSS pixels",
+		fmt.Sprintf("%dx%d", got.Trigger.GlyphWidth, got.Trigger.GlyphHeight),
+		"An svg present in the DOM at zero size is the same invisible control with extra markup.")
 
 	r.assert("the bubble is hidden until asked for", boolIs(got.ClosedVisible, false),
 		"a zero-height bubble before any interaction", describeBool(got.ClosedVisible),
