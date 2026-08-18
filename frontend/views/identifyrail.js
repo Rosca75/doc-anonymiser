@@ -591,7 +591,9 @@ function wireScope(container) {
 
 // --- Smart detection ------------------------------------------------------
 
-/** smartTuning(s) is the offline heuristic pass's strictness (BUILD-04 CR13). */
+/** smartTuning(s) is the offline heuristic pass's strictness: the four fields a
+ *  user changes when the suggestions themselves are wrong, rather than when the
+ *  scope is. */
 function smartTuning(s) {
   const opts = heuristicDiscoveryOptions(s);
   const fieldRow = (id, label, help, controlHTML) =>

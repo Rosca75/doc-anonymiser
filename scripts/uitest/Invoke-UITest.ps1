@@ -261,6 +261,7 @@ function Invoke-DevChecks {
                 Test-ConfigureRail $cdp
                 Test-ValueCardActions $cdp
                 Test-ConfigurePanelFit $cdp
+                Test-StrictnessFields $cdp
                 Test-HelpTooltip $cdp
                 Test-ScrollRetention $cdp
                 Test-TooltipVisibility $cdp
@@ -459,6 +460,43 @@ function Test-ScrollRetention([CdpSession]$cdp) {
     Assert-That -Name 'the scroll position survives a repaint' -Condition ($r.after -eq $r.before) `
         -Expected "scrollTop still $($r.before) after ticking a category" -Actual "$($r.after)" `
         -Hint 'frontend/scroll.js snapshotScrollPositions/restoreScrollPositions must bracket main.js paint(), so a scrolled panel is not thrown back to the top by root.innerHTML.'
+}
+
+# The Discovery strictness block must be readable and aligned. .rail-field gave
+# the control column 6rem, narrower than the strictness select's own longest
+# option, and .cgroup-body carries no padding of its own, so a nested subgroup's
+# fields sat flush against its border while every label above them was inset.
+function Test-StrictnessFields([CdpSession]$cdp) {
+    Write-Step 'The Discovery strictness fields are readable and aligned'
+    $r = $cdp.Eval('__uiProbes.strictnessFields()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the strictness probe runs' -Condition $false `
+            -Expected 'the Discovery strictness block in the rail' -Actual $r.error `
+            -Hint 'views/identifyrail.js smartSection nests it under Smart detection.'
+        return
+    }
+    Assert-That -Name 'the strictness select shows its longest option in full' `
+        -Condition ($r.selectFitsWidestOption -eq $true) `
+        -Expected "a box at least as wide as '$($r.widestText)' ($($r.widestOption)px)" `
+        -Actual "$($r.selectWidth)px of box for $($r.widestOption)px of text" `
+        -Hint 'style.css .rail-field sizes the control column. A column narrower than the widest option truncates it to an unreadable stub.'
+    Assert-That -Name 'the nested fields are inset like the labels above them' `
+        -Condition ($null -ne $r.nestedLabelLeft -and $null -ne $r.sectionLabelLeft -and $r.nestedLabelLeft -ge $r.sectionLabelLeft) `
+        -Expected "a nested label at x >= $($r.sectionLabelLeft)px" -Actual "x = $($r.nestedLabelLeft)px" `
+        -Hint 'style.css .rail-subgroup > .cgroup-body carries the inset; .cgroup-body has no padding of its own.'
+    $lefts = @($r.fieldLabelLefts)
+    Assert-That -Name 'every field in the block shares one inset' `
+        -Condition ($lefts.Count -gt 0 -and (($lefts | Select-Object -Unique).Count -eq 1)) `
+        -Expected 'all .rail-field-label left offsets equal' -Actual "$($lefts -join ', ')" `
+        -Hint 'They are one form. A field at a different offset reads as a mistake.'
+    $wrapped = @($r.labels | Where-Object { $_.lineHeight -gt 0 -and $_.height -gt ($_.lineHeight * 1.5) })
+    Assert-That -Name 'no field label wraps to a second line' -Condition ($wrapped.Count -eq 0) `
+        -Expected 'every .rail-field-label on one line' `
+        -Actual "$($wrapped.Count) wrapped: $(($wrapped | ForEach-Object { $_.text }) -join ', ')" `
+        -Hint 'style.css .rail-field splits the row between the label and the control. Widening the control column narrows the label, and the labels are where that trade shows first.'
+    Assert-That -Name 'widening the control did not widen the rail' -Condition ($r.railOverflowsX -eq $false) `
+        -Expected 'a rail no wider than its column' -Actual "$($r.railOverflowsX)" `
+        -Hint 'The fixed-height layout contract: wide content scrolls inside its own container and never widens the page.'
 }
 
 # The Configure panel must FIT, and its explanations must be tooltips rather than

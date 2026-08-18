@@ -355,6 +355,39 @@ test("the strictness lever is a select of the three levels, balanced by default"
   assert.equal(selected.attrs.value, "balanced", "balanced is the default selection");
 });
 
+test("the strictness block is a nested subgroup, so CSS can inset it", () => {
+  // The inset is a CSS rule keyed on this class (.rail-subgroup > .cgroup-body).
+  // .cgroup-body carries no padding of its own, so a strictness block that stopped
+  // being a .rail-subgroup would silently sit flush against its border again,
+  // hanging left of every label above it. The pixels are the harness's job; the
+  // hook the rule needs is this one's.
+  const smart = all(railHTML(), "section.rail-section")[0].outer;
+  const subgroups = all(smart, ".rail-subgroup");
+  assert.equal(subgroups.length, 1, "Smart detection nests exactly one subgroup");
+  assert.ok(exists(subgroups[0].outer, "#smart-strictness"),
+    "and it is the one holding the strictness lever");
+});
+
+test("every strictness field explains itself through a tooltip", () => {
+  // The Configure panel explains itself through tooltips, never prose: a field
+  // with no tooltip is a control whose only explanation would have to be a
+  // paragraph, and a paragraph is what put the controls at the foot of the panel
+  // out of reach.
+  const smart = all(railHTML(), "section.rail-section")[0].outer;
+  const block = all(smart, ".rail-subgroup")[0].outer;
+  const rows = all(block, ".rail-field-row");
+  assert.ok(rows.length >= 4, `the block has its four fields, got ${rows.length}`);
+  for (const row of rows) {
+    assert.ok(exists(row.outer, "span.help"),
+      `a strictness field with no help tooltip: ${stripTags(row.inner).trim()}`);
+  }
+  // The block's own switch is explained too, so nothing in it is unexplained.
+  for (const toggle of all(block, ".rail-toggle")) {
+    assert.ok(exists(toggle.outer, "span.help"),
+      `a strictness switch with no help tooltip: ${stripTags(toggle.inner).trim()}`);
+  }
+});
+
 test("the strictness select reflects a non-default stored value", () => {
   resetState();
   setState({ settings: { ...getState().settings,

@@ -395,6 +395,106 @@ func checkConfigurePanelFit(c *cdpClient, r *reporter) {
 			"to the end must land on them.")
 }
 
+// --- The Discovery strictness block's measure and inset ---------------------
+
+type strictnessResult struct {
+	Error                  string `json:"error"`
+	SelectWidth            int    `json:"selectWidth"`
+	WidestOption           int    `json:"widestOption"`
+	WidestText             string `json:"widestText"`
+	SelectFitsWidestOption *bool  `json:"selectFitsWidestOption"`
+	NestedLabelLeft        *int   `json:"nestedLabelLeft"`
+	SectionLabelLeft       *int   `json:"sectionLabelLeft"`
+	FieldLabelLefts        []int  `json:"fieldLabelLefts"`
+	Labels                 []struct {
+		Text       string `json:"text"`
+		Height     int    `json:"height"`
+		LineHeight int    `json:"lineHeight"`
+	} `json:"labels"`
+	RailOverflowsX *bool `json:"railOverflowsX"`
+}
+
+// checkStrictnessFields asserts the Discovery strictness block is readable and
+// aligned.
+//
+// Two reported defects, neither visible to a string test. `.rail-field` gave the
+// control column 6rem, narrower than the strictness select's own longest option,
+// so the control read as a truncated stub. And `.cgroup-body` carries no padding
+// of its own, so a nested subgroup's fields sat flush against its border while
+// every label above them was inset. Only pixels can say either.
+func checkStrictnessFields(c *cdpClient, r *reporter) {
+	r.step("The Discovery strictness fields are readable and aligned")
+
+	var got strictnessResult
+	if err := c.eval("__uiProbes.strictnessFields()", &got); err != nil {
+		r.assert("the strictness probe runs", false, "a rendered strictness block", err.Error(),
+			"views/identifyrail.js smartTuning renders it as a .rail-subgroup inside Smart detection.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the strictness probe runs", false, "the Discovery strictness block in the rail",
+			got.Error, "views/identifyrail.js smartSection nests it under Smart detection.")
+		return
+	}
+
+	r.assert("the strictness select shows its longest option in full",
+		boolIs(got.SelectFitsWidestOption, true),
+		fmt.Sprintf("a box at least as wide as %q (%dpx)", got.WidestText, got.WidestOption),
+		fmt.Sprintf("%dpx of box for %dpx of text", got.SelectWidth, got.WidestOption),
+		"style.css .rail-field sizes the control column. A column narrower than the widest "+
+			"option truncates it to an unreadable stub, and no string test can see that.")
+
+	if got.NestedLabelLeft == nil || got.SectionLabelLeft == nil {
+		r.assert("the strictness block has a label to align", false,
+			"a .rail-field-label in the subgroup and a .section-label above it",
+			"one of them is missing",
+			"The comparison needs both; if the rail's markup changed, update the probe.")
+		return
+	}
+
+	// Indented, not flush and not hanging left: a nested field sits at least as
+	// far in as the labels of the section that contains it.
+	r.assert("the nested fields are inset like the labels above them",
+		*got.NestedLabelLeft >= *got.SectionLabelLeft,
+		fmt.Sprintf("a nested label at x >= %dpx (the section labels' own inset)", *got.SectionLabelLeft),
+		fmt.Sprintf("x = %dpx", *got.NestedLabelLeft),
+		"style.css .rail-subgroup > .cgroup-body carries the inset. .cgroup-body has no padding "+
+			"of its own, so a subgroup that matches no such rule sits flush against its border.")
+
+	// One inset for the whole block: a single field left behind reads as a
+	// misprint rather than as a hierarchy.
+	sameInset := len(got.FieldLabelLefts) > 0
+	for _, left := range got.FieldLabelLefts {
+		if left != got.FieldLabelLefts[0] {
+			sameInset = false
+		}
+	}
+	r.assert("every field in the block shares one inset", sameInset,
+		"all .rail-field-label left offsets equal",
+		fmt.Sprintf("%v", got.FieldLabelLefts),
+		"They are one form. A field at a different offset reads as a mistake.")
+
+	// The other half of widening the control: the label column pays for it. A label
+	// on two lines is the cost of taking "make the dropdown wider" too far, and
+	// nothing but a measurement can see it.
+	var wrapped []string
+	for _, l := range got.Labels {
+		if l.LineHeight > 0 && l.Height > l.LineHeight*3/2 {
+			wrapped = append(wrapped, fmt.Sprintf("%q (%dpx over a %dpx line)", l.Text, l.Height, l.LineHeight))
+		}
+	}
+	r.assert("no field label wraps to a second line", len(wrapped) == 0,
+		"every .rail-field-label on one line",
+		fmt.Sprintf("%d wrapped: %s", len(wrapped), strings.Join(wrapped, ", ")),
+		"style.css .rail-field splits the row between the label and the control. Widening the "+
+			"control column narrows the label's, and the labels are where that trade shows first.")
+
+	r.assert("widening the control did not widen the rail", boolIs(got.RailOverflowsX, false),
+		"a rail no wider than its column", describeBool(got.RailOverflowsX),
+		"The fixed-height layout contract: wide content scrolls inside its own container and "+
+			"never widens the page.")
+}
+
 // helpTrigger is the icon the user has to FIND before any of the behaviour below
 // matters.
 type helpTrigger struct {

@@ -754,6 +754,11 @@ input, select {
    read as subordinate, so it loses the outer border and gains an indent. */
 .rail-subgroup { border-color: var(--gray-6); }
 .rail-subgroup > .cgroup-head { background: var(--surface-subtle); }
+/* A subgroup's body takes the same inset as a section's, so a nested field lines
+   up with the labels above it rather than sitting flush against the subgroup's
+   own border. .cgroup-body carries no padding of its own, so a group that does
+   not match one of these selectors gets none: the rule is not decoration. */
+.rail-subgroup > .cgroup-body { padding: 0.75rem 1.1rem; gap: 0.6rem; }
 
 /* The on/off switch in a section header. It is a checkbox plus its state in
    words: a bare checkbox in a header does not say which way is on. */
@@ -776,13 +781,21 @@ input, select {
 .rail-select { width: 100%; padding: 0.5rem; cursor: pointer; }
 
 /* A labelled field: the label keeps a fixed measure so the inputs of a tab line
-   up in a column, which is what makes a stack of them read as one form. */
+   up in a column, which is what makes a stack of them read as one form.
+
+   The control column is wide enough for the widest option of the widest select in
+   it. It is one width for every field, because a column that changes width per
+   row stops reading as a form. */
 .rail-field {
-  display: grid; grid-template-columns: 1fr 6rem; gap: 0.6rem;
+  display: grid; grid-template-columns: minmax(0, 1fr) 18rem; gap: 0.6rem;
   align-items: center; font-size: 0.85rem;
 }
 .rail-field-label { color: var(--text); }
 .rail-field input, .rail-field select { width: 100%; min-width: 0; }
+/* A number does not need the select's measure. It keeps a compact box INSIDE the
+   shared column, so the column stays one width and the box still reads as a
+   number rather than as an empty text field. */
+.rail-field input[type="number"] { width: 6rem; }
 
 .rail-status { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 .rail-status .hint { font-size: 0.78rem; }

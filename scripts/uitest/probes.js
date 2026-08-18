@@ -495,6 +495,88 @@
     },
 
     /**
+     * strictnessFields() measures the Discovery strictness block: how wide its
+     * select is, and how far its fields are inset.
+     *
+     * Both were reported against the built application and neither is visible to
+     * a string test. `.rail-field` gave the control column 6rem, which is
+     * narrower than the select's own longest option, so "How much to trust" read
+     * as a truncated stub; and `.cgroup-body` carries no padding of its own, so a
+     * subgroup's fields sat flush against its border while everything above them
+     * was inset. Pixels are the only way to say either.
+     */
+    async strictnessFields() {
+      await seed("identify");
+      const rail = document.querySelector("#identify-rail");
+      if (!rail) return { error: "no #identify-rail rendered on the Identify screen" };
+
+      const subgroup = rail.querySelector(".rail-subgroup");
+      if (!subgroup) return { error: "no .rail-subgroup (the Discovery strictness block) in the rail" };
+      // The block folds; open it the way the user does, through its own head.
+      if (subgroup.dataset.open === "false") {
+        subgroup.querySelector(".cgroup-title")?.click();
+        await settle();
+      }
+
+      const select = document.querySelector("#smart-strictness");
+      if (!select) return { error: "no #smart-strictness select in the strictness block" };
+
+      // The widest option decides whether the box is readable. Measured by
+      // rendering the option text into a span that inherits the select's font,
+      // because a <option>'s own box is drawn by the platform and has no useful
+      // rect.
+      const probeSpan = document.createElement("span");
+      const style = window.getComputedStyle(select);
+      probeSpan.style.font = style.font || `${style.fontSize} ${style.fontFamily}`;
+      probeSpan.style.position = "fixed";
+      probeSpan.style.visibility = "hidden";
+      probeSpan.style.whiteSpace = "pre";
+      document.body.appendChild(probeSpan);
+      let widestOption = 0;
+      let widestText = "";
+      for (const option of select.options) {
+        probeSpan.textContent = option.textContent;
+        const w = probeSpan.getBoundingClientRect().width;
+        if (w > widestOption) {
+          widestOption = w;
+          widestText = option.textContent;
+        }
+      }
+      probeSpan.remove();
+
+      // The indentation: a nested field's label against a label of the section
+      // ABOVE it. Both are read as viewport x, so the comparison is the one the
+      // eye makes.
+      const nestedLabel = subgroup.querySelector(".rail-field-label");
+      const sectionLabel = rail.querySelector(".rail-section > .cgroup-body .section-label");
+
+      return {
+        selectWidth: Math.round(select.getBoundingClientRect().width),
+        widestOption: Math.round(widestOption),
+        widestText,
+        // A select's own padding and its dropdown arrow both eat into the text
+        // room, so the box has to be WIDER than the text, not merely equal.
+        selectFitsWidestOption: select.getBoundingClientRect().width >= widestOption,
+        nestedLabelLeft: nestedLabel ? Math.round(nestedLabel.getBoundingClientRect().left) : null,
+        sectionLabelLeft: sectionLabel ? Math.round(sectionLabel.getBoundingClientRect().left) : null,
+        // Every field in the block, so a stray one that escaped the inset shows.
+        fieldLabelLefts: [...subgroup.querySelectorAll(".rail-field-label")]
+          .map((el) => Math.round(el.getBoundingClientRect().left)),
+        // Widening the control column narrows the label column, so the labels are
+        // where that trade shows first. A label wrapping to two lines is what
+        // "make the dropdown wider" costs if it is taken too far, and it is
+        // invisible to everything but a measurement.
+        labels: [...subgroup.querySelectorAll(".rail-field-label")].map((el) => ({
+          text: (el.textContent ?? "").trim(),
+          height: Math.round(el.getBoundingClientRect().height),
+          lineHeight: Math.round(parseFloat(window.getComputedStyle(el).lineHeight) || 0),
+        })),
+        // The rail must not have been widened past its column to fit any of this.
+        railOverflowsX: rail.scrollWidth > rail.clientWidth + 1,
+      };
+    },
+
+    /**
      * helpTooltipVisibility() opens one help tooltip and measures where the
      * bubble actually lands.
      *

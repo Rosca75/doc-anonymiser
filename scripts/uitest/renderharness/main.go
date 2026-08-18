@@ -173,6 +173,7 @@ func run(frontendDir, probesPath, artifactDir string, keepArtifacts bool) error 
 	checkConfigureRail(client, r, fx)
 	checkValueCardActions(client, r)
 	checkConfigurePanelFit(client, r)
+	checkStrictnessFields(client, r)
 	checkHelpTooltip(client, r)
 	checkScrollRetention(client, r)
 	checkTooltip(client, r, fx)
