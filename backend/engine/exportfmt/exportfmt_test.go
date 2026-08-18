@@ -3,16 +3,16 @@
 //
 // TIER: unit (docs/TESTING.md). Two kinds of thing live here:
 //
-//   1. The SHARED HELPERS. This file carries NO build tag, so its helpers
-//      (fixture, testConfig, zip/PDF readers, the bespoke-fixture builders)
-//      are compiled into every tier and the integration files can call them.
-//      A helper unused by the unit tests is still legal Go; it exists for the
-//      integration tests next door.
-//   2. The UNIT tests themselves: the ones that need no committed fixture and
-//      assert a business rule rather than real-format behaviour. The filename
-//      mapping is pure string work; the two ExportPDF guards (empty-text
-//      rejection, leak self-check) are logic the integration tier must not
-//      re-verify.
+//  1. The SHARED HELPERS. This file carries NO build tag, so its helpers
+//     (fixture, testConfig, zip/PDF readers, the bespoke-fixture builders)
+//     are compiled into every tier and the integration files can call them.
+//     A helper unused by the unit tests is still legal Go; it exists for the
+//     integration tests next door.
+//  2. The UNIT tests themselves: the ones that need no committed fixture and
+//     assert a business rule rather than real-format behaviour. The filename
+//     mapping is pure string work; the two ExportPDF guards (empty-text
+//     rejection, leak self-check) are logic the integration tier must not
+//     re-verify.
 //
 // The format round-trips that decode or rewrite real .docx/.pptx/.xlsx/.pdf
 // bytes are in exportfmt_integration_test.go, metadata_integration_test.go and
