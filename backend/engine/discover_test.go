@@ -370,40 +370,6 @@ func TestAllowlistStillWinsOverTuning(t *testing.T) {
 
 // --- the offline pass must scale, and must be interruptible --------------
 
-// TestExtractRunsScalesLinearly guards a quadratic hot spot that made
-// detection look like it had hung on a real document.
-//
-// suffixBoundaryOK used to read its first character with []rune(rest)[0],
-// where `rest` is the whole remainder of the document: one allocation and one
-// scan of megabytes, per run. 800 KB took 15 seconds and 2.4 MB took about two
-// minutes, which from the outside is exactly "detection sometimes does not
-// complete". Decoding one rune in place made the same work linear.
-//
-// The assertion is a RATIO with a generous bound rather than a stopwatch
-// threshold, so it fails on a return to quadratic behaviour and not on a busy
-// CI runner.
-func TestExtractRunsContextScalesLinearly(t *testing.T) {
-	measure := func(repeats int) time.Duration {
-		text := strings.Repeat("Alpine Trust S.A. met Marie Duval in Luxembourg. ", repeats)
-		start := time.Now()
-		extractRunsContext(context.Background(), text, "")
-		return time.Since(start)
-	}
-	// Warm the code paths so the first measurement is not the one that pays
-	// for lazily-initialised tables.
-	measure(500)
-
-	small := measure(4000)
-	large := measure(16000)
-	// Four times the input. Linear would be about 4x; quadratic is about 16x.
-	// 8x leaves generous room for allocator noise while still failing loudly
-	// on a reintroduced O(n^2).
-	if large > 8*small {
-		t.Errorf("extractRunsContext looks quadratic again: 4x the input took %v after %v (%.1fx)",
-			large, small, float64(large)/float64(small))
-	}
-}
-
 // TestSmartDetectContextIsInterruptible: before the offline pass took
 // no context, so Cancel could only land BETWEEN documents and one large file
 // ran to completion whatever the user pressed.

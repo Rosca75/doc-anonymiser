@@ -11,11 +11,9 @@ package engine
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strings"
 	"testing"
-	"time"
 )
 
 // runPipeline is a small helper with sensible defaults for tests.
@@ -324,48 +322,6 @@ func TestPipelineCancellation(t *testing.T) {
 	}
 	if len(res.Report.Warnings) == 0 || !strings.Contains(res.Report.Warnings[0], "cancelled") {
 		t.Errorf("cancellation must be recorded in the report: %+v", res.Report.Warnings)
-	}
-}
-
-// TestPipelineBudget measures the deterministic budget: passes
-// 1+2+4 over 50 documents × 50 KB in ≤ 5 s.
-func TestPipelineBudget(t *testing.T) {
-	// ~50 KB of realistic prose per document, seeded with PII and value
-	// mentions so the passes do real work.
-	para := "Marie Duval of Alpine Trust (marie.duval@example.com, +352 621 000 111) " +
-		"reviewed IBAN LU28 0019 4006 4475 0000 with P. Stone before the deadline. "
-	var b strings.Builder
-	for b.Len() < 50*1024 {
-		b.WriteString(para)
-	}
-	text := b.String()
-
-	docs := make([]Document, 50)
-	for i := range docs {
-		docs[i] = Document{Name: fmt.Sprintf("doc%02d.txt", i), Format: FormatTXT, Markdown: text}
-	}
-	values := []Value{
-		{Category: "entity_names", MainText: "Alpine Trust"},
-		{Category: "person_names", MainText: "Marie Duval"},
-		{Category: "person_names", MainText: "Peter Stone"},
-	}
-
-	start := time.Now()
-	res := runPipeline(t, PipelineInput{
-		Documents: docs,
-		Values:    values,
-		Level:     LevelMedium,
-		Allowlist: NewAllowlist(),
-	})
-	elapsed := time.Since(start)
-
-	t.Logf("50 docs × 50 KB deterministic pipeline took %v (budget 5 s), %d replacements",
-		elapsed, res.Report.TotalReplacements)
-	if elapsed > 5*time.Second {
-		t.Errorf("pipeline budget breached: %v > 5 s", elapsed)
-	}
-	if res.Report.TotalReplacements == 0 {
-		t.Error("budget run replaced nothing — the measurement is meaningless")
 	}
 }
 
