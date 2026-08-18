@@ -22,16 +22,16 @@
 // it is a list the user curates rather than a setting.
 //
 // Every AI-dependent control everywhere in the application gates on
-// llmEnabled(state) = useAI AND ollama.available, so the deterministic pipeline
+// llmEnabled(state) = useLocalAI AND ollama.available, so the deterministic pipeline
 // stays fully usable with Ollama absent.
 
 import { applySettings, listOllamaModels, probeOllama, loadSession, saveSession } from "../api.js";
 import {
   getState, setState,
-  applyPreset, toggleCategory, selectionPresetName, setUseAI,
-  setUseNativeDetect, setUseAutoDetect,
+  applyPreset, toggleCategory, selectionPresetName, setUseLocalAI,
+  setUseBuiltInPatterns, setUseHeuristicDiscovery,
   setCategoryGroup, setMinConfidence, setDocumentCountry,
-  setSmartDetectOptions, smartDetectOptions,
+  setHeuristicDiscoveryOptions, heuristicDiscoveryOptions,
   setAIScope,
   parsePageSpec,
   buildRunRequest,
@@ -76,7 +76,7 @@ export function llmGateTooltip(s) {
 // persisted flag of its own: the section is on when any of its methods is on.
 export const RAIL_SECTIONS = [
   ["rail-smart", RAIL.tabSmart, "useSmartDetect"],
-  ["rail-local", RAIL.tabLocalAI, "useAI"],
+  ["rail-local", RAIL.tabLocalAI, "useLocalAI"],
 ];
 
 // Which sections and which category groups the user folded shut. A VIEW
@@ -214,14 +214,14 @@ function profileSection(s) {
  * two sub-toggles rather than a fourth independent flag.
  */
 function smartRouteOn(s) {
-  return !!(s.settings.useNativeDetect || s.settings.useAutoDetect);
+  return !!(s.settings.useBuiltInPatterns || s.settings.useHeuristicDiscovery);
 }
 
 /**
  * routeSwitch(s, id, key, on) is the on/off control in a section header.
  */
 function routeSwitch(s, id, key, on) {
-  const title = key === "useAI" && !s.ollama?.available
+  const title = key === "useLocalAI" && !s.ollama?.available
     ? llmDisabledTooltip(s.settings.ollamaPort) : "";
   return `<label class="route-switch"${title ? ` title="${escapeHTML(title)}"` : ""}>` +
     `<input type="checkbox" class="route-toggle" data-route="${escapeHTML(id)}"` +
@@ -248,12 +248,12 @@ function wireSectionSwitches(container) {
     box.addEventListener("change", (ev) => {
       ev.stopPropagation();
       const on = ev.target.checked;
-      if (ev.target.dataset.route === "rail-local") setUseAI(on);
+      if (ev.target.dataset.route === "rail-local") setUseLocalAI(on);
       else {
         // The Smart detection header is a MASTER over its two sub-toggles:
         // switching it flips both Native and Auto detection together.
-        setUseNativeDetect(on);
-        setUseAutoDetect(on);
+        setUseBuiltInPatterns(on);
+        setUseHeuristicDiscovery(on);
       }
       // Turning a route on opens its section: the settings it reads are the
       // next thing the user wants.
@@ -301,8 +301,8 @@ function smartToggles(s) {
     `</label>` +
     `<p class="hint">${escapeHTML(hint)}</p>`;
   return `<div class="rail-block">` +
-    row("smart-native", s.settings.useNativeDetect !== false, RAIL.nativeDetect, RAIL.nativeDetectHint) +
-    row("smart-auto", s.settings.useAutoDetect !== false, RAIL.autoDetect, RAIL.autoDetectHint) +
+    row("smart-native", s.settings.useBuiltInPatterns !== false, RAIL.nativeDetect, RAIL.nativeDetectHint) +
+    row("smart-auto", s.settings.useHeuristicDiscovery !== false, RAIL.autoDetect, RAIL.autoDetectHint) +
     `</div>`;
 }
 
@@ -322,7 +322,7 @@ function scopeBlocks(s) {
     `</div>` +
     `<div class="rail-block">` +
     sectionLabel(RAIL.whatToAnonymise) +
-    categoryGroups(s, REGEX_GROUPS, "regex", !s.settings.useNativeDetect) +
+    categoryGroups(s, REGEX_GROUPS, "regex", !s.settings.useBuiltInPatterns) +
     `</div>` +
     `<div class="rail-block">` +
     sectionLabel(RAIL.valuesAuto) +
@@ -528,7 +528,7 @@ function wireScope(container) {
 
 /** smartTuning(s) is the offline heuristic pass's strictness (BUILD-04 CR13). */
 function smartTuning(s) {
-  const opts = smartDetectOptions(s);
+  const opts = heuristicDiscoveryOptions(s);
   const numberRow = (id, label, hint, value, attrs) =>
     `<label class="rail-field" for="${id}">` +
     `<span class="rail-field-label">${escapeHTML(label)}</span>` +
@@ -569,11 +569,11 @@ function wireSmart(container) {
   // push, so the disabled state of the regex block and the derived
   // useSmartDetect update in the same round-trip.
   container.querySelector("#smart-native")?.addEventListener("change", (ev) => {
-    setUseNativeDetect(ev.target.checked);
+    setUseBuiltInPatterns(ev.target.checked);
     pushSettings(container);
   });
   container.querySelector("#smart-auto")?.addEventListener("change", (ev) => {
-    setUseAutoDetect(ev.target.checked);
+    setUseHeuristicDiscovery(ev.target.checked);
     pushSettings(container);
   });
 
@@ -586,17 +586,17 @@ function wireSmart(container) {
     container.querySelector(selector)?.addEventListener("change", (ev) => {
       const value = Number(ev.target.value);
       if (Number.isNaN(value)) return;
-      // setSmartDetectOptions validates and IGNORES a bad value rather than
+      // setHeuristicDiscoveryOptions validates and IGNORES a bad value rather than
       // storing it, so a typo shows as the field snapping back rather than as
       // smart detection quietly finding nothing.
-      setSmartDetectOptions(toPatch(value));
+      setHeuristicDiscoveryOptions(toPatch(value));
     });
   }
   container.querySelector("#smart-strictness")?.addEventListener("change", (ev) => {
-    setSmartDetectOptions({ strictness: ev.target.value });
+    setHeuristicDiscoveryOptions({ strictness: ev.target.value });
   });
   container.querySelector("#smart-common-words")?.addEventListener("change", (ev) => {
-    setSmartDetectOptions({ excludeCommonWords: ev.target.checked });
+    setHeuristicDiscoveryOptions({ excludeCommonWords: ev.target.checked });
   });
 }
 
@@ -680,7 +680,7 @@ function scopeBlock(s, gated) {
 
 function localAISection(s) {
   const ollamaOK = !!s.ollama?.available;
-  const aiOn = !!s.settings.useAI;
+  const aiOn = !!s.settings.useLocalAI;
   // The model and the context size are gated, the PORT and Re-probe are not:
   // those two are how a user CONNECTS, so gating them would lock someone out of
   // fixing the very connection the gate is complaining about.
@@ -829,16 +829,16 @@ async function pushSettings(container) {
     ollamaPort: port ? (parseInt(port.value, 10) || 0) : s.settings.ollamaPort,
     model: model?.value || s.settings.model,
     contextSize: ctxSize ? (parseInt(ctxSize.value, 10) || 0) : (s.settings.contextSize ?? 8192),
-    useAI: !!s.settings.useAI,
-    useNativeDetect: s.settings.useNativeDetect !== false,
-    useAutoDetect: s.settings.useAutoDetect !== false,
+    useLocalAI: !!s.settings.useLocalAI,
+    useBuiltInPatterns: s.settings.useBuiltInPatterns !== false,
+    useHeuristicDiscovery: s.settings.useHeuristicDiscovery !== false,
     // Derived: the section counts as on when either half is, so the header
     // switch and any backward-compat reader keep working.
-    useSmartDetect: (s.settings.useNativeDetect !== false) || (s.settings.useAutoDetect !== false),
+    useSmartDetect: (s.settings.useBuiltInPatterns !== false) || (s.settings.useHeuristicDiscovery !== false),
     // Read from the store, not the input: setMinConfidence already validated and
     // stored it, and the Scope tab may not be rendered at all.
     minConfidence: s.settings.minConfidence ?? 0,
-    smartDetect: smartDetectOptions(s),
+    heuristicDiscovery: heuristicDiscoveryOptions(s),
   };
   try {
     const status = await applySettings(settings);

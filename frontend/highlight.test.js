@@ -71,32 +71,32 @@ test("hostile originals are inert in the output", () => {
   assert.ok(html.includes("&quot;&gt;&lt;script&gt;"));
 });
 
-// --- per-occurrence variant spelling -------------------------------------
+// --- per-occurrence spelling spelling -------------------------------------
 
-test("a variant occurrence carries the spelling it replaced and the value in brackets", () => {
+test("a spelling occurrence carries the spelling it replaced and the value in brackets", () => {
   const html = renderHighlighted("[PERSON_1] and [PERSON_1]",
     { "[PERSON_1]": { original: "Johannes Borch", category: "person_names" } },
     { "[PERSON_1]": ["", "Borch"] });
-  // First occurrence matched the canonical value: no data-variant, plain title.
-  // Second replaced "Borch": data-variant present, title shows both.
-  assert.match(html, /data-variant="Borch"/);
+  // First occurrence matched the mainText value: no data-spelling, plain title.
+  // Second replaced "Borch": data-spelling present, title shows both.
+  assert.match(html, /data-spelling="Borch"/);
   assert.match(html, /title="Original: Borch \(Johannes Borch\)"/);
-  // The canonical occurrence stays a plain value with no bracketed original.
+  // The mainText occurrence stays a plain value with no bracketed original.
   assert.match(html, /title="Original: Johannes Borch"/);
 });
 
-test("a variant equal to the value case aside adds no brackets", () => {
+test("a spelling equal to the value case aside adds no brackets", () => {
   const html = renderHighlighted("[PERSON_1]",
     { "[PERSON_1]": { original: "Johannes Borch", category: "person_names" } },
     { "[PERSON_1]": ["johannes borch"] });
-  assert.ok(!html.includes("data-variant"));
+  assert.ok(!html.includes("data-spelling"));
   assert.match(html, /title="Original: Johannes Borch"/);
 });
 
-test("variants absent (the common case) render exactly as before", () => {
+test("derivedSpellings absent (the common case) render exactly as before", () => {
   const html = renderHighlighted("see [ENTITY_1] here",
     { "[ENTITY_1]": { original: "Acme S.A.", category: "entity_names" } });
-  assert.ok(!html.includes("data-variant"));
+  assert.ok(!html.includes("data-spelling"));
   assert.ok(html.includes('title="Original: Acme S.A."'));
 });
 

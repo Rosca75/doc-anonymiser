@@ -422,7 +422,7 @@
         return { error: "no mark[data-original] in #anonymised-pane, so nothing to hover" };
       }
 
-      // ONLY marks currently visible inside the pane are candidates. The pane is
+      // ONLY marks currently visible inside the pane are suggestions. The pane is
       // `overflow: auto` over a long document, so most marks are scrolled out of
       // sight, and a user cannot hover what they cannot see: their
       // getBoundingClientRect is hundreds of pixels below the window, and

@@ -34,10 +34,10 @@ test("outputName leaves a dotfile alone rather than treating it as an extension"
 
 test("applySession restores Native and Auto detection, an absent flag meaning on", () => {
   resetState();
-  applySession({ settings: { level: "medium", useNativeDetect: false } });
+  applySession({ settings: { level: "medium", useBuiltInPatterns: false } });
   const s = getState().settings;
-  assert.equal(s.useNativeDetect, false, "an explicit false is restored");
-  assert.equal(s.useAutoDetect, true, "an absent flag restores ON, like useSmartDetect");
+  assert.equal(s.useBuiltInPatterns, false, "an explicit false is restored");
+  assert.equal(s.useHeuristicDiscovery, true, "an absent flag restores ON, like useSmartDetect");
   assert.equal(s.useSmartDetect, true, "derived: either half on means the route is on");
 });
 
@@ -45,14 +45,14 @@ test("applySession with both detection halves absent restores both on", () => {
   resetState();
   applySession({ settings: { level: "medium" } });
   const s = getState().settings;
-  assert.equal(s.useNativeDetect, true);
-  assert.equal(s.useAutoDetect, true);
+  assert.equal(s.useBuiltInPatterns, true);
+  assert.equal(s.useHeuristicDiscovery, true);
   assert.equal(s.useSmartDetect, true);
 });
 
 test("applySession with both detection halves off derives useSmartDetect off", () => {
   resetState();
-  applySession({ settings: { level: "medium", useNativeDetect: false, useAutoDetect: false } });
+  applySession({ settings: { level: "medium", useBuiltInPatterns: false, useHeuristicDiscovery: false } });
   assert.equal(getState().settings.useSmartDetect, false, "both off means the route reads off");
 });
 

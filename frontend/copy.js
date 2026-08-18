@@ -456,9 +456,9 @@ export const WORKSPACE = {
   colCount: "COUNT",
   colActions: "ACTIONS",
   allTypes: "ALL TYPES",
-  allSources: "ALL SOURCES",
+  allMethods: "ALL METHODS",
   filterTypeTitle: "Filter by type",
-  filterSourceTitle: "Filter by what found the value",
+  filterMethodTitle: "Filter by which discovery method found it",
   retypeSuggestionTitle: "Change the type before accepting",
   accept: "Accept",
   reject: "Reject",
@@ -489,26 +489,82 @@ export const WORKSPACE = {
   rejectedN(n) {
     return n === 0 ? "Nothing to reject." : `${n} suggestion${n === 1 ? "" : "s"} rejected.`;
   },
-  // The source badge labels. "Pattern" is deliberately absent:
-  // deterministic matches are applied without review and never become
-  // suggestions, so naming a source that cannot appear would promise rows the
-  // table can never show.
-  sourceLabels: {
-    smart: "Smart",
-    "local-ai": "Local AI",
+  // WHICH METHODS found a Suggestion or Value. Shown as a set, because two
+  // methods agreeing is worth seeing: the user judging a Suggestion is deciding
+  // how much to trust it, and "two methods found this" is a different position
+  // from either alone. One label per engine discovery method, enforced by
+  // ../detection_parity_test.go.
+  //
+  // Built-in and custom pattern matching are deliberately absent: they produce
+  // direct matches applied without review, never Suggestions, so naming them
+  // would promise rows the table can never show.
+  methodLabel: {
+    manual: "You",
+    signal: "From a signal",
+    heuristic: "Smart detection",
+    local_ai: "Local AI",
+  },
+  methodTitle: "Which discovery method found this",
+
+  // The names of the winning claim in an intersection warning, one per engine
+  // MATCH CLASS, enforced by ../detection_parity_test.go. The warning names a
+  // method, never an internal rank: a rule the user cannot read the inputs of is
+  // indistinguishable from randomness.
+  matchClassLabel: {
+    built_in_pattern: "a built-in pattern",
+    user_defined: "something you declared",
+    smart_discovered: "Smart detection",
+    local_ai_discovered: "Local AI",
   },
 
-  // The ROUTE a value came from, shown on its card. A precedence rule the user
-  // cannot see the inputs of is indistinguishable from randomness, which is how
-  // the old behaviour came to be reported. One label per engine origin,
-  // enforced by ../origin_parity_test.go.
-  originLabel: {
-    native: "Native",
-    declared: "You",
-    auto: "Smart detection",
-    ai: "Local AI",
+  // WHICH built-in signals may derive Suggestions, one label per engine signal
+  // source, enforced by ../detection_parity_test.go. The checklist is built from
+  // the identifier list, so an unlabelled source would render as a checkbox named
+  // after a JSON key.
+  signalSourceLabel: {
+    email: "Email addresses",
   },
-  originTitle: "The detection route this value came from",
+  // What each source can find, shown beside its checkbox. It is the answer to
+  // "what am I switching off", which the source name alone does not give.
+  signalSourceFinds: {
+    email: "Names and organisations",
+  },
+
+  // WHY a discovery method produced a row, one entry per engine evidence kind,
+  // enforced by ../detection_parity_test.go. The engine returns evidence
+  // STRUCTURED and the sentence is assembled here, because an engine returning
+  // prose makes the copy a contract nobody can check.
+  evidenceKindLabel: {
+    email_local_part: "an email address naming this person",
+    email_domain: "an email domain naming this organisation",
+  },
+  evidenceTitle: "Why this was suggested",
+  /**
+   * evidenceSentence(e) turns one structured piece of evidence into a sentence.
+   *
+   * The signal text is included because it is the thing the user can check: "an
+   * email address naming this person" is a claim, and "pierre.dupont@tpps.com" is
+   * the evidence for it. The document list is included when present, so the
+   * sentence points somewhere.
+   */
+  evidenceSentence(e) {
+    const kind = this.evidenceKindLabel[e?.kind];
+    if (!kind) return "";
+    let out = `Found from ${kind}`;
+    if (e.signalText) out += ` (${e.signalText})`;
+    const docs = e.documents ?? [];
+    if (docs.length > 0) out += ` in ${docs.join(", ")}`;
+    return `${out}.`;
+  },
+  /**
+   * relatedValues(others) names the Suggestions or Values that share evidence
+   * with this one. Shared evidence makes them RELATED, never one Value: two
+   * country branches of one group genuinely differ, so only the user can say they
+   * are the same thing, which is why this is a note and not a fold.
+   */
+  relatedValues(others) {
+    return `Shares evidence with ${others.join(", ")}. Group them only if they are the same thing.`;
+  },
 
   // Intersections: two routes claim the same text. The precedence rule always
   // decides, so these are WARNINGS that explain the decision, never refusals.
@@ -525,7 +581,7 @@ export const WORKSPACE = {
   intersectionSome(covered, total, value, winner, route) {
     return `${covered} of ${total} occurrences of "${value}" are also matched by ${route} as "${winner}", which takes priority there.`;
   },
-  intersectionOrder: "Priority order: native detection, then your own values and patterns, then Smart detection, then Local AI.",
+  intersectionOrder: "Priority order: built-in patterns, then your own Values and patterns, then Smart detection, then Local AI.",
   intersectionFix: "If this value should win instead, switch off the type that covers it, narrow the pattern, or add the covering term to Never anonymise.",
   intersectionAllowWinner: "Never anonymise the covering term",
   /** intersectionAllowed(term) confirms the covering term is now protected. */
@@ -551,32 +607,32 @@ export const WORKSPACE = {
     return `${v} is already in the list.`;
   },
   removeValue: "Remove this value",
-  variants: "Variants",
-  addVariant: "add",
-  addVariantPlaceholder: "another spelling, then Enter",
-  removeVariant: "Stop replacing this spelling",
-  variantDragHint: "Drag this spelling onto another value to regroup it",
-  /** variantMoved(v, target) confirms a regrouping drag. */
-  variantMoved(v, target) {
+  derivedSpellings: "Spellings",
+  addSpelling: "add",
+  addSpellingPlaceholder: "another spelling, then Enter",
+  removeSpelling: "Stop replacing this spelling",
+  spellingDragHint: "Drag this spelling onto another Value to regroup it",
+  /** spellingMoved(v, target) confirms a regrouping drag. */
+  spellingMoved(v, target) {
     return `${v} now counts as a spelling of ${target}.`;
   },
-  variantsPending: "working out the other spellings...",
-  noVariants: "no other spellings found",
+  spellingsPending: "working out the other spellings...",
+  noSpellings: "no other spellings found",
   /**
-   * variantDeleted(v) confirms a spelling was dropped from one value, and
+   * spellingDeleted(v) confirms a spelling was dropped from one value, and
    * points at the tab that IS for negative rules. Deleting a spelling here
    * stops it belonging to THIS value; it does not stop it being replaced by
    * something else, and the difference is not guessable from the button.
    */
-  variantDeleted(v) {
+  spellingDeleted(v) {
     return `Removed the spelling "${v}" from this value. To stop it being replaced by anything at all, add it to Never anonymise.`;
   },
   /**
-   * alsoSpelled(variants) names the longer forms folded into one suggestion.
+   * alsoSpelled(spellings) names the longer forms folded into one suggestion.
    * Accepting the row accepts them too, so the row has to say which.
    */
-  alsoSpelled(variants) {
-    return `also spelled ${variants.join(", ")}`;
+  alsoSpelled(spellings) {
+    return `also spelled ${spellings.join(", ")}`;
   },
   /**
    * foldedIntoValue(added, main) explains that a new value joined an existing
@@ -586,8 +642,8 @@ export const WORKSPACE = {
   foldedIntoValue(added, main) {
     return `Added as a spelling of "${main}", which is the shorter form.`;
   },
-  /** variantAlreadyThere(v) explains an add that changed nothing. */
-  variantAlreadyThere(v) {
+  /** spellingAlreadyThere(v) explains an add that changed nothing. */
+  spellingAlreadyThere(v) {
     return `${v} is already one of the spellings.`;
   },
 
@@ -596,8 +652,8 @@ export const WORKSPACE = {
   valuesSearchLabel: "Filter values by name or spelling",
   valuesAllTypes: "All types",
   valuesFilterTypeTitle: "Show only one type",
-  showVariants: "Show spellings",
-  hideVariants: "Hide spellings",
+  showSpellings: "Show spellings",
+  hideSpellings: "Hide spellings",
   showVariantsTitle: "Show the spellings under each value",
   hideVariantsTitle: "Hide the spellings to see more values at once",
   noValuesMatch: "No value matches the current search and type filter.",
@@ -613,7 +669,7 @@ export const WORKSPACE = {
   },
   editValueTitle: "Rename this value",
   editValuePlaceholder: "the value, then Enter",
-  editVariantTitle: "Edit this spelling (double-click)",
+  editSpellingTitle: "Edit this spelling (double-click)",
   editVariantPlaceholder: "the spelling, then Enter",
   changeTypeLabel: "Change the type of this value",
   /** valueRenamedDuplicate(v) explains a rename refused because the type
@@ -762,7 +818,7 @@ export const ANONYMISE = {
   selectedTitle: "Selected placeholder",
   closeSelection: "Close",
   replaces: "replaces",
-  makeVariantOf: "Make it a variant of",
+  makeVariantOf: "Make it a spelling of",
   reassignPlaceholder: "type an existing value",
   reassignHint: "Reassigning runs the fast deterministic passes again. There is no AI re-scan, and existing placeholders keep their numbers.",
   /** reassignDone / reassignRefused report the outcome. */
@@ -1064,7 +1120,7 @@ export const EXPORT = {
 // carry a Luxembourg default here and are OVERLAID at render time by
 // countries.js examplesFor(), so the rail shows a French number for a French
 // document. Overlaying rather than storing five
-// variants keeps this table one row per category and keeps the guard working.
+// derivedSpellings keeps this table one row per category and keeps the guard working.
 export const CATEGORY_LABELS = {
   email: ["Email addresses", "For example jean.muller@example.com"],
   phone: ["Phone numbers", "For example +352 621 123 456"],

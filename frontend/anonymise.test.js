@@ -19,7 +19,7 @@ import {
   runCard, missedCard, renderAnonymise, searchWalk, searchControls,
   selectionPanel, applySelection,
 } from "./views/anonymise.js";
-import { resetState, setState, getState, addEntities } from "./state.js";
+import { resetState, setState, getState, addValues } from "./state.js";
 import { readFileSync } from "node:fs";
 import { ANONYMISE } from "./copy.js";
 import { textOf, all, attr, exists } from "./testhtml.js";
@@ -85,7 +85,7 @@ function reportState(patch = {}) {
     mapping: {},
     replacedValues: RUN_VALUES,
     removedValues: [],
-    entities: [],
+    values: [],
     dismissedWarnings: [],
     ...patch,
   };
@@ -144,13 +144,13 @@ test("with nothing removed the list is absent, not empty", () => {
 
 test("the Selected placeholder card edits the replacement value, like the table", () => {
   // Clicking a mark opens this card. It must let the placeholder be changed, not
-  // only turned into a variant of another value: the same registry entry sits
+  // only turned into a spelling of another value: the same registry entry sits
   // behind the mark and behind the Replaced values row, so both edit it.
   const html = selectedCard(reportState(), { placeholder: "[PERSON_1]", original: "Marie Duval" });
   assert.equal(all(html, "input#selected-ph-input").length, 1,
     "the replacement value has to be editable here too, not just in the table");
   assert.equal(all(html, "input#reassign-input").length, 1,
-    "the 'make it a variant of' field stays: this adds an action, it does not remove one");
+    "the 'make it a spelling of' field stays: this adds an action, it does not remove one");
   assert.match(html, /Marie Duval/, "the card still names what the placeholder replaces");
 });
 
@@ -213,7 +213,7 @@ test("formatDuration handles a missing or negative figure", () => {
 // earlier run's registry still fills the value table. These tests pin that the
 // screen now explains the refusal instead of showing that silent mismatch.
 
-/** blockedState() is a state whose last run was refused by a variant collision. */
+/** blockedState() is a state whose last run was refused by a spelling collision. */
 function blockedState(patch = {}) {
   return {
     running: false,
@@ -574,7 +574,7 @@ test("stage 1 offers exactly two things: copy, or replace", () => {
 test("stage 2 offers the two replace modes, each with its hint", () => {
   const html = selectionPanel(compareState(), view({ stage: "replace" }));
   assert.deepEqual(all(html, "input.selection-mode").map((r) => r.attrs.value),
-    ["variant", "value"]);
+    ["spelling", "value"]);
 
   // The hints are the safety-relevant copy: they say what lands in the
   // re-identification key. Compared as rendered TEXT, because copy containing
@@ -590,9 +590,9 @@ test("stage 2 offers the two replace modes, each with its hint", () => {
 test("each mode's stage 3 shows its own field", () => {
   const s = compareState();
 
-  const variant = selectionPanel(s, view({ stage: "replace", mode: "variant" }));
-  assert.ok(exists(variant, "input#selection-target"), "the spelling mode asks which Value");
-  assert.ok(!exists(variant, "select#selection-category"));
+  const spelling = selectionPanel(s, view({ stage: "replace", mode: "spelling" }));
+  assert.ok(exists(spelling, "input#selection-target"), "the spelling mode asks which Value");
+  assert.ok(!exists(spelling, "select#selection-category"));
 
   const value = selectionPanel(s, view({ stage: "replace", mode: "value" }));
   assert.ok(exists(value, "select#selection-category"), "the new-Value mode asks which type");
@@ -607,7 +607,7 @@ test("stage 3 offers Apply and a Cancel that steps back rather than closing", ()
 
 test("a refusal is shown ON the panel, next to the field the fix goes into", () => {
   const html = selectionPanel(compareState(), view({
-    stage: "replace", mode: "variant", error: ANONYMISE.selectionUnknownTarget,
+    stage: "replace", mode: "spelling", error: ANONYMISE.selectionUnknownTarget,
   }));
   assert.equal(textOf(html, "p.hint"), ANONYMISE.selectionUnknownTarget);
 });
@@ -642,10 +642,10 @@ test("mode 2 adds a new value of its own, in the chosen type", async () => {
     stage: "replace", mode: "value", category: "entity_names",
   }));
 
-  const e = getState().entities.find((x) => x.canonical === "Meridian");
-  assert.ok(e, "the selection became a value");
-  assert.equal(e.category, "entity_names");
-  assert.equal(e.origin, "declared", "the user declared it");
+  const v = getState().values.find((x) => x.mainText === "Meridian");
+  assert.ok(v, "the selection became a Value");
+  assert.equal(v.category, "entity_names");
+  assert.deepEqual(v.discoveryMethods, ["manual"], "the user declared it");
   assert.equal(getState().settings.categories.entity_names, true,
     "adding a value switches its type on, or the pipeline drops it");
 });
@@ -654,23 +654,23 @@ test("mode 2 folds into an existing family instead of creating a rival", async (
   // A new value that is a spelling of one already listed must not become a
   // rival: the shorter would fire inside the longer and leave the rest behind.
   resetState();
-  addEntities([{ category: "brand_names", canonical: "Coca-Cola" }]);
+  addValues([{ category: "brand_names", mainText: "Coca-Cola" }]);
   await applySelection(stubContainer(), view({
     selection: { text: "Coca-Cola company", x: 0, y: 0 },
     stage: "replace", mode: "value", category: "brand_names",
   }));
 
-  assert.equal(getState().entities.length, 1, "one value, not two");
-  assert.ok(getState().entities[0].manualVariants.includes("Coca-Cola company"));
+  assert.equal(getState().values.length, 1, "one value, not two");
+  assert.ok(getState().values[0].spellings.includes("Coca-Cola company"));
 });
 
 test("mode 1 refuses a target that is not a value, on the panel", async () => {
   resetState();
   await applySelection(stubContainer(), view({
     selection: { text: "Meridian", x: 0, y: 0 },
-    stage: "replace", mode: "variant", target: "Nobody",
+    stage: "replace", mode: "spelling", target: "Nobody",
   }));
-  assert.equal(getState().entities.length, 0,
+  assert.equal(getState().values.length, 0,
     "a refused spelling target must not fall through to creating a Value");
 });
 

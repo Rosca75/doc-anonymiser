@@ -26,9 +26,9 @@ import {
   getSameFormatMetadata, saveSameFormat,
 } from "../api.js";
 import {
-  getState, setState, buildRunRequest, addEntities, presetCategories,
+  getState, setState, buildRunRequest, addValues, presetCategories,
   setMetaReview, setExportDir, startNewBatch, setDocumentCountry,
-  SMART_DETECT_DEFAULTS,
+  HEURISTIC_DISCOVERY_DEFAULTS,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { button, card, collapsibleGroup, wireGroups, sectionLabel, toastHTML } from "../ui.js";
@@ -448,7 +448,7 @@ export function applySession(session) {
   const settings = session.settings ?? {};
   const current = getState().settings;
   setState({
-    entities: [],
+    values: [],
     allowlist: session.allowTerms ?? [],
     patterns: (session.patterns ?? []).map((p) => ({ expr: p.expr, error: null })),
     settings: {
@@ -461,19 +461,19 @@ export function applySession(session) {
       ollamaPort: settings.ollamaPort,
       model: settings.model,
       contextSize: settings.contextSize,
-      useAI: settings.useAI,
+      useLocalAI: settings.useLocalAI,
       // Absent means ON: Smart detection is the default route, and
       // a file that says nothing about it must not restore it switched off.
       // useSmartDetect is derived from the two halves it split into.
-      useNativeDetect: settings.useNativeDetect !== false,
-      useAutoDetect: settings.useAutoDetect !== false,
-      useSmartDetect: settings.useNativeDetect !== false || settings.useAutoDetect !== false,
+      useBuiltInPatterns: settings.useBuiltInPatterns !== false,
+      useHeuristicDiscovery: settings.useHeuristicDiscovery !== false,
+      useSmartDetect: settings.useBuiltInPatterns !== false || settings.useHeuristicDiscovery !== false,
       minConfidence: settings.minConfidence ?? 0,
       // A session that deliberately turned every smart-detection filter off
       // writes zeroes, which must be obeyed; a session that says nothing about
       // them gets the shipped defaults. The pointer on the Go side is what keeps
       // those two apart, and the spread preserves the distinction here.
-      smartDetect: { ...SMART_DETECT_DEFAULTS, ...(settings.smartDetect ?? {}) },
+      heuristicDiscovery: { ...HEURISTIC_DISCOVERY_DEFAULTS, ...(settings.heuristicDiscovery ?? {}) },
     },
   });
   // The document country is not part of a session file: it is a frontend-only
@@ -483,8 +483,8 @@ export function applySession(session) {
   setDocumentCountry(DEFAULT_COUNTRY);
   // Loaded values arrive ACCEPTED: a session records what the user decided to
   // replace, not what was once proposed to them.
-  addEntities((session.entities ?? []).map((e) => ({
-    category: e.category, canonical: e.canonical, manualVariants: e.manualVariants ?? [],
+  addValues((session.values ?? []).map((e) => ({
+    category: e.category, mainText: e.mainText, spellings: e.spellings ?? [],
   })));
   if (current.contextSize && !settings.contextSize) {
     // Go treats 0 as "keep the current setting"; mirror that here rather than

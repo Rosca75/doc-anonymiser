@@ -1,7 +1,7 @@
 // panesearch.js, finding a needle in the Compare panes.
 //
 // Search must NOT be done by rewriting the already-rendered HTML. The
-// anonymised pane is full of <mark> elements and escaped entities, so a needle
+// anonymised pane is full of <mark> elements and escaped values, so a needle
 // like "mark" or "&" would corrupt the markup and take the tooltips and the
 // click-to-select with it. So hits are computed over the PLAIN text and
 // rendered during the same pass that escapes it: highlight.js does that for the

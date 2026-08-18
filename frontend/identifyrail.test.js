@@ -17,8 +17,8 @@ import {
 } from "./views/identifyrail.js";
 import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
 import {
-  ALL_CATEGORIES, NAME_CATEGORIES, resetState, getState, setState, setUseAI,
-  setAIScope, setCategoryGroup, setUseNativeDetect, setUseAutoDetect,
+  ALL_CATEGORIES, NAME_CATEGORIES, resetState, getState, setState, setUseLocalAI,
+  setAIScope, setCategoryGroup, setUseBuiltInPatterns, setUseHeuristicDiscovery,
 } from "./state.js";
 import { textOf, stripTags, all, one, exists } from "./testhtml.js";
 
@@ -80,7 +80,7 @@ test("the rail is two route sections, in the order the routes run", () => {
 test("each route section carries the settings key that switches it on", () => {
   const keys = Object.fromEntries(RAIL_SECTIONS.map(([id, , key]) => [id, key]));
   assert.equal(keys["rail-smart"], "useSmartDetect");
-  assert.equal(keys["rail-local"], "useAI");
+  assert.equal(keys["rail-local"], "useLocalAI");
 });
 
 test("Scope is no longer a section: it is nested in the route it scopes", () => {
@@ -109,7 +109,7 @@ test("the gate tooltip tells the two reasons apart", () => {
   assert.match(moved, /127\.0\.0\.1:11500/);
   assert.equal(llmDisabledTooltip(0), llmDisabledTooltip(11434), "an unset port falls back to the default");
 
-  const off = llmGateTooltip({ ollama: { available: true }, settings: { useAI: false } });
+  const off = llmGateTooltip({ ollama: { available: true }, settings: { useLocalAI: false } });
   assert.equal(off, CONFIGURE.aiOffTooltip);
   assert.notEqual(off, missing);
 });
@@ -163,7 +163,7 @@ test("the confidence read-out is a full sentence at every slider stop", () => {
 function railHTML(patch = {}) {
   resetState();
   if (patch.ollama) setState({ ollama: patch.ollama });
-  if (patch.useAI) setUseAI(true);
+  if (patch.useLocalAI) setUseLocalAI(true);
   return railBody(getState());
 }
 
@@ -233,7 +233,7 @@ test("Native and Auto detection are two toggles at the top of Smart detection", 
 
 test("turning Native detection off disables the regex category block only", () => {
   resetState();
-  setUseNativeDetect(false);
+  setUseBuiltInPatterns(false);
   const smart = all(railBody(getState()), "section.rail-section")[0].outer;
   // The regex signal categories (email, vat, ...) go disabled; the name
   // categories (person_names, ...) stay editable, because Auto detection is
@@ -249,11 +249,11 @@ test("turning Native detection off disables the regex category block only", () =
 test("the Smart detection header switch is a master over both sub-toggles", () => {
   // Off when BOTH halves are off; on when either is.
   resetState();
-  setUseNativeDetect(false);
-  setUseAutoDetect(false);
+  setUseBuiltInPatterns(false);
+  setUseHeuristicDiscovery(false);
   let smart = all(railBody(getState()), "input.route-toggle")[0];
   assert.ok(!("checked" in smart.attrs), "both halves off means the section reads off");
-  setUseNativeDetect(true);
+  setUseBuiltInPatterns(true);
   smart = all(railBody(getState()), "input.route-toggle")[0];
   assert.ok("checked" in smart.attrs, "either half on means the section reads on");
 });
@@ -303,7 +303,7 @@ test("the strictness lever is a select of the three levels, balanced by default"
 test("the strictness select reflects a non-default stored value", () => {
   resetState();
   setState({ settings: { ...getState().settings,
-    smartDetect: { ...getState().settings.smartDetect, strictness: "strict" } } });
+    heuristicDiscovery: { ...getState().settings.heuristicDiscovery, strictness: "strict" } } });
   const smart = all(railBody(getState()), "section.rail-section")[0].outer;
   const selected = all(one(smart, "#smart-strictness").outer, "option")
     .find((o) => "selected" in o.attrs);
@@ -323,7 +323,7 @@ test("every category checkbox is reachable without switching anything", () => {
 test("the Local AI fields are disabled while the route is off", () => {
   const off = railHTML({ ollama: { available: true, models: ["m"], detail: "" } });
   assert.ok("disabled" in one(off, "#ollama-model").attrs);
-  const on = railHTML({ ollama: { available: true, models: ["m"], detail: "" }, useAI: true });
+  const on = railHTML({ ollama: { available: true, models: ["m"], detail: "" }, useLocalAI: true });
   assert.ok(!("disabled" in one(on, "#ollama-model").attrs));
   // The port is never gated: it is how a user FIXES a connection, so locking
   // it would lock them out of fixing the thing the gate complains about.
@@ -334,10 +334,10 @@ test("the Local AI fields are disabled while the route is off", () => {
 
 /** localAIHTML renders the Local AI section with documents and an optional
  *  scope, the route switched on and Ollama present so the fields are live. */
-function localAIHTML({ documents = [], scope = null, useAI = true } = {}) {
+function localAIHTML({ documents = [], scope = null, useLocalAI = true } = {}) {
   resetState();
   setState({ ollama: { available: true, models: ["m"], detail: "" }, documents });
-  if (useAI) setUseAI(true);
+  if (useLocalAI) setUseLocalAI(true);
   if (scope) setAIScope(scope);
   return all(railBody(getState()), "section.rail-section")[1].outer;
 }

@@ -28,8 +28,8 @@ function screen(patch = {}) {
   return {
     step: "identify",
     documents: [{ name: "a.md", markdown: "text" }],
-    entities: [],
-    candidates: [],
+    values: [],
+    suggestions: [],
     results: null,
     ...patch,
   };
@@ -37,7 +37,7 @@ function screen(patch = {}) {
 
 const accepted = (n) =>
   Array.from({ length: n }, (_, i) => ({
-    category: "person_names", canonical: `Person ${i}`, status: "accepted",
+    category: "person_names", mainText: `Person ${i}`, status: "accepted",
   }));
 
 const waiting = (n) =>
@@ -48,9 +48,9 @@ const waiting = (n) =>
 // --- The review done -----------------------------------------------------
 
 test("with the review done the hint counts what the next step will act on", () => {
-  assert.equal(readyHint(screen({ entities: accepted(3) })),
+  assert.equal(readyHint(screen({ values: accepted(3) })),
     WORKSPACE.readyToReplace(3));
-  assert.equal(readyHint(screen({ entities: accepted(1) })),
+  assert.equal(readyHint(screen({ values: accepted(1) })),
     WORKSPACE.readyToReplace(1), "one value reads in the singular");
 });
 
@@ -68,10 +68,10 @@ test("a value that is not accepted is not counted as ready", () => {
   // The entity list also carries rejected and pending rows; only accepted ones
   // are what the run will replace.
   const s = screen({
-    entities: [
-      { category: "person_names", canonical: "Kept", status: "accepted" },
-      { category: "person_names", canonical: "Dropped", status: "rejected" },
-      { category: "person_names", canonical: "Unanswered" },
+    values: [
+      { category: "person_names", mainText: "Kept", status: "accepted" },
+      { category: "person_names", mainText: "Dropped", status: "rejected" },
+      { category: "person_names", mainText: "Unanswered" },
     ],
   });
   assert.equal(readyHint(s), WORKSPACE.readyToReplace(1));
@@ -80,7 +80,7 @@ test("a value that is not accepted is not counted as ready", () => {
 // --- The gate shut -------------------------------------------------------
 
 test("a waiting suggestion turns the hint into the refusal, and the guard agrees", () => {
-  const s = screen({ entities: accepted(3), candidates: waiting(2) });
+  const s = screen({ values: accepted(3), suggestions: waiting(2) });
 
   assert.equal(canGoTo("anonymise", s), false, "the guard refuses the move");
   assert.equal(gateReason(s), WORKSPACE.reviewGate(2));
@@ -93,7 +93,7 @@ test("the refusal names the action that clears it", () => {
   // tells the user they are stuck without telling them how to stop being stuck,
   // and a user who switched detection off after it ran has no other clue that
   // suggestions are still sitting in the list.
-  const sentence = gateReason(screen({ candidates: waiting(1) }));
+  const sentence = gateReason(screen({ suggestions: waiting(1) }));
 
   assert.match(sentence, /1 suggestion still waiting/, "singular for one");
   assert.match(sentence, /Accept or reject/);
@@ -108,7 +108,7 @@ test("the guard and the hint move together across the whole review", () => {
   // failure this guards against is a screen that changes its mind about the gate
   // halfway through a review.
   for (let left = 3; left >= 0; left--) {
-    const s = screen({ entities: accepted(3 - left), candidates: waiting(left) });
+    const s = screen({ values: accepted(3 - left), suggestions: waiting(left) });
     const open = canGoTo("anonymise", s);
     assert.equal(open, left === 0, `${left} waiting`);
     assert.equal(readyHint(s) === gateReason(s), !open,

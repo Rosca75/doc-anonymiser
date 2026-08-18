@@ -588,7 +588,7 @@ main#view.page { overflow-y: auto; }
 .caution .icon { flex: none; margin-top: 1px; }
 .caution-text { flex: 1; min-width: 0; }
 
-/* A removable chip: the allowlist terms, an entity's variants, a pending
+/* A removable chip: the allowlist terms, a Value's spellings, a pending
    value. The label is text, the × is the only control. */
 .chip-tag {
   display: inline-flex; align-items: center; gap: 0.4rem;
@@ -1025,7 +1025,7 @@ input, select {
   padding: 0.9rem 1rem;
   border: 1px solid var(--gray-5); border-radius: var(--card-radius);
 }
-/* The drop target while a variant chip is being dragged over it. */
+/* The drop target while a spelling chip is being dragged over it. */
 .value-card.drop-target { border-color: var(--accent-light); background: var(--tint-orange-3); }
 
 .value-head { display: flex; align-items: center; gap: 0.6rem; min-width: 0; flex-wrap: wrap; }
@@ -1042,24 +1042,24 @@ input, select {
 .ph-input:focus { border-color: var(--text); color: var(--text); background: var(--bg); }
 .ph-input:disabled { color: var(--muted); cursor: not-allowed; }
 
-.variant-row { align-items: center; gap: 0.45rem; }
-.variant-row .hint { margin: 0; font-size: 0.78rem; }
+.spelling-row { align-items: center; gap: 0.45rem; }
+.spelling-row .hint { margin: 0; font-size: 0.78rem; }
 .value-note { font-size: 0.78rem; }
 .value-note .hint { margin: 0; }
 /* An error on a row: the invalid tint's foreground, no fill, so it reads as a
    correction rather than as a warning strip inside a card. */
 .hint.bad { color: var(--invalid-fg); }
 
-/* A variant chip is a DRAG HANDLE as well as a label (BUILD-02 Phase 9d): drag
+/* A spelling chip is a DRAG HANDLE as well as a label (BUILD-02 Phase 9d): drag
    it onto another value card to regroup it. The cursor says so before the user
    tries, and the text selection is suppressed because selecting text cancels a
    drag mid-gesture. */
-.variant-chip { cursor: grab; user-select: none; color: var(--text); }
-.variant-chip:active { cursor: grabbing; }
-.variant-chip:hover { background: var(--tint-orange-3); border-color: var(--accent-light); }
+.spelling-chip { cursor: grab; user-select: none; color: var(--text); }
+.spelling-chip:active { cursor: grabbing; }
+.spelling-chip:hover { background: var(--tint-orange-3); border-color: var(--accent-light); }
 /* The spelling text inside a chip is its own element so a double-click edits it
    without the remove button beside it reacting. */
-.variant-text { cursor: text; }
+.spelling-text { cursor: text; }
 
 /* --- Value editing, filtering and conflicts (My values) ----------------- */
 
@@ -1096,7 +1096,7 @@ input, select {
    text, no shouting, because a conflict is a correction to make, not an alarm. */
 .value-card.conflicted { border-color: var(--err); background: var(--invalid-bg); }
 .value-name.bad { color: var(--invalid-fg); }
-.variant-chip.bad {
+.spelling-chip.bad {
   color: var(--invalid-fg); background: var(--invalid-bg); border-color: var(--err);
 }
 .conflict-note { display: flex; flex-direction: column; gap: 0.25rem; }
@@ -1179,9 +1179,9 @@ input, select {
   white-space: nowrap;
 }
 
-/* An inline input that replaces the "add" chip, so adding a variant never opens
+/* An inline input that replaces the "add" chip, so adding a spelling never opens
    a dialog (decision 10). */
-.variant-input {
+.spelling-input {
   width: 11rem; padding: 0.15rem 0.5rem;
   font-size: 0.8rem; border-radius: 20px;
 }

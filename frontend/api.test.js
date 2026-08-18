@@ -170,8 +170,8 @@ test("the value wrappers name the Go methods BRIDGE.md documents", async () => {
     assert.equal(await removeValue("[ENTITY_1]"), "RemoveValue");
     assert.equal(await restoreValue("[ENTITY_1]"), "RestoreValue");
     assert.equal(await listRemovedValues(), "ListRemovedValues");
-    assert.equal(await validateValues({ entities: [] }), "ValidateValues");
-    assert.equal(await checkIntersections({ entities: [] }), "CheckIntersections");
+    assert.equal(await validateValues({ values: [] }), "ValidateValues");
+    assert.equal(await checkIntersections({ values: [] }), "CheckIntersections");
   });
 
   // The arguments reach Go in the documented order, which is the other half of

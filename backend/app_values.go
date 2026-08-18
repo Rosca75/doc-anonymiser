@@ -1,7 +1,8 @@
-// app_entities.go — bound methods for the Entities screen:
-// LLM discovery over selected files, variant expansion for the review
-// table, and custom-pattern validation/testing. Thin adapters only
-// (CLAUDE.md §3): all logic lives in engine/* and ollama/*.
+// app_values.go — the bound Value surface: spelling expansion for the review
+// workspace, the placeholder rename and removal the Anonymise step drives,
+// validation before a run, the pre-run intersection check, and custom-pattern
+// validation and testing. Thin adapters only (CLAUDE.md §3): all logic lives in
+// engine/* and ollama/*.
 package backend
 
 import (
@@ -20,16 +21,18 @@ var runtimeEventsEmit = func(a *App, name string, payload interface{}) {
 	runtime.EventsEmit(a.ctx, name, payload)
 }
 
-// ExpandEntityVariants returns the automatic + manual variants of one
-// entity for the expandable variant list in the review table.
-func (a *App) ExpandEntityVariants(e engine.Value) []string {
+// ExpandValueSpellings returns the derived plus listed spellings of one Value,
+// for the expandable spelling list on its card. Go answers rather than the
+// frontend deriving them, so the chips the user sees are exactly what the run
+// will replace.
+func (a *App) ExpandValueSpellings(e engine.Value) []string {
 	return engine.ExpandSpellings(e)
 }
 
-// --- The step 3 value surface -----------------------------------------------
+// --- The Anonymise-step Value surface ---------------------------------------
 //
-// Every method here is addressed BY PLACEHOLDER, because on step 3 the user is
-// looking at report rows and at marks in the Compare pane and both carry the
+// Every method here is addressed BY PLACEHOLDER, because on Anonymise the user
+// is looking at report rows and at marks in the Compare pane and both carry the
 // placeholder. Renaming a value and removing it are the two rules a Value obeys
 // once a run has produced it, and this is the only surface for either.
 

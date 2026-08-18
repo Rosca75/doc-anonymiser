@@ -189,7 +189,7 @@ export function tabbar(tabs, opts = {}) {
  *   disabled?: boolean, title?: string}>} chips
  * @param {object} [opts]
  * @param {string} [opts.attr] data attribute name (default "chip")
- * @param {boolean} [opts.square] the squarer, smaller variant used by the rail
+ * @param {boolean} [opts.square] the squarer, smaller spelling used by the rail
  * @param {string} [opts.ariaLabel] accessible name for the row
  * @returns {string} safe HTML
  */
@@ -214,7 +214,7 @@ export function chipRow(chips, opts = {}) {
  *
  * @param {string} text
  * @param {object} [opts]
- * @param {boolean} [opts.mini] the smaller variant used for column captions
+ * @param {boolean} [opts.mini] the smaller spelling used for column captions
  * @returns {string} safe HTML
  */
 export function sectionLabel(text, opts = {}) {

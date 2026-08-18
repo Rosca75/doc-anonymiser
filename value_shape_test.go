@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -106,11 +107,22 @@ func TestValueWireShapeCarriesEveryCurrentField(t *testing.T) {
 // pass while a reducer kept building an old shape and Go silently ignored it: the
 // edit would look like it worked and then not stick.
 func TestFrontendWritesNoRetiredValueField(t *testing.T) {
-	// "origin" and "canonical" are ordinary English words that appear in prose
-	// and in unrelated identifiers (a mapping row's `original`, CSS transform
-	// origins), so the sweep looks for them as OBJECT KEYS only. The other three
-	// are invented names that can be matched anywhere.
-	asKey := map[string]bool{"origin": true, "canonical": true}
+	// Two of these are ordinary English words, so for them the sweep looks for the
+	// KEY FORMS only (`origin:`, `"origin"`, `.origin`) and not for the bare word.
+	// A mapping row's `original` is literally source text and keeps its name, and
+	// prose is allowed to use "origin" as a word; a looser sweep flags both, and a
+	// guard that cries wolf gets deleted rather than fixed. The other three are
+	// invented names that cannot appear innocently, so they are matched anywhere.
+	asWord := map[string]bool{"origin": true, "canonical": true}
+	patterns := make([]*regexp.Regexp, 0, len(retiredValueFields))
+	for _, field := range retiredValueFields {
+		if asWord[field] {
+			patterns = append(patterns, regexp.MustCompile(
+				`(?:\b`+field+`\s*:|"`+field+`"|\.`+field+`\b)`))
+			continue
+		}
+		patterns = append(patterns, regexp.MustCompile(`\b`+field+`\b`))
+	}
 
 	err := filepath.WalkDir("frontend", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -123,18 +135,11 @@ func TestFrontendWritesNoRetiredValueField(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		text := string(raw)
-		for _, field := range retiredValueFields {
-			needles := []string{field}
-			if asKey[field] {
-				needles = []string{field + ":", `"` + field + `"`, "." + field}
-			}
-			for _, needle := range needles {
-				if strings.Contains(text, needle) {
-					t.Errorf("%s mentions %q, which the current Value model replaced.\n"+
-						"See the header of this file for which decision that key undoes.",
-						path, needle)
-				}
+		for i, re := range patterns {
+			if re.Match(raw) {
+				t.Errorf("%s mentions %q, which the current Value model replaced.\n"+
+					"See the header of this file for which decision that key undoes.",
+					path, retiredValueFields[i])
 			}
 		}
 		return nil

@@ -33,7 +33,7 @@ import {
 import {
   getState, setState,
   buildRunRequest, documentSource, cacheDocumentSource,
-  entityAutocomplete, reassignOriginal, addEntities,
+  valueAutocomplete, reassignOriginal, addValues,
   setValueTables, dismissWarning, visibleWarnings, blockingConflicts,
   foldIntoFamily,
 } from "../state.js";
@@ -82,8 +82,8 @@ let selection = null;
 // how), then a mode. All view state: it is about THIS selection and dies with
 // it, so it resets whenever `selection` is cleared or the document changes.
 let selectionStage = null;    // null | "replace"
-let selectionMode = null;     // null | "variant" | "value"
-let selectionTarget = "";     // the variant autocomplete's draft
+let selectionMode = null;     // null | "spelling" | "value"
+let selectionTarget = "";     // the spelling autocomplete's draft
 let selectionCategory = "person_names";
 // A refusal from Apply. It belongs ON the panel, next to the field the fix goes
 // into, for the same reason a refused rename lands on its own row.
@@ -281,12 +281,12 @@ export function formatDuration(ms) {
  */
 export function selectedCard(s, mark = selectedMark) {
   const matches = reassignDraft.trim()
-    ? entityAutocomplete(reassignDraft, s).slice(0, 6)
+    ? valueAutocomplete(reassignDraft, s).slice(0, 6)
     : [];
   const suggestions = matches.map((m) =>
     `<button class="btn btn-secondary reassign-pick"` +
-    ` data-category="${escapeHTML(m.category)}" data-canonical="${escapeHTML(m.canonical)}">` +
-    `${escapeHTML(m.canonical)}` +
+    ` data-category="${escapeHTML(m.category)}" data-mainText="${escapeHTML(m.mainText)}">` +
+    `${escapeHTML(m.mainText)}` +
     `<span class="hint">${escapeHTML(CATEGORY_LABELS[m.category]?.[0] ?? m.category)}</span>` +
     `</button>`).join("");
 
@@ -583,7 +583,7 @@ export function missedCard(s) {
     `</div>`;
 
   return collapsibleCard("missed", ANONYMISE.missedTitle,
-    ANONYMISE.missedSummary(s.entities.length), body);
+    ANONYMISE.missedSummary(s.values.length), body);
 }
 
 /**
@@ -819,7 +819,7 @@ function selectionStageMode() {
     `</span></label>`;
 
   return `<div class="selection-options">` +
-    option("variant", ANONYMISE.selectionModeVariant, ANONYMISE.selectionModeVariantHint) +
+    option("spelling", ANONYMISE.selectionModeVariant, ANONYMISE.selectionModeVariantHint) +
     option("value", ANONYMISE.selectionModeValue, ANONYMISE.selectionModeValueHint) +
     `</div>` +
     `<div class="run-actions">` +
@@ -830,11 +830,11 @@ function selectionStageMode() {
 /** Stage 3: the fields the chosen mode needs, plus Apply and Cancel. */
 function selectionStageFields(s, view) {
   let fields = "";
-  if (view.mode === "variant") {
+  if (view.mode === "spelling") {
     // The same autocomplete the Selected placeholder card uses, so "which value
     // is this a spelling of" is answered the same way in both places.
-    const options = entityAutocomplete(view.target, s)
-      .map((e) => `<option value="${escapeHTML(e.canonical)}"></option>`).join("");
+    const options = valueAutocomplete(view.target, s)
+      .map((e) => `<option value="${escapeHTML(e.mainText)}"></option>`).join("");
     fields =
       `<label class="field-label">${escapeHTML(ANONYMISE.selectionTargetLabel)}` +
       `<input id="selection-target" list="selection-targets"` +
@@ -957,16 +957,16 @@ function wireSelected(container) {
 
   for (const pick of container.querySelectorAll(".reassign-pick")) {
     pick.addEventListener("click", async () => {
-      const { category, canonical } = pick.dataset;
+      const { category, mainText } = pick.dataset;
       const original = selectedMark?.original;
       if (!original) return;
-      if (!reassignOriginal(original, category, canonical)) {
-        notify(ANONYMISE.reassignRefused(original, canonical), "warn");
+      if (!reassignOriginal(original, category, mainText)) {
+        notify(ANONYMISE.reassignRefused(original, mainText), "warn");
         return;
       }
       selectedMark = null;
       reassignDraft = "";
-      await runFastRerun(container, ANONYMISE.reassignDone(original, canonical));
+      await runFastRerun(container, ANONYMISE.reassignDone(original, mainText));
     });
   }
 }
@@ -1098,7 +1098,7 @@ function wireMissed(container) {
   const add = () => {
     const text = (drafts.missed ?? "").trim();
     if (!text) return;
-    if (!addEntities([{ category: drafts.missedCategory, canonical: text }])) {
+    if (!addValues([{ category: drafts.missedCategory, mainText: text }])) {
       notify(ANONYMISE.missedAlreadyThere(text), "info");
       return;
     }
@@ -1109,7 +1109,7 @@ function wireMissed(container) {
   value?.addEventListener("keydown", (ev) => { if (ev.key === "Enter") add(); });
 
   container.querySelector("#btn-fast-rerun")?.addEventListener("click", async () => {
-    await runFastRerun(container, ANONYMISE.fastRerunDone(getState().entities.length));
+    await runFastRerun(container, ANONYMISE.fastRerunDone(getState().values.length));
   });
 }
 
@@ -1279,11 +1279,11 @@ function wireMarkTooltip(container, doc) {
     if (!original) return; // a mapping miss has nothing to show
     const category = mark.dataset.category;
     const count = doc ? countOccurrences(doc.anonymised ?? "", mark.dataset.ph ?? "") : 0;
-    // When this occurrence replaced a variant spelling, lead with what was
-    // actually on the page and keep the canonical value in brackets:
-    // "Borch (Johannes Borch)". A canonical match shows the value alone.
-    const variant = mark.dataset.variant;
-    const originalDisplay = variant ? `${variant} (${original})` : original;
+    // When this occurrence replaced a spelling spelling, lead with what was
+    // actually on the page and keep the mainText value in brackets:
+    // "Borch (Johannes Borch)". A mainText match shows the value alone.
+    const spelling = mark.dataset.spelling;
+    const originalDisplay = spelling ? `${spelling} (${original})` : original;
 
     tip.innerHTML =
       `<span class="tooltip-original">${escapeHTML(originalDisplay)}</span>` +
@@ -1458,7 +1458,7 @@ export async function applySelection(container, view = selectionViewState()) {
   const clearSelection = () =>
     container.ownerDocument?.defaultView?.getSelection?.()?.removeAllRanges();
 
-  if (view.mode === "variant") {
+  if (view.mode === "spelling") {
     const main = (view.target ?? "").trim();
     if (!main) {
       selectionError = ANONYMISE.selectionNeedsTarget;
@@ -1468,16 +1468,16 @@ export async function applySelection(container, view = selectionViewState()) {
     // reassignOriginal refuses an unknown target, or one that IS the text. The
     // reason goes on the panel rather than into a toast: the fix is in the
     // field the user is looking at.
-    const entity = entityAutocomplete(main, getState())
-      .find((e) => e.canonical.toLowerCase() === main.toLowerCase());
-    if (!entity || !reassignOriginal(text, entity.category, entity.canonical)) {
+    const value = valueAutocomplete(main, getState())
+      .find((v) => v.mainText.toLowerCase() === main.toLowerCase());
+    if (!value || !reassignOriginal(text, value.category, value.mainText)) {
       selectionError = ANONYMISE.selectionUnknownTarget;
       setState({});
       return;
     }
     resetSelectionPanel();
     clearSelection();
-    await runFastRerun(container, ANONYMISE.selectionBecameVariant(text, entity.canonical));
+    await runFastRerun(container, ANONYMISE.selectionBecameVariant(text, value.mainText));
     return;
   }
 
@@ -1485,14 +1485,14 @@ export async function applySelection(container, view = selectionViewState()) {
   {
     // Through foldIntoFamily first, so a new value that belongs to an existing
     // family becomes a spelling of it instead of a rival that would fire inside
-    // it. addEntities switches the category on, which is what makes the value
+    // it. addValues switches the category on, which is what makes the value
     // actually apply.
     const family = foldIntoFamily(view.category, text);
     const message = family
       ? WORKSPACE.foldedIntoValue(text, family.main)
       : ANONYMISE.selectionBecameValue(text);
     if (!family) {
-      addEntities([{ category: view.category, canonical: text, origin: "declared" }]);
+      addValues([{ category: view.category, mainText: text, discoveryMethods: ["manual"] }]);
     }
     resetSelectionPanel();
     clearSelection();

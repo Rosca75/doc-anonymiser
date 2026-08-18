@@ -1,5 +1,5 @@
-// app_entities_test.go —  Go-side tests: the ExpandEntityVariants
-// bound-method adapter and multi-file discovery merge/dedupe against a
+// app_validation_test.go — Go-side tests for the bound Value surface: the
+// spelling-expansion adapter, and multi-file discovery merge and dedupe against a
 // mocked Ollama server (zero real network).
 package backend
 
@@ -55,7 +55,7 @@ func newTestApp(t *testing.T, replyFor func(userPrompt string) string) *App {
 
 func TestExpandEntityVariantsAdapter(t *testing.T) {
 	app := NewApp()
-	got := app.ExpandEntityVariants(engine.Value{Category: "person_names", MainText: "Marie Duval"})
+	got := app.ExpandValueSpellings(engine.Value{Category: "person_names", MainText: "Marie Duval"})
 	joined := strings.Join(got, "|")
 	for _, want := range []string{"Marie Duval", "M. Duval", "Duval", "Marie"} {
 		if !strings.Contains(joined, want) {

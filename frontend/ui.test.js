@@ -190,24 +190,24 @@ test("the documentation page styles itself from the brand tokens only", () => {
   assert.match(docsHTML, /href="\.\.\/brand\.css"/);
 });
 
-// --- Variant chip contract -----------------------------------------------
+// --- Spelling chip contract -----------------------------------------------
 //
-// Reported symptom: the variant chips looked disabled and could not be dragged.
-// Both were CSS, not markup: the chips inherited the muted colour of the variant
+// Reported symptom: the spelling chips looked disabled and could not be dragged.
+// Both were CSS, not markup: the chips inherited the muted colour of the spelling
 // area, and nothing said they were draggable. The markup side is asserted by
 // reading views/identifyworkspace.js, since the chip builder is not exported and
 // there is no DOM here.
 
 const workspaceJS = fs.readFileSync(path.join(staticDir, "views", "identifyworkspace.js"), "utf8");
 
-test("variant chips are rendered draggable", () => {
+test("spelling chips are rendered draggable", () => {
   // the chips looked disabled and could not be dragged.
   // They are .chip-tag now, and the drag survived the relayout:
   // regrouping a mis-attached spelling has no other home. A conflicting spelling
   // adds a " bad" class between the base class and the closing quote, so this
   // asserts the two facts (the chip class, and draggable) rather than one exact
   // run of characters the interpolation now splits.
-  assert.match(workspaceJS, /class="chip-tag variant-chip/);
+  assert.match(workspaceJS, /class="chip-tag spelling-chip/);
   assert.match(workspaceJS, /draggable="true"/);
 });
 
@@ -225,8 +225,8 @@ test("a drop onto a value's own card is refused rather than being a no-op move",
   assert.match(workspaceJS, /a drop onto its own card would be a no-op/);
 });
 
-test("variant chips are not styled as disabled", () => {
-  const chip = styleCSS.match(/\n\.variant-chip \{[^}]*\}/);
+test("spelling chips are not styled as disabled", () => {
+  const chip = styleCSS.match(/\n\.spelling-chip \{[^}]*\}/);
   assert.ok(chip, "the chip rule must exist");
   // The chip must carry the ordinary text colour, not the muted one its
   // surroundings use: a greyed-out chip reads as disabled.
@@ -239,7 +239,7 @@ test("variant chips are not styled as disabled", () => {
 });
 
 test("a drop target is visibly marked", () => {
-  // The target is a value CARD now, not a table row: the variant chips moved
+  // The target is a value CARD now, not a table row: the spelling chips moved
   // from a table into cards.
   assert.match(styleCSS, /\.value-card\.drop-target \{/);
 });
@@ -320,7 +320,7 @@ test("countBadge renders zero but renders nothing for a missing count", () => {
   assert.equal(countBadge(undefined), "");
 });
 
-test("countBadge marks the active variant", () => {
+test("countBadge marks the active spelling", () => {
   assert.ok(countBadge(4, { active: true }).includes('class="count-badge active"'));
   assert.ok(countBadge(4).includes('class="count-badge"'));
   assert.ok(!countBadge(4).includes("active"));
@@ -372,7 +372,7 @@ test("chipRow marks the active chip and reports it to assistive technology", () 
   assert.ok(html.includes('role="group" aria-label="Preset"'));
 });
 
-test("chipRow square variant and disabled chips", () => {
+test("chipRow square spelling and disabled chips", () => {
   const html = chipRow([{ id: "later", label: "Not yet", disabled: true }], { square: true });
   assert.ok(html.includes("tint-chip square"));
   assert.ok(html.includes("disabled"));
@@ -380,7 +380,7 @@ test("chipRow square variant and disabled chips", () => {
 
 // --- sectionLabel / statTile ---------------------------------------------
 
-test("sectionLabel escapes and supports the mini variant", () => {
+test("sectionLabel escapes and supports the mini spelling", () => {
   assert.ok(sectionLabel("Document country").includes('class="section-label">Document country<'));
   assert.ok(sectionLabel("x", { mini: true }).includes("section-label mini"));
   assert.ok(sectionLabel("<b>").includes("&lt;b&gt;"));

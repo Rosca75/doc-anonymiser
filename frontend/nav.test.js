@@ -35,15 +35,15 @@ import { one, textOf, exists } from "./testhtml.js";
  * stateOn(step, patch) is a state parked on one wizard step.
  *
  * Only the fields the navigation guard reads are filled in (state.js canGoTo:
- * documents, candidates and results), because a fuller fixture would suggest the
- * guard looks at more than it does. `candidates` joined the list in
+ * documents, suggestions and results), because a fuller fixture would suggest the
+ * guard looks at more than it does. `suggestions` joined the list in
  * when the review gate became the guard's third rule.
  */
 function stateOn(step, patch = {}) {
   return {
     step,
     documents: [{ name: "a.md", markdown: "text" }],
-    candidates: [],
+    suggestions: [],
     results: null,
     ...patch,
   };
@@ -166,7 +166,7 @@ test("the review gate reaches the footer through the guard, not through the scre
   // footer must inherit that from canGoTo rather than growing a condition of its
   // own, which is the whole reason the guard lives in one place.
   const waiting = stepFooterHTML({}, stateOn("identify", {
-    candidates: [{ text: "Alpine Trust", category: "entity_names", count: 4 }],
+    suggestions: [{ text: "Alpine Trust", category: "entity_names", count: 4 }],
   }));
   assert.ok("disabled" in one(waiting, "#step-next").attrs,
     "a suggestion is still waiting, so CONTINUE TO ANONYMISE must be disabled");
@@ -265,8 +265,8 @@ test("a multi-step back clears the steps it jumps over, not just the one it leav
   setState({
     documents: [{ name: "a.md" }],
     results: FINISHED_RUN,
-    entities: [{ category: "person_names", canonical: "Marie Duval", status: "accepted" }],
-    candidates: [{ text: "Alpine Trust", category: "entity_names", count: 2 }],
+    values: [{ category: "person_names", mainText: "Marie Duval", status: "accepted" }],
+    suggestions: [{ text: "Alpine Trust", category: "entity_names", count: 2 }],
     patterns: [{ expr: "PRJ-[0-9]+", error: null }],
     step: "anonymise",
   });
@@ -276,8 +276,8 @@ test("a multi-step back clears the steps it jumps over, not just the one it leav
   assert.equal(await moving, true);
   const s = getState();
   assert.equal(s.step, "import");
-  assert.deepEqual(s.entities, [], "the Identify values did not survive the jump to Import");
-  assert.deepEqual(s.candidates, [], "nor did the suggestions");
+  assert.deepEqual(s.values, [], "the Identify values did not survive the jump to Import");
+  assert.deepEqual(s.suggestions, [], "nor did the suggestions");
   assert.deepEqual(s.patterns, [], "nor the custom patterns");
   assert.equal(s.results, null, "and the run is gone");
   assert.equal(s.documents.length, 1, "but the imported documents are kept");
