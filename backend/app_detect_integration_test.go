@@ -1,4 +1,15 @@
-// app_detect_test.go — tests for the unified detection run.
+//go:build integration
+
+// app_detect_integration_test.go — tests for the unified detection run.
+//
+// TIER: integration (docs/TESTING.md). Every test here drives App.RunDetection
+// against a MOCK Ollama server (httptest) and asserts the bound detection
+// wiring end to end: the event stream, cancellation, family folding across
+// routes, and signal-based discovery through the App. That is external-boundary
+// wiring with a stand-in for the real model, which the integration tier owns;
+// it stays hermetic (loopback httptest, zero real network). Its helpers
+// (recorder, detectionApp, signalApp, scopeChatServer) and newTestApp, shared
+// from app_validation_integration_test.go, are compiled only in this tier.
 //
 // These guard the reported issue "detection sometimes does not complete, the
 // progress is difficult to follow". Each test names the specific way the old
