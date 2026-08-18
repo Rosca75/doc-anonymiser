@@ -173,7 +173,7 @@ test("brand.css declares Helvetica first for headings and body", () => {
   assert.match(css, /--font-body:\s*Helvetica,\s*Arial,\s*sans-serif;/);
 });
 
-// --- the merged entity category ------------------------------------------
+// --- the merged entity_names category ------------------------------------
 
 test("the retired category labels are gone from the copy", () => {
   // client_names and internal_names merged into entity_names. A label left

@@ -196,9 +196,9 @@ func TestOccurrenceVariantsRecordVariantSpelling(t *testing.T) {
 	}
 }
 
-// TestOccurrenceVariantsPrunedWhenAllCanonical: a document whose every match
+// TestOccurrenceSpellingsPrunedWhenAllMainText: a document whose every match
 // was the mainText value carries no variant map, so the payload stays lean.
-func TestOccurrenceVariantsPrunedWhenAllCanonical(t *testing.T) {
+func TestOccurrenceSpellingsPrunedWhenAllMainText(t *testing.T) {
 	res := runPipeline(t, PipelineInput{
 		Documents: []Document{{
 			Name:     "n.txt",
@@ -452,17 +452,17 @@ func TestOwnershipIsDecidedByRuleNotByDocumentOrder(t *testing.T) {
 	}
 }
 
-// TestDeclaredBeatsAutoDetected: a custom pattern and an auto-detected value
+// TestUserDefinedBeatsSmartDiscovered: a custom pattern and a discovered Value
 // covering the same string resolve to the pattern, because a declaration
 // outranks a guess, and exactly one placeholder exists for the string.
-func TestDeclaredBeatsAutoDetected(t *testing.T) {
+func TestUserDefinedBeatsSmartDiscovered(t *testing.T) {
 	reg := NewRegistry()
 	res, err := Run(context.Background(), PipelineInput{
 		Documents: []Document{{Name: "a.txt", Format: FormatTXT,
 			Markdown: "Project PRJ-4471 is on track. PRJ-4471 again.\n"}},
 		// The user's own regex...
 		Patterns: []CustomPattern{{Expr: `PRJ-[0-9]+`}},
-		// ...and the same string as something Smart detection turned up.
+		// ...and the same string as something Smart detection discovered.
 		Values: []Value{{
 			Category: CatProjectNames, MainText: "PRJ-4471", DiscoveryMethods: []string{MethodHeuristic},
 		}},

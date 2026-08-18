@@ -39,7 +39,7 @@
     <ol>
       <li><a href="#what">What the application does</a></li>
       <li><a href="#formats">Which files you can import</a></li>
-      <li><a href="#steps">The five steps</a></li>
+      <li><a href="#steps">The four steps</a></li>
       <li><a href="#detection">How values are found</a></li>
       <li><a href="#placeholders">Placeholders and the re-identification key</a></li>
       <li><a href="#local">Local processing and the optional AI</a></li>
@@ -93,7 +93,7 @@
   </section>
 
   <section id="steps">
-    <h2>The five steps</h2>
+    <h2>The four steps</h2>
     <p>
       The workflow banner under the menu shows where you are. A step you
       cannot reach yet is greyed out, for example Export before a run has
@@ -108,36 +108,41 @@
         see. Drag the divider between the two panes to resize them.
       </dd>
 
-      <dt>2. Configure</dt>
+      <dt>2. Identify</dt>
       <dd>
-        Choose what counts as sensitive. Start from a preset (Soft, Standard
-        or Thorough), then adjust the individual checkboxes if you need to.
-        Changing any checkbox switches the preset display to Custom, which
-        simply means the selection is now your own. The same screen holds the
-        list of terms that must never be anonymised, and the settings for the
-        optional local AI.
+        One screen with two halves. On the left you choose how the application
+        looks: which detection routes are on, the document country, a preset
+        (Soft, Standard or Thorough) over the individual category checkboxes,
+        and how certain a finding has to be. Changing any checkbox switches the
+        preset display to Custom, which simply means the selection is now your
+        own. Every control has a small information icon beside it that explains
+        what it does, on hover or with the keyboard.
+        <br><br>
+        On the right you review what was found. Suggestions wait for a decision
+        and you accept or reject each one, singly or in bulk; My Values holds the
+        ones you accepted, and you can also type a Value in yourself. The same
+        half holds the never anonymise list and your own patterns. A Value can be
+        expanded to show its spellings, the other forms that will also be
+        replaced, and you can add your own or drag one to a different Value.
+        <br><br>
+        You cannot move on to Anonymise while a Suggestion is still waiting.
+        Walking past one would silently answer "reject" for you.
       </dd>
 
-      <dt>3. Values</dt>
-      <dd>
-        Tell the application which specific values to replace, such as a
-        client name or a person. You can type them in yourself, or use one of
-        the discovery methods to get suggestions. Every suggestion lands on
-        the review list, where you accept or reject it one by one or in bulk.
-        Each accepted value can be expanded to show its variants, the other
-        spellings that will also be replaced, and you can add your own or move
-        one variant to a different value.
-      </dd>
-
-      <dt>4. Run</dt>
+      <dt>3. Anonymise</dt>
       <dd>
         Run the anonymisation and read the result next to the original.
-        Replacements are highlighted, and hovering one shows the value it
-        replaced. If something was missed, add it here and re-run the fast
-        deterministic passes without starting over.
+        Replacements are highlighted, and hovering one shows the Value it
+        replaced. Select text in either pane to make it a spelling of an
+        existing Value or a Value of its own. If something was missed, Add
+        missed Value declares it and the fast re-run applies it without starting
+        over; every placeholder already handed out keeps its number.
+        <br><br>
+        This step never contacts the local AI and never invents a Value. Only
+        what you accepted is replaced.
       </dd>
 
-      <dt>5. Export</dt>
+      <dt>4. Export</dt>
       <dd>
         Save the anonymised copies, one at a time or all of them in one zip
         file. Word, PowerPoint and Excel documents can also be saved in their
@@ -149,11 +154,13 @@
   </section>
 
   <section id="detection">
-    <h2>How values are found</h2>
+    <h2>How Values are found</h2>
     <p>
-      Three mechanisms work together, in this order.
+      A Value is one thing to be replaced, with one placeholder for it and all
+      its spellings. Nothing becomes a Value on its own: everything below either
+      matches a pattern you switched on, or produces a Suggestion you accept.
     </p>
-    <h3>Predefined patterns</h3>
+    <h3>Built-in patterns</h3>
     <p>
       Some information always looks the same, so it can be recognised without
       any guessing: email addresses, phone numbers, web addresses, bank
@@ -163,28 +170,56 @@
       verified so that an ordinary long number is not mistaken for one. These
       patterns need no AI and no network connection.
     </p>
-    <h3>Values you list</h3>
+    <h3>Values you declare</h3>
     <p>
       The names of clients, projects, internal teams and people cannot be
-      guessed from their shape, so you provide them in the Values step. Each
-      one is expanded into its variants automatically: initials, the surname
-      on its own, the first name on its own, and hyphen or space spellings.
-      That is why entering "Marie Duval" also replaces "M. Duval" and
-      "Duval".
+      guessed from their shape, so you provide them on the Identify step. Each
+      one gets its spellings automatically: initials, the surname on its own, the
+      first name on its own, and hyphen or space forms. That is why entering
+      "Marie Duval" also replaces "M. Duval" and "Duval". The moment you edit
+      that list yourself it becomes yours, and the application stops adding to
+      it, so a spelling you delete stays deleted.
     </p>
-    <h3>Discovery</h3>
+    <h3>Signal-based suggestions</h3>
     <p>
-      Smart detection reads the selected documents and proposes values based
-      on how they are written, for example a capitalised run of words followed
-      by a company form such as S.A. or GmbH. It works entirely offline. Its
-      settings let you make it stricter when it proposes too much.
+      A pattern match can also be EVIDENCE about text written somewhere else. An
+      address like pierre.dupont@tpps.com is being replaced because it is
+      personal data in its own right, and it also says that a person called
+      Pierre Dupont and a company whose name starts "Tpps" are involved. If
+      either is written in any of your documents, outside the address itself, it
+      is suggested for review, with the address shown as the reason.
     </p>
     <p>
-      Auto-discovery with local AI does the same job with a language model
-      running on this machine, which catches names that no rule describes. It
-      is only available when the local AI is switched on and detected. Every
-      proposal it makes is checked against the document text before you see
-      it, so a name the model invented is dropped rather than shown.
+      This is a suggestion and never a replacement, and it is switched separately
+      from the pattern. Clearing "Email addresses" under Signal-based suggestions
+      stops the suggestions; email addresses are still anonymised, because that
+      is Built-in patterns and the Email category doing their own job.
+    </p>
+    <p>
+      Two suggestions built on the same evidence are shown as RELATED, never
+      merged. Two companies reached through one email domain may genuinely be two
+      different legal entities, and only you can say whether they are the same
+      thing.
+    </p>
+    <h3>Heuristic discovery</h3>
+    <p>
+      This reads the selected documents and suggests Values based on how they are
+      written, for example a capitalised run of words followed by a company form
+      such as S.A. or GmbH. It works entirely offline. Its settings, under
+      Discovery strictness, let you make it stricter when it suggests too much.
+    </p>
+    <h3>Local AI</h3>
+    <p>
+      A language model running on this machine does the same job, and catches
+      names that no rule describes. It is only available when the local AI is
+      switched on and detected, and switching it on is always your decision.
+      Everything it proposes is checked against the document text before you see
+      it, so a name the model invented is dropped rather than shown. It never
+      runs during the Anonymise step.
+    </p>
+    <p>
+      When two of these find the same thing, it is ONE suggestion carrying both,
+      not two rows to decide about twice.
     </p>
   </section>
 
@@ -213,7 +248,7 @@
     <h2>Local processing and the optional AI</h2>
     <p>
       The application makes no network connection of its own. There is no
-      telemetry, no update check, and no cloud service. All of its assets,
+      telemetry, no update check, and no cloud service of any kind. All of its assets,
       including this documentation page, are built into the program file.
     </p>
     <p>
@@ -226,7 +261,8 @@
     <p>
       If Ollama is not installed or not running, every AI control is disabled
       and explains why in its tooltip. Nothing else is affected: the patterns,
-      the values you list, smart detection, the run and every export work
+      the Values you declare, built-in patterns, signal-based suggestions,
+      heuristic discovery, the run and every export work
       exactly the same without it.
     </p>
   </section>
@@ -236,14 +272,15 @@
     <dl>
       <dt>An AI button is greyed out</dt>
       <dd>
-        Either the local AI is switched off, under Configure in the AI and
+        Either the local AI is switched off, on the Identify step in the Local
+        AI section, or
         advanced settings tab, or Ollama was not detected on 127.0.0.1. Start
         Ollama, then use Re-probe on that same tab.
       </dd>
 
-      <dt>Smart detection proposes far too much</dt>
+      <dt>Detection suggests far too much</dt>
       <dd>
-        Open the smart detection settings in the Values step and raise the
+        Open Discovery strictness on the Identify step and raise the
         minimum length or the minimum number of occurrences, or switch on the
         exclusion of common words. Values you never want touched belong in the
         never anonymise list instead, where they are protected from every
@@ -254,13 +291,13 @@
       <dd>
         Add it on the Run screen and re-run the fast deterministic passes. If
         it is another spelling of a value you already have, expand that value
-        and add it as a variant, so both spellings map to the same
+        and add it as a spelling, so both forms map to the same
         placeholder.
       </dd>
 
       <dt>Something was replaced that should not have been</dt>
       <dd>
-        Add it to the never anonymise list under Configure. Terms on that list
+        Add it to the never anonymise list on the Identify step. Terms on that list
         survive every pass, including the AI ones.
       </dd>
 

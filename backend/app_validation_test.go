@@ -65,7 +65,7 @@ func TestExpandEntityVariantsAdapter(t *testing.T) {
 }
 
 // aiOnlyApp is newTestApp with the AI route on and the offline route off, so a
-// test about what the model proposes is not also reading heuristic candidates.
+// test about what the model proposes is not also reading heuristic findings.
 func aiOnlyApp(t *testing.T, replyFor func(userPrompt string) string) *App {
 	t.Helper()
 	app := newTestApp(t, replyFor)
@@ -301,10 +301,10 @@ func TestCuratedSpellings(t *testing.T) {
 	}
 }
 
-// TestOfflineRouteReturnsCandidatesNotEntities: detection proposes candidates
+// TestOfflineRouteReturnsSuggestionsNotValues: discovery produces Suggestions
 // for review; the App holds no entity state to mutate, and nothing is replaced
 // until the user accepts a suggestion.
-func TestOfflineRouteReturnsCandidatesNotEntities(t *testing.T) {
+func TestOfflineRouteReturnsSuggestionsNotValues(t *testing.T) {
 	app := NewApp()
 	app.settings.HeuristicDiscovery = engine.HeuristicDiscoveryOptions{} // no filtering
 	app.docs = []engine.Document{
@@ -324,10 +324,10 @@ func TestOfflineRouteReturnsCandidatesNotEntities(t *testing.T) {
 		byText[c.MainText] = c
 	}
 	if c, ok := byText["Marie Duval"]; !ok || c.Category != engine.CatPersonNames || c.Count < 2 {
-		t.Errorf("the person candidate is wrong: %+v", res.Suggestions)
+		t.Errorf("the person suggestion is wrong: %+v", res.Suggestions)
 	}
 	if c, ok := byText["Alpine Trust S.A."]; !ok || c.Category != engine.CatEntityNames {
-		t.Errorf("the legal-suffix candidate is wrong: %+v", res.Suggestions)
+		t.Errorf("the legal-suffix suggestion is wrong: %+v", res.Suggestions)
 	}
 }
 

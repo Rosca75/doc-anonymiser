@@ -191,7 +191,7 @@ test("a new import drops a scope whose document is gone", () => {
   assert.deepEqual(getState().aiScope, { docName: "b.pdf", mode: "pages", pages: "1-2" });
 });
 
-// --- entity review reducers ----------------------------------------------
+// --- Value review reducers -----------------------------------------------
 import {
   addValues, deleteValue,
   setValueSpellings, addSpelling, acceptedValues,
@@ -246,7 +246,7 @@ test("acceptedValues filters on status, as the belt to a removed brace", () => {
   assert.equal(acceptedValues().length, 1);
 
   setState({ values: getState().values.map((e) => ({ ...e, status: "denied" })) });
-  assert.equal(acceptedValues().length, 0, "a denied entity never reaches the pipeline");
+  assert.equal(acceptedValues().length, 0, "a denied Value never reaches the pipeline");
 });
 
 test("manual derivedSpellings dedupe and clear the expansion cache", () => {
@@ -644,7 +644,7 @@ test("valueAutocomplete ranks prefix matches before substring matches", () => {
   assert.deepEqual(valueAutocomplete(""), []);
 });
 
-test("reassignOriginal removes a standalone entity and adds the spelling", () => {
+test("reassignOriginal removes a standalone Value and adds the spelling", () => {
   resetState();
   addValues([
     { category: "person_names", mainText: "Jean Muller" },
@@ -652,7 +652,7 @@ test("reassignOriginal removes a standalone entity and adds the spelling", () =>
   ]);
   assert.equal(reassignOriginal("J. Muller", "person_names", "Jean Muller"), true);
   const values = getState().values;
-  assert.equal(values.length, 1, "the standalone entity is folded in");
+  assert.equal(values.length, 1, "the standalone Value is folded in");
   assert.deepEqual(values[0].spellings, ["J. Muller"]);
   assert.equal(values[0].derivedSpellings, null, "target re-expands");
   // Unknown target rejected, state untouched.
@@ -824,8 +824,8 @@ import {
   HEURISTIC_DISCOVERY_DEFAULTS,
 } from "./state.js";
 
-/** seedCandidates() puts a mixed review list in the store. */
-function seedCandidates() {
+/** seedSuggestions() puts a mixed review list in the store. */
+function seedSuggestions() {
   resetState();
   addSuggestions([
     { discoveryMethods: ["heuristic"], mainText: "Marie Duval", category: "person_names", count: 7 },

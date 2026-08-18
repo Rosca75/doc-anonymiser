@@ -8,9 +8,12 @@ conflicting instruction found elsewhere. Re-read it before every work session.
 doc-anonymiser is a Windows-first desktop application (Go + Wails v2, pattern
 P0 — pure Go, no CGo, no npm) that anonymises text-based client documents
 (.txt, .csv, .md) entirely on the local machine. It replaces two internal
-Python notebooks. The anonymisation pipeline is deterministic at its core
-(regex PII pass + known-entity pass) and optionally augmented by a local LLM
-served by Ollama over localhost HTTP (entity discovery, deep-scan pass).
+Python notebooks. The anonymisation pipeline is DETERMINISTIC end to end
+(built-in pattern matching + the accepted Values), and discovery is a separate,
+earlier step: heuristic and signal-based discovery run offline, and a local LLM
+served by Ollama over localhost HTTP can be switched on beside them. Every
+discovery method produces Suggestions the user accepts or rejects, so
+anonymisation itself reaches no model and creates no Value.
 Fallback decision recorded: if local-LLM quality proves insufficient for NER,
 the fallback is pattern P4 (a small ONNX NER model running via ONNX Runtime
 Web inside the WebView) — do NOT introduce CGo bindings under any circumstance.
@@ -53,8 +56,10 @@ doc-anonymiser/
 ├── embed_test.go              # asserts the frontend is embedded (package main)
 ├── backend/app_e2e_test.go    # headless end-to-end through the bound app layer
 ├── category_parity_test.go    # JS↔Go category parity guard (package main)
-├── origin_parity_test.go      # JS↔Go detection-route parity guard (package main)
-├── entity_shape_test.go       # no per-value negative rule comes back (package main)
+├── detection_parity_test.go   # JS↔Go discovery-method, match-class and
+│                              #   signal-source parity guards (package main)
+├── value_shape_test.go        # the Value wire shape: no retired key comes back,
+│                              #   and every current field is present
 ├── copy_guard_test.go         # no em dashes in Go user-facing strings (package main)
 ├── uitest_parity_test.go      # keeps the two UI harnesses on ONE probes.js (package main)
 ├── frontend/                  # THE GUI — vanilla ES modules, embedded via go:embed
@@ -67,7 +72,7 @@ doc-anonymiser/
 │   ├── main.js / shell.js / ui.js / html.js / icons.js / copy.js / scroll.js
 │   ├── nav.js                 # THE one place the wizard moves (per-screen footers + step bar)
 │   ├── toast.js / modal.js    # state-backed notice strip + in-app confirm (no native dialogs)
-│   ├── highlight.js / panesearch.js / entitymodel.js / candidatemodel.js
+│   ├── highlight.js / panesearch.js / valuemodel.js / suggestionmodel.js
 │   ├── countries.js
 │   ├── views/                 # one JS module per wizard step + shared panels:
 │   │                          #   home.js, import.js, export.js, anonymise.js,
@@ -80,25 +85,28 @@ doc-anonymiser/
 ├── backend/                   # ALL Go business logic + the Wails bound-app layer (package backend)
 │   ├── CLAUDE.md              # backend charter (see above)
 │   ├── app.go                 # Wails bound struct: thin adapters to engine/* and ollama/*
-│   ├── app_entities.go / app_export.go / app_run.go   # App method groups
+│   ├── app_values.go / app_detect.go / app_export.go / app_run.go  # method groups
 │   ├── engine/                # UI-agnostic anonymisation engine
 │   │   ├── document.go        # Document model, txt/csv/md ingestion
 │   │   ├── csvmd.go           # CSV ⇄ markdown-table conversion (round-trip)
 │   │   ├── convert/           # binary-format → markdown converters (pure Go, one-way)
 │   │   │   ├── docx.go / pptx.go / xlsx.go / pdf.go
-│   │   ├── origin.go          # WHICH ROUTE found a value, and the superseding order
-│   │   ├── pii.go             # Pass 1: deterministic regex PII detection
+│   │   ├── matchclass.go      # discovery methods (provenance) and match classes
+│   │   │                      #   (precedence), kept as separate concepts
+│   │   ├── signals.go         # which built-in signals may DERIVE Suggestions
+│   │   ├── signaldiscovery.go # signal-based discovery: a match used as evidence
+│   │   ├── evidence.go        # WHY a discovery method produced a Suggestion
+│   │   ├── pii.go             # Pass 1: built-in pattern matching
 │   │   ├── country.go         # Document-country model; which regex categories apply where
 │   │   ├── conflicts.go       # ValidateValues: blocking conflicts + warnings, before pass 1
 │   │   ├── intersections.go   # what two routes both claim, answered BEFORE a run
-│   │   ├── families.go        # one value, its spellings; the shorter form is the main one
-│   │   ├── removals.go        # Removed values: the session exclusion list
-│   │   ├── entities.go        # Entity model, categories, variant expansion
-│   │   ├── discover.go        # LLM discovery / deep-scan orchestration
+│   │   ├── families.go        # one Value, its spellings; the shorter form is main
+│   │   ├── removals.go        # Removed Values: the session exclusion list
+│   │   ├── values.go          # Value model, categories, spelling derivation
+│   │   ├── discover.go        # heuristic discovery, and the unified Suggestion
 │   │   ├── registry.go        # Placeholder registry (consistent pseudonyms)
 │   │   ├── pipeline.go        # Pass orchestration per anonymisation level
 │   │   ├── allowlist.go       # Terms never anonymised
-│   │   ├── simplereplace.go   # Manual find-and-replace pass
 │   │   ├── report.go          # Per-file / per-category / per-VALUE statistics
 │   │   ├── session.go         # Save/load session state (JSON, schema migrations)
 │   │   └── exportfmt/         # same-format export: rewrite of original bytes (docx/pptx/xlsx, pdf experimental)
@@ -131,7 +139,7 @@ doc-anonymiser/
 │   ├── audit.yml              # deterministic static analysis -> code scanning
 │   ├── ci.yml                 # build + test on push/PR
 │   └── release.yml            # on tag: build, zip, attach to Release
-└── docs/                      # phased build plans (BUILD.md, BUILD-02..04, CHANGE-01)
+└── docs/                      # phased build plans and change orders
     ├── UITESTING.md           # the three test layers and how to run each
     ├── audit.md               # the audit layer: running it, dismissing, adding a tool
     ├── audit-baseline.md      # first full run: counts, genuine vs noise
@@ -214,49 +222,84 @@ doc-anonymiser/
   2) anonymise, 3) export. CSV imports are converted to a markdown table for
   preview/processing but retain their grid model so they can round-trip back
   to CSV on export.
-- **The Value, the unit everything else is about (BUILD-06):** a Value is a
-  string to be replaced. It has none, one or many VARIANTS (spellings of the
-  same real-world thing), and one Value plus all its variants maps to exactly
-  ONE replacement string, whatever found it. That invariant lives in the
-  registry, not only in validation, because detection is what produces the
-  violation: `Registry.Assign` keeps a `byOriginal` index, so a string already
-  owned under one category is never given a second placeholder under another.
-  Precedence is the fixed pass order (pass 1 before 2 before 3), which makes it
-  deterministic with no extra tie-break rule and agrees with `ResolveOverlaps`
-  preferring the higher-confidence span.
-  A Value reaches the pipeline through one of three TRIGGERS: a regex (native,
-  scoped by country), auto-detection (Smart detection and the local AI), or a
-  declaration the user typed. Triggers must not conflict:
-  `engine.ValidateValues` (`backend/engine/conflicts.go`) runs inside
-  `engine.Run` BEFORE pass 1 and returns blocking conflicts (the same string in
-  two active categories, a variant colliding with another value, a declared
-  value that is also allowlisted, a simple-replace rule that would rewrite
-  anonymised output) and warnings. A blocking conflict aborts before the
-  registry is mutated: a half-run that assigned placeholders for a
-  configuration the user was just told is invalid is unrecoverable without a
-  new session.
-- **Which route owns a value: the superseding order.** Four routes can claim
-  the same characters, and exactly one has to win. The rule is ORIGIN, and it
-  is deliberately a separate field from confidence: confidence answers "how
-  much is this trusted" and feeds `MinConfidence`, origin answers "who found
-  it" and feeds precedence. With one number doing both, raising the confidence
-  floor silently reordered precedence, and a regex signal and a custom pattern
-  (both 1.0) were separated by whichever match happened to be longer.
+- **The detection vocabulary is the contract.** These words mean one thing
+  each, in Go names, JavaScript names, JSON, comments, copy and documentation.
 
-  | Origin | Rank | Produced by |
+  | Term | Definition | Output |
   |---|---|---|
-  | `native` | 1 | pass 1 regex signals, and an already-decided registry entry |
-  | `declared` | 2 | the user typed it: manual values and custom patterns |
-  | `auto` | 3 | offline Smart detection |
-  | `ai` | 4 | the local model |
+  | **Detection route** | A switchable user-facing feature group | Smart detection or Local AI |
+  | **Smart detection** | The built-in, non-AI route | Direct matches AND Suggestions |
+  | **Built-in pattern matching** | Application-provided patterns for structured signals | Direct matches |
+  | **Signal-based discovery** | Uses a direct signal match as EVIDENCE to find related text | Suggestions |
+  | **Heuristic discovery** | Uses spelling, context, frequency and deterministic gazetteers | Suggestions |
+  | **Local AI** | The Ollama-backed route, used during Identify | Suggestions |
+  | **Custom pattern matching** | The user's own regular expressions | Direct matches |
+  | **Manual Value declaration** | A Value the user typed | An accepted Value |
 
-  LOWER WINS. An unknown or empty origin ranks with `declared` rather than
-  last, so a producer that states none is trusted rather than silently
-  demoted. The constants live in `backend/engine/origin.go`, are mirrored by
-  `frontend/state.js ORIGINS` and are guarded by `origin_parity_test.go`,
-  exactly as the categories are.
+  Not every method produces Suggestions, and the difference is what the review
+  gate is about. Pattern matching produces DIRECT MATCHES, applied without
+  review, because a pattern is a rule the user chose. Every DISCOVERY method
+  produces SUGGESTIONS, which must be accepted or rejected before anything is
+  replaced.
 
-  `ResolveOverlaps` compares origin FIRST, then confidence, then length, then
+- **The Value, the unit everything else is about:** a Value is one accepted
+  replacement unit. It has a category, one MAIN TEXT, none or many SPELLINGS of
+  the same real-world thing, and one placeholder for the whole family, whatever
+  found it. That invariant lives in the registry and not only in validation,
+  because detection is what produces the violation: `Registry.Assign` keeps a
+  `byOriginal` index, so a string already owned under one category is never
+  given a second placeholder under another.
+
+  A **Suggestion** is an unreviewed potential Value. Nothing becomes a Value
+  without the user accepting it, and accepting carries every discovery method,
+  every piece of evidence and every folded spelling across intact.
+
+  Declarations must not conflict: `engine.ValidateValues`
+  (`backend/engine/conflicts.go`) runs inside `engine.Run` BEFORE pass 1 and
+  returns blocking conflicts (the same string in two active categories, a
+  spelling colliding with another Value, a declared Value that is also
+  allowlisted) and warnings. A blocking conflict aborts before the registry is
+  mutated: a half-run that assigned placeholders for a configuration the user
+  was just told is invalid is unrecoverable without a new session.
+- **Provenance and precedence are separate fields.** Two different questions get
+  asked about every Value, and one field cannot answer both.
+
+  `DiscoveryMethods` answers HOW WAS THIS FOUND. It is a SET, because several
+  methods can find the same thing and two routes agreeing is corroboration worth
+  showing rather than a fact to overwrite. A manually declared Value carries
+  exactly `["manual"]`.
+
+  | Discovery method | Produced by |
+  |---|---|
+  | `manual` | the user typed it |
+  | `signal` | signal-based discovery |
+  | `heuristic` | heuristic discovery |
+  | `local_ai` | Local AI discovery |
+
+  The **match class** answers WHICH CLAIM WINS. It is derived from the methods by
+  `engine.MatchClassForMethods`, which takes the STRONGEST: corroboration by a
+  weaker method is not doubt. It is engine-internal, never user-editable state,
+  and user-facing copy names the winning METHOD rather than a rank.
+
+  | Match class | Rank | Produced by |
+  |---|---:|---|
+  | `built_in_pattern` | 1 | pass 1 pattern matches, and an already-decided registry entry |
+  | `user_defined` | 2 | a manual Value or a custom pattern: the same act by the same person |
+  | `smart_discovered` | 3 | signal-based or heuristic discovery |
+  | `local_ai_discovered` | 4 | Local AI discovery |
+
+  LOWER WINS. An unknown or empty class ranks with `user_defined` rather than
+  last, so a producer that states none is trusted rather than silently demoted:
+  ranking it last turns a forgotten stamp into a missing replacement instead of
+  an error. `Confidence` is a THIRD, separate thing, feeding `MinConfidence`;
+  with one number doing precedence as well, raising the floor silently reordered
+  which route won.
+
+  The constants live in `backend/engine/matchclass.go`, are mirrored by
+  `frontend/state.js DISCOVERY_METHODS` and `MATCH_CLASSES`, and are guarded by
+  `detection_parity_test.go`, exactly as the categories are.
+
+  `ResolveOverlaps` compares the match class FIRST, then confidence, then length, then
   start and category. Ownership is decided ONCE for the whole batch, before a
   single placeholder is minted (`engine.unifyOwnership`, phase B of
   `engine.Run`): resolving per document let the same string be won by
@@ -266,7 +309,37 @@ doc-anonymiser/
   precedence-aware, because changing an entry's category after the fact would
   change its placeholder text, and a placeholder that has left the machine can
   never be re-numbered.
-- **An intersection is a warning, never a refusal.** When two routes claim the
+- **Signal-based discovery: a match used as evidence.** A built-in pattern does
+  two independent things, and the user controls the second without losing the
+  first. It MATCHES AND REPLACES the signal, because an email address is
+  personal data in its own right. It can also be EVIDENCE about text written
+  elsewhere: `pierre.dupont@tpps.com` is deterministic evidence for a person and
+  an organisation that may appear in prose in another file.
+
+  Only the second is switchable, through `signalSuggestionSources`
+  (`backend/engine/signals.go`, mirrored by `frontend/state.js SIGNAL_SOURCES`).
+  Clearing a source stops the Suggestions and must NEVER stop the signal being
+  anonymised: that is governed by Built-in patterns and the signal's own
+  category. Conflating the two is the mistake the separate setting exists to
+  prevent, and a test asserts it at both the engine and the bound-app level.
+
+  Discovery reads the WHOLE imported batch, because the evidence is in one file
+  and the text it points at is usually in another. It suggests nothing unless the
+  text occurs OUTSIDE the source signal, keeps the document's own casing and
+  accents, rejects role mailboxes, single-token handles, public mail providers,
+  public-suffix labels and infrastructure labels, and respects the allowlist and
+  the session exclusions like every other producer.
+
+  Shared evidence makes two findings **Related Values**, never one Value. Two
+  organisations reached through one email domain may genuinely be two legal
+  entities or two country branches, and one placeholder for two companies would
+  make the mapping CSV state they were the same one. The user confirms grouping.
+- **Anonymise creates no Value.** No discovery method runs during a pipeline run
+  and Ollama is never reached: every method runs at Identify time and its
+  findings are Suggestions. A run that could mint a Value the user never saw
+  would walk past the review gate rather than enforce it, and
+  `TestAnonymiseNeverCallsOllama` asserts the call count is zero.
+- **An intersection is a warning, never a refusal.** When two methods claim the
   same text the precedence rule always has an answer, so refusing the run
   would punish the user for a configuration the engine can resolve.
   `engine.DetectIntersections` answers "what covers what" BEFORE a run, using
@@ -285,8 +358,8 @@ doc-anonymiser/
   values added one at a time. Both fold only WITHIN one category (a person
   "Delta" and an organisation "Delta Industries" are an intersection, not a
   family), only at word boundaries ("Alten" is not a spelling of
-  "Altenberg"), and never below `minVariantLen`.
-- **Country association (BUILD-06 Phase 1):** the country-specific regex
+  "Altenberg"), and never below `minSpellingLen`.
+- **Country association:** the country-specific built-in pattern
   categories are scoped by the DOCUMENT COUNTRY, owned by the engine
   (`backend/engine/country.go`, `CategoryCountries`, `CategoryAppliesTo`) and
   mirrored by `frontend/countries.js` exactly as `presetCategories()` mirrors
@@ -294,12 +367,12 @@ doc-anonymiser/
   a category outside the selected country renders DISABLED rather than hidden,
   because an absent switch reads as "unsupported" rather than "not applicable
   here".
-- **Removing a Value (BUILD-06 Phase 4):** any value can be removed after the
-  run, from the step 3 table. Removal is ONE action with three effects that
-  cannot happen separately: the registry entry is forgotten, the value and its
-  variants are recorded as a SESSION EXCLUSION, and the `Entity` behind it (if
-  any) is dropped. The exclusion is the whole mechanism for a regex-detected
-  value, which has no `Entity` at all. Exclusions live on the App
+- **Removing a Value:** any Value can be removed after the run, from the
+  Anonymise step's table. Removal is ONE action with three effects that cannot
+  happen separately: the registry entry is forgotten, the Value and its
+  spellings are recorded as a SESSION EXCLUSION, and the `Value` behind it (if
+  any) is dropped. The exclusion is the whole mechanism for something a built-in
+  pattern matched, which has no `Value` at all. Exclusions live on the App
   (`App.removed`) and in the session file, deliberately SEPARATE from the
   allowlist in state, so "undo the removal" is not the same gesture as "delete
   an allowlist term"; they are ENFORCED through the allowlist
@@ -307,22 +380,21 @@ doc-anonymiser/
   the single veto every span producer already consults. Removing a value does
   NOT free its number: an export, a mapping CSV or a session file in which
   `[PERSON_4]` means one person may already have left the machine. Restoring a
-  value brings it back with a NEW number, for the same reason.
+  Value brings it back with a NEW number, for the same reason.
   A session exclusion is the ONLY negative rule in the model, and it is
-  VISIBLE: it has its own list on step 3, with a restore action. It is not the
-  per-value spelling suppression that curated variants replaced, which had no
-  home in the interface at all.
-- **A value's spellings are its chips, and nothing else (curated variants).**
-  Spellings are derived automatically until the user edits them; from that
-  moment the list is theirs and the engine stops re-deriving it
-  (`Entity.AutoExpand`, nil and true both meaning "expand"). Deleting,
-  renaming or moving a spelling CURATES the value, so the deletion sticks
-  without a negative rule. The alternative, a per-value list of spellings the
-  expansion must suppress, is a rule with no home in the interface: invisible
-  except as the absence of a chip, unlisted anywhere, impossible to undo, and
-  doing the job of the never-anonymise list, which is the one place a negative
-  rule is meant to live and be visible. `entity_shape_test.go` fails the build
-  if the field returns, on either side of the bridge.
+  VISIBLE: it has its own list on the Anonymise step, with a restore action.
+- **A Value's spellings are its chips, and nothing else.** Spellings are derived
+  automatically until the user edits them; from that moment the list is theirs
+  and the engine stops re-deriving it (`Value.SpellingPolicy`, `"automatic"` or
+  `"curated"`, and an absent value reading as automatic). Deleting, renaming or
+  moving a spelling CURATES the Value, so the deletion sticks without a negative
+  rule. The alternative, a per-Value list of spellings the derivation must
+  suppress, is a rule with no home in the interface: invisible except as the
+  absence of a chip, unlisted anywhere, impossible to undo, and doing the job of
+  the never-anonymise list, which is the one place a negative rule is meant to
+  live and be visible. `value_shape_test.go` fails the build if the field
+  returns, on either side of the bridge, and it also asserts every field the
+  current shape DOES carry, so a Value that lost one is caught too.
 - **Anonymisation levels** (mirror the notebook semantics):
   - `soft` — hard PII (emails, phones, IBANs, national IDs, VAT numbers,
     URLs with credentials) + engagement entities (entity/project names) +
@@ -332,92 +404,102 @@ doc-anonymiser/
   - `advanced` — medium + dates, amounts, organisation names and location
     names.
   - Levels are PRESETS over granular per-category switches
-    (`engine.CategorySelection`, BUILD-02 Phase 3): the pipeline obeys the
-    per-category selection; a level is the UI shorthand that fills it.
-    `medium` remains the default preset.
+    (`engine.CategorySelection`): the pipeline obeys the per-category selection;
+    a level is the UI shorthand that fills it. `medium` remains the default
+    preset.
 - **Pipeline passes (fixed order):**
-  1. Deterministic PII regex pass (`backend/engine/pii.go`).
-  2. Known-entity pass: discovery results + manual entities, expanded into
-     name variants (initials, surname-only, first-name-only, hyphen/space
-     variants), longest-match-first (`backend/engine/entities.go`). The
-     expansion stops applying the moment the user edits a value's spellings:
-     see the curated-variant model below.
-  3. Optional LLM deep-scan pass (Ollama): finds residual entities. Every
-     LLM-proposed entity passes a **hallucination filter** — it is dropped
-     unless the exact string occurs in the source text — and respects the
-     allowlist.
-  4. Post-pass: registry re-application across ALL loaded documents so the
-     same real-world entity maps to the same placeholder everywhere.
+  1. Built-in pattern matching (`backend/engine/pii.go`).
+  2. Value pass: the accepted Values, expanded into their spellings (initials,
+     surname-only, first-name-only, hyphen/space), longest-match-first
+     (`backend/engine/values.go`). Derivation stops the moment the spelling
+     policy goes `curated`: see the spelling-policy rule above.
+  3. Post-pass: registry re-application across ALL loaded documents so the same
+     real-world subject maps to the same placeholder everywhere.
+
+  No discovery method runs here. Discovery happens at Identify time
+  (`App.RunDetection`), every finding is a Suggestion, and every Local AI finding
+  passes a **hallucination filter** (dropped unless the exact string occurs in
+  the source text) and the allowlist before the user ever sees it.
 - **Placeholders:** stable per session, format `[CATEGORY_N]` (e.g.
   `[ENTITY_1]`, `[PERSON_3]`, `[EMAIL_2]`). The registry maps original →
   placeholder and is exportable as a re-identification key (CSV/JSON).
-- **Allowlist wins:** an allowlisted term is never replaced, by any pass,
-  including `ApplySimpleRules`, which runs last and used to be the one pass
-  that could.
-- **The step 2 to 3 gate (BUILD-06 Phase 7):** the wizard cannot reach
+- **Allowlist wins:** an allowlisted term is never replaced, by any pass. It is
+  also the single veto the session exclusions are enforced through, so there is
+  exactly one place a producer has to consult.
+- **The Identify to Anonymise gate:** the wizard cannot reach
   Anonymise while a detection suggestion is still unreviewed. Detection
   produces suggestions, not decisions, and walking past one silently answers
   "reject" on the user's behalf. The rule lives in `state.js canGoTo` once, so
   the step bar and all four footers inherit it, and the Identify footer's hint
   is the refusal itself, naming the bulk "Reject all shown" so the gate is
   never a dead end.
-- **Entity categories:** eight, listed in `engine.AllEntityCategories` and
-  mirrored by `frontend/state.js`. Every one is reachable by manual entry and
-  by the local AI; three are additionally reachable OFFLINE, by a heuristic
-  detector, and the frontend label of the rest says where they come from,
-  enforced by `identifyrail.test.js`.
+- **Value categories:** eight, listed in `engine.AllValueCategories` and
+  mirrored by `frontend/state.js`. Every one is reachable by manual declaration
+  and by the local AI; several are additionally reachable OFFLINE, by heuristic
+  or signal-based discovery, and the frontend label of the rest says where they
+  come from, enforced by `identifyrail.test.js`.
 
   | Identifier | Placeholder | Also found offline by |
   |---|---|---|
-  | `entity_names` | `ENTITY` | legal-suffix runs, country-scoped org keywords |
+  | `entity_names` | `ENTITY` | legal-suffix runs, country-scoped org keywords, email domains (signal-based discovery) |
   | `project_names` | `PROJECT` | codes beside a project cue |
   | `product_names` | `PRODUCT` | a trademark mark, or a product head noun |
   | `brand_names` | `BRAND` | nothing: a brand is world knowledge |
-  | `person_names` | `PERSON` | title cues, multi-word runs, email local-parts |
+  | `person_names` | `PERSON` | title cues, multi-word runs, email local parts (signal-based discovery) |
   | `identifier_names` | `ID` | reference and contract codes |
   | `other_names` | `OTHER` | nothing: it is defined by exclusion |
   | `custom_patterns` | `CUSTOM` | the user's own regexes |
 
   `entity_names` covers named organisations, companies, teams and internal
   systems. A human being is always `person_names`, which is why `entity_names`
-  gets organisation-style variant expansion and NOT the person-style expansion
-  (initials, surname-only): expanding "Delta Industries" to "Industries" would
+  gets organisation-style spelling derivation and NOT the person-style one
+  (initials, surname-only): deriving "Industries" from "Delta Industries" would
   replace an ordinary noun everywhere. `identifier_names` and `other_names` are
-  expanded LITERALLY (`engine.literalOnlyCategories`): a code has no name
-  structure, and stripping a token that resembles a legal suffix off one would
-  invent a variant matching a different code.
+  LITERAL (`engine.literalOnlyCategories`): a code has no name structure, and
+  stripping a token that resembles a legal suffix off one would invent a spelling
+  matching a different code.
   The code detector (`backend/engine/codes.go`) requires a separator between
   the letters and the digits. That is what keeps it out of pass 1's territory,
   which owns tax and VAT numbers, and `TestCodeDetectorDoesNotOverlapPassOne`
   holds the boundary.
-- **Engine identifiers are stable, user-visible labels are not (BUILD-05 Phase 0,
-  superseding BUILD-04 CR3):** the wizard has **four** steps, and both their
-  tokens and their visible labels are: 1 **Import**, 2 **Identify**,
-  3 **Anonymise**, 4 **Export**. Step 2 owns what used to be a screen of its
-  own: the configure choices are the left rail of Identify, and the values,
-  suggestions, allowlist and custom patterns are its workspace. The rail lists
-  the DETECTION ROUTES as switchable sections (BUILD-06): Smart detection, on
-  by default and owning the scope controls (country, preset, the 24 detection
-  categories, the confidence floor) because they are that route's scope; Local
-  AI, off by default; Cloud AI, off and not built. Detecting Ollama ENABLES the
-  Local AI switch, it never flips it. Within the scope controls the categories
-  are grouped by TRIGGER, not by preset tier: contact details, technical
-  identifiers, "Auto detected values" (what a detector can emit) and "Your own
-  patterns" (`custom_patterns`, which is declarative and must never sit under
-  the detected group).
-  The engine category identifiers listed above, and the PII category constants
-  in `backend/engine/pii.go`, are NEVER renamed to follow a label change: a
-  label is a display string, an identifier is a contract. Session files are
-  read only by the version that wrote them: a file whose schema version this
-  build does not know is refused with an actionable message rather than
-  half-migrated, so no step-token or field migration table exists
-  (BUILD-05 decision 1).
+- **Engine identifiers are stable, user-visible labels are not:** the wizard has
+  **four** steps, and both their tokens and their visible labels are:
+  1 **Import**, 2 **Identify**, 3 **Anonymise**, 4 **Export**. Identify owns two
+  halves: the Configure choices are its left rail and the Values, Suggestions,
+  never-anonymise list and custom patterns are its Review workspace.
+
+  The rail lists the DETECTION ROUTES as switchable sections: Smart detection, on
+  by default and owning the scope controls (document country, preset, the
+  detection categories, the match confidence) because they are that route's
+  scope; and Local AI, off by default. Detecting Ollama ENABLES the Local AI
+  switch, it never flips it. Smart detection's own state is DERIVED from its three
+  methods and never stored: a fourth persisted boolean can disagree with the three
+  it summarises. There is no cloud route.
+
+  Within the scope controls the categories are grouped by what FINDS them, not by
+  preset tier: contact details, technical identifiers, "Auto detected values"
+  (what a discovery method can emit) and "Your own patterns"
+  (`custom_patterns`, which is declarative and must never sit under the discovered
+  group).
+
+  The Configure panel keeps VISIBLE LABELS short and puts every explanation in a
+  help tooltip. A paragraph under each control is read once and then occupies the
+  panel forever, which is what put the controls at its foot out of reach. Only
+  DYNAMIC information stays inline: validation errors, the live confidence value,
+  active counts, Ollama availability, detection progress and status. Both the
+  frontend suite and the rendering harness measure it, the harness in pixels.
+
+  The category identifiers listed above, and the pattern category constants in
+  `backend/engine/pii.go`, are NEVER renamed to follow a label change: a label is
+  a display string, an identifier is a contract.
 - **Sensitive state stays in memory** by default. Saving a session (registry
-  + entities + settings + the removal list + the spent placeholder numbers) to
+  + Values + settings + the removal list + the spent placeholder numbers) to
   disk is an explicit user action with a warning that the file contains the
-  re-identification key. `SessionVersion` is **6**; a file of any
-  other version is refused, never migrated, and the reasons for each bump are
-  recorded beside the constant in `backend/engine/session.go`.
+  re-identification key. `SessionVersion` is **7**; a file of any other version
+  is refused, never migrated, and the reasons for each bump are recorded beside
+  the constant in `backend/engine/session.go`. There is no migration table and no
+  compatibility alias anywhere in the loader: a session file holds the
+  re-identification key, and a half-migrated one silently reassigns placeholders.
 
 ## 6. Coding rules
 
@@ -450,10 +532,13 @@ doc-anonymiser/
   in the supported formats, in English and French. Keep `testdata/` under
   `backend/` so the engine tests' relative fixture paths stay valid.
 - **The parity guards are load-bearing.** `category_parity_test.go`,
-  `step_parity_test.go`, `copy_guard_test.go`, `uitest_parity_test.go` and
-  `frontend_tests_test.go` exist because each one is a mistake that already
-  happened once and passed every other test. When one fails it is naming a real
-  inconsistency; fix the inconsistency, not the guard.
+  `detection_parity_test.go`, `value_shape_test.go`, `step_parity_test.go`,
+  `copy_guard_test.go`, `uitest_parity_test.go` and `frontend_tests_test.go`
+  exist because each one is a mistake that already happened once and passed
+  every other test. When one fails it is naming a real inconsistency; fix the
+  inconsistency, not the guard. When a guard reports a false positive, tighten
+  what it matches rather than deleting it: a guard that cries wolf gets deleted,
+  which is how the mistake comes back.
 - Frontend coding and typography rules live in `frontend/CLAUDE.md` (ES
   modules, no framework/build/CDN; Helvetica with Arial fallback, no Georgia,
   headings at regular weight; `--font-heading` in `brand.css` is the single
@@ -487,5 +572,10 @@ doc-anonymiser/
 - Ollama base URL: `http://127.0.0.1:11434` (user-overridable port in
   settings; host is locked to loopback — do not "improve" this into a
   configurable remote host: it would break the local-only guarantee).
-- Discovery and deep-scan prompts must request STRICT JSON with the exact
-  category keys from §5 and set `"format":"json"` in the request body.
+- The discovery and classification prompts must request STRICT JSON with the
+  exact category keys from §5 and set `"format":"json"` in the request body.
+  `backend/ollama/client_test.go` holds the three lists (each prompt's keys, the
+  parser's keys, the engine's categories) to each other, because a key in a
+  prompt the parser does not know is dropped on parse and a key the parser knows
+  that no prompt requests is a category the model is never asked to fill: either
+  way the category is dead and every test still passes.

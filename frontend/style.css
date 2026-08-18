@@ -1384,8 +1384,8 @@ input, select {
 /* Highlight tints per category family: black text on every fill (BUILD-02
    section 5 remapping). */
 mark { border-radius: 3px; padding: 0 2px; color: var(--text); }
-mark.pii { background: var(--tint-orange-2); border-bottom: 1px solid var(--tint-orange-1); }
-mark.entity { background: var(--gray-5); border-bottom: 1px solid var(--gray-3); }
+mark.signal { background: var(--tint-orange-2); border-bottom: 1px solid var(--tint-orange-1); }
+mark.name { background: var(--gray-5); border-bottom: 1px solid var(--gray-3); }
 mark.custom { background: var(--src-ai-bg); border-bottom: 1px solid var(--src-ai-fg); }
 
 /* The Compare search's hits. They must stay legible ON TOP of a category mark,

@@ -28,7 +28,7 @@ import {
 import {
   getState, setState, buildRunRequest, addValues, presetCategories,
   setMetaReview, setExportDir, startNewBatch, setDocumentCountry,
-  HEURISTIC_DISCOVERY_DEFAULTS,
+  HEURISTIC_DISCOVERY_DEFAULTS, SIGNAL_SOURCES,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { button, card, collapsibleGroup, wireGroups, sectionLabel, toastHTML } from "../ui.js";
@@ -462,17 +462,21 @@ export function applySession(session) {
       model: settings.model,
       contextSize: settings.contextSize,
       useLocalAI: settings.useLocalAI,
-      // Absent means ON: Smart detection is the default route, and
-      // a file that says nothing about it must not restore it switched off.
-      // useSmartDetect is derived from the two halves it split into.
+      // Absent means ON for every Smart detection method: they are the shipped
+      // defaults, and a file that says nothing about one must not restore it
+      // switched off. There is no section flag to restore, because the section
+      // state is derived from these.
       useBuiltInPatterns: settings.useBuiltInPatterns !== false,
       useHeuristicDiscovery: settings.useHeuristicDiscovery !== false,
-      useSmartDetect: settings.useBuiltInPatterns !== false || settings.useHeuristicDiscovery !== false,
+      // Same rule per SOURCE: a key the file omits falls back to the default
+      // rather than to off, so a source cannot be silently disabled by silence.
+      signalSuggestionSources: Object.fromEntries(SIGNAL_SOURCES.map((source) =>
+        [source, settings.signalSuggestionSources?.[source] !== false])),
       minConfidence: settings.minConfidence ?? 0,
-      // A session that deliberately turned every smart-detection filter off
-      // writes zeroes, which must be obeyed; a session that says nothing about
-      // them gets the shipped defaults. The pointer on the Go side is what keeps
-      // those two apart, and the spread preserves the distinction here.
+      // A session that deliberately turned every heuristic filter off writes
+      // zeroes, which must be obeyed; one that says nothing about them gets the
+      // shipped defaults. The pointer on the Go side is what keeps those two
+      // apart, and the spread preserves the distinction here.
       heuristicDiscovery: { ...HEURISTIC_DISCOVERY_DEFAULTS, ...(settings.heuristicDiscovery ?? {}) },
     },
   });

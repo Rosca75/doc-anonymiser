@@ -416,7 +416,7 @@ func MergeSuggestions(batches ...[]engine.Suggestion) []engine.Suggestion {
 	return engine.MergeSuggestions(batches...)
 }
 
-// --- Candidate span classification ----------------------
+// --- Suggestion classification -------------------------------------------
 
 // classifySystemPrompt asks for one category per suggestion, strict JSON
 // with the exact category keys. Only suggestion TEXTS and short context

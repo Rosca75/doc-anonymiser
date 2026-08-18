@@ -51,11 +51,19 @@ without the runtime. Preserve that behaviour.
   wiring live in its module. Identify is the exception that proves the rule:
   it is one screen with two halves, each big enough to deserve its own file, so
   `identify.js` owns the layout and the footer, `identifyrail.js` the choices
-  and `identifyworkspace.js` the values, suggestions and patterns. The rail is
-  three switchable DETECTION ROUTE sections (BUILD-06), not tabs: Smart
-  detection (on by default, and the owner of the scope controls, because the
-  country, preset, categories and confidence floor are the scope OF that
-  route), Local AI (off by default) and Cloud AI (off, disabled, not built).
+  and `identifyworkspace.js` the Values, Suggestions and patterns. The rail is
+  TWO switchable DETECTION ROUTE sections, not tabs: **Smart detection** (on by
+  default, and the owner of the scope controls, because the country, preset,
+  categories and confidence floor are the scope OF that route) and **Local AI**
+  (off by default). There is no cloud route.
+
+  Smart detection is a route containing THREE methods, each with its own
+  control: built-in pattern matching (direct matches), signal-based discovery
+  and heuristic discovery (both Suggestions). The section's own state is DERIVED
+  from them (`state.js smartDetectionOn`) and never stored: a fourth persisted
+  boolean can disagree with the three it summarises, and a section reading "On"
+  while every method is off lies about what a run does. Its header switch is a
+  master that changes all three in one action.
 - **`nav.js` is the only module that moves the wizard.** Every screen has its
   own footer now, so the step bar and four footers all navigate; the
   backward-reset rule lives in `nav.js` once rather than in five places. It
@@ -66,8 +74,16 @@ without the runtime. Preserve that behaviour.
   entry for every engine category (enforced by `../category_parity_test.go`).
 - **`ui.js` and `shell.js` are pure markup/string builders** (the shared UI
   toolkit and the application shell): no state, no bridge calls.
-- **Pure view-models stay pure and tested**: `entitymodel.js`,
-  `candidatemodel.js` are logic-only and have regression tests.
+- **Pure view-models stay pure and tested**: `valuemodel.js` and
+  `suggestionmodel.js` are logic-only and have regression tests.
+- **The Configure panel explains itself through TOOLTIPS, never prose.** A
+  paragraph under a control is read once and then occupies the panel forever,
+  which is what put the controls at its foot out of reach. Every explanation
+  goes in `ui.js helpTooltip` beside the label it explains, opening on hover AND
+  on keyboard focus. What stays inline is only what CHANGES: a validation error,
+  the live confidence value, the per-group active counts, Ollama availability,
+  run status. Live read-outs carry `.rail-readout`; `p.hint` inside the rail is
+  banned, and both the frontend suite and the rendering harness measure it.
 
 ## The fixed-height layout contract (BUILD-05)
 
@@ -113,13 +129,22 @@ Windows it steals focus from the window it belongs to.
 - `nav.js` — wizard movement, the backward-reset rule, and the shared
   per-screen footer (markup plus wiring).
 - `api.js` — THE ONLY bridge caller (see above and `BRIDGE.md`).
-- `state.js` — the store; single source of truth for frontend state.
+- `state.js` — the store; single source of truth for frontend state. It also
+  holds the three vocabularies the two sides SHARE, each mirroring an engine
+  list and each guarded by `../detection_parity_test.go`:
+  `DISCOVERY_METHODS` (provenance: which methods found a Value, a SET),
+  `MATCH_CLASSES` (precedence, in order; read only to NAME the winning method in
+  an intersection warning, never written onto a Value) and `SIGNAL_SOURCES`
+  (which built-in signals may derive Suggestions).
 - `copy.js` — all user-visible strings + `CATEGORY_LABELS`.
 - `ui.js` — shared UI toolkit: the card kit (`card`, `tabbar`, `countBadge`,
   `chipRow`, `sectionLabel`, `statTile`, `collapsibleGroup`, `stepFooter`,
-  `toastHTML`, `modalHTML`) plus `button` and `icon`. There is exactly ONE way
-  to draw each thing: `card` is the fixed-height surface, `collapsibleGroup` the
-  foldable block. The BUILD-02 `panel()` did both at once and is gone.
+  `toastHTML`, `modalHTML`), the explanation kit (`helpTooltip`,
+  `wireHelpTooltips`, `dropdownChecklist`) plus `button` and `icon`. There is
+  exactly ONE way to draw each thing: `card` is the fixed-height surface,
+  `collapsibleGroup` the foldable block, `helpTooltip` the explanation,
+  `dropdownChecklist` a set of switches that must not spend a permanent row
+  each.
 - `html.js` — tiny shared HTML helpers (`escapeHTML`).
 - `icons.js` — vendored Material Symbols SVG map.
 - `highlight.js` — renders placeholders as category-coloured `<mark>` with
@@ -132,8 +157,12 @@ Windows it steals focus from the window it belongs to.
   elements and escaped entities and a needle like `mark` or `&` would corrupt
   them; they are emitted during the same pass that escapes the text, which is
   why `highlight.js` takes an optional search argument instead.
-- `entitymodel.js` — pure variant view-model (regression-tested).
-- `candidatemodel.js` — pure suggestions filter/sort view-model.
+- `valuemodel.js` — pure spelling-expansion view-model (regression-tested).
+  Three states are distinct and must stay distinct: `derivedSpellings` null means
+  an expansion is in flight, `[]` means it finished and found none, an error
+  means it failed.
+- `suggestionmodel.js` — pure Suggestions filter/sort view-model (search,
+  category, discovery method, count sort).
 - `countries.js` — the document-country table, MIRRORING the engine's
   `backend/engine/country.go` exactly as `presetCategories()` mirrors
   `PresetSelection`: the per-country example strings for the phone / VAT /
@@ -236,8 +265,8 @@ rule 2 above, and it is on you.
 - `node --test "frontend/**/*.test.js"` — store, view-model, render and copy-guard
   tests, zero npm dependencies (Node ships on the CI runner). The pattern is
   recursive and quoted for the reason above; keep it that way.
-- Keep the pure view-models (`entitymodel.js`, `candidatemodel.js`) covered
-  by table-style tests when you change their logic.
+- Keep the pure view-models (`valuemodel.js`, `suggestionmodel.js`) covered by
+  table-style tests when you change their logic.
 - **Render tests over substring matches.** Export a screen's builder and assert
   what a pane SHOWS with `testhtml.js` (`textOf`, `all`, `attr`). Four bugs
   about what a pane displayed lived happily beside green tests that only
@@ -255,6 +284,25 @@ rule 2 above, and it is on you.
   synchronous throw: every wrapper is `async` for that reason, and
   `api.test.js` pins it. A view that calls `api.js` while rendering must
   tolerate the rejection.
+
+## Domain vocabulary
+
+The frontend uses the same words as the engine, and the words are the contract.
+
+| Term | In state | Meaning |
+|---|---|---|
+| **Suggestion** | `state.suggestions` | an UNREVIEWED potential Value. One list for every method: a row says which methods found it, so there is no per-route mapping step for a field to fall out of. |
+| **Value** | `state.values` | an accepted replacement unit: one placeholder, one family of spellings. |
+| **Main text** | `mainText` | the primary form naming a Value. Never duplicated in `spellings`. |
+| **Spelling** | `spellings` | an alternative form of the same Value. `derivedSpellings` is the separate cache of what Go derived. |
+| **Spelling policy** | `spellingPolicy` | `"automatic"` or `"curated"`. Curated means the chips ARE the list. |
+| **Discovery method** | `discoveryMethods` | provenance, a set. |
+| **Evidence** | `evidence` | structured, bounded reasons a method produced a row. The SENTENCE is built in `copy.js`, never returned as prose by the engine. |
+
+Retired names must not come back, and two guards say so mechanically:
+`../value_shape_test.go` sweeps this folder for `excludedVariants`,
+`manualVariants`, `autoExpand`, `canonical` and `origin` as object keys, and
+`../detection_parity_test.go` holds the three shared lists to the engine's.
 
 ## Where to look next
 

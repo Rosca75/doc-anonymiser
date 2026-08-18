@@ -140,7 +140,7 @@ const drafts = {
   // The live "found N times in M documents" read-out under the add row.
   valueMatches: "",
 };
-// Per-entity inline feedback (a refused placeholder, a duplicate spelling),
+// Per-Value inline feedback (a refused placeholder, a duplicate spelling),
 // keyed by valueKey. Cleared for a row as soon as it succeeds at anything.
 const rowFeedback = new Map();
 // The spelling chip currently being dragged, or null. It is held here rather than
@@ -1345,7 +1345,7 @@ function wireVariantDrag(container) {
       dragging = {
         spelling: chip.dataset.spelling,
         fromCategory: card?.dataset.category,
-        fromCanonical: card?.dataset.mainText,
+        fromMainText: card?.dataset.mainText,
       };
       // Setting the data is still required, or some WebViews cancel the drag.
       ev.dataTransfer?.setData("text/plain", chip.dataset.spelling ?? "");
@@ -1357,7 +1357,7 @@ function wireVariantDrag(container) {
   for (const card of container.querySelectorAll(".value-card")) {
     card.addEventListener("dragover", (ev) => {
       if (!dragging) return;
-      if (card.dataset.mainText === dragging.fromCanonical &&
+      if (card.dataset.mainText === dragging.fromMainText &&
           card.dataset.category === dragging.fromCategory) {
         return; // a drop onto its own card would be a no-op
       }
@@ -1370,7 +1370,7 @@ function wireVariantDrag(container) {
       card.classList.remove("drop-target");
       if (!dragging) return;
       const moved = moveSpelling(
-        dragging.fromCategory, dragging.fromCanonical,
+        dragging.fromCategory, dragging.fromMainText,
         card.dataset.category, card.dataset.mainText, dragging.spelling);
       const { spelling } = dragging;
       dragging = null;
@@ -1407,9 +1407,9 @@ function revealVariantInput(cardEl, category, mainText, key) {
       setState({}); // repaint puts the add chip back
       return;
     }
-    const before = variantCount(category, mainText);
+    const before = spellingCount(category, mainText);
     addSpelling(category, mainText, value);
-    if (variantCount(category, mainText) === before) {
+    if (spellingCount(category, mainText) === before) {
       // A duplicate: say so, rather than looking like nothing happened.
       rowFeedback.set(key, WORKSPACE.spellingAlreadyThere(value));
       setState({});
@@ -1538,10 +1538,10 @@ function deleteVariant(category, mainText, spelling) {
   });
 }
 
-/** variantCount(category, mainText) is how many spellings a value carries right
+/** spellingCount(category, mainText) is how many spellings a value carries right
  *  now, automatic and manual together. The add flow compares it before and after
  *  so a duplicate gets an explanation instead of silence. */
-function variantCount(category, mainText) {
+function spellingCount(category, mainText) {
   const e = getState().values.find(
     (x) => valueKey(x.category, x.mainText) === valueKey(category, mainText));
   if (!e) return 0;

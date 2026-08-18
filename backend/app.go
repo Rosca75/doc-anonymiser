@@ -190,7 +190,7 @@ type App struct {
 }
 
 // allowlistFor builds the allowlist every pass and every export must obey: the
-// user's never-anonymise terms, plus the canonical and variant strings of every
+// user's never-anonymise terms, plus the main text and spellings of every
 // removed value (engine.ApplyRemovals).
 //
 // It exists so a removal cannot be honoured by the run and forgotten by the

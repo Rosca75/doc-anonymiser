@@ -245,7 +245,7 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 
 	r.assert("Smart detection is on by default", boolIs(got.SmartOn, true),
 		"the rail-smart route switch checked", describeBool(got.SmartOn),
-		"state.js settings.useSmartDetect defaults to true.")
+		"Every Smart detection method defaults on, so the derived section state reads on.")
 
 	r.assert("Local AI is off by default", boolIs(got.LocalOn, false),
 		"the rail-local route switch unchecked", describeBool(got.LocalOn),

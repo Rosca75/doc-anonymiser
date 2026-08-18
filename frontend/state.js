@@ -88,7 +88,9 @@ const initialState = {
   // The three DETECTION ROUTES, each with its own switch, because
   // they are three separate ways of finding values and the user turns them on
   // and off independently:
-  //   useSmartDetect the offline heuristic pass. ON by default, and
+  //   (there is no section flag: Smart detection reads ON when any of its
+  //   three methods is on, and a stored fourth boolean could disagree with them.)
+  //   the offline heuristic pass is ON by default, and
   //                   deactivable. It is now a DERIVED value, written on every
   //                   settings push = (useBuiltInPatterns || useHeuristicDiscovery), so the
   //                   section header and any backward-compat reader still see the
@@ -1912,7 +1914,7 @@ export function rejectAllShown(texts) {
 // --- Spelling regrouping -----------------------------------
 
 /**
- * moveSpelling(fromCategory, fromCanonical, toCategory, toCanonical,
+ * moveSpelling(fromCategory, fromMainText, toCategory, toMainText,
  * spelling) moves one spelling spelling between values.
  *
  * The source CURATES without the moved spelling, which is what makes the move
@@ -1923,11 +1925,11 @@ export function rejectAllShown(texts) {
  * Pure reducer; the drag-and-drop wiring only calls it. Returns false for
  * self-drops, unknown rows, or a spelling the source does not actually carry.
  */
-export function moveSpelling(fromCategory, fromCanonical, toCategory, toCanonical, spelling) {
+export function moveSpelling(fromCategory, fromMainText, toCategory, toMainText, spelling) {
   const v = (spelling ?? "").trim();
   if (!v) return false;
-  const fromKey = valueKey(fromCategory, fromCanonical);
-  const toKey = valueKey(toCategory, toCanonical);
+  const fromKey = valueKey(fromCategory, fromMainText);
+  const toKey = valueKey(toCategory, toMainText);
   if (fromKey === toKey) return false; // cannot drop onto self
 
   const from = state.values.find((e) => valueKey(e.category, e.mainText) === fromKey);
@@ -1973,7 +1975,7 @@ export function moveSpelling(fromCategory, fromCanonical, toCategory, toCanonica
 // the expansion and the chips shown always describe the value as it stands.
 
 /**
- * renameValue(category, mainText, newCanonical) changes a value's name.
+ * renameValue(category, mainText, newMainText) changes a value's name.
  *
  * The expansion depends on the name, so the row goes back to pending and Go
  * re-derives the spellings. A rename onto a name the same category already
@@ -1984,8 +1986,8 @@ export function moveSpelling(fromCategory, fromCanonical, toCategory, toCanonica
  * @returns {string} "" on success, or a reason ("empty" | "duplicate" |
  *   "not found") the caller can turn into feedback
  */
-export function renameValue(category, mainText, newCanonical) {
-  const next = (newCanonical ?? "").trim();
+export function renameValue(category, mainText, newMainText) {
+  const next = (newMainText ?? "").trim();
   const key = valueKey(category, mainText);
   const cur = state.values.find((e) => valueKey(e.category, e.mainText) === key);
   if (!cur) return "not found";
@@ -2325,7 +2327,7 @@ export function valueConflicts(s = state) {
 // --- Reassignment helpers --------------------------------
 
 /**
- * valueAutocomplete(query, s) filters entity canonicals for the
+ * valueAutocomplete(query, s) filters Value main texts for the
  * reassignment popover: case-insensitive, prefix matches rank before
  * substring matches, each entry {category, mainText, label}.
  */
@@ -2344,25 +2346,25 @@ export function valueAutocomplete(query, s = state) {
 }
 
 /**
- * reassignOriginal(original, toCategory, toCanonical) makes `original`
+ * reassignOriginal(original, toCategory, toMainText) makes `original`
  * a manual spelling of the target entity. If `original` currently exists
  * as an entity of its own (it earned its own placeholder), that entity
  * is removed so exactly one entity matches the text after the fast
  * re-run. Returns false when the target does not exist.
  */
-export function reassignOriginal(original, toCategory, toCanonical) {
+export function reassignOriginal(original, toCategory, toMainText) {
   const text = (original ?? "").trim();
   if (!text) return false;
   const target = state.values.find((e) =>
-    valueKey(e.category, e.mainText) === valueKey(toCategory, toCanonical));
+    valueKey(e.category, e.mainText) === valueKey(toCategory, toMainText));
   if (!target) return false;
-  if (valueKey(toCategory, toCanonical) === valueKey(toCategory, text)) return false;
+  if (valueKey(toCategory, toMainText) === valueKey(toCategory, text)) return false;
 
   // Drop a same-named standalone entity (any category) before rerouting.
   const standalone = state.values.find((e) => e.mainText.toLowerCase() === text.toLowerCase());
   if (standalone) deleteValue(standalone.category, standalone.mainText);
 
-  addSpelling(toCategory, toCanonical, text);
+  addSpelling(toCategory, toMainText, text);
   return true;
 }
 

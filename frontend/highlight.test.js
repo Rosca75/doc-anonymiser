@@ -10,8 +10,8 @@ import { tooltipMeta } from "./views/anonymise.js";
 
 test("placeholders become category-coloured marks", () => {
   const html = renderHighlighted("mail [EMAIL_1] met [PERSON_2] on [CUSTOM_1]");
-  assert.ok(html.includes('<mark class="pii" title="email">[EMAIL_1]</mark>'));
-  assert.ok(html.includes('<mark class="entity" title="person">[PERSON_2]</mark>'));
+  assert.ok(html.includes('<mark class="signal" title="email">[EMAIL_1]</mark>'));
+  assert.ok(html.includes('<mark class="name" title="person">[PERSON_2]</mark>'));
   assert.ok(html.includes('<mark class="custom" title="custom">[CUSTOM_1]</mark>'));
 });
 
@@ -33,18 +33,18 @@ test("bracket text that is not a placeholder is left unmarked", () => {
 });
 
 test("markClass covers the three families", () => {
-  assert.equal(markClass("IBAN"), "pii");
-  assert.equal(markClass("ENTITY"), "entity");
+  assert.equal(markClass("IBAN"), "signal");
+  assert.equal(markClass("ENTITY"), "name");
   assert.equal(markClass("CUSTOM"), "custom");
   assert.equal(markClass("FUTURE_LABEL"), "custom");
 });
 
-test("every entity placeholder label gets the entity tint", () => {
+test("every NAME placeholder label gets the name tint", () => {
   // An unknown label falls through to "custom", so a label left out of
   // ENTITY_LABELS renders in the wrong tint with nothing failing. The list here
-  // is the placeholderLabels table in backend/engine/registry.go, entity half.
+  // is the placeholderLabels table in backend/engine/registry.go, name half.
   for (const label of ["ENTITY", "PROJECT", "PRODUCT", "BRAND", "PERSON", "ID", "OTHER"]) {
-    assert.equal(markClass(label), "entity", `${label} must read as an entity`);
+    assert.equal(markClass(label), "name", `${label} must read as a name category`);
   }
 });
 
@@ -60,6 +60,8 @@ test("mapping adds data attributes and the original in the title", () => {
 
 test("mapping miss falls back to the label-only title", () => {
   const html = renderHighlighted("see [ENTITY_9] here", { "[ENTITY_1]": { original: "x" } });
+  // The title is the LABEL, lower-cased, not the tint class: the tint groups
+  // categories, and the title names the one this placeholder belongs to.
   assert.ok(html.includes('title="entity"'));
   assert.ok(!html.includes("data-ph"));
 });

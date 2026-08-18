@@ -252,7 +252,7 @@ func TestOverallFractionIsMonotonicAcrossUnevenPhases(t *testing.T) {
 }
 
 // TestDetectionKeepsGoingWhenOneFileFails: one file the model chokes on used
-// to abort the whole run with an error, throwing away every candidate found
+// to abort the whole run with an error, throwing away every suggestion found
 // in the others.
 func TestDetectionKeepsGoingWhenOneFileFails(t *testing.T) {
 	var calls int
@@ -293,7 +293,7 @@ func TestDetectionKeepsGoingWhenOneFileFails(t *testing.T) {
 		t.Errorf("the report must name the file that failed: %v", res.Errors)
 	}
 	if len(res.Suggestions) == 0 {
-		t.Error("the offline route's candidates must survive an AI failure")
+		t.Error("the offline route's findings must survive an AI failure")
 	}
 	if rec.count("detection:done") != 1 {
 		t.Error("a run with a failed file still ends with detection:done")
@@ -519,7 +519,7 @@ func TestDetectionRespectsTheRouteSwitches(t *testing.T) {
 	}
 }
 
-// TestDetectionFoldsFamiliesAcrossRoutes: a Smart candidate and an AI proposal
+// TestDetectionFoldsFamiliesAcrossRoutes: a heuristic finding and a model one
 // that are spellings of the same thing come back as ONE value.
 //
 // Folding per route would leave them unmerged, which is exactly the case that

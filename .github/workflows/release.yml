@@ -80,7 +80,7 @@ jobs:
           OPTIONAL: LOCAL AI (OLLAMA)
           ---------------------------
           The app works fully offline with no AI installed. If you want the
-          optional AI-assisted entity discovery and deep-scan features:
+          optional AI-assisted Value discovery on the Identify step:
             1. Install Ollama from https://ollama.com/download
             2. In a terminal, run:  ollama pull qwen2.5:3b-instruct
             3. Start the app — the AI features light up automatically.
@@ -147,7 +147,7 @@ jobs:
           OPTIONAL: LOCAL AI (OLLAMA)
           ---------------------------
           The app works fully offline with no AI installed. If you want the
-          optional AI-assisted entity discovery and deep-scan features:
+          optional AI-assisted Value discovery on the Identify step:
             1. Install Ollama from https://ollama.com/download
             2. In a terminal, run:  ollama pull qwen2.5:3b-instruct
             3. Start the app — the AI features light up automatically.

@@ -78,9 +78,11 @@ test("the rail is two route sections, in the order the routes run", () => {
   }
 });
 
-test("each route section carries the settings key that switches it on", () => {
+test("each route section names what switches it on", () => {
   const keys = Object.fromEntries(RAIL_SECTIONS.map(([id, , key]) => [id, key]));
-  assert.equal(keys["rail-smart"], "useSmartDetect");
+  // Smart detection's state is DERIVED from its three methods and not stored, so
+  // it names the sentinel rather than a settings key that does not exist.
+  assert.equal(keys["rail-smart"], "derived");
   assert.equal(keys["rail-local"], "useLocalAI");
 });
 
@@ -496,7 +498,7 @@ test("a category only a detection route or manual entry can produce says so", ()
 // attributes, and wireScope resolves the group from btn.dataset.groupType. A
 // browser lowercases attribute NAMES, so a camelCase data key (data-groupType)
 // is read back as data-grouptype, and dataset.groupType comes out undefined ->
-// the handler falls back to "regex" and the "Auto detected values" (entity)
+// the handler falls back to "regex" and the "Auto detected values" (name)
 // group's buttons silently drive the Contact regex group instead. The fix is a
 // hyphenated key (data-group-type) that survives the dataset round-trip. These
 // tests drive the handler's exact resolution FROM the rendered attributes, so a
@@ -541,7 +543,7 @@ function clickBulk(btn) {
   setCategoryGroup(group[1], ds.on === "1");
 }
 
-test("the entity group's select-all toggles the NAME categories, not the regex ones (CR11)", () => {
+test("the name group's select-all toggles the NAME categories, not the pattern ones", () => {
   resetState();
   // A clean baseline: every category off, so "became selected" is unambiguous.
   const off = {};

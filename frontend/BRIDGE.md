@@ -10,8 +10,8 @@ what shape it comes back in, **without opening any Go**.
   a `Promise`. The namespace is `backend` because the App struct lives in
   `../backend` (package `backend`).
 - Source of truth: the wrappers in `frontend/api.js` and the method bodies in
-  `../backend/app.go`, `app_entities.go`, `app_export.go`, `app_run.go`. If
-  this doc and those disagree, the code wins — update this doc.
+  `../backend/app.go`, `app_values.go`, `app_detect.go`, `app_export.go`,
+  `app_run.go`. If this doc and those disagree, the code wins — update this doc.
 - Shapes below use `{...}` for objects and `[...]` for arrays. "resolves to"
   = the Promise's fulfilled value. Only genuine failures reject; documented
   "normal empty/absent" states resolve instead (graceful degradation).
@@ -70,19 +70,35 @@ Local AI section sizes its From/To range inputs from it.
 |---|---|---|
 | `applySettings(settings)` | settings object | fresh `OllamaStatus`; rejects with an actionable message on bad input |
 
-`useAI` and `useSmartDetect` are the DETECTION ROUTE switches: Smart detection
-on by default, Local AI off by default and additionally gated on the live
-Ollama probe. Smart detection split into two independently switchable halves,
-both sent alongside `useSmartDetect`: `useNativeDetect` is the MASTER over the
-regex signal categories (email, VAT, IBAN, amount, date, ...) applied at
-anonymisation time, and `useAutoDetect` is the offline word-frequency detection
-pass. Both default on. `useSmartDetect` is now DERIVED and sent for backward
-compatibility, always `useNativeDetect || useAutoDetect`. There is no cloud
-route and no `useCloudAI`, on either side. The frontend store carried one and
-`pushSettings` sent it while Go discarded it, which made this line read as a
-contradiction rather than a contract; BUILD-06 Phase 8 deleted the field instead
-of documenting it, because a setting nothing reads and nothing can change is a
-claim the next reader has to disprove.
+There are TWO detection routes, and the settings say so directly.
+
+**Local AI** is one switch, `useLocalAI`. Off by default and additionally gated
+on the live Ollama probe, so a stale `true` can never start a model that is not
+running.
+
+**Smart detection** is THREE methods, each with its own setting, and no switch of
+its own:
+
+| Setting | What it does | Default |
+|---|---|---|
+| `useBuiltInPatterns` | MASTER over the structured signal categories (email, VAT, IBAN, amount, date, …). Off means pass 1 is skipped and no signal category is replaced, whatever `categories` selects; the selection is left intact. Produces DIRECT MATCHES, never Suggestions. | on |
+| `useHeuristicDiscovery` | Heuristic discovery: spelling, context, frequency and deterministic gazetteers. Produces SUGGESTIONS. | on |
+| `signalSuggestionSources` | `{email: bool}` keyed by `engine.AllSignalSources`. Which built-in signals may be used as EVIDENCE to derive Suggestions. Produces SUGGESTIONS. | `{email: true}` |
+
+The section's on/off state is DERIVED (`state.js smartDetectionOn`): it is on when
+any of the three is on. There is deliberately no fourth persisted boolean, because
+a stored section flag can disagree with the three methods it claims to summarise,
+and a section reading "On" while every method is off lies about what a run does.
+The rail's header switch is a master that changes all three in one action.
+
+`signalSuggestionSources` does NOT govern whether a signal is matched and
+replaced. Clearing `email` stops email-DERIVED Suggestions and leaves email
+anonymisation exactly as it was, which is governed by `useBuiltInPatterns` and the
+`email` category. Conflating the two is the mistake the separate setting exists to
+prevent. A source key the object omits reads as its DEFAULT, never as off, on both
+sides: the safe reading of silence is the shipped behaviour.
+
+There is no cloud route and no `useCloudAI`, on either side.
 
 `country` is the DOCUMENT COUNTRY (BUILD-06 Phase 1), one of the codes in
 `engine.SupportedCountries`. It is a real engine setting, not a frontend
@@ -97,33 +113,87 @@ display choice: it decides which country-specific regex categories run.
 | `importAllowlistCSV()` | — | parsed terms, or `null` when the user cancels the dialog |
 | `saveAllowlistTemplate()` | — | saves the downloadable CSV template |
 
-## Values screen (discovery — UI label "Values", engine token `entities`)
+## Identify: detection and the Value surface
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
-| `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, pages}` (null = every document whole; restricts the LOCAL AI route only; `pages` is a 1-based `number[]` over the document's own page/slide/row/line units, and an empty array means the whole selected document) | `DetectionResult {candidates, proposals, phases, skipped, errors, cancelled, status}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
+| `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, pages}` (null = every document whole; restricts the LOCAL AI route only; `pages` is a 1-based `number[]` over the document's own page/slide/row/line units, and an empty array means the whole selected document) | `DetectionResult {suggestions, phases, skipped, errors, cancelled, status}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
 | `cancelDetection()` | — | aborts the in-flight run, reaching whichever route is running, including mid-file |
-| `expandVariants(entity)` | `{category, canonical, manualVariants, autoExpand}` | the spellings this value matches, longest first. `autoExpand: false` means the user curated the list: Go derives nothing and returns the canonical name plus exactly the spellings it was given, so the chips on the card are what the run replaces |
-| `countTermMatches(term)` | term | `{count, documents}`, the live read-out under the manual add-value row (debounced) |
-| `checkIntersections(request)` | `{entities, patterns, allowTerms, categories, suppressRegexPII}` | `{intersections: [{value, category, origin, winnerValue, winnerCategory, winnerOrigin, occurrences, totalOccurrences, documents}]}`. The values another detection route also claims, so a card can warn BEFORE the run rather than the user finding out on the results screen. `occurrences == totalOccurrences` means the value is never replaced under its own type. Mutates nothing (no placeholder minted, registry untouched), so it is safe to call on every edit. An empty list is the normal answer, not an error |
+| `expandSpellings(value)` | `{category, mainText, spellings, spellingPolicy}` | the forms this Value matches, longest first. `spellingPolicy: "curated"` means the list is the user's: Go derives nothing and returns the main text plus exactly the spellings it was given, so the chips on the card are what the run replaces |
+| `countTermMatches(term)` | term | `{count, documents}`, the live read-out under the manual declaration row (debounced) |
+| `checkIntersections(request)` | `{values, patterns, allowTerms, categories, suppressRegexPII}` | `{intersections: [{value, category, matchClass, winnerValue, winnerCategory, winnerMatchClass, occurrences, totalOccurrences, documents}]}`. The Values another method also claims, so a card can warn BEFORE the run rather than the user finding out on the results screen. `occurrences == totalOccurrences` means the Value is never replaced under its own type. `matchClass` is the engine-internal precedence input; the frontend turns it into the NAME of the winning method (`copy.js WORKSPACE.matchClassLabel`) and never prints a rank. Mutates nothing (no placeholder minted, registry untouched), so it is safe to call on every edit. An empty list is the normal answer, not an error |
 | `validatePattern(expr)` | regex | `""` (valid) or the error message |
 | `patternMatches(expr)` | regex | up to 20 sample matches across the loaded documents, shown live under the pattern field: a regex that compiles and matches nothing is the common mistake |
 
-## Values, placeholders and removals (step 3)
+### The unified Suggestion
 
-These are the surface behind the step 3 **Replaced values** table: one row per
-value the session replaced, editable placeholder, remove action, and a collapsed
-removed list with restore.
+`DetectionResult.suggestions` is ONE list for every method. Each row is:
+
+```json
+{
+  "mainText": "Pierre Dupont",
+  "category": "person_names",
+  "spellings": ["Dupont"],
+  "count": 3,
+  "contexts": ["Contact Pierre Dupont for approval."],
+  "confidence": 0.9,
+  "discoveryMethods": ["signal", "heuristic"],
+  "evidence": [
+    {
+      "kind": "email_local_part",
+      "signalCategory": "email",
+      "signalText": "pierre.dupont@tpps.com",
+      "documents": ["engagement.md"]
+    }
+  ]
+}
+```
+
+One list, not one per route, and that is a data-integrity decision rather than a
+tidiness one: with a list per route the frontend had to map each into its own
+shape, and the mapping for the Local AI route rebuilt the row as
+`{text, category}` and dropped the folded spellings on the floor. A row says which
+methods found it, so route membership is a property of the row.
+
+- `discoveryMethods` is a SET drawn from `engine.AllDiscoveryMethods`
+  (`manual`, `signal`, `heuristic`, `local_ai`), mirrored by `state.js
+  DISCOVERY_METHODS` and guarded by `../detection_parity_test.go`. Several
+  methods can find the same thing, and two routes agreeing is corroboration
+  worth showing rather than a fact to overwrite. Built-in and custom pattern
+  matching never appear: they produce direct matches, never Suggestions.
+- `evidence` is STRUCTURED and bounded, one entry per relationship, with the
+  document list capped. The engine never returns prose: the sentence is built in
+  `copy.js` from `evidenceKindLabel`, so the copy stays checkable and the copy
+  guards can reach it.
+- `spellings` are the longer forms `engine.FoldValueFamilies` folded in.
+  Accepting the row carries them across, so ONE Value with its spellings reaches
+  the pipeline rather than two rivals, the shorter of which would fire inside the
+  longer and leave the rest of the phrase in clear text.
+- Merging is ONE rule, `engine.MergeSuggestions`, used by every producer:
+  case-insensitive dedupe of `mainText` WITHIN a category, summed counts, and
+  unioned spellings, contexts, methods and evidence. `state.js
+  addSuggestions` mirrors it, so a second run that finds a row again updates it
+  rather than being dropped as a duplicate.
+
+Shared evidence makes two rows RELATED, never one Value: `state.js relatedTo`
+computes it and the row carries a note. Two organisations reached through one
+email domain may genuinely be two legal entities, and one placeholder for two
+companies would make the mapping CSV state they were the same one.
+
+## Values, placeholders and removals (the Anonymise step)
+
+These are the surface behind the Anonymise step's **Replaced values** table: one
+row per Value the session replaced, editable placeholder, remove action, and a
+collapsed removed list with restore.
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
 | `valuePlaceholders()` | — | `[{original, placeholder, category, count}]`, sorted by category then placeholder number. The source for the table, read from the REGISTRY rather than derived from report text, so a row cannot exist that the edit behind it has no entry for. Empty before the first run, which is an empty table, not an error |
 | `setValuePlaceholder(current, next)` | `[NAME_N]`, `[NAME_N]` | resolves on success; REJECTS when the shape is wrong, when `current` is not a placeholder this session assigned, or when `next` already belongs to another value (two originals behind one placeholder makes the key ambiguous). Takes effect on the NEXT run, never retroactively |
-| `removeValue(placeholder)` | `[NAME_N]` | resolves to `{original, category, placeholder, variants}`. Removal prunes the registry entry AND records a session exclusion, so the value stays gone across re-runs and same-format exports. The NUMBER is not freed. Does not re-run: the caller re-runs |
+| `removeValue(placeholder)` | `[NAME_N]` | resolves to `{mainText, category, placeholder, spellings}`. Removal prunes the registry entry AND records a session exclusion, so the Value stays gone across re-runs and same-format exports. The NUMBER is not freed. Does not re-run: the caller re-runs |
 | `restoreValue(placeholder)` | the placeholder it USED to have | resolves on success; REJECTS when nothing by that placeholder was removed. The value returns on the next run with a NEW number, because the old one stays retired |
-| `listRemovedValues()` | — | `[{original, category, placeholder, variants}]` for the collapsed removed list |
-| `nextRulePlaceholder()` | — | the next free `[CUSTOM_N]`, RESERVED as it is handed over. Replaces the frontend's own numbering, which counted only the rules while `CUSTOM` is also the automatic label for `custom_patterns` matches, so a rule and an automatic assignment could collide. Works before the first run |
-| `validateValues(request)` | `{entities, patterns, rules, allowTerms}` | `{blocking, warnings}`, each `[{kind, severity, message}]`. Blocking conflicts refuse the run, so this is what a screen calls to say so before the user presses it |
+| `listRemovedValues()` | — | `[{mainText, category, placeholder, spellings}]` for the collapsed removed list |
+| `validateValues(request)` | `{values, patterns, allowTerms}` | `{blocking, warnings}`, each `[{kind, severity, message}]`. Blocking conflicts refuse the run, so this is what a screen calls to say so before the user presses it |
 
 ## Run screen (pipeline)
 
@@ -131,22 +201,51 @@ removed list with restore.
 |---|---|---|
 | `runPipeline(request)` | request | resolves immediately; results arrive on the `pipeline:done` event, progress on `pipeline:progress` |
 | `cancelPipeline()` | — | aborts the in-flight run |
-| `fastRerun(request)` | request | re-runs the deterministic passes only (no LLM); resolves directly to fresh `Results` |
+| `fastRerun(request)` | request | re-runs the deterministic passes; resolves directly to fresh `Results`. "Fast" is not a reduced mode: Anonymise runs NO discovery method at all, so this differs from `runPipeline` only in being synchronous and reusing the session registry |
 | `getMapping()` | — | placeholder → `{original, category}` lookup (empty before the first run) |
 
-The run `request` is `{entities, allowTerms, patterns, categories, simpleRules,
-suppressRegexPII}`. Each entity is
-`{category, canonical, manualVariants, origin, autoExpand}`. `autoExpand: false`
-means the spellings are curated, so Go replaces exactly `manualVariants` plus
-the canonical name and derives nothing. `origin` is the ROUTE that produced the
-value, one of `native`, `declared`, `auto`, `ai` (precedence order, lower wins);
-it is what decides which route owns a string when two claim the same text, and
-it is deliberately separate from confidence, which feeds the `minConfidence`
-floor. Absent reads as `declared`.
-`suppressRegexPII` is the "Native detection" master switch
-inverted (`!useNativeDetect`): when true, Go skips the deterministic regex PII
-pass (pass 1) so NO signal category is replaced, whatever `categories` selects;
-the entity, custom-pattern and code passes are unaffected.
+The run `request` is
+`{values, allowTerms, patterns, categories, suppressRegexPII}`. Each Value is:
+
+```json
+{
+  "category": "person_names",
+  "mainText": "Pierre Dupont",
+  "spellings": ["Dupont"],
+  "spellingPolicy": "automatic",
+  "discoveryMethods": ["signal", "heuristic"],
+  "evidence": [{ "kind": "email_local_part", "signalCategory": "email",
+                 "signalText": "pierre.dupont@tpps.com", "documents": ["mail.md"] }]
+}
+```
+
+- `spellingPolicy` is `"automatic"` or `"curated"`. Curated means main text plus
+  exactly the listed `spellings` IS the complete replacement set and Go derives
+  nothing, so the chips on the card are what the run replaces. Absent reads as
+  automatic, so a producer that never sets it cannot freeze a Value's spellings by
+  accident.
+- `discoveryMethods` is PROVENANCE and travels intact. Go reduces the set to ONE
+  match class (`engine.MatchClassForMethods`, taking the strongest) when an
+  overlap has to be decided, and reduces it nowhere else. Precedence order is
+  `built_in_pattern`, `user_defined`, `smart_discovered`, `local_ai_discovered`;
+  lower wins, and an unknown or empty set ranks with `user_defined`, so a producer
+  that states nothing is trusted rather than silently demoted. `matchClass` is
+  never user-editable state and the frontend never writes it onto a Value.
+- `evidence` travels too, because it is what lets a session file explain a Value
+  after a reload.
+- Confidence is a THIRD, separate thing, feeding the `minConfidence` floor. With
+  one field doing precedence as well, raising the floor silently reordered which
+  route won.
+
+`suppressRegexPII` is the Built-in patterns switch inverted
+(`!useBuiltInPatterns`): when true, Go skips pass 1 so NO signal category is
+replaced, whatever `categories` selects; the Value, custom-pattern and code
+passes are unaffected.
+
+**Anonymise creates no Value.** No discovery method runs during a pipeline run and
+Ollama is never reached, so nothing can be replaced that the user did not accept
+on Identify. A run that could mint a Value the user never saw would walk past the
+review gate rather than enforce it.
 
 ## Export screen
 
@@ -162,8 +261,16 @@ the entity, custom-pattern and code passes are unaffected.
 | `copyText(text)` | the selected text | puts an arbitrary short string on the clipboard, for the Compare pane's selection panel. Rejects with an actionable message on an empty selection or one over 4096 bytes, which is a mis-drag guard: a drag that ran away down the pane must not push a whole document through the clipboard |
 | `exportMapping(format)` | `"csv"`/`"json"` | saves the re-identification key. Call ONLY after the user confirmed the sensitivity warning |
 | `exportReport(format)` | `"json"`/`"md"` | saves the run report, INCLUDING the per-value table (BUILD-06). That table maps placeholders back to real values, so the exported report is a re-identification key: warn before writing it, as for `exportMapping`. |
-| `saveSession(request)` | request | persists the session (entities, allowlist, patterns, rules, settings, registry, the removal list and the spent placeholder numbers). Warn the user first: the file contains the re-identification key |
+| `saveSession(request)` | request | persists the session (Values, the never-anonymise list, patterns, settings, registry, the removal list and the spent placeholder numbers). Warn the user first: the file contains the re-identification key |
 | `loadSession()` | — | the `Session` object, or `null` when the user cancels |
+
+The session file is **schema version 7** and nothing else is accepted. Its shape
+is `{version, values, allowTerms, patterns, settings, registry,
+placeholderOverrides, removedValues, retiredPlaceholders}`. A file of any other
+version is REFUSED with an actionable message naming which direction the mismatch
+goes, and never migrated: a session file holds the re-identification key, and a
+half-migrated one silently reassigns placeholders. There is no migration table and
+no compatibility alias anywhere in the loader.
 
 ## Runtime events (push, not request/reply)
 
@@ -176,7 +283,7 @@ missing runtime is a safe no-op).
 | `pipeline:progress` | during a `runPipeline` run | progress info |
 | `pipeline:done` | when a `runPipeline` run finishes | `Results` |
 | `detection:progress` | during a `runDetection` run | `{phase, phaseIndex, phaseCount, docIndex, docCount, docName, chunkIndex, chunkCount, fraction}` |
-| `detection:done` | when a `runDetection` run finishes, is cancelled, or has nothing to run | `DetectionResult` |
+| `detection:done` | when a `runDetection` run finishes, is cancelled, or has nothing to run | `DetectionResult` (one `suggestions` list) |
 | `detection:error` | when a run stops unexpectedly | `{message}` |
 
 **`detection:done` / `detection:error` are a guarantee, not a courtesy.** Exactly

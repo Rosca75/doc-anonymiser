@@ -91,7 +91,7 @@ linters:
 
     # contextcheck — functions that create a fresh context.Background()
     # instead of propagating the caller's. Matters because Ollama calls must
-    # be cancellable: the user pressing Cancel on a deep scan has to actually
+    # be cancellable: the user pressing Cancel on a detection run has to actually
     # stop the request, not just stop waiting for it.
     - contextcheck
 

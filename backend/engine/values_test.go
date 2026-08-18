@@ -188,7 +188,7 @@ func TestEntityReplacementEndToEnd(t *testing.T) {
 	reg := NewRegistry()
 
 	spans := ResolveOverlaps(DetectValues(text, values, NewEmptyAllowlist()))
-	// Every variant maps to the value's CANONICAL placeholder — the
+	// Every spelling maps to the Value's MAIN TEXT placeholder, the
 	// registry is keyed on Span.MainText, so "M. Duval" and "Marie"
 	// share [PERSON_1].
 	out := ApplySpans(text, spans, func(s Span) string {
@@ -261,7 +261,7 @@ func TestVariantExpansionClassPerCategory(t *testing.T) {
 	}
 }
 
-func TestLiteralOnlyCategoriesStillTakeManualVariants(t *testing.T) {
+func TestLiteralOnlyCategoriesStillTakeListedSpellings(t *testing.T) {
 	// No AUTOMATIC expansion is not the same as no variants: a spelling the user
 	// typed is an explicit instruction, and the automatic rules are what cannot
 	// be trusted on a code.

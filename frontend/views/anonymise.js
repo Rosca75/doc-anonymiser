@@ -115,7 +115,7 @@ export function renderAnonymise(container) {
   const s = getState();
   const doc = currentDocument(s);
   // A refused run carries empty documents and an empty report, so the value,
-  // report and "something missed" cards would show a zero run beside a stale
+  // report and "Add missed Value" cards would show a zero run beside a stale
   // registry table: the exact mismatch a refused run produces. They are hidden
   // until the conflict is fixed, and the run card explains why.
   const blocked = blockingConflicts(s).length > 0;

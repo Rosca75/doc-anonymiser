@@ -1,6 +1,6 @@
 // app_run.go — bound methods for the Run screen: pipeline
 // execution in a goroutine with progress events, cancellation, and the
-// fast "something missed?" re-run path. Thin adapters (CLAUDE.md §3) —
+// fast "Add missed Value" re-run path. Thin adapters (CLAUDE.md §3) —
 // the engine does all the work.
 package backend
 
@@ -25,7 +25,7 @@ type RunRequest struct {
 	// SuppressRegexPII is the "Native detection" master switch, inverted: true
 	// means the deterministic regex PII pass (pass 1) is skipped for this run,
 	// so no signal category is replaced. The frontend sends it as
-	// !settings.useNativeDetect.
+	// !settings.useBuiltInPatterns.
 	SuppressRegexPII bool `json:"suppressRegexPII"`
 }
 
@@ -192,7 +192,7 @@ func (a *App) CancelPipeline() {
 	}
 }
 
-// FastRerun is the "something missed?" loop: re-run the
+// FastRerun is the "Add missed Value" loop: re-run the
 // deterministic passes only with the (updated) entities
 // and rules, reusing the session registry so existing placeholders keep
 // their numbers. Fast enough to run synchronously.

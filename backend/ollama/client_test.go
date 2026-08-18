@@ -141,7 +141,7 @@ func TestDiscoverHappyPath(t *testing.T) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 	for i := range want {
-		// Compared field by field: ProposedEntity carries a Variants slice, so
+		// Compared field by field: a Suggestion carries slices, so
 		// the struct is not comparable with ==. Discover proposes bare strings
 		// and never folds, so an empty Variants list is part of the contract.
 		if got[i].Category != want[i].Category || got[i].MainText != want[i].MainText {
@@ -485,12 +485,12 @@ func TestDiscoverCancelBetweenChunks(t *testing.T) {
 	}
 }
 
-// --- candidate span classification ---------------------------------------
+// --- Suggestion classification -------------------------------------------
 
-// TestClassifyCandidates: categories come back per candidate; a name the
+// TestClassifySuggestions: categories come back per suggestion; a name the
 // server "invents" (not among the inputs) is dropped by the verbatim
 // filter; allowlisted texts are vetoed.
-func TestClassifyCandidates(t *testing.T) {
+func TestClassifySuggestions(t *testing.T) {
 	c := chatReplyServer(t, `{"entity_names":["Alpine Trust","Fabricated Corp"],"project_names":[],"person_names":["Marie Duval","CSSF"]}`)
 	allow := engine.NewAllowlist() // seeds CSSF
 	c.Allow = allow.Contains
@@ -514,16 +514,16 @@ func TestClassifyCandidates(t *testing.T) {
 		t.Errorf("classification wrong: %v", byText)
 	}
 	if _, ok := byText["Fabricated Corp"]; ok {
-		t.Error("invented candidate must be dropped by the verbatim filter")
+		t.Error("invented suggestion must be dropped by the verbatim filter")
 	}
 	if _, ok := byText["CSSF"]; ok {
-		t.Error("allowlisted candidate must be vetoed")
+		t.Error("allowlisted suggestion must be vetoed")
 	}
 }
 
-// TestClassifyCandidatesBatching: 200 candidates with contexts stay under
+// TestClassifySuggestionsBatching: 200 suggestions with contexts stay under
 // the byte budget per request (several requests, each bounded).
-func TestClassifyCandidatesBatching(t *testing.T) {
+func TestClassifySuggestionsBatching(t *testing.T) {
 	var maxBody atomic.Int64
 	var calls atomic.Int32
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -551,14 +551,14 @@ func TestClassifyCandidatesBatching(t *testing.T) {
 	})
 
 	c.ContextSize = 1024 // budget 2304 bytes per prompt
-	var candidates []engine.Suggestion
+	var suggestions []engine.Suggestion
 	for i := 0; i < 200; i++ {
-		candidates = append(candidates, engine.Suggestion{
+		suggestions = append(suggestions, engine.Suggestion{
 			MainText: strings.Repeat("N", 20) + string(rune('A'+i%26)),
 			Contexts: []string{strings.Repeat("context words here ", 5)},
 		})
 	}
-	if _, err := c.ClassifySuggestions(context.Background(), candidates); err != nil {
+	if _, err := c.ClassifySuggestions(context.Background(), suggestions); err != nil {
 		t.Fatalf("ClassifySuggestions: %v", err)
 	}
 	budget := c.ContextSize * 3 * 3 / 4
@@ -566,7 +566,7 @@ func TestClassifyCandidatesBatching(t *testing.T) {
 		t.Errorf("a batch exceeded the byte budget: %d > %d", maxBody.Load(), budget)
 	}
 	if calls.Load() < 2 {
-		t.Errorf("200 padded candidates must need several batches, got %d call(s)", calls.Load())
+		t.Errorf("200 padded suggestions must need several batches, got %d call(s)", calls.Load())
 	}
 }
 

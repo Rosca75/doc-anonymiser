@@ -58,7 +58,7 @@ func TestSmartDetectSuffixGazetteer(t *testing.T) {
 	}
 }
 
-func TestSmartDetectSuffixAloneIsNotACandidate(t *testing.T) {
+func TestHeuristicSuffixAloneIsNotASuggestion(t *testing.T) {
 	// A legal form with no preceding name must not be proposed.
 	got := HeuristicDiscoverWithOptions("The GmbH structure is common. The GmbH form works.", NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
 	if c := findSuggestion(got, "GmbH"); c != nil {
@@ -187,10 +187,10 @@ func TestSmartDetectFrenchFixture(t *testing.T) {
 
 // --- HeuristicDiscoveryOptions --------------------------------------------------
 
-// TestSmartDetectCandidatesCarryAScore: every suggestion must carry the
+// TestHeuristicSuggestionsCarryAScore: every suggestion must carry the
 // heuristic score, whether or not filtering is on, because the review UI
 // sorts and filters on it without re-running detection.
-func TestSmartDetectCandidatesCarryAScore(t *testing.T) {
+func TestHeuristicSuggestionsCarryAScore(t *testing.T) {
 	got := HeuristicDiscoverWithOptions("Alpine Trust S.A. signed. Marie Duval signed too.\n", NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
 	if len(got) == 0 {
 		t.Fatal("expected suggestions")
@@ -202,10 +202,10 @@ func TestSmartDetectCandidatesCarryAScore(t *testing.T) {
 	}
 }
 
-// TestCandidateScoreLadder pins the score each detector signal earns, in
+// TestSuggestionScoreLadder pins the score each detector signal earns, in
 // English and French. The ladder is the thing a future tuning change has
 // to argue with, so it is asserted directly.
-func TestCandidateScoreLadder(t *testing.T) {
+func TestSuggestionScoreLadder(t *testing.T) {
 	cases := []struct {
 		name string
 		text string

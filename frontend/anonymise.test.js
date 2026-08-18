@@ -422,7 +422,7 @@ function seedRun() {
   });
 }
 
-test("the Find and replace card is absent before the first run", () => {
+test("the result cards are absent before the first run", () => {
   resetState();
   setState({ documents: [{ name: "a.txt", markdown: "x", previewTruncated: false, isGrid: false }] });
   const html = renderColumn();

@@ -1,14 +1,14 @@
-// entitymodel.test.js, the derivedSpellings regression suite (,
-// extended by, trimmed for).
+// valuemodel.test.js, the spelling-expansion data-flow suite.
 //
-// These pin the DATA-FLOW contract, which the relayout deliberately did
-// not change: pending vs empty vs error are three distinct states, only the rows
-// a user just touched re-expand, and two values never interfere with each other.
+// Three states are DISTINCT and must stay distinct: derivedSpellings null means an
+// expansion is in flight, [] means it finished and found none, and an error means
+// it failed. Collapsing any two of them shows a forever-pending placeholder for a
+// list that is already final, or the reverse.
 //
-// What went with is variantRows() and everything about EXPANDED rows. The
-// value cards that replaced the review table always show their derivedSpellings, so there
-// is no expanded set left to model. The states it encoded are still tested here,
-// read straight off the entity, which is exactly what the cards do.
+// The other two contracts here: only the rows a user just touched re-expand, so a
+// settled Value is never asked again; and two Values never interfere with each
+// other's expansion state. A Value card reads these states straight off the Value,
+// which is what these tests read too.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -26,11 +26,10 @@ function valueFor(mainText) {
 }
 
 /**
- * variantState(e) is the state a value card renders, read straight off the
- * entity. It is the classification variantRows() used to return, spelled out
- * here because it is the contract these tests exist to pin.
+ * spellingState(v) is the state a Value card renders, read straight off the
+ * Value. It is spelled out here because it is the contract these tests pin.
  */
-function variantState(e) {
+function spellingState(e) {
   if (e.spellingsError) return "error";
   if (e.derivedSpellings === null || e.derivedSpellings === undefined) return "pending";
   if (e.derivedSpellings.length === 0) return "empty";
@@ -44,7 +43,7 @@ test("a new value is PENDING, not empty", () => {
   addValues([{ category: "person_names", mainText: "Marie Duval" }]);
   const e = valueFor("Marie Duval");
   assert.equal(e.derivedSpellings, null, "a fresh value must be pending, not empty");
-  assert.equal(variantState(e), "pending");
+  assert.equal(spellingState(e), "pending");
   assert.deepEqual(pendingExpansions(getState().values).map((x) => x.mainText),
     ["Marie Duval"]);
 });
@@ -55,7 +54,7 @@ test("zero derivedSpellings is an explicit EMPTY state, never a stuck pending pl
   setValueSpellings("entity_names", "Acme", []);
   const e = valueFor("Acme");
   assert.deepEqual(e.derivedSpellings, []);
-  assert.equal(variantState(e), "empty");
+  assert.equal(spellingState(e), "empty");
   assert.deepEqual(pendingExpansions(getState().values), [],
     "an empty result is SETTLED: it must never be expanded again");
 });
@@ -64,7 +63,7 @@ test("a list of derivedSpellings settles the row", () => {
   resetState();
   addValues([{ category: "person_names", mainText: "Marie Duval" }]);
   setValueSpellings("person_names", "Marie Duval", ["M. Duval", "Duval"]);
-  assert.equal(variantState(valueFor("Marie Duval")), "list");
+  assert.equal(spellingState(valueFor("Marie Duval")), "list");
   assert.deepEqual(pendingExpansions(getState().values), []);
 });
 
@@ -81,7 +80,7 @@ test("adding a spelling re-pends ONLY the amended value", () => {
   addSpelling("person_names", "Marie Duval", "Mimi");
   assert.deepEqual(pendingExpansions(getState().values).map((e) => e.mainText),
     ["Marie Duval"], "the untouched value must NOT be re-expanded");
-  assert.equal(variantState(valueFor("Thomas Berger")), "list");
+  assert.equal(spellingState(valueFor("Thomas Berger")), "list");
 });
 
 test("two values keep independent state", () => {
@@ -93,8 +92,8 @@ test("two values keep independent state", () => {
   setValueSpellings("entity_names", "Alpha", ["A"]);
   setValueSpellingError("entity_names", "Beta", "expansion failed");
 
-  assert.equal(variantState(valueFor("Alpha")), "list");
-  assert.equal(variantState(valueFor("Beta")), "error");
+  assert.equal(spellingState(valueFor("Alpha")), "list");
+  assert.equal(spellingState(valueFor("Beta")), "error");
 });
 
 test("a failed expansion surfaces the error and stops re-pending", () => {
@@ -103,7 +102,7 @@ test("a failed expansion surfaces the error and stops re-pending", () => {
   addValues([{ category: "person_names", mainText: "Marie Duval" }]);
   setValueSpellingError("person_names", "Marie Duval", "Go said no");
   const e = valueFor("Marie Duval");
-  assert.equal(variantState(e), "error");
+  assert.equal(spellingState(e), "error");
   assert.equal(e.spellingsError, "Go said no");
   assert.deepEqual(pendingExpansions(getState().values), [],
     "an errored row is SETTLED: it must not be retried on every repaint");
@@ -118,7 +117,7 @@ test("setValueSpellings clears a previous error", () => {
   setValueSpellings("person_names", "Marie Duval", ["Duval"]);
   const e = valueFor("Marie Duval");
   assert.equal(e.spellingsError, null);
-  assert.equal(variantState(e), "list");
+  assert.equal(spellingState(e), "list");
 });
 
 test("CR17: adding a spelling to a SECOND value works like the first", () => {
@@ -135,7 +134,7 @@ test("CR17: adding a spelling to a SECOND value works like the first", () => {
   addSpelling("entity_names", "Second Client", "SecondCo");
   const second = valueFor("Second Client");
   assert.deepEqual(second.spellings, ["SecondCo"]);
-  assert.equal(variantState(second), "pending", "the amended row re-expands");
+  assert.equal(spellingState(second), "pending", "the amended row re-expands");
   assert.deepEqual(valueFor("First Client").spellings, [],
     "the first value must be untouched");
 });
@@ -148,7 +147,7 @@ test("CR17: a duplicate spelling changes nothing, case-insensitively", () => {
   addSpelling("entity_names", "Acme", "acme ltd");
   const e = valueFor("Acme");
   assert.deepEqual(e.spellings, ["ACME Ltd"], "one spelling, kept as typed");
-  assert.equal(variantState(e), "empty", "an add that changed nothing must not re-pend");
+  assert.equal(spellingState(e), "empty", "an add that changed nothing must not re-pend");
 });
 
 test("moving a spelling curates the source and re-pends the target", () => {
@@ -172,8 +171,8 @@ test("moving a spelling curates the source and re-pends the target", () => {
   assert.deepEqual(beta.spellings, ["Alph"]);
   // A curated row is settled: nothing is left for Go to derive, so only the
   // target is asked to expand.
-  assert.equal(variantState(alpha), "empty");
-  assert.equal(variantState(beta), "pending");
+  assert.equal(spellingState(alpha), "empty");
+  assert.equal(spellingState(beta), "pending");
   assert.deepEqual(pendingExpansions(getState().values).map((e) => e.mainText), ["Beta"]);
 });
 

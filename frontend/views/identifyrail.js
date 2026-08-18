@@ -77,10 +77,12 @@ export function llmGateTooltip(s) {
 // RAIL_SECTIONS is the rail's shape: [id, title, settings key that switches
 // the route on]. The order is the order the routes run in.
 //
-// Smart detection's key is a MASTER over its own child settings rather than a
-// persisted flag of its own: the section is on when any of its methods is on.
+// Smart detection's third element is the sentinel "derived", not a settings key:
+// its section state is computed from its three methods and NOT stored, so a
+// settings key here would name a flag that does not exist. Local AI has a real
+// key, because it is one switch over one route.
 export const RAIL_SECTIONS = [
-  ["rail-smart", RAIL.tabSmart, "useSmartDetect"],
+  ["rail-smart", RAIL.tabSmart, "derived"],
   ["rail-local", RAIL.tabLocalAI, "useLocalAI"],
 ];
 
@@ -179,7 +181,7 @@ export function renderIdentifyRail(container) {
  */
 export function railBody(s) {
   const routes = RAIL_SECTIONS.map(([id, title, key]) => {
-    const on = id === "rail-smart" ? smartRouteOn(s) : !!s.settings[key];
+    const on = key === "derived" ? smartRouteOn(s) : !!s.settings[key];
     return collapsibleGroup(id, title, sectionBody(s, id), {
       open: !collapsedGroups.has(id),
       cls: `rail-section${on ? "" : " route-off"}`,
@@ -268,12 +270,10 @@ function wireSectionSwitches(container) {
       ev.stopPropagation();
       const on = ev.target.checked;
       if (ev.target.dataset.route === "rail-local") setUseLocalAI(on);
-      else {
-        // The Smart detection header is a MASTER over its two sub-toggles:
-        // switching it flips both Native and Auto detection together.
-        setUseBuiltInPatterns(on);
-        setUseHeuristicDiscovery(on);
-      }
+      // The Smart detection header is a MASTER over its three methods: switching
+      // it flips all of them in one action, through the one reducer that knows
+      // what "all of them" means.
+      else setSmartDetection(on);
       // Turning a route on opens its section: the settings it reads are the
       // next thing the user wants.
       if (on) collapsedGroups.delete(ev.target.dataset.route);
@@ -363,7 +363,7 @@ function signalSourceControl(s) {
 
 /** scopeBlocks(s) is the country, the preset, the REGEX categories, and the
   *  confidence floor, in that order: broadest choice first.
-  *  Entity categories appear later under "Values to detect automatically". */
+  *  The name categories appear after them, under "Auto detected values". */
 function scopeBlocks(s) {
   // labelWithHelp keeps every block's heading to a SHORT visible label with its
   // explanation one hover or one Tab away. A paragraph under each of these five
@@ -424,7 +424,8 @@ function presetChips(s) {
  * overlaid on copy.js CATEGORY_LABELS at render time rather than stored five
  * times over.
  *
- * type is "regex" (static PII detection) or "entity" (auto-detection values).
+ * type is "regex" (built-in pattern categories) or "entity" (the name
+ * categories a discovery method can emit).
  *
  * blockDisabled greys the whole block out without clearing the stored selection:
  * when Native detection is off, the regex categories still show (so the user

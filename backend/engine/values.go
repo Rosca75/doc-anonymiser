@@ -24,7 +24,7 @@ import (
 // Spelling policies for Value.SpellingPolicy.
 //
 // Kept as string constants rather than a bool so both states have a NAME on
-// both sides of the bridge and in a session file. A bool called "autoExpand"
+// both sides of the bridge and in a session file. A single boolean
 // forced every reader to work out which way round false meant.
 const (
 	// SpellingPolicyAutomatic means the engine may derive further spellings

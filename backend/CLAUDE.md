@@ -21,8 +21,8 @@ or above it. `main.go` imports this package and calls `backend.NewApp()`.
 
 ## The bound-app layer (`app*.go`)
 
-- `app.go`, `app_entities.go`, `app_export.go`, `app_run.go` hold the `App`
-  struct — the ONLY seam between the frontend and Go. Every method is a thin
+- `app.go`, `app_values.go`, `app_detect.go`, `app_export.go`, `app_run.go`
+  hold the `App` struct — the ONLY seam between the frontend and Go. Every method is a thin
   adapter that delegates straight to `engine/*` or `ollama/*`. **No business
   logic in these files.**
 - `App` is the only place allowed to touch user-chosen filesystem paths
@@ -40,17 +40,52 @@ or above it. `main.go` imports this package and calls `backend.NewApp()`.
 - **UI-agnostic:** nothing under `engine/` imports Wails or reads user paths.
   This keeps it headless-unit-testable and keeps the P4 fallback contained.
 - **One external boundary:** only `ollama/client.go` constructs HTTP requests
-  to Ollama. `engine/*` receives an interface, never the concrete client, so
-  swapping the NER backend is a contained refactor. Ollama host is locked to
-  loopback `127.0.0.1:11434` (port is settable); never make the host remote.
+  to Ollama, and only the App calls it, from the Identify-time discovery route.
+  `engine/*` never sees the concrete client, so swapping the NER backend is a
+  contained refactor. Ollama host is locked to loopback `127.0.0.1:11434` (port
+  is settable); never make the host remote.
+- **Anonymise reaches no model, and creates no Value.** `engine.Run` has no LLM
+  slot at all: every discovery method runs at Identify time and its findings
+  are Suggestions the user accepts. A run that could mint a Value the user never
+  saw would walk past the review gate rather than enforce it, and
+  `TestAnonymiseNeverCallsOllama` asserts the call count is zero.
 - **Graceful degradation:** Ollama is probed at startup and on demand
   (`GET /api/tags`); the deterministic pipeline must be fully usable without
   it. LLM-dependent controls disable with a tooltip when it is absent.
 
-## The Value model (BUILD-06)
+## The Value model
 
-Three files carry it, and each exists because the rule it enforces cannot be
-enforced anywhere else:
+A **Value** is one accepted replacement unit: one category, one `MainText`, its
+`Spellings`, one placeholder for the whole family. A **Suggestion** is an
+unreviewed potential Value. Nothing becomes a Value without the user accepting
+it.
+
+Provenance and precedence are SEPARATE fields, and that is the load-bearing
+decision of the model:
+
+- `DiscoveryMethods` is provenance, a SET drawn from `AllDiscoveryMethods`
+  (`manual`, `signal`, `heuristic`, `local_ai`). Several methods can find the
+  same thing, and accepting a Suggestion keeps all of them, because two routes
+  agreeing is corroboration worth showing rather than a fact to overwrite.
+- The **match class** is precedence, derived from the methods by
+  `MatchClassForMethods` taking the strongest, and consumed only by overlap
+  resolution, ownership unification and the pre-run intersection check.
+- `Confidence` is a third thing, feeding `MinConfidence`.
+
+One field answering two of those questions is what made raising the confidence
+floor silently reorder which route won.
+
+`SpellingPolicy` (`"automatic"` or `"curated"`) is a string rather than a bool so
+both states have a name on both sides of the bridge and in a session file. It is
+what makes deleting a spelling STICK without a negative rule: a curated Value's
+main text plus its listed spellings IS the complete replacement set. A per-Value
+list of suppressed spellings would be a rule with no home in the interface,
+invisible except as the absence of a chip and impossible to undo. `Evidence` is
+structured and bounded, so the frontend can explain a Value from `copy.js`
+instead of the engine returning prose nobody can check.
+
+These files carry the model, and each exists because the rule it enforces cannot
+be enforced anywhere else:
 
 - `engine/country.go` — the document country and `CategoryCountries`, the table
   saying which regex categories apply where, plus `CategoryAppliesTo`. It is
@@ -69,21 +104,47 @@ enforced anywhere else:
   `ResolveOverlapsWithLosers`, the one place the decision is made, because a
   parallel check can disagree with the pipeline and then describe something
   that did not happen.
-- `engine/origin.go` — WHICH ROUTE produced a detection (`native`, `declared`,
-  `auto`, `ai`) and `OriginRank`, the superseding order, lower wins. It is a
-  separate field from `Confidence` on purpose: confidence feeds the
-  `MinConfidence` floor, so using one number for both meant raising the floor
-  silently reordered which route wins. `ResolveOverlaps` compares origin FIRST.
-  Mirrored by `frontend/state.js ORIGINS`, guarded by `../origin_parity_test.go`.
+- `engine/matchclass.go` — the discovery methods, the match classes
+  (`built_in_pattern`, `user_defined`, `smart_discovered`,
+  `local_ai_discovered`), `MatchClassRank` (lower wins) and
+  `MatchClassForMethods`. An unknown or empty class ranks with `user_defined`
+  rather than last, so a producer that states none is trusted rather than
+  silently demoted: ranking it last turns a forgotten stamp into a missing
+  replacement instead of an error. `ResolveOverlaps` compares the class FIRST.
+  Mirrored by `frontend/state.js DISCOVERY_METHODS` and `MATCH_CLASSES`, guarded
+  by `../detection_parity_test.go`.
+- `engine/signals.go` — `AllSignalSources` and `SignalSourceSelection`: which
+  built-in signals may DERIVE Suggestions. Data-driven on purpose, so a new
+  source is one constant and one implementation rather than a new field, a new
+  rail row and a new persisted flag. It does NOT govern whether a signal is
+  matched and replaced, and conflating the two is the mistake the separate
+  setting exists to prevent. A nil selection reads as the defaults, never as
+  "none".
+- `engine/signaldiscovery.go` — signal-based discovery: an email's local part
+  seeds a person and its domain seeds an organisation, and each seed is searched
+  for across the WHOLE BATCH, because the address is in one file and the text it
+  points at is usually in another. Three rules shape every decision: whole
+  batch; nothing suggested from text found only INSIDE the source signal; and
+  the DOCUMENT's own casing and accents are what gets suggested. A domain seed
+  extends over the capitalised name built on it, and the bare stem is then
+  dropped when a longer name exists, because keeping it would let family folding
+  collapse two legal entities into one Value.
+- `engine/evidence.go` — `Evidence` and `MergeEvidence`. Deduplicated by
+  RELATIONSHIP, not by document, so the same relationship found in five files is
+  one piece of evidence naming several documents.
 - `engine/intersections.go` — `DetectIntersections`, which answers "what covers
   what" BEFORE a run so the warning can sit on the value's own card instead of
   arriving on the results screen. It reuses `detectText` and the shared
   comparator, never a parallel check, because a parallel check can disagree
   with the pipeline and then describe something that did not happen.
 - `engine/families.go` — `FoldValueFamilies`: "Coca-Cola" and "Coca-Cola
-  company" are ONE value, and the SHORTER form is the main one. Variants match
-  longest first, so that way the phrase collapses into one placeholder; the
-  other way the shorter fires inside the longer and leaks the rest.
+  company" are ONE Value, and the SHORTER form is the main text. Spellings match
+  longest first, so that way the phrase collapses into one placeholder; the other
+  way the shorter fires inside the longer and leaks the rest. It folds ONCE over
+  the unified Suggestion list, across every method, so a family cannot be split
+  by which route found which spelling. `MergeSuggestions` beside it is THE merge
+  rule every producer funnels through, which is what makes "nothing is lost"
+  checkable rather than hopeful.
 - `engine/codes.go` — the offline detector for CODE-SHAPED values, a second
   scanner over the raw text. It is separate from `discover.go` because that
   file's tokenizer treats a digit as a word boundary, so no code shape can
@@ -95,35 +156,37 @@ enforced anywhere else:
   `App.allowlistFor`, which run, detection and export all go through so a
   removal cannot be honoured by one and forgotten by another.
 
-`Registry` owns the one-value-one-replacement invariant through its
-`byOriginal` index, and tracks two sets of numbers it will never hand out
-again: `retired` (a `Forget` freed the entry, deliberately not the number) and
-`reserved` (a rule replacement minted outside the registry). Both persist in
-the session file, or a save-and-reload frees exactly the numbers the removal
-refused to free.
+`Registry` owns the one-value-one-replacement invariant through its `byOriginal`
+index, and tracks the numbers it will never hand out again: `retired`, where a
+`Forget` freed the entry and deliberately not the number. It persists in the
+session file, or a save-and-reload frees exactly the numbers the removal refused
+to free.
 
 ## Pipeline passes (fixed order)
 
 1. Deterministic PII regex pass (`engine/pii.go`). Regexes are compiled once
    at package init and documented with match / deliberately-no-match examples.
-2. Known-entity pass (`engine/entities.go`): discovery + manual entities,
-   expanded into name variants, longest-match-first. Expansion stops applying
-   once the user has curated a value's spellings (`Entity.AutoExpand`, nil and
-   true both meaning "expand"): from then on `ManualVariants` IS the list,
+2. Value pass (`engine/values.go`): the accepted Values, expanded into their
+   spellings, longest-match-first. Derivation stops the moment the spelling
+   policy goes `curated`: from then on main text plus `Spellings` IS the list,
    which is what makes deleting a spelling stick without a negative rule.
-   While it applies, expansion has three classes and a category belongs to
+   While it applies, derivation has three classes and a category belongs to
    exactly one: person-style (initials, surname-only, first-name-only,
    hyphen/space), organisation-style (a legal suffix stripped, never added),
-   and literal, for the categories with no name structure to expand.
-3. Optional LLM deep-scan pass (`engine/discover.go` + `ollama`): every
-   LLM-proposed entity passes a **hallucination filter** (dropped unless the
-   exact string occurs in the source text) and respects the allowlist.
-4. Post-pass: registry re-application across ALL loaded documents so the same
-   real-world entity maps to the same placeholder everywhere.
+   and literal, for the categories with no name structure to derive from.
+3. Post-pass: registry re-application across ALL loaded documents so the same
+   real-world subject maps to the same placeholder everywhere.
+
+There is no discovery pass here, and that is the point. Discovery happens at
+Identify time (`App.RunDetection` over `engine/discover.go`,
+`engine/signaldiscovery.go` and `ollama`), every finding is a Suggestion, and
+every Local AI finding passes a **hallucination filter** (dropped unless the
+exact string occurs in the source text) and the allowlist before the user ever
+sees it.
 
 `Run` executes those passes in THREE phases rather than one loop: detect every
 document, then UNIFY OWNERSHIP across the whole batch (`unifyOwnership` picks
-each string's owner by `OriginRank`), then apply. The split exists because
+each string's owner by `MatchClassRank`), then apply. The split exists because
 `Registry.Assign`'s `byOriginal` index gives a string to its first claimant for
 the whole session, and with detection and replacement in one step the first
 claimant was decided by byte offset within DOCUMENT order: which category a
@@ -142,7 +205,10 @@ an override took. The renames a user made are recorded rather than inferred
 (`Registry.Overrides`) and persist in the session file; **session files are read
 only by the version that wrote them**, so a file whose `SessionVersion` this
 build does not know is refused with an actionable message instead of
-half-migrated (BUILD-05 decision 1). The current version is **6**. A corrupt
+half-migrated. The current version is **7**, and version 6 is refused like any
+other: nearly every field a v6 file carries is renamed or gone, so reading it
+would mean guessing at each one and each guess changes what the next run
+replaces. A corrupt
 key (two entries claiming one value) is refused the same way, as an ERROR:
 these functions run behind bound methods on a file the user picked, so
 panicking would take the application down on a bad file.

@@ -238,7 +238,7 @@ test("a fully covered value says it is never replaced under its own type", () =>
   const note = one(html, "div.intersection-note");
   assert.ok(note.inner.includes("Every occurrence"),
     "a value nothing leaves alone is the case worth shouting about");
-  // The route is named in the same words the origin chip uses.
+  // The winning method is named in the same words the method chip uses.
   assert.ok(note.inner.includes(WORKSPACE.matchClassLabel.built_in_pattern),
     "the warning names the winning method, never an internal rank");
   assert.ok(note.inner.includes("Priority order"), "the rule that decided is stated");
