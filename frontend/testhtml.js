@@ -145,7 +145,7 @@ export function stripTags(html) {
 
 /**
  * textOf(html, selector) → the visible text of the single match: tags removed,
- * entities decoded. This is what the user reads, which is what the preview
+ * values decoded. This is what the user reads, which is what the preview
  * tests need to assert.
  */
 export function textOf(html, selector) {

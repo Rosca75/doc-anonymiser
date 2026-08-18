@@ -134,7 +134,6 @@
       progress: null,
       discovery: null,
       dismissedWarnings: [],
-      simpleRules: [],
       notice: null,
       confirm: null,
       results: {
@@ -145,7 +144,6 @@
         }],
         report: {
           level: "medium",
-          llmPass: "skipped (Ollama not available)",
           totalReplacements: 124,
           byCategory: { person_names: 61, entity_names: 61, email: 1, phone: 1 },
           values: VALUES,
@@ -321,10 +319,9 @@
     /**
      * configureRail() reports the shape of the Identify screen's left rail.
      *
-     * Reported issue 3: Configure stopped being a screen and its choices became
-     * three switchable DETECTION ROUTE sections, not four peer tabs. Smart
-     * detection on, Local AI off, Cloud AI present but unoperable, and every
-     * category checkbox reachable without clicking anything.
+     * The Configure choices are switchable DETECTION ROUTE sections rather than
+     * peer tabs: Smart detection on, Local AI off, and every category checkbox
+     * reachable without clicking anything.
      */
     async configureRail() {
       await seed("identify");
@@ -338,8 +335,6 @@
         routes: toggles.map((t) => t.dataset.route),
         smartOn: byRoute("rail-smart")?.checked ?? null,
         localOn: byRoute("rail-local")?.checked ?? null,
-        cloudDisabled: byRoute("rail-cloud")?.disabled ?? null,
-        cloudOn: byRoute("rail-cloud")?.checked ?? null,
         categories: rail.querySelectorAll(".cat-toggle").length,
         // Present in the DOM is not the same as reachable: a checkbox inside a
         // zero-height folded group is not something the user can tick. Measured,
@@ -347,6 +342,132 @@
         categoriesWithSize: [...rail.querySelectorAll(".cat-toggle")]
           .filter((c) => c.getBoundingClientRect().height > 0).length,
       };
+    },
+
+    /**
+     * configurePanelFit() measures whether the Configure panel FITS.
+     *
+     * The panel used to carry a paragraph under every control, and the sum of
+     * them made it taller than the window: the controls at the foot were
+     * unreachable without scrolling past prose that had been read on the first
+     * visit and never again. The explanations moved into help tooltips, and this
+     * is the measurement that keeps them there.
+     *
+     * Two numbers matter and neither can be asserted from a string of HTML:
+     * whether the rail's scrollable body actually overflows, and whether any
+     * static paragraph is still inside it.
+     */
+    async configurePanelFit() {
+      await seed("identify");
+      const rail = document.querySelector("#identify-rail");
+      if (!rail) return { error: "no #identify-rail rendered on the Identify screen" };
+      // The scrolling element is the rail's card body; fall back to the rail
+      // itself so the probe reports a number rather than an error if the class
+      // moves.
+      const body = rail.querySelector(".card-body") ?? rail;
+
+      // Scrolling the panel to its foot and measuring the LAST control is the
+      // question that matters. The panel is allowed to scroll: it holds
+      // twenty-four category checkboxes and the window is what it is. What is not
+      // allowed is a foot the user cannot get to, which is what a paragraph under
+      // every control produced.
+      const footReachable = await (async () => {
+        // The LAST SECTION's header, not the last .rail-block: a block inside a
+        // folded section has zero height by design, so measuring one would report
+        // an unreachable foot for a panel that is perfectly fine.
+        const sections = [...rail.querySelectorAll("section.rail-section, section.rail-panel")];
+        const last = sections[sections.length - 1]?.querySelector("[data-group-toggle]");
+        if (!last) return null;
+        body.scrollTop = body.scrollHeight;
+        await new Promise((r) => requestAnimationFrame(() => r()));
+        const box = last.getBoundingClientRect();
+        const clip = body.getBoundingClientRect();
+        const visible = box.height > 0 && box.bottom > clip.top && box.top < clip.bottom;
+        body.scrollTop = 0;
+        return visible;
+      })();
+
+      // Static explanatory prose, however it is marked up: a paragraph inside the
+      // rail that is not one of the live read-outs. Counting the class alone would
+      // pass the moment a paragraph were given a different one.
+      const prose = [...rail.querySelectorAll("p")]
+        .filter((el) => !el.classList.contains("rail-readout"));
+
+      return {
+        scrollHeight: Math.round(body.scrollHeight),
+        clientHeight: Math.round(body.clientHeight),
+        // The page itself must not have grown to fit the rail: the rail scrolls
+        // inside its own card body and nowhere else.
+        pageOverflows: document.documentElement.scrollHeight > window.innerHeight + 1,
+        footReachable,
+        proseParagraphs: prose.length,
+        proseHeight: Math.round(prose.reduce((sum, el) => sum + el.getBoundingClientRect().height, 0)),
+        helpTooltips: rail.querySelectorAll("span.help").length,
+      };
+    },
+
+    /**
+     * helpTooltipVisibility() opens one help tooltip and measures where the
+     * bubble actually lands.
+     *
+     * This is the failure the layer exists for: a bubble positioned inside the
+     * rail's `overflow: auto` body is CLIPPED at the container's edge, and no
+     * amount of asserting on HTML strings can see it. So the probe dispatches a
+     * real pointerenter, then compares the bubble's painted rectangle against
+     * the viewport and against the scrolling container.
+     *
+     * It also drives the KEYBOARD path, because an explanation only a pointer can
+     * reach is one half the users never get.
+     */
+    async helpTooltipVisibility() {
+      await seed("identify");
+      const rail = document.querySelector("#identify-rail");
+      const help = rail?.querySelector("span.help");
+      if (!help) return { error: "no help tooltip rendered in the Identify rail" };
+      const iconBtn = help.querySelector("button.help-icon");
+      const bubble = help.querySelector("span.help-bubble");
+      if (!iconBtn || !bubble) return { error: "a help tooltip with no icon or no bubble" };
+
+      const closedVisible = bubble.getBoundingClientRect().height > 0;
+
+      help.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+      await new Promise((r) => requestAnimationFrame(() => r()));
+      const box = bubble.getBoundingClientRect();
+      const scroller = rail.querySelector(".card-body") ?? rail;
+      const clip = scroller.getBoundingClientRect();
+
+      const opened = {
+        closedVisible,
+        openedOnHover: box.height > 0 && box.width > 0,
+        // Inside the viewport on every side.
+        onScreen: box.top >= 0 && box.left >= 0
+          && box.bottom <= window.innerHeight && box.right <= window.innerWidth,
+        // NOT clipped by the rail's scrolling body: the bubble may extend past
+        // it, which is exactly what fixed positioning is for, but it must not be
+        // cut off by it. Painted-and-visible at its own centre is the test.
+        notClipped: (() => {
+          const x = Math.round(box.left + box.width / 2);
+          const y = Math.round(box.top + Math.min(8, box.height / 2));
+          const hit = document.elementFromPoint(x, y);
+          return !!hit && (hit === bubble || bubble.contains(hit));
+        })(),
+        overflowsScroller: box.bottom > clip.bottom,
+      };
+
+      help.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false }));
+      await new Promise((r) => requestAnimationFrame(() => r()));
+      opened.closedOnLeave = bubble.getBoundingClientRect().height === 0;
+
+      iconBtn.focus();
+      help.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      await new Promise((r) => requestAnimationFrame(() => r()));
+      opened.openedOnFocus = bubble.getBoundingClientRect().height > 0;
+
+      help.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await new Promise((r) => requestAnimationFrame(() => r()));
+      opened.closedOnEscape = bubble.getBoundingClientRect().height === 0;
+
+      return opened;
     },
 
     /**
@@ -427,7 +548,7 @@
         return { error: "no mark[data-original] in #anonymised-pane, so nothing to hover" };
       }
 
-      // ONLY marks currently visible inside the pane are candidates. The pane is
+      // ONLY marks currently visible inside the pane are suggestions. The pane is
       // `overflow: auto` over a long document, so most marks are scrolled out of
       // sight, and a user cannot hover what they cannot see: their
       // getBoundingClientRect is hundreds of pixels below the window, and

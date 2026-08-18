@@ -8,8 +8,8 @@ import (
 
 // scopeFor is the detection configuration these tests share: every category on,
 // no confidence floor, Luxembourg, nothing allowlisted.
-func scopeFor(entities []Entity, patterns []CustomPattern) detectionScope {
-	return NewDetectionScope(entities, patterns,
+func scopeFor(values []Value, patterns []CustomPattern) detectionScope {
+	return NewDetectionScope(values, patterns,
 		PresetSelection(LevelAdvanced), 0, CountryLU, NewEmptyAllowlist(), false)
 }
 
@@ -29,22 +29,24 @@ func findIntersection(rows []Intersection, value, category string) (Intersection
 // about, and Occurrences == TotalOccurrences is how the view knows.
 func TestIntersectionEmailCoversADeclaredValue(t *testing.T) {
 	const value = "marie.duval@example.com"
-	docs := []Document{{Name: "a.txt", Format: FormatTXT,
-		Markdown: "Write to " + value + " today, or to " + value + " tomorrow.\n"}}
+	docs := []Document{{
+		Name: "a.txt", Format: FormatTXT,
+		Markdown: "Write to " + value + " today, or to " + value + " tomorrow.\n",
+	}}
 
 	rows := DetectIntersections(docs,
-		scopeFor([]Entity{{Category: CatPersonNames, Canonical: value}}, nil))
+		scopeFor([]Value{{Category: CatPersonNames, MainText: value}}, nil))
 
 	row, ok := findIntersection(rows, value, CatPersonNames)
 	if !ok {
 		t.Fatalf("the declared value must be reported as covered, got %+v", rows)
 	}
-	if row.WinnerCategory != CatEmail || row.WinnerOrigin != OriginNative {
+	if row.WinnerCategory != CatEmail || row.WinnerMatchClass != MatchClassBuiltInPattern {
 		t.Errorf("native detection must be named as the winner, got %s / %s",
-			row.WinnerCategory, row.WinnerOrigin)
+			row.WinnerCategory, row.WinnerMatchClass)
 	}
-	if row.Origin != OriginDeclared {
-		t.Errorf("the losing claim is the user's declaration, got %q", row.Origin)
+	if row.MatchClass != MatchClassUserDefined {
+		t.Errorf("the losing claim is the user's declaration, got %q", row.MatchClass)
 	}
 	if row.Occurrences != 2 || row.TotalOccurrences != 2 {
 		t.Errorf("both occurrences are covered, got %d of %d",
@@ -62,11 +64,13 @@ func TestIntersectionEmailCoversADeclaredValue(t *testing.T) {
 func TestIntersectionPartialCoverage(t *testing.T) {
 	// "Meridian" is a declared value. A custom pattern claims it only where it
 	// is followed by a code, so one of the three occurrences is covered.
-	docs := []Document{{Name: "a.txt", Format: FormatTXT,
-		Markdown: "Meridian alone. Meridian again. Meridian-4471 is coded.\n"}}
+	docs := []Document{{
+		Name: "a.txt", Format: FormatTXT,
+		Markdown: "Meridian alone. Meridian again. Meridian-4471 is coded.\n",
+	}}
 
 	rows := DetectIntersections(docs, scopeFor(
-		[]Entity{{Category: CatEntityNames, Canonical: "Meridian"}},
+		[]Value{{Category: CatEntityNames, MainText: "Meridian"}},
 		[]CustomPattern{{Expr: `Meridian-[0-9]+`}}))
 
 	row, ok := findIntersection(rows, "Meridian", CatEntityNames)
@@ -88,23 +92,25 @@ func TestIntersectionPartialCoverage(t *testing.T) {
 // Smart detection outranks the local AI, so an auto value covering an AI one
 // reports the AI value as the loser.
 func TestIntersectionAutoCoversAI(t *testing.T) {
-	docs := []Document{{Name: "a.txt", Format: FormatTXT,
-		Markdown: "The Helios Fund closed in June.\n"}}
+	docs := []Document{{
+		Name: "a.txt", Format: FormatTXT,
+		Markdown: "The Helios Fund closed in June.\n",
+	}}
 
-	rows := DetectIntersections(docs, scopeFor([]Entity{
+	rows := DetectIntersections(docs, scopeFor([]Value{
 		// The longer name from Smart detection...
-		{Category: CatEntityNames, Canonical: "Helios Fund", Origin: OriginAuto},
+		{Category: CatEntityNames, MainText: "Helios Fund", DiscoveryMethods: []string{MethodHeuristic}},
 		// ...covering the shorter one the AI proposed as a brand.
-		{Category: CatBrandNames, Canonical: "Helios", Origin: OriginAI},
+		{Category: CatBrandNames, MainText: "Helios", DiscoveryMethods: []string{MethodLocalAI}},
 	}, nil))
 
 	row, ok := findIntersection(rows, "Helios", CatBrandNames)
 	if !ok {
 		t.Fatalf("the AI value must be reported as covered, got %+v", rows)
 	}
-	if row.Origin != OriginAI || row.WinnerOrigin != OriginAuto {
+	if row.MatchClass != MatchClassLocalAIDiscovered || row.WinnerMatchClass != MatchClassSmartDiscovered {
 		t.Errorf("Smart detection must supersede the local AI, got %s losing to %s",
-			row.Origin, row.WinnerOrigin)
+			row.MatchClass, row.WinnerMatchClass)
 	}
 }
 
@@ -112,12 +118,14 @@ func TestIntersectionAutoCoversAI(t *testing.T) {
 // same characters are not an intersection, they are simply two values. Warning
 // about them trains the user to ignore the warning.
 func TestIntersectionSilentWhenValuesDoNotCoOccur(t *testing.T) {
-	docs := []Document{{Name: "a.txt", Format: FormatTXT,
-		Markdown: "Alpine Trust met Borealis Capital on the Tuesday.\n"}}
+	docs := []Document{{
+		Name: "a.txt", Format: FormatTXT,
+		Markdown: "Alpine Trust met Borealis Capital on the Tuesday.\n",
+	}}
 
-	rows := DetectIntersections(docs, scopeFor([]Entity{
-		{Category: CatEntityNames, Canonical: "Alpine Trust"},
-		{Category: CatBrandNames, Canonical: "Borealis Capital", Origin: OriginAI},
+	rows := DetectIntersections(docs, scopeFor([]Value{
+		{Category: CatEntityNames, MainText: "Alpine Trust"},
+		{Category: CatBrandNames, MainText: "Borealis Capital", DiscoveryMethods: []string{MethodLocalAI}},
 	}, nil))
 
 	if len(rows) != 0 {
@@ -130,13 +138,15 @@ func TestIntersectionSilentWhenValuesDoNotCoOccur(t *testing.T) {
 // allowlist the run does, or it warns about an overlap that will not happen.
 func TestIntersectionRespectsTheAllowlist(t *testing.T) {
 	const value = "marie.duval@example.com"
-	docs := []Document{{Name: "a.txt", Format: FormatTXT,
-		Markdown: "Write to " + value + " today.\n"}}
+	docs := []Document{{
+		Name: "a.txt", Format: FormatTXT,
+		Markdown: "Write to " + value + " today.\n",
+	}}
 
 	allow := NewEmptyAllowlist()
 	allow.Add(value)
 	scope := NewDetectionScope(
-		[]Entity{{Category: CatPersonNames, Canonical: value}}, nil,
+		[]Value{{Category: CatPersonNames, MainText: value}}, nil,
 		PresetSelection(LevelAdvanced), 0, CountryLU, allow, false)
 
 	if rows := DetectIntersections(docs, scope); len(rows) != 0 {
@@ -151,11 +161,13 @@ func TestIntersectionRespectsTheAllowlist(t *testing.T) {
 // worse than no warning.
 func TestCheckAgreesWithTheRun(t *testing.T) {
 	const value = "marie.duval@example.com"
-	docs := []Document{{Name: "a.txt", Format: FormatTXT,
-		Markdown: "Write to " + value + " today.\n"}}
-	entities := []Entity{{Category: CatPersonNames, Canonical: value}}
+	docs := []Document{{
+		Name: "a.txt", Format: FormatTXT,
+		Markdown: "Write to " + value + " today.\n",
+	}}
+	values := []Value{{Category: CatPersonNames, MainText: value}}
 
-	rows := DetectIntersections(docs, scopeFor(entities, nil))
+	rows := DetectIntersections(docs, scopeFor(values, nil))
 	row, ok := findIntersection(rows, value, CatPersonNames)
 	if !ok {
 		t.Fatalf("expected the check to report the overlap, got %+v", rows)
@@ -163,7 +175,7 @@ func TestCheckAgreesWithTheRun(t *testing.T) {
 
 	reg := NewRegistry()
 	if _, err := Run(context.Background(), PipelineInput{
-		Documents: docs, Entities: entities,
+		Documents: docs, Values: values,
 		Level: LevelAdvanced, Country: CountryLU,
 		Allowlist: NewEmptyAllowlist(), Registry: reg,
 	}); err != nil {

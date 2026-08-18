@@ -69,8 +69,8 @@ func TestMetadataExtractAndPropose(t *testing.T) {
 	// Proposals: pipeline path, allowlist wins ("CSSF" survives in the
 	// subject although it looks like an organisation).
 	cfg := testConfig(
-		engine.Entity{Category: "entity_names", Canonical: "Alpine Trust"},
-		engine.Entity{Category: "person_names", Canonical: "Marie Duval"},
+		engine.Value{Category: "entity_names", MainText: "Alpine Trust"},
+		engine.Value{Category: "person_names", MainText: "Marie Duval"},
 	)
 	cfg.Allowlist.Add("CSSF")
 	props := ProposeMetadata(fields, cfg)

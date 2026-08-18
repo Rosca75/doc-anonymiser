@@ -1,19 +1,10 @@
-// app_values_test.go — the value-management surface the step 3 Replaced values
-// table drives: removing a value, restoring it, renaming its placeholder, and
-// minting a placeholder for a find-and-replace rule.
+// app_values_test.go — the value-management surface the Anonymise step's
+// Replaced values table drives: removing a value, restoring it and renaming its
+// placeholder.
 //
-// This file exists because none of those methods had a test at all, and three
-// of them did not work:
-//
-//	Registry.Rename        unlocked an already-unlocked mutex, which Go answers
-//	                       with an unrecoverable fatal error, so EVERY rename
-//	                       took the whole application down;
-//	RestoreValue           returned an error saying it was not implemented;
-//	NextRulePlaceholder    parsed with a scanf verb Go's fmt does not support,
-//	                       so it always answered 1 and every rule collided.
-//
-// All three passed `go test ./...` by never being called. The tests below call
-// them.
+// A removal must not free the placeholder NUMBER it used, and neither a removal
+// nor a rename may survive only in memory: both facts are load-bearing for the
+// re-identification key, so both are asserted here.
 package backend
 
 import (
@@ -49,7 +40,7 @@ func valuesApp(t *testing.T) (*App, RunRequest) {
 		Markdown: "Marie Duval chaired the meeting. Marie Duval signed it.",
 	}}
 	req := RunRequest{
-		Entities: []engine.Entity{{Category: engine.CatPersonNames, Canonical: "Marie Duval"}},
+		Values: []engine.Value{{Category: engine.CatPersonNames, MainText: "Marie Duval"}},
 	}
 	return app, req
 }
@@ -68,7 +59,7 @@ func TestRemoveValuePrunesTheKeyAndKeepsTheNumber(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveValue: %v", err)
 	}
-	if info.Original != "Marie Duval" || info.Placeholder != placeholder {
+	if info.MainText != "Marie Duval" || info.Placeholder != placeholder {
 		t.Errorf("RemoveValue reported %+v, want the row that was removed", info)
 	}
 
@@ -86,8 +77,8 @@ func TestRemoveValuePrunesTheKeyAndKeepsTheNumber(t *testing.T) {
 	// placeholder means this person, and handing it to somebody else would make
 	// two artefacts of one session disagree with nothing able to detect it.
 	app.docs[0].Markdown = "Alpine Trust and Marie Duval."
-	next := RunRequest{Entities: []engine.Entity{
-		{Category: engine.CatPersonNames, Canonical: "Alpine Trust"},
+	next := RunRequest{Values: []engine.Value{
+		{Category: engine.CatPersonNames, MainText: "Alpine Trust"},
 	}}
 	runOnce(t, app, next)
 	for _, row := range app.ValuePlaceholders() {
@@ -197,8 +188,8 @@ func TestSetValuePlaceholderRenamesAndTakesEffectOnTheNextRun(t *testing.T) {
 	// A collision is refused, because two originals behind one placeholder makes
 	// the key ambiguous.
 	app.docs[0].Markdown += " Jean Weber attended."
-	req.Entities = append(req.Entities,
-		engine.Entity{Category: engine.CatPersonNames, Canonical: "Jean Weber"})
+	req.Values = append(req.Values,
+		engine.Value{Category: engine.CatPersonNames, MainText: "Jean Weber"})
 	runOnce(t, app, req)
 	var other string
 	for _, row := range app.ValuePlaceholders() {
@@ -214,71 +205,6 @@ func TestSetValuePlaceholderRenamesAndTakesEffectOnTheNextRun(t *testing.T) {
 	}
 }
 
-func TestNextRulePlaceholderNeverCollides(t *testing.T) {
-	// Bug 11: the frontend counted only the existing rules, while CUSTOM is also
-	// the automatic label for custom_patterns matches, so a rule and an automatic
-	// assignment could land on one number and the exported key would have two
-	// values behind one placeholder.
-	app := NewApp()
-	app.docs = []engine.Document{{
-		Name: "codes.txt", Format: engine.FormatTXT,
-		Markdown: "Ref PRJ-4471 and ref PRJ-9902 appear here.",
-	}}
-	req := RunRequest{Patterns: []engine.CustomPattern{
-		{Expr: `PRJ-\d{4}`},
-	}}
-	runOnce(t, app, req)
-
-	assigned := map[string]string{}
-	for _, row := range app.ValuePlaceholders() {
-		assigned[row.Placeholder] = row.Original
-	}
-	if len(assigned) < 2 {
-		t.Fatalf("the pattern should have assigned two CUSTOM placeholders, got %+v", assigned)
-	}
-
-	first, err := app.NextRulePlaceholder()
-	if err != nil {
-		t.Fatalf("NextRulePlaceholder: %v", err)
-	}
-	if owner, taken := assigned[first]; taken {
-		t.Errorf("%s was already assigned to %q", first, owner)
-	}
-
-	// Handing the same number out twice is the same bug with a different cause,
-	// so the number is reserved as it is handed over, not when the rule is saved.
-	second, err := app.NextRulePlaceholder()
-	if err != nil {
-		t.Fatalf("NextRulePlaceholder (second): %v", err)
-	}
-	if second == first {
-		t.Errorf("two calls returned the same placeholder %q", first)
-	}
-
-	// And a reserved number is not available to an automatic assignment either.
-	app.docs[0].Markdown += " Also PRJ-1234."
-	runOnce(t, app, req)
-	for _, row := range app.ValuePlaceholders() {
-		if row.Placeholder == first || row.Placeholder == second {
-			t.Errorf("%q was assigned to %q despite being reserved", row.Placeholder, row.Original)
-		}
-	}
-}
-
-func TestNextRulePlaceholderWorksBeforeTheFirstRun(t *testing.T) {
-	// The select-and-replace flow can mint a placeholder before anything has run.
-	// The step 2 placeholder editor failed in exactly this state (a nil registry)
-	// for the whole of, which is why the editor moved rather than being
-	// patched.
-	got, err := NewApp().NextRulePlaceholder()
-	if err != nil {
-		t.Fatalf("NextRulePlaceholder before a run: %v", err)
-	}
-	if got != "[CUSTOM_1]" {
-		t.Errorf("the first rule placeholder is %q, want [CUSTOM_1]", got)
-	}
-}
-
 // --- Session persistence -------------------------------------------------
 
 func TestRemovalsAndSpentNumbersSurviveTheSessionFile(t *testing.T) {
@@ -288,21 +214,15 @@ func TestRemovalsAndSpentNumbersSurviveTheSessionFile(t *testing.T) {
 	if _, err := app.RemoveValue(placeholder); err != nil {
 		t.Fatalf("RemoveValue: %v", err)
 	}
-	rule, err := app.NextRulePlaceholder()
-	if err != nil {
-		t.Fatalf("NextRulePlaceholder: %v", err)
-	}
-
 	// Save exactly what SaveSessionToFile writes, without the dialog.
 	app.mu.Lock()
 	session := engine.Session{
-		Entities:             req.Entities,
+		Values:               req.Values,
 		Settings:             engine.SessionSettings{Level: "medium", OllamaPort: 11434, Country: engine.CountryLU},
 		Registry:             app.registry.Export(),
 		PlaceholderOverrides: app.registry.Overrides(),
 		RemovedValues:        app.removed,
 		RetiredPlaceholders:  app.registry.Retired(),
-		ReservedPlaceholders: app.registry.Reserved(),
 	}
 	app.mu.Unlock()
 
@@ -331,19 +251,12 @@ func TestRemovalsAndSpentNumbersSurviveTheSessionFile(t *testing.T) {
 		t.Errorf("a removed value came back after a reload: %q", res.Documents[0].Anonymised)
 	}
 
-	// The spent numbers survived too. Without them a reload frees exactly the
-	// numbers the removal refused to free, one save-and-reload after the refusal.
+	// The spent number survived too. Without it a reload frees exactly the
+	// number the removal refused to free, one save-and-reload after the refusal.
 	for _, row := range fresh.ValuePlaceholders() {
-		if row.Placeholder == placeholder || row.Placeholder == rule {
+		if row.Placeholder == placeholder {
 			t.Errorf("%q was handed out again after a reload (to %q)", row.Placeholder, row.Original)
 		}
-	}
-	nextRule, err := fresh.NextRulePlaceholder()
-	if err != nil {
-		t.Fatalf("NextRulePlaceholder after reload: %v", err)
-	}
-	if nextRule == rule {
-		t.Errorf("the reserved rule placeholder %q was handed out again after a reload", rule)
 	}
 }
 

@@ -14,7 +14,7 @@
 //   empty nothing imported
 //   documents imported, nothing chosen
 //   configured categories chosen, no suggestions
-//   candidates suggestions waiting for review
+//   suggestions suggestions waiting for review
 //   values values accepted, no run yet
 //   results a run has produced output
 //
@@ -32,9 +32,9 @@ import {
   getState, setState, resetState,
   WIZARD_STEPS, canGoTo, goTo, nextStep,
   isBackward, resetStep, STEP_RESETS,
-  addCandidates, applyPreset, setMinConfidence,
+  addSuggestions, applyPreset, setMinConfidence,
   addAllowTerm, presetCategories,
-  acceptCandidate, rejectCandidate, rejectAllShown,
+  acceptSuggestion, rejectSuggestion, rejectAllShown,
 } from "./state.js";
 import { DEFAULT_COUNTRY, countryIDCategories } from "./countries.js";
 
@@ -54,22 +54,22 @@ const SHAPES = {
     setMinConfidence(0.9);
     addAllowTerm("CSSF");
   },
-  candidates: () => {
+  suggestions: () => {
     SHAPES.configured();
-    addCandidates([
-      { text: "Alpine Trust", category: "entity_names", count: 4 },
-      { text: "Marie Duval", category: "person_names", count: 2 },
-    ], "smart");
+    addSuggestions([
+      { discoveryMethods: ["heuristic"], mainText: "Alpine Trust", category: "entity_names", count: 4 },
+      { discoveryMethods: ["heuristic"], mainText: "Marie Duval", category: "person_names", count: 2 },
+    ]);
   },
-  // "values" is the shape AFTER the review, which is the only way a real
-  // session reaches it: every suggestion has been answered, one accepted and
-  // one rejected, so nothing is left waiting. It used to add the entity beside
-  // the still-unreviewed suggestions, which is a state the UI cannot produce
-  // and, since, one the gate refuses to walk out of.
+  // "values" is the shape AFTER the review, which is the only way a real session
+  // reaches it: every Suggestion has been answered, one accepted and one
+  // rejected, so nothing is left waiting. A shape with an accepted Value beside
+  // still-unreviewed Suggestions is one the interface cannot produce and one the
+  // gate refuses to walk out of.
   values: () => {
-    SHAPES.candidates();
-    acceptCandidate("Marie Duval");
-    rejectCandidate("Alpine Trust");
+    SHAPES.suggestions();
+    acceptSuggestion("Marie Duval");
+    rejectSuggestion("Alpine Trust");
   },
   results: () => {
     SHAPES.values();
@@ -97,10 +97,10 @@ test("matrix: which steps each session shape unlocks", () => {
     documents: ["import", "identify", "anonymise"],
     configured: ["import", "identify", "anonymise"],
     // Suggestions waiting for review SHUT Anonymise. This
-    // test pinned the opposite until then: "candidates unlocks anonymise" was
+    // test pinned the opposite until then: "suggestions unlocks anonymise" was
     // asserted as a feature, which is how walking past an unreviewed detection
     // stayed invisible.
-    candidates: ["import", "identify"],
+    suggestions: ["import", "identify"],
     values: ["import", "identify", "anonymise"],
     // A finished run unlocks Export.
     results: ["import", "identify", "anonymise", "export"],
@@ -135,7 +135,7 @@ test("matrix: Anonymise is reachable exactly when no suggestion is waiting", () 
   for (const name of SHAPE_NAMES) {
     SHAPES[name]();
     const s = getState();
-    const want = s.documents.length > 0 && s.candidates.length === 0;
+    const want = s.documents.length > 0 && s.suggestions.length === 0;
     assert.equal(canGoTo("anonymise"), want, `shape "${name}"`);
   }
 });
@@ -145,10 +145,10 @@ test("matrix: rejecting the waiting suggestions opens the gate", () => {
   // suggestions are worth keeping (or who switched detection off after it ran)
   // needs ONE action to get moving again, and this is the one the footer hint
   // names.
-  SHAPES.candidates();
+  SHAPES.suggestions();
   assert.equal(canGoTo("anonymise"), false, "suggestions are waiting");
 
-  const waiting = getState().candidates.map((c) => c.text);
+  const waiting = getState().suggestions.map((r) => r.mainText);
   assert.equal(rejectAllShown(waiting), waiting.length);
   assert.equal(canGoTo("anonymise"), true, "nothing is waiting any more");
 
@@ -162,16 +162,16 @@ test("matrix: accepting the waiting suggestions opens the gate too", () => {
   // Accepting is the other half of the review. It promotes the suggestion into
   // a value AND clears it from the review list, so the gate opens for the same
   // reason: nothing is left unanswered.
-  SHAPES.candidates();
-  for (const text of getState().candidates.map((c) => c.text)) acceptCandidate(text);
-  assert.deepEqual(getState().candidates, []);
+  SHAPES.suggestions();
+  for (const text of getState().suggestions.map((r) => r.mainText)) acceptSuggestion(text);
+  assert.deepEqual(getState().suggestions, []);
   assert.equal(canGoTo("anonymise"), true);
 });
 
 test("matrix: the gate cannot be walked past by stepping forward repeatedly", () => {
   // The same probe the document guard gets: a shut gate that a determined
   // nextStep() opens is not a gate.
-  SHAPES.candidates();
+  SHAPES.suggestions();
   goTo("identify");
   for (let i = 0; i < 10; i++) nextStep();
   assert.equal(getState().step, "identify",
@@ -285,7 +285,7 @@ test("matrix: a reset never touches an EARLIER step's state", () => {
   resetStep("anonymise");
   assert.deepEqual(getState().settings.categories, categories,
     "resetting the run must not undo the category selection");
-  assert.equal(getState().entities.length, 1,
+  assert.equal(getState().values.length, 1,
     "resetting the run must not undo the values");
 });
 
@@ -310,8 +310,8 @@ test("matrix: resetting every step in turn lands on a usable session", () => {
   }
   const s = getState();
   assert.equal(s.documents.length, 1, "the documents are still there");
-  assert.deepEqual(s.entities, []);
-  assert.deepEqual(s.candidates, []);
+  assert.deepEqual(s.values, []);
+  assert.deepEqual(s.suggestions, []);
   assert.equal(s.results, null);
   assert.equal(s.mapping, null, "the re-identification key is gone with the run");
   assert.deepEqual(s.settings.categories, {

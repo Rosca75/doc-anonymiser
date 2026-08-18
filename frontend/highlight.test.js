@@ -10,8 +10,8 @@ import { tooltipMeta } from "./views/anonymise.js";
 
 test("placeholders become category-coloured marks", () => {
   const html = renderHighlighted("mail [EMAIL_1] met [PERSON_2] on [CUSTOM_1]");
-  assert.ok(html.includes('<mark class="pii" title="email">[EMAIL_1]</mark>'));
-  assert.ok(html.includes('<mark class="entity" title="person">[PERSON_2]</mark>'));
+  assert.ok(html.includes('<mark class="signal" title="email">[EMAIL_1]</mark>'));
+  assert.ok(html.includes('<mark class="name" title="person">[PERSON_2]</mark>'));
   assert.ok(html.includes('<mark class="custom" title="custom">[CUSTOM_1]</mark>'));
 });
 
@@ -33,18 +33,18 @@ test("bracket text that is not a placeholder is left unmarked", () => {
 });
 
 test("markClass covers the three families", () => {
-  assert.equal(markClass("IBAN"), "pii");
-  assert.equal(markClass("ENTITY"), "entity");
+  assert.equal(markClass("IBAN"), "signal");
+  assert.equal(markClass("ENTITY"), "name");
   assert.equal(markClass("CUSTOM"), "custom");
   assert.equal(markClass("FUTURE_LABEL"), "custom");
 });
 
-test("every entity placeholder label gets the entity tint", () => {
+test("every NAME placeholder label gets the name tint", () => {
   // An unknown label falls through to "custom", so a label left out of
   // ENTITY_LABELS renders in the wrong tint with nothing failing. The list here
-  // is the placeholderLabels table in backend/engine/registry.go, entity half.
+  // is the placeholderLabels table in backend/engine/registry.go, name half.
   for (const label of ["ENTITY", "PROJECT", "PRODUCT", "BRAND", "PERSON", "ID", "OTHER"]) {
-    assert.equal(markClass(label), "entity", `${label} must read as an entity`);
+    assert.equal(markClass(label), "name", `${label} must read as a name category`);
   }
 });
 
@@ -60,6 +60,8 @@ test("mapping adds data attributes and the original in the title", () => {
 
 test("mapping miss falls back to the label-only title", () => {
   const html = renderHighlighted("see [ENTITY_9] here", { "[ENTITY_1]": { original: "x" } });
+  // The title is the LABEL, lower-cased, not the tint class: the tint groups
+  // categories, and the title names the one this placeholder belongs to.
   assert.ok(html.includes('title="entity"'));
   assert.ok(!html.includes("data-ph"));
 });
@@ -71,32 +73,32 @@ test("hostile originals are inert in the output", () => {
   assert.ok(html.includes("&quot;&gt;&lt;script&gt;"));
 });
 
-// --- per-occurrence variant spelling -------------------------------------
+// --- per-occurrence spelling spelling -------------------------------------
 
-test("a variant occurrence carries the spelling it replaced and the value in brackets", () => {
+test("a spelling occurrence carries the spelling it replaced and the value in brackets", () => {
   const html = renderHighlighted("[PERSON_1] and [PERSON_1]",
     { "[PERSON_1]": { original: "Johannes Borch", category: "person_names" } },
     { "[PERSON_1]": ["", "Borch"] });
-  // First occurrence matched the canonical value: no data-variant, plain title.
-  // Second replaced "Borch": data-variant present, title shows both.
-  assert.match(html, /data-variant="Borch"/);
+  // First occurrence matched the mainText value: no data-spelling, plain title.
+  // Second replaced "Borch": data-spelling present, title shows both.
+  assert.match(html, /data-spelling="Borch"/);
   assert.match(html, /title="Original: Borch \(Johannes Borch\)"/);
-  // The canonical occurrence stays a plain value with no bracketed original.
+  // The mainText occurrence stays a plain value with no bracketed original.
   assert.match(html, /title="Original: Johannes Borch"/);
 });
 
-test("a variant equal to the value case aside adds no brackets", () => {
+test("a spelling equal to the value case aside adds no brackets", () => {
   const html = renderHighlighted("[PERSON_1]",
     { "[PERSON_1]": { original: "Johannes Borch", category: "person_names" } },
     { "[PERSON_1]": ["johannes borch"] });
-  assert.ok(!html.includes("data-variant"));
+  assert.ok(!html.includes("data-spelling"));
   assert.match(html, /title="Original: Johannes Borch"/);
 });
 
-test("variants absent (the common case) render exactly as before", () => {
+test("derivedSpellings absent (the common case) render exactly as before", () => {
   const html = renderHighlighted("see [ENTITY_1] here",
     { "[ENTITY_1]": { original: "Acme S.A.", category: "entity_names" } });
-  assert.ok(!html.includes("data-variant"));
+  assert.ok(!html.includes("data-spelling"));
   assert.ok(html.includes('title="Original: Acme S.A."'));
 });
 

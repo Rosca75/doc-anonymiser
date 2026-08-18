@@ -120,7 +120,7 @@ func GridToMarkdownTable(grid [][]string) string {
 // GridToCSV serialises a grid back to CSV bytes for export. It uses the
 // standard library writer with LF line endings and minimal quoting. Fixture
 // tests pin the byte shape here, and caller-visible export behaviour builds on
-// that canonical form.
+// that mainText form.
 func GridToCSV(grid [][]string) ([]byte, error) {
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)

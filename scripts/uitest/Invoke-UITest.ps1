@@ -259,6 +259,8 @@ function Invoke-DevChecks {
                 Test-Layout $cdp
                 Test-ImportPreview $cdp
                 Test-ConfigureRail $cdp
+                Test-ConfigurePanelFit $cdp
+                Test-HelpTooltip $cdp
                 Test-ScrollRetention $cdp
                 Test-TooltipVisibility $cdp
                 Test-CompareSearch $cdp
@@ -360,9 +362,9 @@ function Test-ImportPreview([CdpSession]$cdp) {
         -Hint 'An empty pane would pass the placeholder check for the wrong reason, so it is asserted separately.'
 }
 
-# Reported issue 3: three switchable detection-route sections, not four peer tabs.
+# The Configure choices are switchable detection-route sections, not peer tabs.
 function Test-ConfigureRail([CdpSession]$cdp) {
-    Write-Step 'The Configure rail is three detection routes'
+    Write-Step 'The Configure rail is the two detection routes'
     $r = $cdp.Eval('__uiProbes.configureRail()')
     if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
         Assert-That -Name 'the Identify rail renders' -Condition $false `
@@ -370,23 +372,18 @@ function Test-ConfigureRail([CdpSession]$cdp) {
             -Hint 'views/identify.js renders the rail section and hands it to renderIdentifyRail.'
         return
     }
-    Assert-That -Name 'the rail is three route sections' -Condition ($r.sections -eq 3) `
-        -Expected '3 .rail-section elements' -Actual "$($r.sections), routes: $($r.routes -join ', ')" `
-        -Hint 'views/identifyrail.js RAIL_SECTIONS defines Smart detection, Local AI and Cloud AI.'
+    Assert-That -Name 'the rail is two route sections' -Condition ($r.sections -eq 2) `
+        -Expected '2 .rail-section elements' -Actual "$($r.sections), routes: $($r.routes -join ', ')" `
+        -Hint 'views/identifyrail.js RAIL_SECTIONS defines Smart detection and Local AI.'
     Assert-That -Name 'the old tab strip is gone' -Condition ($r.railTabs -eq 0) `
         -Expected '0 [data-railtab] chips anywhere in the document' -Actual "$($r.railTabs)" `
-        -Hint 'The rail switches sections on and off; it does not tab between them (BUILD-06).'
+        -Hint 'The rail switches sections on and off; it does not tab between them.'
     Assert-That -Name 'Smart detection is on by default' -Condition ($r.smartOn -eq $true) `
         -Expected 'the rail-smart route switch checked' -Actual "$($r.smartOn)" `
-        -Hint 'state.js settings.useSmartDetect defaults to true.'
+        -Hint 'Every Smart detection method defaults on, so the derived section state reads on.'
     Assert-That -Name 'Local AI is off by default' -Condition ($r.localOn -eq $false) `
         -Expected 'the rail-local route switch unchecked' -Actual "$($r.localOn)" `
-        -Hint 'state.js settings.useAI defaults to false. Detecting Ollama ENABLES this switch, it never flips it.'
-    Assert-That -Name 'Cloud AI cannot be switched on' `
-        -Condition ($r.cloudDisabled -eq $true -and $r.cloudOn -eq $false) `
-        -Expected 'the rail-cloud switch present, unchecked and disabled' `
-        -Actual "disabled: $($r.cloudDisabled), checked: $($r.cloudOn)" `
-        -Hint 'Cloud AI is not built (BUILD-05 decision 8) and renders disabled rather than omitted.'
+        -Hint 'state.js settings.useLocalAI defaults to false. Detecting Ollama ENABLES this switch, it never flips it.'
     Assert-That -Name 'every category checkbox is present' `
         -Condition ($r.categories -ge $script:Fixture.categoryCount) `
         -Expected "at least $($script:Fixture.categoryCount) .cat-toggle checkboxes" -Actual "$($r.categories)" `
@@ -427,6 +424,72 @@ function Test-ScrollRetention([CdpSession]$cdp) {
     Assert-That -Name 'the scroll position survives a repaint' -Condition ($r.after -eq $r.before) `
         -Expected "scrollTop still $($r.before) after ticking a category" -Actual "$($r.after)" `
         -Hint 'frontend/scroll.js snapshotScrollPositions/restoreScrollPositions must bracket main.js paint(), so a scrolled panel is not thrown back to the top by root.innerHTML.'
+}
+
+# The Configure panel must FIT, and its explanations must be tooltips rather than
+# prose. The panel used to carry a paragraph under every control, and the sum of
+# them put the controls at the foot out of reach.
+function Test-ConfigurePanelFit([CdpSession]$cdp) {
+    Write-Step 'The Configure panel fits, and explains itself on demand'
+    $r = $cdp.Eval('__uiProbes.configurePanelFit()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the panel-fit probe runs' -Condition $false `
+            -Expected '#identify-rail on the Identify screen' -Actual $r.error `
+            -Hint 'views/identify.js renders the rail and hands it to renderIdentifyRail.'
+        return
+    }
+    Assert-That -Name 'the panel spends no vertical space on prose' `
+        -Condition ($r.proseParagraphs -eq 0 -and $r.proseHeight -eq 0) `
+        -Expected '0 static paragraphs, 0px of them' `
+        -Actual "$($r.proseParagraphs) paragraph(s), $($r.proseHeight)px" `
+        -Hint 'An explanation belongs in a help tooltip. Live read-outs carry .rail-readout and are excluded, so this measures prose only.'
+    Assert-That -Name 'the explanations are still reachable' -Condition ($r.helpTooltips -ge 8) `
+        -Expected 'at least 8 help tooltips in the rail' -Actual "$($r.helpTooltips)" `
+        -Hint 'Removing the paragraphs must MOVE the explanations, not delete them: ui.js helpTooltip is where each one now lives.'
+    Assert-That -Name 'the panel scrolls inside its own body, not the page' `
+        -Condition ($r.pageOverflows -eq $false) `
+        -Expected 'a document no taller than the window' -Actual "$($r.pageOverflows)" `
+        -Hint 'The fixed-height layout contract: scrolling happens inside a card body and nowhere else.'
+    Assert-That -Name 'the foot of the panel is reachable' -Condition ($r.footReachable -eq $true) `
+        -Expected 'the last section painted after scrolling the panel to its end' `
+        -Actual "$($r.footReachable)" `
+        -Hint 'Prose under every control is what put the controls at the foot out of reach.'
+}
+
+# A help tooltip's bubble sits OUTSIDE the rail's clipping context on purpose: a
+# bubble inside an overflow:auto ancestor is cut at the container's edge, and only
+# a real renderer plus a hit test can see that. The keyboard path is driven too,
+# because an explanation only a pointer can reach is one half the users never get.
+function Test-HelpTooltip([CdpSession]$cdp) {
+    Write-Step 'A Configure help tooltip opens, is painted, and closes'
+    $r = $cdp.Eval('__uiProbes.helpTooltipVisibility()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the help-tooltip probe runs' -Condition $false `
+            -Expected 'a help tooltip in the Identify rail' -Actual $r.error `
+            -Hint 'views/identifyrail.js renders ui.js helpTooltip beside each explained label.'
+        return
+    }
+    Assert-That -Name 'the bubble is hidden until asked for' -Condition ($r.closedVisible -eq $false) `
+        -Expected 'a zero-height bubble before any interaction' -Actual "$($r.closedVisible)" `
+        -Hint 'An always-visible bubble is the paragraph the tooltip replaced, with extra steps.'
+    Assert-That -Name 'hover opens it' -Condition ($r.openedOnHover -eq $true) `
+        -Expected 'a painted bubble after pointerenter' -Actual "$($r.openedOnHover)" `
+        -Hint 'ui.js wireHelpTooltips sets data-open on pointerenter; style.css reveals it.'
+    Assert-That -Name 'the bubble is on screen' -Condition ($r.onScreen -eq $true) `
+        -Expected 'the whole bubble inside the viewport' -Actual "$($r.onScreen)" `
+        -Hint 'A bubble that opens off the edge of the window is a bubble nobody reads.'
+    Assert-That -Name 'the bubble is painted, not clipped by the scrolling panel' `
+        -Condition ($r.notClipped -eq $true) `
+        -Expected 'the bubble itself under a hit test at its own coordinates' -Actual "$($r.notClipped)" `
+        -Hint 'This is the reason the bubble sits outside the clipping context of the rail.'
+    Assert-That -Name 'leaving closes it' -Condition ($r.closedOnLeave -eq $true) `
+        -Expected 'a zero-height bubble after pointerleave' -Actual "$($r.closedOnLeave)" -Hint ''
+    Assert-That -Name 'keyboard focus opens it too' -Condition ($r.openedOnFocus -eq $true) `
+        -Expected 'a painted bubble after focusin' -Actual "$($r.openedOnFocus)" `
+        -Hint 'An explanation only a pointer can reach is one half the users never get.'
+    Assert-That -Name 'Escape closes it' -Condition ($r.closedOnEscape -eq $true) `
+        -Expected 'a zero-height bubble after Escape' -Actual "$($r.closedOnEscape)" `
+        -Hint 'A tooltip the keyboard can open and not dismiss is a keyboard trap.'
 }
 
 # Reported issue 6. This is the assertion that CANNOT be made without a real

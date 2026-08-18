@@ -16,23 +16,23 @@ import { hitClass } from "./panesearch.js";
 // Placeholder shape produced by the Go registry: [LABEL_N].
 const PLACEHOLDER_RE = /\[([A-Z][A-Z0-9_]*)_(\d+)\]/g;
 
-// Label → colour family. PII labels share one tint, entity labels another,
-// custom patterns a third (see style.css mark.* classes).
-const PII_LABELS = new Set(["EMAIL", "PHONE", "IBAN", "VAT", "NATIONAL_ID", "URL", "AMOUNT", "DATE"]);
-const ENTITY_LABELS = new Set([
+// Label → colour family. The structured signals share one tint, the NAME
+// categories another, custom patterns a third (see style.css mark.* classes).
+const SIGNAL_LABELS = new Set(["EMAIL", "PHONE", "IBAN", "VAT", "NATIONAL_ID", "URL", "AMOUNT", "DATE"]);
+const NAME_LABELS = new Set([
   "ENTITY", "PROJECT", "PRODUCT", "BRAND", "PERSON", "ID", "OTHER",
 ]);
 
 /**
  * markClass(label) picks the CSS class for one placeholder label.
  *
- * A label missing from both sets falls through to "custom", so an entity label
- * left out of ENTITY_LABELS renders in the wrong tint with nothing failing:
- * highlight.test.js asserts every label the registry can produce.
+ * A label missing from both sets falls through to "custom", so one left out of
+ * NAME_LABELS renders in the wrong tint with nothing failing: highlight.test.js
+ * asserts every label the registry can produce.
  */
 export function markClass(label) {
-  if (PII_LABELS.has(label)) return "pii";
-  if (ENTITY_LABELS.has(label)) return "entity";
+  if (SIGNAL_LABELS.has(label)) return "signal";
+  if (NAME_LABELS.has(label)) return "name";
   return "custom"; // CUSTOM and any future label default to the third tint
 }
 
@@ -42,9 +42,9 @@ export function markClass(label) {
  *
  * When the mapping knows a placeholder ("[ENTITY_1]" → {original,
  * category}), the mark carries data-ph, data-original, data-category and a
- * title="Original: <value>". When that occurrence replaced a non-canonical
- * spelling it also carries data-variant, and the title shows
- * "variant (original)". The title is the accessibility fallback; the styled
+ * title="Original: <value>". When that occurrence replaced a non-mainText
+ * spelling it also carries data-spelling, and the title shows
+ * "spelling (original)". The title is the accessibility fallback; the styled
  * tooltip is positioned in JS against the Compare card (,
  * views/anonymise.js), because a CSS ::after inside the pane was CLIPPED by
  * the pane's own overflow and never appeared near the right-hand edge.
@@ -57,10 +57,10 @@ export function markClass(label) {
  *
  * @param {string} text anonymised document text
  * @param {object} [mapping] placeholder → {original, category} lookup
- * @param {object} [variants] placeholder → ordered array of the spellings each
+ * @param {object} [derivedSpellings] placeholder → ordered array of the spellings each
  *   occurrence replaced (Go's ResultDocument.occurrenceVariants). Slot i is the
  *   text the i-th occurrence of that placeholder replaced, "" or absent when it
- *   was the canonical value. The marks are walked in the same left-to-right
+ *   was the mainText value. The marks are walked in the same left-to-right
  *   order Go recorded them, so slot i lines up with occurrence i.
  * @param {object} [search] {hits, activeIndex} from panesearch.js, with hits
  *   offset into the SAME text string this walks. Hits are emitted in the plain
@@ -71,7 +71,7 @@ export function markClass(label) {
  *   unaffected.
  * @returns {string} safe HTML
  */
-export function renderHighlighted(text, mapping, variants, search) {
+export function renderHighlighted(text, mapping, derivedSpellings, search) {
   let out = "";
   let last = 0;
   const hits = search?.hits ?? [];
@@ -106,15 +106,15 @@ export function renderHighlighted(text, mapping, variants, search) {
     seen[m[0]] = occ + 1;
     if (info?.original) {
       // The spelling this occurrence replaced, shown only when it differs from
-      // the canonical value (case aside): "Borch" for [PERSON_1] whose value is
+      // the mainText value (case aside): "Borch" for [PERSON_1] whose value is
       // "Johannes Borch", nothing when the match WAS "Johannes Borch".
-      const variant = variants?.[m[0]]?.[occ];
+      const spelling = derivedSpellings?.[m[0]]?.[occ];
       const showVariant =
-        variant && variant.toLowerCase() !== info.original.toLowerCase();
-      const tip = showVariant ? `${variant} (${info.original})` : info.original;
+        spelling && spelling.toLowerCase() !== info.original.toLowerCase();
+      const tip = showVariant ? `${spelling} (${info.original})` : info.original;
       out += `<mark class="${markClass(label)}" data-ph="${escapeHTML(m[0])}"` +
         ` data-original="${escapeHTML(info.original)}"` +
-        (showVariant ? ` data-variant="${escapeHTML(variant)}"` : "") +
+        (showVariant ? ` data-spelling="${escapeHTML(spelling)}"` : "") +
         (info.category ? ` data-category="${escapeHTML(info.category)}"` : "") +
         ` tabindex="0"` +
         ` title="Original: ${escapeHTML(tip)}">` +

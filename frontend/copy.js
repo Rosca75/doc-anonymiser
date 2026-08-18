@@ -164,7 +164,15 @@ export const IMPORT = {
 // Configure step copy. Plain language: no "PII", no
 // abbreviations without an example, full sentences.
 export const CONFIGURE = {
-  presetHint: "Start from a preset, then adjust the checkboxes if you need to. Changing any checkbox switches the preset to Custom.",
+  // The Configure panel keeps VISIBLE LABELS short and moves every explanation
+  // into a help tooltip. A paragraph under each control is useful the first time
+  // and, on every visit after that, is what pushes the panel taller than the
+  // window and buries the controls actually in use. Only DYNAMIC information
+  // stays inline: a validation error, the live confidence value, an active count,
+  // Ollama's availability, the run status.
+  //
+  // Every `...Help` key below is tooltip text. Nothing renders it as a paragraph.
+  presetHelp: "Start from a preset, then adjust the checkboxes if you need to. Changing any checkbox switches the preset to Custom.",
   groupContact: "Contact and account details",
   // The rail groups by TRIGGER, the user's own model of how a value is found
   // so these are the names of the three ways it happens.
@@ -173,8 +181,8 @@ export const CONFIGURE = {
   groupDetected: "Auto detected values",
   groupDeclared: "Your own patterns",
   groupThorough: "Only for thorough anonymisation",
-  useAIHint: "When enabled, a language model running on this machine can suggest names to replace and double-check the result. Nothing leaves your computer.",
-  contextSizeHint: "Higher values let the AI read longer documents at once but use more memory.",
+  useAIHelp: "A language model running on this machine reads the documents and suggests Values. Nothing leaves your computer, and nothing it finds is replaced until you accept it.",
+  contextSizeHelp: "Higher values let the model read longer documents at once but use more memory.",
   aiOffTooltip: "Local AI is turned off. Turn it on with the switch on the Local AI section of Configure.",
   allowHint: "Terms in this list survive every pass, even when they also appear as names to replace.",
   // the group that surfaces the recognizers.
@@ -186,7 +194,7 @@ export const CONFIGURE = {
   // the two thresholds that actually change something spelled out.
   confidenceTitle: "Detection confidence",
   confidenceLabel: "Minimum confidence",
-  confidenceHint: "Every detection carries a score for how certain it is. Anything below the minimum you set here is left alone. Keep it at 0 to replace everything that is found, which is how the application behaves by default.",
+  confidenceHelp: "Every detection carries a score for how certain it is. Anything below the minimum you set here is left alone. Keep it at 0 to replace everything that is found, which is how the application behaves by default.",
   // What the floor does at each position is views/identifyrail.js
   // confidenceEffect(), and it is described there rather than here: the setting
   // is a floor on a SCORE, and copy calling it a rule about who proposed a
@@ -217,18 +225,43 @@ export function categoryLabels(examples = {}) {
 export const RAIL = {
   tabSmart: "Smart detection",
   tabLocalAI: "Local AI",
-  tabCloudAI: "Cloud AI",
 
   // the three routes are switchable sections, not tabs. Scope stopped
   // being a section of its own because it is the scope OF smart detection.
-  smartIntro: "Finds names by how they are written, on this machine and without any AI. It runs on the categories you choose below.",
-  smartTuning: "Strictness",
-  // The two independent halves the Smart detection route splits into, rendered
-  // as toggles at the top of the section.
-  nativeDetect: "Native detection (signals)",
-  nativeDetectHint: "Regex signals such as emails, VAT numbers and IBANs.",
-  autoDetect: "Auto detection (word frequency)",
-  autoDetectHint: "Finds recurring names by word frequency.",
+  smartHelp: "Finds Values on this machine, without any AI: application-provided patterns for structured signals, evidence taken from those signals, and rules about how names are written. It uses the categories chosen below.",
+  smartTuning: "Discovery strictness",
+  smartTuningHelp: "Heuristic discovery guesses which words are names from how they are written, so it always suggests some things that are not names. These settings decide how strict it is. Set them all to zero, and untick the box, to see everything it can find.",
+
+  // Smart detection's three methods, as controls at the top of the section.
+  builtInPatterns: "Built-in patterns",
+  builtInPatternsHelp: "Application-provided patterns for structured signals: emails, phone numbers, VAT numbers, IBANs and the rest. They MATCH AND REPLACE the signal itself, and they are the only thing here that acts without review.",
+  heuristicDiscovery: "Heuristic discovery",
+  heuristicDiscoveryHelp: "Finds recurring names from spelling, context and frequency, and suggests them for review.",
+
+  // The compact signal-source control. It switches whether a built-in pattern
+  // match may be used as EVIDENCE to find related text, and nothing else.
+  signalSuggestions: "Signal-based suggestions",
+  signalSuggestionsHelp: "A matched signal can also be evidence about text written elsewhere: an email address names a person and an organisation, and both may appear in prose in another file. Those become Suggestions you accept or reject. Clearing a source here stops the suggestions and does NOT stop the signal itself being anonymised, which is governed by Built-in patterns and the signal's own category.",
+  signalSuggestionSources: "Suggestion sources",
+  // One label and one "what it finds" per engine signal source. The checklist is
+  // built from the identifier list, so an unlabelled source would render as a
+  // checkbox named after a JSON key. Guarded by ../detection_parity_test.go
+  // through the WORKSPACE tables these mirror, so the two must agree.
+  signalSourceLabel: {
+    email: "Email addresses",
+  },
+  signalSourceFinds: {
+    email: "Names and organisations",
+  },
+  signalSourcesOff: "Off",
+  /** signalSourcesSummary(names) is the closed control's read-out: "Off", the one
+   *  enabled source's name, or a count once there are several. A list of names
+   *  would grow the control back into the row it exists to avoid. */
+  signalSourcesSummary(names) {
+    if (names.length === 0) return "Off";
+    if (names.length === 1) return names[0];
+    return `${names.length} sources`;
+  },
   routeOn: "On",
   routeOff: "Off",
   /** routeSwitchLabel(title) is the accessible name of a section's switch. */
@@ -237,9 +270,10 @@ export const RAIL = {
   },
 
   country: "Document country",
-  countryHint: "The phone, VAT and national identification examples follow this country's formats, and the matching national identifiers are switched on. It changes nothing else about how detection works.",
+  countryHelp: "The phone, VAT and national identification examples follow this country's formats, and the matching national identifiers are switched on. It changes nothing else about how detection works.",
   preset: "Preset",
-  whatToAnonymise: "What to anonymise",
+  categories: "Categories",
+  categoriesHelp: "The structured signals built-in pattern matching looks for. They are matched and replaced directly, without review. Switching Built-in patterns off leaves the selection intact and skips the pass.",
 
   //  split the category list in two blocks: the regex-triggered
   // patterns (found by shape) and the entity categories (found by name). Both
@@ -247,10 +281,10 @@ export const RAIL = {
   // the ONE scope the whole pipeline reads (CLAUDE.md §5): rendering a second
   // copy of the same checkboxes inside Local AI would give one setting two
   // controls, and the second copy would be folded shut and unreachable anyway.
-  valuesAuto: "Values to detect automatically",
-  valuesAutoHint: "These categories are used by every detection route you switch on.",
+  valuesAuto: "Auto detected values",
+  valuesAutoHelp: "These categories are used by every detection route you switch on.",
   // What the Local AI section says INSTEAD of a second copy of the checkboxes.
-  localValuesHint: "Local AI looks for the same value categories chosen under Smart detection above. Switching this route on adds a model pass over them, it does not change what is selected.",
+  localValuesHelp: "Local AI looks for the same categories chosen under Smart detection above. Switching this route on adds a model pass over them; it does not change what is selected.",
 
   /** activeCount(n, total) is the rail heading's read-out. */
   activeCount(n, total) {
@@ -270,8 +304,8 @@ export const RAIL = {
   // much, so the user can aim the scan at one document and a range of its own
   // units (pages, slides, rows or lines). This scope applies to the Local AI
   // route only; Smart detection always reads everything because it is cheap.
-  scopeHeading: "What to scan",
-  scopeIntro: "The local AI reads only what you point it at. Scanning one document, or a few pages of one, keeps a small model focused and the pass quick.",
+  scopeHeading: "Scan scope",
+  scopeHelp: "The local AI reads only what you point it at. Scanning one document, or a few pages of one, keeps a small model focused and the pass quick.",
   scopeAllDocs: "All documents (whole)",
   scopeDoc: "Document",
   scopeEntireDoc: "Entire document",
@@ -310,21 +344,15 @@ export const RAIL = {
     return `${name} (${count} ${u}${count === 1 ? "" : "s"})`;
   },
 
-  // The Cloud AI placeholder. It commits only to the thing that
-  // will not change about the feature: nothing leaves the machine until the user
-  // has said in writing what may.
-  cloudNotYet: "Not available yet",
-  cloudBody: "Connecting to a cloud endpoint is not built yet. When it is, this is where you will pick the provider, the model and the endpoint, and confirm in writing what may leave this machine before anything is sent.",
-
   // The Load profile section: a plain (switch-less) section at the foot of the
   // rail. Load restores a saved profile; Save writes one, but only once a run
   // has produced a registry worth preserving.
   profileTitle: "Load profile",
-  profileHint: "Reuse a saved setup: values, allowlist, patterns, rules and the placeholder registry, so a follow-up batch reuses the same placeholders.",
+  profileHelp: "Reuse a saved setup: Values, the never anonymise list, patterns and the placeholder registry, so a follow-up batch reuses the same placeholders.",
   profileLoad: "Load",
   profileSave: "Save",
   profileSaveDisabled: "Run detection once before saving a profile.",
-  profileLoadDone: "Profile loaded: values, allowlist, patterns and rules restored.",
+  profileLoadDone: "Profile loaded: Values, allowlist and patterns restored.",
   profileSaveDone: "Profile saved. A follow-up batch will reuse these placeholders.",
 };
 
@@ -334,17 +362,16 @@ export const VALUES = {
   // Smart detection tuning. It moved to the Identify RAIL's own tab
   // which RAIL.tabSmart titles, so the block no longer
   // needs a heading of its own.
-  smartSettingsHint: "Smart detection guesses which words are names from how they are written, so it always proposes some things that are not names. These settings decide how strict it is. Set them all to zero, and untick the box, to see everything it can find.",
   smartMinLength: "Shortest value",
-  smartMinLengthHint: "Suggestions shorter than this many letters are skipped.",
+  smartMinLengthHelp: "Suggestions shorter than this many letters are skipped.",
   smartMinOccurrences: "Fewest occurrences",
-  smartMinOccurrencesHint: "How often a value must appear before it is suggested. 1 means once is enough.",
+  smartMinOccurrencesHelp: "How often a value must appear before it is suggested. 1 means once is enough.",
   smartCommonWords: "Skip ordinary words",
-  smartCommonWordsHint: "Ignores month names, weekdays and common sentence openers, which are capitalised without being names.",
+  smartCommonWordsHelp: "Ignores month names, weekdays and common sentence openers, which are capitalised without being names.",
   smartMinConfidence: "Minimum certainty",
-  smartMinConfidenceHint: "Higher values keep only the strongest suggestions, such as a name followed by a company form or introduced by a title.",
+  smartMinConfidenceHelp: "Higher values keep only the strongest suggestions, such as a name followed by a company form or introduced by a title.",
   smartStrictness: "How much to trust",
-  smartStrictnessHint: "Strict keeps only suggestions with strong evidence, such as a company form, a title or a matching email address. Lenient also shows the weakest guesses, which pairs well with a low minimum certainty. Balanced is the default.",
+  smartStrictnessHelp: "Strict keeps only suggestions with strong evidence, such as a company form, a title or a matching email address. Lenient also shows the weakest guesses, which pairs well with a low minimum certainty. Balanced is the default.",
   smartStrictnessLenient: "Lenient: show weak guesses too",
   smartStrictnessBalanced: "Balanced (recommended)",
   smartStrictnessStrict: "Strict: strong evidence only",
@@ -463,9 +490,9 @@ export const WORKSPACE = {
   colCount: "COUNT",
   colActions: "ACTIONS",
   allTypes: "ALL TYPES",
-  allSources: "ALL SOURCES",
+  allMethods: "ALL METHODS",
   filterTypeTitle: "Filter by type",
-  filterSourceTitle: "Filter by what found the value",
+  filterMethodTitle: "Filter by which discovery method found it",
   retypeSuggestionTitle: "Change the type before accepting",
   accept: "Accept",
   reject: "Reject",
@@ -496,26 +523,82 @@ export const WORKSPACE = {
   rejectedN(n) {
     return n === 0 ? "Nothing to reject." : `${n} suggestion${n === 1 ? "" : "s"} rejected.`;
   },
-  // The source badge labels. "Pattern" is deliberately absent:
-  // deterministic matches are applied without review and never become
-  // suggestions, so naming a source that cannot appear would promise rows the
-  // table can never show.
-  sourceLabels: {
-    smart: "Smart",
-    "local-ai": "Local AI",
+  // WHICH METHODS found a Suggestion or Value. Shown as a set, because two
+  // methods agreeing is worth seeing: the user judging a Suggestion is deciding
+  // how much to trust it, and "two methods found this" is a different position
+  // from either alone. One label per engine discovery method, enforced by
+  // ../detection_parity_test.go.
+  //
+  // Built-in and custom pattern matching are deliberately absent: they produce
+  // direct matches applied without review, never Suggestions, so naming them
+  // would promise rows the table can never show.
+  methodLabel: {
+    manual: "You",
+    signal: "From a signal",
+    heuristic: "Smart detection",
+    local_ai: "Local AI",
+  },
+  methodTitle: "Which discovery method found this",
+
+  // The names of the winning claim in an intersection warning, one per engine
+  // MATCH CLASS, enforced by ../detection_parity_test.go. The warning names a
+  // method, never an internal rank: a rule the user cannot read the inputs of is
+  // indistinguishable from randomness.
+  matchClassLabel: {
+    built_in_pattern: "a built-in pattern",
+    user_defined: "something you declared",
+    smart_discovered: "Smart detection",
+    local_ai_discovered: "Local AI",
   },
 
-  // The ROUTE a value came from, shown on its card. A precedence rule the user
-  // cannot see the inputs of is indistinguishable from randomness, which is how
-  // the old behaviour came to be reported. One label per engine origin,
-  // enforced by ../origin_parity_test.go.
-  originLabel: {
-    native: "Native",
-    declared: "You",
-    auto: "Smart detection",
-    ai: "Local AI",
+  // WHICH built-in signals may derive Suggestions, one label per engine signal
+  // source, enforced by ../detection_parity_test.go. The checklist is built from
+  // the identifier list, so an unlabelled source would render as a checkbox named
+  // after a JSON key.
+  signalSourceLabel: {
+    email: "Email addresses",
   },
-  originTitle: "The detection route this value came from",
+  // What each source can find, shown beside its checkbox. It is the answer to
+  // "what am I switching off", which the source name alone does not give.
+  signalSourceFinds: {
+    email: "Names and organisations",
+  },
+
+  // WHY a discovery method produced a row, one entry per engine evidence kind,
+  // enforced by ../detection_parity_test.go. The engine returns evidence
+  // STRUCTURED and the sentence is assembled here, because an engine returning
+  // prose makes the copy a contract nobody can check.
+  evidenceKindLabel: {
+    email_local_part: "an email address naming this person",
+    email_domain: "an email domain naming this organisation",
+  },
+  evidenceTitle: "Why this was suggested",
+  /**
+   * evidenceSentence(e) turns one structured piece of evidence into a sentence.
+   *
+   * The signal text is included because it is the thing the user can check: "an
+   * email address naming this person" is a claim, and "pierre.dupont@tpps.com" is
+   * the evidence for it. The document list is included when present, so the
+   * sentence points somewhere.
+   */
+  evidenceSentence(e) {
+    const kind = this.evidenceKindLabel[e?.kind];
+    if (!kind) return "";
+    let out = `Found from ${kind}`;
+    if (e.signalText) out += ` (${e.signalText})`;
+    const docs = e.documents ?? [];
+    if (docs.length > 0) out += ` in ${docs.join(", ")}`;
+    return `${out}.`;
+  },
+  /**
+   * relatedValues(others) names the Suggestions or Values that share evidence
+   * with this one. Shared evidence makes them RELATED, never one Value: two
+   * country branches of one group genuinely differ, so only the user can say they
+   * are the same thing, which is why this is a note and not a fold.
+   */
+  relatedValues(others) {
+    return `Shares evidence with ${others.join(", ")}. Group them only if they are the same thing.`;
+  },
 
   // Intersections: two routes claim the same text. The precedence rule always
   // decides, so these are WARNINGS that explain the decision, never refusals.
@@ -532,7 +615,7 @@ export const WORKSPACE = {
   intersectionSome(covered, total, value, winner, route) {
     return `${covered} of ${total} occurrences of "${value}" are also matched by ${route} as "${winner}", which takes priority there.`;
   },
-  intersectionOrder: "Priority order: native detection, then your own values and patterns, then Smart detection, then Local AI.",
+  intersectionOrder: "Priority order: built-in patterns, then your own Values and patterns, then Smart detection, then Local AI.",
   intersectionFix: "If this value should win instead, switch off the type that covers it, narrow the pattern, or add the covering term to Never anonymise.",
   intersectionAllowWinner: "Never anonymise the covering term",
   /** intersectionAllowed(term) confirms the covering term is now protected. */
@@ -558,32 +641,32 @@ export const WORKSPACE = {
     return `${v} is already in the list.`;
   },
   removeValue: "Remove this value",
-  variants: "Variants",
-  addVariant: "add",
-  addVariantPlaceholder: "another spelling, then Enter",
-  removeVariant: "Stop replacing this spelling",
-  variantDragHint: "Drag this spelling onto another value to regroup it",
-  /** variantMoved(v, target) confirms a regrouping drag. */
-  variantMoved(v, target) {
+  derivedSpellings: "Spellings",
+  addSpelling: "add",
+  addSpellingPlaceholder: "another spelling, then Enter",
+  removeSpelling: "Stop replacing this spelling",
+  spellingDragHint: "Drag this spelling onto another Value to regroup it",
+  /** spellingMoved(v, target) confirms a regrouping drag. */
+  spellingMoved(v, target) {
     return `${v} now counts as a spelling of ${target}.`;
   },
-  variantsPending: "working out the other spellings...",
-  noVariants: "no other spellings found",
+  spellingsPending: "working out the other spellings...",
+  noSpellings: "no other spellings found",
   /**
-   * variantDeleted(v) confirms a spelling was dropped from one value, and
+   * spellingDeleted(v) confirms a spelling was dropped from one value, and
    * points at the tab that IS for negative rules. Deleting a spelling here
    * stops it belonging to THIS value; it does not stop it being replaced by
    * something else, and the difference is not guessable from the button.
    */
-  variantDeleted(v) {
+  spellingDeleted(v) {
     return `Removed the spelling "${v}" from this value. To stop it being replaced by anything at all, add it to Never anonymise.`;
   },
   /**
-   * alsoSpelled(variants) names the longer forms folded into one suggestion.
+   * alsoSpelled(spellings) names the longer forms folded into one suggestion.
    * Accepting the row accepts them too, so the row has to say which.
    */
-  alsoSpelled(variants) {
-    return `also spelled ${variants.join(", ")}`;
+  alsoSpelled(spellings) {
+    return `also spelled ${spellings.join(", ")}`;
   },
   /**
    * foldedIntoValue(added, main) explains that a new value joined an existing
@@ -593,8 +676,8 @@ export const WORKSPACE = {
   foldedIntoValue(added, main) {
     return `Added as a spelling of "${main}", which is the shorter form.`;
   },
-  /** variantAlreadyThere(v) explains an add that changed nothing. */
-  variantAlreadyThere(v) {
+  /** spellingAlreadyThere(v) explains an add that changed nothing. */
+  spellingAlreadyThere(v) {
     return `${v} is already one of the spellings.`;
   },
 
@@ -603,8 +686,8 @@ export const WORKSPACE = {
   valuesSearchLabel: "Filter values by name or spelling",
   valuesAllTypes: "All types",
   valuesFilterTypeTitle: "Show only one type",
-  showVariants: "Show spellings",
-  hideVariants: "Hide spellings",
+  showSpellings: "Show spellings",
+  hideSpellings: "Hide spellings",
   showVariantsTitle: "Show the spellings under each value",
   hideVariantsTitle: "Hide the spellings to see more values at once",
   noValuesMatch: "No value matches the current search and type filter.",
@@ -620,7 +703,7 @@ export const WORKSPACE = {
   },
   editValueTitle: "Rename this value",
   editValuePlaceholder: "the value, then Enter",
-  editVariantTitle: "Edit this spelling (double-click)",
+  editSpellingTitle: "Edit this spelling (double-click)",
   editVariantPlaceholder: "the spelling, then Enter",
   changeTypeLabel: "Change the type of this value",
   /** valueRenamedDuplicate(v) explains a rename refused because the type
@@ -769,7 +852,7 @@ export const ANONYMISE = {
   selectedTitle: "Selected placeholder",
   closeSelection: "Close",
   replaces: "replaces",
-  makeVariantOf: "Make it a variant of",
+  makeVariantOf: "Make it a spelling of",
   reassignPlaceholder: "type an existing value",
   reassignHint: "Reassigning runs the fast deterministic passes again. There is no AI re-scan, and existing placeholders keep their numbers.",
   /** reassignDone / reassignRefused report the outcome. */
@@ -827,18 +910,18 @@ export const ANONYMISE = {
   noValuesInScope: "No values from this category appear in the files in scope.",
   dismissWarning: "Hide this warning",
 
-  // Something missed?
-  missedTitle: "Something missed?",
+  // Add missed Value.
+  missedTitle: "Add missed Value",
   /** missedSummary(n) is the folded card's read-out: how many values the next
    *  run will look for. */
   missedSummary(n) {
     return n === 0 ? "add a value" : `${n} value${n === 1 ? "" : "s"} to replace`;
   },
-  missedHint: "Add the value, then re-run the fast passes. Existing placeholders keep their numbers.",
-  missedCategoryLabel: "The type of value",
-  missedLabel: "A value the run missed",
-  missedPlaceholder: "missed value, e.g. P. Stone",
-  addValue: "Add value",
+  missedHint: "Declare the Value, then re-run the fast passes. It gets a category, a placeholder and a re-identification entry like any other Value. Existing placeholders keep their numbers.",
+  missedCategoryLabel: "The type of Value",
+  missedLabel: "A Value the run missed",
+  missedPlaceholder: "missed Value, e.g. P. Stone",
+  addValue: "Add Value",
   /** missedAlreadyThere(v) explains an add that changed nothing. */
   missedAlreadyThere(v) {
     return `${v} is already on the list of values to replace.`;
@@ -849,25 +932,6 @@ export const ANONYMISE = {
     return `Re-ran the fast passes over ${n} value${n === 1 ? "" : "s"}. ` +
       `Existing placeholders kept their numbers.`;
   },
-
-  // Find and replace.
-  rulesTitle: "Find and replace",
-  /** rulesSummary(n) is the folded card's read-out. */
-  rulesSummary(n) {
-    return n === 1 ? "1 rule" : `${n} rules`;
-  },
-  rulesHint: "These run last, in order, and each rule sees what the previous one produced.",
-  ruleFind: "find",
-  ruleReplace: "replace with",
-  ruleTo: "to",
-  caseSensitive: "Case-sensitive",
-  exactCase: "exact case",
-  anyCase: "any case",
-  addRule: "Add rule",
-  ruleNeedsFind: "Type the text to find. A rule with nothing to find would do nothing.",
-  moveUp: "Run this rule earlier",
-  moveDown: "Run this rule later",
-  removeRule: "Remove this rule",
 
   // The Compare card.
   compareDoc: "Which document to compare",
@@ -913,40 +977,34 @@ export const ANONYMISE = {
   },
 
   // The floating selection panel. Selecting text in either pane offers to copy
-  // it or to replace it, and replacing has three outcomes that differ in WHAT
+  // it or to replace it, and replacing has two outcomes that differ in WHAT
   // ENDS UP IN THE RE-IDENTIFICATION KEY. That difference is not guessable from
-  // the labels, which is why each mode carries a hint.
+  // the labels, which is why each mode carries a hint. Both outcomes go through
+  // the Value model: there is no way from here to rewrite text without the key
+  // recording it.
   selectionTitle: "Selected text",
   selectionCopy: "Copy",
   selectionReplace: "Replace",
-  selectionModeVariant: "Make it a spelling of an existing value",
-  selectionModeValue: "Add it as a new value",
-  selectionModeText: "Replace the text only",
-  selectionModeVariantHint: "The text is replaced with that value's placeholder, so both spellings share one number.",
-  selectionModeValueHint: "The text becomes a value of its own, with its own placeholder.",
-  selectionModeTextHint: "A find and replace rule. No value is created and nothing is added to the re-identification key.",
-  selectionTargetLabel: "Which value it is a spelling of",
-  selectionTargetPlaceholder: "start typing a value",
+  selectionModeVariant: "Make it a spelling of an existing Value",
+  selectionModeValue: "Add it as a new Value",
+  selectionModeVariantHint: "The text is replaced with that Value's placeholder, so both spellings share one number.",
+  selectionModeValueHint: "The text becomes a Value of its own, with its own placeholder.",
+  selectionTargetLabel: "Which Value it is a spelling of",
+  selectionTargetPlaceholder: "start typing a Value",
   selectionTypeLabel: "Type",
-  replaceWith: "What to replace it with",
   applySelection: "Apply",
   cancelSelection: "Cancel",
   selectionBack: "Back",
-  selectionNeedsReplacement: "Type what the selected text should become.",
-  selectionNeedsTarget: "Choose the value this is a spelling of.",
-  selectionUnknownTarget: "That value is not in the list. Pick one of the suggestions.",
+  selectionNeedsTarget: "Choose the Value this is a spelling of.",
+  selectionUnknownTarget: "That Value is not in the list. Pick one of the suggestions.",
   selectionCopied: "Copied to the clipboard.",
-  /** selectionBecameVariant(text, main) confirms mode 1. */
+  /** selectionBecameVariant(text, main) confirms the spelling mode. */
   selectionBecameVariant(text, main) {
     return `${text} now counts as a spelling of ${main}, so both share one placeholder.`;
   },
-  /** selectionBecameValue(text) confirms mode 2. */
+  /** selectionBecameValue(text) confirms the new-Value mode. */
   selectionBecameValue(text) {
-    return `${text} is now a value of its own, with its own placeholder.`;
-  },
-  /** selectionApplied(find, replace) confirms mode 3. */
-  selectionApplied(find, replace) {
-    return `${find} is now replaced with ${replace} everywhere, by a find and replace rule.`;
+    return `${text} is now a Value of its own, with its own placeholder.`;
   },
 
   // The footer.
@@ -1008,12 +1066,12 @@ export const EXPORT = {
   // Profile (Save only; Load lives on the Identify rail).
   sessionTitle: "Profile",
   sessionSummary: "reuse placeholders",
-  sessionHint: "Saves values, allowlist, patterns, rules and the placeholder registry, so a follow-up batch reuses the same placeholders. Contains the key.",
+  sessionHint: "Saves Values, allowlist, patterns and the placeholder registry, so a follow-up batch reuses the same placeholders. Contains the key.",
   save: "Save",
   sessionSaveTitle: "Save the profile file",
   sessionSaveConfirm: "Save profile",
   sessionSaveDone: "Profile saved. A follow-up batch will reuse these placeholders.",
-  sessionLoadDone: "Profile loaded: values, allowlist, patterns and rules restored.",
+  sessionLoadDone: "Profile loaded: Values, allowlist and patterns restored.",
 
   // The document list.
   documentsTitle: "Documents",
@@ -1079,7 +1137,7 @@ export const EXPORT = {
   newBatch: "START A NEW BATCH",
   newBatchTooltip: "Clear this batch and keep your settings",
   newBatchTitle: "Start a new batch?",
-  newBatchBody: "This clears the imported documents, the run and its result, the values, the suggestions, the patterns and the find and replace rules. Your settings, your document country and your never anonymise list are kept, and so is the placeholder registry, so a follow-up batch reuses the same placeholders for the same values.",
+  newBatchBody: "This clears the imported documents, the run and its result, the Values, the Suggestions and the patterns. Your settings, your document country and your never anonymise list are kept, and so is the placeholder registry, so a follow-up batch reuses the same placeholders for the same Values.",
   newBatchConfirm: "Clear the batch",
   newBatchDone: "Batch cleared. Drop new files on the Import step; your settings were kept.",
 };
@@ -1096,7 +1154,7 @@ export const EXPORT = {
 // carry a Luxembourg default here and are OVERLAID at render time by
 // countries.js examplesFor(), so the rail shows a French number for a French
 // document. Overlaying rather than storing five
-// variants keeps this table one row per category and keeps the guard working.
+// derivedSpellings keeps this table one row per category and keeps the guard working.
 export const CATEGORY_LABELS = {
   email: ["Email addresses", "For example jean.muller@example.com"],
   phone: ["Phone numbers", "For example +352 621 123 456"],

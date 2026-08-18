@@ -73,7 +73,7 @@ func TestEveryEngineCategoryIsKnownToTheFrontend(t *testing.T) {
 	var missing []string
 	for _, category := range append(
 		append([]string{}, engine.AllPIICategories...),
-		engine.AllEntityCategories...) {
+		engine.AllValueCategories...) {
 		if !union[category] {
 			missing = append(missing, category)
 		}
@@ -96,7 +96,7 @@ func TestFrontendInventsNoCategory(t *testing.T) {
 	for _, c := range engine.AllPIICategories {
 		known[c] = true
 	}
-	for _, c := range engine.AllEntityCategories {
+	for _, c := range engine.AllValueCategories {
 		known[c] = true
 	}
 
@@ -147,7 +147,7 @@ func TestEveryEngineCategoryHasAFrontendLabel(t *testing.T) {
 	var missing []string
 	for _, category := range append(
 		append([]string{}, engine.AllPIICategories...),
-		engine.AllEntityCategories...) {
+		engine.AllValueCategories...) {
 		if !strings.Contains(copyJS, fmt.Sprintf("\n  %s: [", category)) {
 			missing = append(missing, category)
 		}

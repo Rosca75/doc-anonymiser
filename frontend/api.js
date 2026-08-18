@@ -182,12 +182,12 @@ export async function saveAllowlistTemplate() {
   return bridge().SaveAllowlistTemplate();
 }
 
-// --- Entities screen ------------------------------------------
+// --- Values screen ------------------------------------------
 
 /**
  * runDetection(fileNames, allowTerms, aiScope) runs EVERY enabled detection
  * route in one call and resolves to a DetectionResult
- * {candidates, proposals, phases, skipped, errors, cancelled, status}.
+ * {suggestions, proposals, phases, skipped, errors, cancelled, status}.
  *
  * This is the UI's detection entry point. It replaced two separate
  * calls whose lifecycles could not be reconciled: one cancellation slot, one
@@ -216,12 +216,11 @@ export async function cancelDetection() {
   return bridge().CancelDetection();
 }
 
-/** expandVariants(entity) resolves to the variant list of one entity
- *  ({category, canonical, manualVariants, autoExpand}). autoExpand false means
- *  the user curated the spellings, so Go derives none and returns exactly the
- *  list it was given. */
-export async function expandVariants(entity) {
-  return bridge().ExpandEntityVariants(entity);
+/** expandSpellings(value) resolves to the complete spelling list of one Value
+ *  ({category, mainText, spellings, spellingPolicy}). A "curated" policy means
+ *  Go derives nothing and returns exactly the list it was given. */
+export async function expandSpellings(value) {
+  return bridge().ExpandValueSpellings(value);
 }
 
 /** countTermMatches(term) resolves to {count, documents} for the live
@@ -244,7 +243,7 @@ export async function patternMatches(expr) {
 // --- Values, placeholders and removals (step 3,  Phases 4 and 5) ---
 //
 // These supersede setEntityPlaceholder / entityPlaceholder above, which are
-// addressed by (category, canonical) and live on step 2, where the registry does
+// addressed by (category, mainText) and live on step 2, where the registry does
 // not exist yet. Everything here is addressed BY PLACEHOLDER, because on step 3
 // the user is looking at report rows and at marks in the Compare pane and both
 // carry the placeholder.
@@ -269,7 +268,7 @@ export async function setValuePlaceholder(current, next) {
 }
 
 /** removeValue(placeholder) deletes a value from the session and resolves to
- *  {original, category, placeholder, variants}. It does NOT re-run: the caller
+ *  {original, category, placeholder, derivedSpellings}. It does NOT re-run: the caller
  *  re-runs, because Go re-running from inside a bound method is a deadlock
  *  shape (RunPipeline holds an in-progress guard, FastRerun is synchronous). */
 export async function removeValue(placeholder) {
@@ -285,13 +284,6 @@ export async function restoreValue(placeholder) {
 /** listRemovedValues() resolves to the collapsed removed list. */
 export async function listRemovedValues() {
   return bridge().ListRemovedValues();
-}
-
-/** nextRulePlaceholder() resolves to the next free [CUSTOM_N], reserved as it
- *  is handed over so an automatic assignment cannot take it while the user is
- *  still typing the rule. */
-export async function nextRulePlaceholder() {
-  return bridge().NextRulePlaceholder();
 }
 
 /** validateValues(request) resolves to {blocking, warnings}. A blocking
@@ -413,9 +405,9 @@ export async function exportReport(format) {
   return bridge().ExportReport(format);
 }
 
-/** saveSession(request) persists the session (entities, allowlist,
- *  patterns, rules, settings, registry). Warn the user first, the file
- *  contains the re-identification key. */
+/** saveSession(request) persists the session (values, allowlist, patterns,
+ *  settings, registry). Warn the user first, the file contains the
+ *  re-identification key. */
 export async function saveSession(request) {
   return bridge().SaveSessionToFile(request);
 }

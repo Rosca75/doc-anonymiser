@@ -7,6 +7,7 @@ import {
   button, icon,
   card, countBadge, tabbar, chipRow, sectionLabel, statTile,
   collapsibleGroup, stepFooter, toastHTML, modalHTML,
+  helpTooltip, wireHelpTooltips, dropdownChecklist,
 } from "./ui.js";
 
 // --- button --------------------------------------------------------------
@@ -190,24 +191,24 @@ test("the documentation page styles itself from the brand tokens only", () => {
   assert.match(docsHTML, /href="\.\.\/brand\.css"/);
 });
 
-// --- Variant chip contract -----------------------------------------------
+// --- Spelling chip contract -----------------------------------------------
 //
-// Reported symptom: the variant chips looked disabled and could not be dragged.
-// Both were CSS, not markup: the chips inherited the muted colour of the variant
+// Reported symptom: the spelling chips looked disabled and could not be dragged.
+// Both were CSS, not markup: the chips inherited the muted colour of the spelling
 // area, and nothing said they were draggable. The markup side is asserted by
 // reading views/identifyworkspace.js, since the chip builder is not exported and
 // there is no DOM here.
 
 const workspaceJS = fs.readFileSync(path.join(staticDir, "views", "identifyworkspace.js"), "utf8");
 
-test("variant chips are rendered draggable", () => {
+test("spelling chips are rendered draggable", () => {
   // the chips looked disabled and could not be dragged.
   // They are .chip-tag now, and the drag survived the relayout:
   // regrouping a mis-attached spelling has no other home. A conflicting spelling
   // adds a " bad" class between the base class and the closing quote, so this
   // asserts the two facts (the chip class, and draggable) rather than one exact
   // run of characters the interpolation now splits.
-  assert.match(workspaceJS, /class="chip-tag variant-chip/);
+  assert.match(workspaceJS, /class="chip-tag spelling-chip/);
   assert.match(workspaceJS, /draggable="true"/);
 });
 
@@ -225,8 +226,8 @@ test("a drop onto a value's own card is refused rather than being a no-op move",
   assert.match(workspaceJS, /a drop onto its own card would be a no-op/);
 });
 
-test("variant chips are not styled as disabled", () => {
-  const chip = styleCSS.match(/\n\.variant-chip \{[^}]*\}/);
+test("spelling chips are not styled as disabled", () => {
+  const chip = styleCSS.match(/\n\.spelling-chip \{[^}]*\}/);
   assert.ok(chip, "the chip rule must exist");
   // The chip must carry the ordinary text colour, not the muted one its
   // surroundings use: a greyed-out chip reads as disabled.
@@ -239,7 +240,7 @@ test("variant chips are not styled as disabled", () => {
 });
 
 test("a drop target is visibly marked", () => {
-  // The target is a value CARD now, not a table row: the variant chips moved
+  // The target is a value CARD now, not a table row: the spelling chips moved
   // from a table into cards.
   assert.match(styleCSS, /\.value-card\.drop-target \{/);
 });
@@ -320,7 +321,7 @@ test("countBadge renders zero but renders nothing for a missing count", () => {
   assert.equal(countBadge(undefined), "");
 });
 
-test("countBadge marks the active variant", () => {
+test("countBadge marks the active spelling", () => {
   assert.ok(countBadge(4, { active: true }).includes('class="count-badge active"'));
   assert.ok(countBadge(4).includes('class="count-badge"'));
   assert.ok(!countBadge(4).includes("active"));
@@ -372,15 +373,15 @@ test("chipRow marks the active chip and reports it to assistive technology", () 
   assert.ok(html.includes('role="group" aria-label="Preset"'));
 });
 
-test("chipRow square variant and disabled chips", () => {
-  const html = chipRow([{ id: "cloud", label: "Cloud AI", disabled: true }], { square: true });
+test("chipRow square spelling and disabled chips", () => {
+  const html = chipRow([{ id: "later", label: "Not yet", disabled: true }], { square: true });
   assert.ok(html.includes("tint-chip square"));
   assert.ok(html.includes("disabled"));
 });
 
 // --- sectionLabel / statTile ---------------------------------------------
 
-test("sectionLabel escapes and supports the mini variant", () => {
+test("sectionLabel escapes and supports the mini spelling", () => {
   assert.ok(sectionLabel("Document country").includes('class="section-label">Document country<'));
   assert.ok(sectionLabel("x", { mini: true }).includes("section-label mini"));
   assert.ok(sectionLabel("<b>").includes("&lt;b&gt;"));
@@ -603,4 +604,147 @@ test("every functional tint the kit references is declared in brand.css", () => 
   const missing = [...used].filter((token) => !brandCSS.includes(token + ":") &&
     !styleCSS.includes(token + ":")).sort();
   assert.deepEqual(missing, [], `style.css uses undeclared tokens: ${missing.join(", ")}`);
+});
+
+// --- helpTooltip ---------------------------------------------------------
+//
+// The tooltip is what lets the Configure panel explain itself without spending
+// permanent vertical space. Two things are load-bearing and both are asserted
+// here: the KEYBOARD path (the icon is a real focusable button and the bubble is
+// its accessible description) and the OPEN state living in one data attribute so
+// CSS owns appearance and JavaScript owns only when.
+
+/** fakeNode(tag) is a minimal element stand-in with the four APIs
+ *  wireHelpTooltips touches: listeners, attributes and one query. */
+function fakeNode(children = {}) {
+  const listeners = new Map();
+  const attrs = new Map();
+  return {
+    listeners, attrs,
+    addEventListener: (name, fn) => listeners.set(name, fn),
+    setAttribute: (k, v) => attrs.set(k, v),
+    removeAttribute: (k) => attrs.delete(k),
+    querySelector: (sel) => children[sel] ?? null,
+    fire: (name, ev = {}) => listeners.get(name)?.(ev),
+    isOpen: () => attrs.get("data-open") === "true",
+  };
+}
+
+/** wireOne(help) runs wireHelpTooltips over a container holding just `help`. */
+function wireOne(help) {
+  wireHelpTooltips({ querySelectorAll: () => [help] });
+}
+
+test("helpTooltip renders a focusable icon that describes its bubble", () => {
+  const html = helpTooltip("Why this matters", { id: "help-x", label: "About the floor" });
+  assert.match(html, /<button type="button" class="help-icon"/,
+    "a real button, so Tab reaches it: a span with a hover style is invisible to the keyboard");
+  assert.match(html, /aria-label="About the floor"/);
+  assert.match(html, /aria-describedby="help-x"/);
+  assert.match(html, /<span class="help-bubble" id="help-x" role="tooltip">Why this matters<\/span>/);
+});
+
+test("helpTooltip escapes its text and derives a stable id", () => {
+  const html = helpTooltip('a <b>bold</b> "claim"');
+  assert.ok(!html.includes("<b>"), "copy is escaped, never trusted as markup");
+  assert.equal(html, helpTooltip('a <b>bold</b> "claim"'),
+    "the same text must derive the same id, or aria-describedby drifts between renders");
+  assert.notEqual(helpTooltip("one"), helpTooltip("two"),
+    "different text must derive different ids, or two bubbles collide");
+});
+
+test("helpTooltip renders nothing for empty copy", () => {
+  // A tooltip with no text is an icon that opens an empty bubble.
+  assert.equal(helpTooltip(""), "");
+  assert.equal(helpTooltip(undefined), "");
+});
+
+test("the tooltip opens on hover AND on keyboard focus", () => {
+  const help = fakeNode();
+  wireOne(help);
+  assert.ok(!help.isOpen(), "closed until asked");
+
+  help.fire("pointerenter");
+  assert.ok(help.isOpen(), "hover opens it");
+  help.fire("pointerleave");
+  assert.ok(!help.isOpen(), "and leaving closes it");
+
+  help.fire("focusin");
+  assert.ok(help.isOpen(), "Tab opens it too, or half the users never see it");
+  help.fire("focusout");
+  assert.ok(!help.isOpen());
+});
+
+test("the tooltip stays open while EITHER hover or focus holds", () => {
+  // With one flag, moving the pointer from the icon into the bubble closes the
+  // bubble the pointer is moving towards, so the text cannot be selected.
+  const help = fakeNode();
+  wireOne(help);
+  help.fire("focusin");
+  help.fire("pointerenter");
+  help.fire("pointerleave");
+  assert.ok(help.isOpen(), "still focused, so still open");
+  help.fire("focusout");
+  assert.ok(!help.isOpen());
+});
+
+test("Escape closes the tooltip and gives up the hover with it", () => {
+  const iconBtn = { blurred: false, blur() { this.blurred = true; } };
+  const help = fakeNode({ ".help-icon": iconBtn });
+  wireOne(help);
+  help.fire("pointerenter");
+  assert.ok(help.isOpen());
+
+  let stopped = false;
+  help.fire("keydown", { key: "Escape", stopPropagation: () => { stopped = true; } });
+  assert.ok(!help.isOpen(), "Escape closes it");
+  assert.ok(stopped, "and does not also reach whatever else listens for Escape");
+  assert.ok(iconBtn.blurred, "focus is released, or the bubble reopens on the next repaint");
+
+  // The hover flag is cleared too, so a twitch that does not leave the icon does
+  // not bring the bubble straight back.
+  help.fire("pointerleave");
+  assert.ok(!help.isOpen());
+});
+
+// --- dropdownChecklist ---------------------------------------------------
+
+test("dropdownChecklist is one row closed and a list open", () => {
+  const rows = [{ id: "email", label: "Email addresses", detail: "Names and organisations", checked: true }];
+  const closed = dropdownChecklist({
+    id: "sources", label: "Signal-based suggestions", summary: "Email addresses",
+    listLabel: "Suggestion sources", open: false, rows,
+  });
+  assert.match(closed, /aria-expanded="false"/);
+  assert.match(closed, /class="checklist-list" id="sources-list" hidden/,
+    "the list is hidden while closed, so it costs no vertical space");
+  assert.match(closed, /<span class="checklist-summary">Email addresses<\/span>/);
+
+  const open = dropdownChecklist({
+    id: "sources", label: "Signal-based suggestions", summary: "Email addresses",
+    listLabel: "Suggestion sources", open: true, rows,
+  });
+  assert.match(open, /data-open="true"/);
+  assert.match(open, /aria-expanded="true"/);
+  assert.ok(!/checklist-list" id="sources-list" hidden/.test(open));
+});
+
+test("dropdownChecklist carries one checkbox per row, keyed by its identifier", () => {
+  const html = dropdownChecklist({
+    id: "sources", label: "L", summary: "S", listLabel: "Rows", open: true,
+    rows: [
+      { id: "email", label: "Email addresses", checked: true },
+      { id: "phone", label: "Phone numbers", checked: false },
+    ],
+  });
+  assert.match(html, /data-checklist="email"[^>]* checked/);
+  assert.match(html, /data-checklist="phone"(?![^>]*checked)/);
+});
+
+test("dropdownChecklist escapes every string it is given", () => {
+  const html = dropdownChecklist({
+    id: "x", label: "<b>L</b>", summary: "<b>S</b>", listLabel: "<b>R</b>", open: true,
+    rows: [{ id: "a", label: "<b>A</b>", detail: "<b>D</b>", checked: false }],
+  });
+  assert.ok(!html.includes("<b>"), "copy is escaped, never trusted as markup");
 });

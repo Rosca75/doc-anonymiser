@@ -11,7 +11,7 @@ import (
 )
 
 // selectionFixture contains at least one instance of every selectable
-// category kind (PII + entities via the entity list below).
+// category kind (PII + values via the value list below).
 const selectionFixture = `Contact info.desk@example.com or +352 621 000 111.
 Site https://example.com/x holds IBAN LU28 0019 4006 4475 0000 and VAT LU12345678.
 Matricule 1893120105732 was billed EUR 12,500 on 2026-01-15.
@@ -19,28 +19,28 @@ Client Alpine Trust S.A. runs Project Borealis with Paul Stone (internal) and Ma
 The Meridian Suite platform ships with Helios. Code PRJ-42 applies.
 Reference INV-88213 is open.`
 
-// selectionEntities declares one entity per DECLARABLE entity category.
+// selectionEntities declares one value per DECLARABLE value category.
 // identifier_names and other_names are absent on purpose: the first is what the
 // code detector emits and the fixture carries INV-88213 for it, and the second
 // is defined by exclusion, so there is nothing characteristic to declare.
-var selectionEntities = []Entity{
-	{Category: CatEntityNames, Canonical: "Alpine Trust S.A."},
-	{Category: CatProjectNames, Canonical: "Project Borealis"},
-	{Category: CatEntityNames, Canonical: "Paul Stone"},
-	{Category: CatPersonNames, Canonical: "Marie Curie"},
-	{Category: CatProductNames, Canonical: "Meridian Suite"},
-	{Category: CatBrandNames, Canonical: "Helios"},
+var selectionEntities = []Value{
+	{Category: CatEntityNames, MainText: "Alpine Trust S.A."},
+	{Category: CatProjectNames, MainText: "Project Borealis"},
+	{Category: CatEntityNames, MainText: "Paul Stone"},
+	{Category: CatPersonNames, MainText: "Marie Curie"},
+	{Category: CatProductNames, MainText: "Meridian Suite"},
+	{Category: CatBrandNames, MainText: "Helios"},
 }
 
 var selectionPatterns = []CustomPattern{{Expr: `PRJ-[0-9]+`}}
 
-// runWithSelection is the shared harness: one document, the full entity
+// runWithSelection is the shared harness: one document, the full value
 // set, a given selection.
 func runWithSelection(t *testing.T, sel CategorySelection) *Results {
 	t.Helper()
 	res, err := Run(context.Background(), PipelineInput{
 		Documents:  []Document{{Name: "f.txt", Format: FormatTXT, Markdown: selectionFixture}},
-		Entities:   selectionEntities,
+		Values:     selectionEntities,
 		Patterns:   selectionPatterns,
 		Categories: sel,
 		Allowlist:  NewEmptyAllowlist(),
@@ -116,7 +116,7 @@ func TestPresetEquivalence(t *testing.T) {
 		t.Run(string(level), func(t *testing.T) {
 			byLevel, err := Run(context.Background(), PipelineInput{
 				Documents: []Document{{Name: "f.txt", Format: FormatTXT, Markdown: selectionFixture}},
-				Entities:  selectionEntities,
+				Values:    selectionEntities,
 				Patterns:  selectionPatterns,
 				Level:     level,
 				Allowlist: NewEmptyAllowlist(),
@@ -126,7 +126,7 @@ func TestPresetEquivalence(t *testing.T) {
 			}
 			bySelection, err := Run(context.Background(), PipelineInput{
 				Documents:  []Document{{Name: "f.txt", Format: FormatTXT, Markdown: selectionFixture}},
-				Entities:   selectionEntities,
+				Values:     selectionEntities,
 				Patterns:   selectionPatterns,
 				Level:      level,
 				Categories: PresetSelection(level),
@@ -151,7 +151,7 @@ func TestMixedSelection(t *testing.T) {
 
 	res, err := Run(context.Background(), PipelineInput{
 		Documents:  []Document{{Name: "f.txt", Format: FormatTXT, Markdown: selectionFixture}},
-		Entities:   selectionEntities,
+		Values:     selectionEntities,
 		Patterns:   selectionPatterns,
 		Categories: sel,
 		Allowlist:  NewEmptyAllowlist(),
@@ -164,7 +164,7 @@ func TestMixedSelection(t *testing.T) {
 		t.Errorf("emails off: the address must survive, output: %s", out)
 	}
 	if !strings.Contains(out, "[ENTITY_1]") {
-		t.Errorf("entities on: Alpine Trust must be replaced, output: %s", out)
+		t.Errorf("values on: Alpine Trust must be replaced, output: %s", out)
 	}
 	if strings.Contains(out, "Marie Curie") {
 		t.Errorf("persons on: Marie Curie must be replaced, output: %s", out)
@@ -184,7 +184,7 @@ func TestAllowlistWinsOverAnEnabledCategory(t *testing.T) {
 
 	res, err := Run(context.Background(), PipelineInput{
 		Documents:  []Document{{Name: "f.txt", Format: FormatTXT, Markdown: selectionFixture}},
-		Entities:   selectionEntities,
+		Values:     selectionEntities,
 		Categories: PresetSelection(LevelMedium),
 		Allowlist:  allow,
 	})

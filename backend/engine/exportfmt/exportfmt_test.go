@@ -38,9 +38,9 @@ func fixture(t *testing.T, name string) []byte {
 
 // testConfig builds a Config with a fresh registry and the given entities
 // at medium level.
-func testConfig(entities ...engine.Entity) Config {
+func testConfig(entities ...engine.Value) Config {
 	return Config{
-		Entities:  entities,
+		Values:    entities,
 		Level:     engine.LevelMedium,
 		Allowlist: engine.NewEmptyAllowlist(),
 		Registry:  engine.NewRegistry(),
@@ -103,8 +103,8 @@ func buildZip(t *testing.T, entries map[string]string) []byte {
 func TestDocxRoundTrip(t *testing.T) {
 	raw := fixture(t, "report.docx")
 	cfg := testConfig(
-		engine.Entity{Category: "person_names", Canonical: "Marie Duval"},
-		engine.Entity{Category: "person_names", Canonical: "Amélie Lefèvre"},
+		engine.Value{Category: "person_names", MainText: "Marie Duval"},
+		engine.Value{Category: "person_names", MainText: "Amélie Lefèvre"},
 	)
 	cfg.Allowlist.Add("Luxembourg")
 
@@ -156,8 +156,8 @@ func TestDocxRoundTrip(t *testing.T) {
 func TestPptxRoundTrip(t *testing.T) {
 	raw := fixture(t, "deck.pptx")
 	cfg := testConfig(
-		engine.Entity{Category: "entity_names", Canonical: "Alpine Trust"},
-		engine.Entity{Category: "entity_names", Canonical: "Borealis Fund"},
+		engine.Value{Category: "entity_names", MainText: "Alpine Trust"},
+		engine.Value{Category: "entity_names", MainText: "Borealis Fund"},
 	)
 
 	out, total, err := ExportPptx(raw, cfg)
@@ -208,8 +208,8 @@ func TestSpanningReplacement(t *testing.T) {
 	})
 
 	cfg := testConfig(
-		engine.Entity{Category: "person_names", Canonical: "Marie Duval"},
-		engine.Entity{Category: "person_names", Canonical: "Peter Stone"},
+		engine.Value{Category: "person_names", MainText: "Marie Duval"},
+		engine.Value{Category: "person_names", MainText: "Peter Stone"},
 	)
 	out, _, _, err := ExportDocx(raw, cfg)
 	if err != nil {
@@ -317,7 +317,7 @@ func TestXlsxRoundTrip(t *testing.T) {
 	must(src.Write(&buf))
 	src.Close()
 
-	cfg := testConfig(engine.Entity{Category: "entity_names", Canonical: "Alpine Trust"})
+	cfg := testConfig(engine.Value{Category: "entity_names", MainText: "Alpine Trust"})
 	out, total, err := ExportXlsx(buf.Bytes(), cfg)
 	if err != nil {
 		t.Fatalf("ExportXlsx: %v", err)

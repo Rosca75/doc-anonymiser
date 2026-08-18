@@ -13,21 +13,25 @@ import (
 	"testing"
 )
 
-// runForReport anonymises two documents with entities that hit both of them,
+// runForReport anonymises two documents with values that hit both of them,
 // so the per-run and per-document value lists differ.
 func runForReport(t *testing.T) *Results {
 	t.Helper()
 	res, err := Run(context.Background(), PipelineInput{
 		Documents: []Document{
-			{Name: "a.txt", Format: FormatTXT,
-				Markdown: "Marie Duval met Marie Duval again at Meridian Consulting."},
-			{Name: "b.txt", Format: FormatTXT,
-				Markdown: "Thomas Berger wrote to marie.duval@example.com."},
+			{
+				Name: "a.txt", Format: FormatTXT,
+				Markdown: "Marie Duval met Marie Duval again at Meridian Consulting.",
+			},
+			{
+				Name: "b.txt", Format: FormatTXT,
+				Markdown: "Thomas Berger wrote to marie.duval@example.com.",
+			},
 		},
-		Entities: []Entity{
-			{Category: "person_names", Canonical: "Marie Duval"},
-			{Category: "person_names", Canonical: "Thomas Berger"},
-			{Category: "entity_names", Canonical: "Meridian Consulting"},
+		Values: []Value{
+			{Category: "person_names", MainText: "Marie Duval"},
+			{Category: "person_names", MainText: "Thomas Berger"},
+			{Category: "entity_names", MainText: "Meridian Consulting"},
 		},
 		Level:     LevelMedium,
 		Allowlist: NewEmptyAllowlist(),

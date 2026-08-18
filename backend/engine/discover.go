@@ -1,6 +1,6 @@
 // engine/discover.go — the Smart detection tier: a
 // fully OFFLINE heuristic discovery pass that always works without
-// Ollama. It proposes candidate entities from how names are written, for
+// Ollama. It proposes suggestion values from how names are written, for
 // the review screen; nothing it finds is ever replaced without explicit
 // user acceptance.
 //
@@ -12,14 +12,14 @@
 //     sentence start is dropped (sentence-case noise); repeated
 //     sentence-start runs are kept.
 //  2. Legal-suffix gazetteer (Luxembourg-aware): a capitalised run
-//     followed by S.A., S.à r.l., GmbH, ... is an entity_names candidate
-//     with high confidence (suffix included in the candidate text).
+//     followed by S.A., S.à r.l., GmbH, ... is an entity_names suggestion
+//     with high confidence (suffix included in the suggestion text).
 //  3. Frequency analysis: runs occurring twice or more qualify on their
 //     own; a single-occurrence SINGLE-WORD run without a suffix or title
 //     cue is dropped (too noisy). Single-occurrence multi-word runs are
 //     kept: "Marie Duval" mid-sentence is a strong name signal even once.
 //  4. Title cues (Mr, Mrs, Ms, Dr, Me, M., Mme, ...) route the following
-//     name to person_names (the cue itself is not part of the candidate).
+//     name to person_names (the cue itself is not part of the suggestion).
 //  5. Email-derived names: the local-part of an address in the document
 //     ("johannes.borch@pwc.lu") names a person, so a matching capitalised run
 //     is routed to person_names with high confidence. Needs no name list; it
@@ -36,7 +36,7 @@
 // The allowlist veto is applied LAST — allowlist wins, as everywhere
 // (CLAUDE.md §5).
 //
-// UI-agnostic and I/O-free per CLAUDE.md §4: text in, candidates out.
+// UI-agnostic and I/O-free per CLAUDE.md §4: text in, suggestions out.
 package engine
 
 import (
@@ -48,70 +48,174 @@ import (
 	"unicode/utf8"
 )
 
-// Candidate is one Smart-detection proposal for the review UI (and for
-// LLM span classification).
-type Candidate struct {
-	Text     string `json:"text"`
+// Suggestion is one UNREVIEWED potential Value, whichever discovery method
+// produced it.
+//
+// It is one type for every route on purpose. Two shapes, one per route, is a
+// mapping seam: the frontend had to convert each into its own state, and the
+// conversion for Local AI dropped the folded spellings on the floor. One shape
+// means the review workspace treats a signal finding, a heuristic finding and a
+// model finding identically, which is also what the user is being asked to do.
+//
+// A Suggestion is never applied. It becomes a Value only when the user accepts
+// it, and accepting carries its methods, evidence and spellings across intact.
+type Suggestion struct {
+	// MainText is the primary textual form of the potential Value.
+	MainText string `json:"mainText"`
+	// Category is one of AllValueCategories.
 	Category string `json:"category"`
-	// Count is how many times the exact text occurs in the document.
+	// Spellings are the longer forms folded into this one (FoldValueFamilies):
+	// "Coca-Cola company" under "Coca-Cola". Accepting carries them across as
+	// the Value's spellings, so ONE Value with its spellings reaches the
+	// pipeline instead of two rivals, the shorter of which would fire inside the
+	// longer and leave the rest of the phrase in clear text.
+	Spellings []string `json:"spellings,omitempty"`
+	// Count is how many times the exact main text occurs.
 	Count int `json:"count"`
-	// Contexts holds up to 3 snippets of ±60 runes around occurrences,
-	// for the review UI and for LLM classification prompts.
+	// Contexts holds up to maxSuggestionContexts snippets of ±60 runes around
+	// occurrences, for the review workspace and for Local AI classification
+	// prompts.
 	Contexts []string `json:"contexts,omitempty"`
-	// Confidence is the HEURISTIC score of this proposal, 0.0 to 1.0
-	// It is not the same kind of number as Span
-	// .Confidence: nothing is replaced on the strength of it, it only
-	// ranks and filters what the review list shows. See candidateScore
-	// for the exact ladder.
+	// Confidence is the score of this suggestion, 0.0 to 1.0. It is not the same
+	// kind of number as Span.Confidence: nothing is replaced on the strength of
+	// it, it only ranks and filters what the review list shows. See
+	// suggestionScore for the heuristic ladder.
 	Confidence float32 `json:"confidence,omitempty"`
-	// Variants are the longer spellings folded into this one
-	// (FoldValueFamilies): "Coca-Cola company" under "Coca-Cola". Accepting the
-	// candidate carries them across as the value's manual variants, so one
-	// value with its spellings reaches the pipeline instead of two rivals, the
-	// shorter of which would fire inside the longer.
-	Variants []string `json:"variants,omitempty"`
+	// DiscoveryMethods is every method that found this suggestion
+	// (matchclass.go). Merging two routes' output UNIONS this set rather than
+	// keeping one row per route: the user is reviewing a potential Value, not a
+	// detector's output, and two routes agreeing is one decision to make.
+	DiscoveryMethods []string `json:"discoveryMethods,omitempty"`
+	// Evidence is why the methods produced it, deduplicated across them.
+	Evidence []Evidence `json:"evidence,omitempty"`
 }
 
-// SmartDetectOptions tunes how eagerly SmartDetect proposes candidates
-// The owner's report was that Smart detection surfaces
-// far too many values to review, so every knob here removes noise:
+// MergeSuggestions is THE merge rule for Suggestions, wherever they come from.
 //
-//   - MinLength drops very short candidates ("Ltd", "Rue").
-//   - MinOccurrences requires a candidate to appear N times.
-//   - ExcludeCommonWords drops candidates made only of ordinary
+// One implementation, used by every producer, because merging is where the data
+// loss used to happen: two routes reported into two lists, the frontend mapped
+// each into its own shape, and the mapping for one of them dropped the folded
+// spellings on the floor. A single function that every route funnels through is
+// what makes "nothing is lost" checkable.
+//
+// It deduplicates main text CASE-INSENSITIVELY WITHIN a category (the same
+// string under two categories is an intersection, not a duplicate), keeps the
+// first-seen spelling, sums occurrence counts, and UNIONS spellings, contexts,
+// discovery methods and evidence. Contexts and evidence documents are capped, so
+// merging a hundred files cannot grow one row without bound. Confidence takes
+// the STRONGEST sighting: a name seen once in one file and beside a legal form in
+// another is as good as the legal-form sighting.
+//
+// @param batches the per-route, per-document findings, in any order
+// @return one Suggestion per (category, main text), in first-seen order
+func MergeSuggestions(batches ...[]Suggestion) []Suggestion {
+	at := map[string]int{}
+	var out []Suggestion
+	for _, batch := range batches {
+		for _, s := range batch {
+			text := strings.TrimSpace(s.MainText)
+			if text == "" {
+				continue
+			}
+			key := s.Category + "|" + strings.ToLower(text)
+			i, seen := at[key]
+			if !seen {
+				s.MainText = text
+				s.Contexts = MergeContexts(nil, s.Contexts)
+				s.Spellings = MergeSpellings(s.Spellings, nil, text)
+				s.Evidence = MergeEvidence(nil, s.Evidence)
+				at[key] = len(out)
+				out = append(out, s)
+				continue
+			}
+			out[i].Count += s.Count
+			if s.Confidence > out[i].Confidence {
+				out[i].Confidence = s.Confidence
+			}
+			out[i].Spellings = MergeSpellings(out[i].Spellings, s.Spellings, out[i].MainText)
+			out[i].Contexts = MergeContexts(out[i].Contexts, s.Contexts)
+			out[i].DiscoveryMethods = MergeMethods(out[i].DiscoveryMethods, s.DiscoveryMethods)
+			out[i].Evidence = MergeEvidence(out[i].Evidence, s.Evidence)
+		}
+	}
+	return out
+}
+
+// maxSuggestionContexts bounds the snippets one suggestion carries. The review
+// row shows a few examples; carrying every occurrence's would grow the payload
+// with the document size while telling the user nothing the first few do not.
+const maxSuggestionContexts = 3
+
+// WithMethod returns the suggestion with one discovery method recorded. It is
+// how each route stamps its own output, so no producer has to remember the
+// field name or the dedupe rule.
+func (s Suggestion) WithMethod(method string) Suggestion {
+	s.DiscoveryMethods = addMethod(s.DiscoveryMethods, method)
+	return s
+}
+
+// addMethod appends a method unless it is already present, keeping first-seen
+// order so the result is deterministic.
+func addMethod(methods []string, method string) []string {
+	if method == "" {
+		return methods
+	}
+	for _, m := range methods {
+		if m == method {
+			return methods
+		}
+	}
+	return append(methods, method)
+}
+
+// MergeMethods unions two method sets, keeping first-seen order.
+func MergeMethods(into, from []string) []string {
+	for _, m := range from {
+		into = addMethod(into, m)
+	}
+	return into
+}
+
+// HeuristicDiscoveryOptions tunes how eagerly heuristic discovery suggests
+// values. Over-detection is the failure mode that matters here: a review list
+// nobody can get through is worse than one that misses a value the user can
+// still type in by hand. So every knob removes noise:
+//
+//   - MinLength drops very short suggestions ("Ltd", "Rue").
+//   - MinOccurrences requires a suggestion to appear N times.
+//   - ExcludeCommonWords drops suggestions made only of ordinary
 //     capitalised words (month names, weekdays, common sentence openers),
 //     which is where most of the noise comes from.
-//   - MinConfidence drops candidates whose heuristic score is too low,
+//   - MinConfidence drops suggestions whose heuristic score is too low,
 //     which is the single control that trades recall for precision
 //     smoothly rather than in one dimension at a time.
 //
-// A zero value of this struct means "no filtering at all", which is what
-// keeps the legacy SmartDetect signature behaving exactly as it did.
-type SmartDetectOptions struct {
-	// MinLength is the minimum candidate length in RUNES (not bytes, so
+// A zero value of this struct means "no filtering at all".
+type HeuristicDiscoveryOptions struct {
+	// MinLength is the minimum suggestion length in RUNES (not bytes, so
 	// accented names count correctly). 0 disables the check.
 	MinLength int `json:"minLength"`
-	// MinOccurrences is the minimum number of times the candidate must
+	// MinOccurrences is the minimum number of times the suggestion must
 	// occur. 0 and 1 both mean "once is enough".
 	MinOccurrences int `json:"minOccurrences"`
-	// ExcludeCommonWords drops candidates whose every significant word is
+	// ExcludeCommonWords drops suggestions whose every significant word is
 	// an ordinary capitalised word rather than a name.
 	ExcludeCommonWords bool `json:"excludeCommonWords"`
 	// MinConfidence is the heuristic-score floor, 0.0 to 1.0. 0 disables
 	// the check.
 	MinConfidence float32 `json:"minConfidence"`
-	// Strictness selects HOW MANY detectors a candidate must satisfy, a
+	// Strictness selects HOW MANY detectors a suggestion must satisfy, a
 	// lever orthogonal to MinConfidence (which is about how HIGH they must
 	// score). "" and "balanced" are the default behaviour; "strict" emits
-	// only structurally-anchored candidates (a legal suffix, a title cue, a
+	// only structurally-anchored suggestions (a legal suffix, a title cue, a
 	// trademark, a matching email name or a code), trading recall for
 	// precision; "lenient" additionally keeps the rare single-word single-
 	// occurrence runs the frequency rule drops. Unknown values read as
-	// balanced, so an older UI that never sets it is unaffected.
+	// balanced.
 	Strictness string `json:"strictness,omitempty"`
 }
 
-// Strictness levels for SmartDetectOptions.Strictness. Kept as string
+// Strictness levels for HeuristicDiscoveryOptions.Strictness. Kept as string
 // constants (not an enum type) so they cross the Wails JSON boundary and a
 // session file unchanged, and an empty string keeps meaning "balanced".
 const (
@@ -120,7 +224,7 @@ const (
 	StrictnessStrict   = "strict"
 )
 
-// DefaultSmartDetectOptions are the options the APPLICATION starts with
+// DefaultHeuristicDiscoveryOptions are the options the APPLICATION starts with
 // They are deliberately stricter than the legacy
 // no-filter behaviour, because over-detection was the reported problem:
 // a review list nobody can get through is worse than one that misses a
@@ -131,8 +235,8 @@ const (
 // detection finds, and requiring two occurrences would throw exactly
 // those away. The noise is cut by the word list and the score floor
 // instead.
-func DefaultSmartDetectOptions() SmartDetectOptions {
-	return SmartDetectOptions{
+func DefaultHeuristicDiscoveryOptions() HeuristicDiscoveryOptions {
+	return HeuristicDiscoveryOptions{
 		MinLength:          4,
 		MinOccurrences:     1,
 		ExcludeCommonWords: true,
@@ -144,7 +248,7 @@ func DefaultSmartDetectOptions() SmartDetectOptions {
 // smartCommonWords are ordinary capitalised words that are not names:
 // month names, weekdays and frequent sentence openers, in English and
 // French (the two document languages this application is tested against,
-// CLAUDE.md §6). A candidate whose significant words are ALL in this set
+// CLAUDE.md §6). A suggestion whose significant words are ALL in this set
 // is dropped when ExcludeCommonWords is on.
 //
 // Compared lower-cased. Table-driven; extend freely, and prefer adding a
@@ -267,11 +371,11 @@ var streetCues = map[string]bool{
 // orgKeywordsCommon are organisation-indicating words that hold in ANY country,
 // because English is the lingua franca of company naming: "Delta Group",
 // "Helios Holdings", "Meridian Partners". They VOUCH a capitalised run as an
-// entity_names candidate the same way a legal suffix does, but a hair less
+// entity_names suggestion the same way a legal suffix does, but a hair less
 // certainly (a legal form is registered, a keyword is convention), so they
 // score just below one. Compared accent-folded and lower-cased.
 //
-// This is broader than the legalSuffixes gazetteer (entities.go), which lists
+// This is broader than the legalSuffixes gazetteer (values.go), which lists
 // only registered legal FORMS (Sàrl, GmbH): a keyword names the KIND of
 // organisation, a suffix names its legal shell. Both mark a run as a company.
 var orgKeywordsCommon = map[string]bool{
@@ -377,7 +481,7 @@ var smartTitles = map[string]bool{
 }
 
 // smartLeadingStopwords are articles/pronouns/salutations that must not OPEN a
-// run: "The CSSF" is the term "CSSF", not an entity called "The CSSF", and
+// run: "The CSSF" is the term "CSSF", not a Value called "The CSSF", and
 // "Hello Oscar" is the person "Oscar", not "Hello Oscar". Table-driven; extend
 // freely.
 var smartLeadingStopwords = map[string]bool{
@@ -564,9 +668,6 @@ func foldAccentsLower(s string) string {
 // contextRadius is the snippet half-width around an occurrence (runes).
 const contextRadius = 60
 
-// maxContexts caps how many snippets one candidate carries.
-const maxContexts = 3
-
 // smartRun is one occurrence of a capitalised run during extraction.
 type smartRun struct {
 	text           string
@@ -581,27 +682,27 @@ type smartRun struct {
 	words          int  // significant (non-particle) word count
 }
 
-// SmartDetectWithOptions is SmartDetect with the tuning
+// HeuristicDiscoverWithOptions is SmartDetect with the tuning
 // applied. The detectors themselves are unchanged; the options decide
-// which of their proposals reach the review list, and every candidate
-// carries the heuristic score the filtering used (candidateScore), so the
+// which of their proposals reach the review list, and every suggestion
+// carries the heuristic score the filtering used (suggestionScore), so the
 // UI can filter further without recomputing anything.
 //
 // It runs country-agnostic (the organisation-keyword signal uses only the
 // common English set); the App layer, which knows the document country, calls
-// SmartDetectContext directly with it.
-func SmartDetectWithOptions(text string, allow *Allowlist, opts SmartDetectOptions) []Candidate {
-	// context.Background() cannot be cancelled, so SmartDetectContext never
+// HeuristicDiscoverContext directly with it.
+func HeuristicDiscoverWithOptions(text string, allow *Allowlist, opts HeuristicDiscoveryOptions) []Suggestion {
+	// context.Background() cannot be cancelled, so HeuristicDiscoverContext never
 	// returns an error here; the check satisfies the no-blank-error rule and
 	// keeps the wrapper honest if the contract ever changes.
-	candidates, err := SmartDetectContext(context.Background(), text, allow, opts, "")
+	suggestions, err := HeuristicDiscoverContext(context.Background(), text, allow, opts, "")
 	if err != nil {
 		return nil
 	}
-	return candidates
+	return suggestions
 }
 
-// SmartDetectContext is SmartDetectWithOptions that can be INTERRUPTED
+// HeuristicDiscoverContext is HeuristicDiscoverWithOptions that can be INTERRUPTED
 // Until now the offline pass took no context at all, so Cancel
 // could only take effect between documents: one very large file ran to
 // completion whatever the user pressed, which is a large part of why
@@ -610,10 +711,10 @@ func SmartDetectWithOptions(text string, allow *Allowlist, opts SmartDetectOptio
 // country scopes the organisation-keyword signal (countryLanguages); "" leaves
 // only the common English keyword set active.
 //
-// On cancellation it returns the candidates found so far together with
+// On cancellation it returns the suggestions found so far together with
 // ctx.Err(), the same contract the chunked LLM scan already had: partial work
 // is worth keeping, and the caller decides how to describe it.
-func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts SmartDetectOptions, country string) ([]Candidate, error) {
+func HeuristicDiscoverContext(ctx context.Context, text string, allow *Allowlist, opts HeuristicDiscoveryOptions, country string) ([]Suggestion, error) {
 	runs, err := extractRunsContext(ctx, text, country)
 	if err != nil {
 		return nil, err
@@ -624,7 +725,7 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 	// confidence, whatever the frequency/word-count heuristics would have said.
 	emailNames := deriveEmailNames(text)
 
-	// Group occurrences by candidate text (case-sensitive: "WEBER" and
+	// Group occurrences by suggestion text (case-sensitive: "WEBER" and
 	// "Weber" are different spellings the review UI should see as typed;
 	// the registry collapses case later anyway).
 	type group struct {
@@ -682,13 +783,13 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		if r.hasSuffix || r.hasTitle || r.hasTrademark || r.orgKeyword {
 			g.qualifies = true
 		}
-		if len(g.contexts) < maxContexts {
+		if len(g.contexts) < maxSuggestionContexts {
 			g.contexts = append(g.contexts, contextSnippet(text, r.start, r.end))
 		}
 	}
 
 	strictness := opts.Strictness
-	var out []Candidate
+	var out []Suggestion
 	for _, key := range order {
 		g := groups[key]
 		r := firstRunFor(runs, key)
@@ -726,7 +827,7 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 			continue
 		}
 		// Default category for unclassified runs: multi-word runs read as
-		// person names, single words as organisation-ish entity names.
+		// person names, single words as organisation-ish names.
 		// This is only the INITIAL guess; the review UI and the optional
 		// LLM classification refine it.
 		if g.category == "" {
@@ -744,7 +845,7 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 
 		// The score is computed either way, so the review UI always has it to
 		// filter and sort on, even when the engine-side floor is off.
-		score := candidateScore(r, g.count)
+		score := suggestionScore(r, g.count)
 
 		// Email-name signal: a run named by an address is a person. It
 		// overrides the category UNLESS a legal suffix or trademark already
@@ -760,7 +861,7 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 			}
 		}
 
-		// Strict strictness: emit ONLY structurally-vouched candidates, so a
+		// Strict strictness: emit ONLY structurally-vouched suggestions, so a
 		// bare capitalised run or a lone product head noun is dropped however
 		// it scored. This is the high-precision end of the lever, orthogonal to
 		// the numeric confidence floor: strictness is about WHICH detectors are
@@ -768,12 +869,12 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		if strictness == StrictnessStrict && !vouched {
 			continue
 		}
-		if !keepCandidate(g.text, r, g.count, score, opts) {
+		if !keepSuggestion(g.text, g.count, score, opts) {
 			continue
 		}
 
-		out = append(out, Candidate{
-			Text:       g.text,
+		out = append(out, Suggestion{
+			MainText:   g.text,
 			Category:   g.category,
 			Count:      g.count,
 			Contexts:   g.contexts,
@@ -781,7 +882,7 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 		})
 	}
 
-	sortCandidates(out, func(text string) int { return groups[text].firstStart })
+	sortSuggestions(out, func(text string) int { return groups[text].firstStart })
 
 	// The code detector is a second scanner over the same text (codes.go). It
 	// runs here rather than at the call site so every caller of the offline
@@ -789,11 +890,11 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 	// through one filter.
 	codes, codeStarts := detectCodes(text, allow)
 	for _, c := range codes {
-		if keepCandidate(c.Text, smartRun{words: 1}, c.Count, c.Confidence, opts) {
+		if keepSuggestion(c.MainText, c.Count, c.Confidence, opts) {
 			out = append(out, c)
 		}
 	}
-	sortCandidates(out, func(text string) int {
+	sortSuggestions(out, func(text string) int {
 		if g, ok := groups[text]; ok {
 			return g.firstStart
 		}
@@ -802,18 +903,18 @@ func SmartDetectContext(ctx context.Context, text string, allow *Allowlist, opts
 	return out, nil
 }
 
-// sortCandidates imposes the review list's deterministic ranking: the most
+// sortSuggestions imposes the review list's deterministic ranking: the most
 // frequent value first, ties broken by where it first appears in the document.
 // Shared by every offline detector so two lists cannot be ordered differently.
 //
-// @param candidates the list, sorted in place
+// @param suggestions the list, sorted in place
 // @param firstStart the byte offset of a value's first occurrence
-func sortCandidates(candidates []Candidate, firstStart func(text string) int) {
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].Count != candidates[j].Count {
-			return candidates[i].Count > candidates[j].Count
+func sortSuggestions(suggestions []Suggestion, firstStart func(text string) int) {
+	sort.SliceStable(suggestions, func(i, j int) bool {
+		if suggestions[i].Count != suggestions[j].Count {
+			return suggestions[i].Count > suggestions[j].Count
 		}
-		return firstStart(candidates[i].Text) < firstStart(candidates[j].Text)
+		return firstStart(suggestions[i].MainText) < firstStart(suggestions[j].MainText)
 	})
 }
 
@@ -916,7 +1017,7 @@ func extractRunsContext(ctx context.Context, text, country string) ([]smartRun, 
 			r.words = significantWords(r.text)
 		} else if smartTitles[firstTok] && last == i {
 			i = j
-			continue // a bare title with no name is not a candidate
+			continue // a bare title with no name is not a suggestion
 		}
 
 		// Detector 4b: a title BEFORE the run ("M. Dupont": the dotted
@@ -993,7 +1094,7 @@ func extractRunsContext(ctx context.Context, text, country string) ([]smartRun, 
 			}
 		}
 
-		// Very short candidates are noise ("Al", "Le"), and a run that IS
+		// Very short suggestions are noise ("Al", "Le"), and a run that IS
 		// a bare legal form ("GmbH" discussed as a concept) is not a name.
 		if len([]rune(r.text)) >= 3 && !isBareSuffix(r.text) {
 			runs = append(runs, r)
@@ -1074,7 +1175,7 @@ func trailingOrgKeyword(text string, end int, country string) int {
 }
 
 // isBareSuffix reports whether the whole run text is just a legal form
-// from the gazetteer (never a candidate on its own).
+// from the gazetteer (never a suggestion on its own).
 func isBareSuffix(s string) bool {
 	for _, suffix := range legalSuffixes {
 		if s == suffix {
@@ -1207,9 +1308,9 @@ func contextSnippet(text string, start, end int) string {
 	return strings.Join(strings.Fields(text[from:to]), " ")
 }
 
-// --- candidate scoring and filtering -------------------------
+// --- suggestion scoring and filtering -------------------------
 
-// candidateScore turns what the detectors observed about a run into one
+// suggestionScore turns what the detectors observed about a run into one
 // heuristic number in [0.0, 1.0]. It is a LADDER, not a formula, so every
 // step can be read and argued with:
 //
@@ -1230,7 +1331,7 @@ func contextSnippet(text string, start, end int) string {
 //
 // The default floor (0.5) therefore keeps the first five rungs and drops
 // the last two.
-func candidateScore(r smartRun, count int) float32 {
+func suggestionScore(r smartRun, count int) float32 {
 	switch {
 	case r.hasSuffix:
 		return 0.95
@@ -1251,12 +1352,16 @@ func candidateScore(r smartRun, count int) float32 {
 	}
 }
 
-// keepCandidate applies the SmartDetectOptions filters to one candidate.
-// Split out of SmartDetectWithOptions so each rule is independently
+// keepSuggestion applies the HeuristicDiscoveryOptions filters to one suggestion.
+// Split out of HeuristicDiscoverWithOptions so each rule is independently
 // testable and so the order of the checks is visible: cheapest first,
 // and the word list before the score, because "this is just the word
 // March" is a better reason to drop something than "it scored low".
-func keepCandidate(text string, r smartRun, count int, score float32, opts SmartDetectOptions) bool {
+//
+// Every filter reads the suggestion's own text, count and score, so the run
+// that produced it is deliberately not a parameter: a caller with no run to
+// hand over would otherwise have to invent one.
+func keepSuggestion(text string, count int, score float32, opts HeuristicDiscoveryOptions) bool {
 	if opts.MinLength > 0 && len([]rune(text)) < opts.MinLength {
 		return false
 	}
@@ -1272,7 +1377,7 @@ func keepCandidate(text string, r smartRun, count int, score float32, opts Smart
 	return true
 }
 
-// isCommonWordRun reports whether EVERY significant word of the candidate
+// isCommonWordRun reports whether EVERY significant word of the suggestion
 // is an ordinary capitalised word (smartCommonWords). "March" is dropped;
 // "March Consulting" is not, because "Consulting" is not in the list, and
 // a real company can perfectly well be called that.

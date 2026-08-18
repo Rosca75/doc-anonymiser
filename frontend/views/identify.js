@@ -72,14 +72,14 @@ export function renderIdentify(container) {
 export function readyHint(s) {
   const gate = gateReason(s);
   if (gate) return gate;
-  const accepted = s.entities.filter((e) => e.status === "accepted").length;
+  const accepted = s.values.filter((e) => e.status === "accepted").length;
   return WORKSPACE.readyToReplace(accepted);
 }
 
 /**
  * gateReason(s) is why the move to Anonymise is refused, or "" when it is not.
  *
- * It is derived from the same field the guard reads (s.candidates), rather than
+ * It is derived from the same field the guard reads (s.suggestions), rather than
  * re-deriving the guard's answer, so the sentence and the disabled button can
  * never disagree about whether the gate is shut.
  *
@@ -87,6 +87,6 @@ export function readyHint(s) {
  * @returns {string} the refusal sentence, or "" when nothing is blocking
  */
 export function gateReason(s) {
-  const waiting = s.candidates.length;
+  const waiting = s.suggestions.length;
   return waiting > 0 ? WORKSPACE.reviewGate(waiting) : "";
 }

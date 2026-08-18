@@ -1,7 +1,8 @@
-// app_entities.go — bound methods for the Entities screen:
-// LLM discovery over selected files, variant expansion for the review
-// table, and custom-pattern validation/testing. Thin adapters only
-// (CLAUDE.md §3): all logic lives in engine/* and ollama/*.
+// app_values.go — the bound Value surface: spelling expansion for the review
+// workspace, the placeholder rename and removal the Anonymise step drives,
+// validation before a run, the pre-run intersection check, and custom-pattern
+// validation and testing. Thin adapters only (CLAUDE.md §3): all logic lives in
+// engine/* and ollama/*.
 package backend
 
 import (
@@ -20,16 +21,18 @@ var runtimeEventsEmit = func(a *App, name string, payload interface{}) {
 	runtime.EventsEmit(a.ctx, name, payload)
 }
 
-// ExpandEntityVariants returns the automatic + manual variants of one
-// entity for the expandable variant list in the review table.
-func (a *App) ExpandEntityVariants(e engine.Entity) []string {
-	return engine.ExpandVariants(e)
+// ExpandValueSpellings returns the derived plus listed spellings of one Value,
+// for the expandable spelling list on its card. Go answers rather than the
+// frontend deriving them, so the chips the user sees are exactly what the run
+// will replace.
+func (a *App) ExpandValueSpellings(e engine.Value) []string {
+	return engine.ExpandSpellings(e)
 }
 
-// --- The step 3 value surface -----------------------------------------------
+// --- The Anonymise-step Value surface ---------------------------------------
 //
-// Every method here is addressed BY PLACEHOLDER, because on step 3 the user is
-// looking at report rows and at marks in the Compare pane and both carry the
+// Every method here is addressed BY PLACEHOLDER, because on Anonymise the user
+// is looking at report rows and at marks in the Compare pane and both carry the
 // placeholder. Renaming a value and removing it are the two rules a Value obeys
 // once a run has produced it, and this is the only surface for either.
 
@@ -83,15 +86,16 @@ func (a *App) ValuePlaceholders() []engine.MappingEntry {
 // RemovedValueInfo is the frontend-facing summary of a removed value: what the
 // collapsed "removed" list shows, and what RestoreValue is addressed by.
 type RemovedValueInfo struct {
-	Original string `json:"original"`
+	// MainText is the removed Value's main text, as the user saw it.
+	MainText string `json:"mainText"`
 	Category string `json:"category"`
-	// Placeholder is what the value USED to become. It is the address for
+	// Placeholder is what the Value USED to become. It is the address for
 	// RestoreValue, and the reason the removed list is readable at all: the user
 	// removed a row from a table of placeholders, so that is what they recognise.
 	Placeholder string `json:"placeholder"`
-	// Variants are the spellings the exclusion also covers, so the UI can say
-	// that removing "Marie Duval" also stopped "M. Duval" being replaced.
-	Variants []string `json:"variants,omitempty"`
+	// Spellings are the forms the exclusion also covers, so the UI can say that
+	// removing "Marie Duval" also stopped "M. Duval" being replaced.
+	Spellings []string `json:"spellings,omitempty"`
 }
 
 // ValidationError is a single validation issue.
@@ -145,17 +149,17 @@ func (a *App) RemoveValue(placeholder string) (*RemovedValueInfo, error) {
 				"Pick a row from the replaced-values list", placeholder)
 	}
 
-	// The exclusion covers the variants too, or removing "Marie Duval" would
+	// The exclusion covers the spellings too, or removing "Marie Duval" would
 	// leave "M. Duval" being replaced under a placeholder whose entry is gone.
-	variants := engine.ExpandVariants(engine.Entity{
-		Category:  entry.Category,
-		Canonical: entry.Original,
+	spellings := engine.ExpandSpellings(engine.Value{
+		Category: entry.Category,
+		MainText: entry.Original,
 	})
 
 	removed := engine.RemovedValue{
 		Category:    entry.Category,
-		Canonical:   strings.ToLower(entry.Original),
-		Variants:    variants,
+		MainText:    strings.ToLower(entry.Original),
+		Spellings:   spellings,
 		Placeholder: entry.Placeholder,
 	}
 
@@ -166,10 +170,10 @@ func (a *App) RemoveValue(placeholder string) (*RemovedValueInfo, error) {
 	a.mu.Unlock()
 
 	return &RemovedValueInfo{
-		Original:    entry.Original,
+		MainText:    entry.Original,
 		Category:    entry.Category,
 		Placeholder: entry.Placeholder,
-		Variants:    variants,
+		Spellings:   spellings,
 	}, nil
 }
 
@@ -218,69 +222,19 @@ func (a *App) ListRemovedValues() []RemovedValueInfo {
 	out := make([]RemovedValueInfo, 0, len(a.removed))
 	for _, r := range a.removed {
 		out = append(out, RemovedValueInfo{
-			Original:    r.Canonical,
+			MainText:    r.MainText,
 			Category:    r.Category,
 			Placeholder: r.Placeholder,
-			Variants:    r.Variants,
+			Spellings:   r.Spellings,
 		})
 	}
 	return out
 }
 
-// NextRulePlaceholder mints and RESERVES the next free [CUSTOM_N] for a
-// simple-replace rule.
-//
-// It replaces the frontend's nextCustomNumber, which counted only the existing
-// rules. CUSTOM is also the automatic label for the custom_patterns category, so
-// a rule and an automatic assignment could already collide on the same number,
-// and the exported key would then have two different values behind one
-// placeholder. Asking the registry is the fix: it is the only thing that knows
-// every number already spent, whether by an entry, an override, a reservation or
-// a retirement.
-//
-// The number is reserved as it is handed out, not when the rule is saved. A
-// number handed to the user and not held is a number the next automatic
-// assignment can take while they are still typing.
-//
-// @return the placeholder to put in the rule, or an actionable error
-func (a *App) NextRulePlaceholder() (string, error) {
-	a.mu.Lock()
-	// The session registry, created here if the user reaches the
-	// select-and-replace flow before the first run: it is the same lazily
-	// created instance the pipeline uses, so a number reserved now is still
-	// reserved when the run starts.
-	if a.registry == nil {
-		a.registry = engine.NewRegistry()
-	}
-	reg := a.registry
-	a.mu.Unlock()
-
-	// Reserve() refuses a placeholder that is taken, so walking upwards until it
-	// accepts one is both the search and the claim, with no second definition of
-	// "free" that could drift from the registry's.
-	label := engine.PlaceholderLabel(engine.CatCustomPatterns)
-	for n := 1; n <= maxRulePlaceholder; n++ {
-		candidate := fmt.Sprintf("[%s_%d]", label, n)
-		if err := reg.Reserve(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-	return "", fmt.Errorf(
-		"every %s placeholder up to %d is already in use, which is far past what a "+
-			"session is expected to need. Remove some find-and-replace rules, or start a new session",
-		label, maxRulePlaceholder)
-}
-
-// maxRulePlaceholder bounds the search above. It is a runaway guard, not a
-// product limit: a session with ten thousand custom rules is a bug somewhere
-// else, and an unbounded loop would hang the UI thread rather than say so.
-const maxRulePlaceholder = 10000
-
 // ValidateValuesRequest is the input for ValidateValues.
 type ValidateValuesRequest struct {
-	Entities   []engine.Entity        `json:"entities"`
+	Values     []engine.Value         `json:"values"`
 	Patterns   []engine.CustomPattern `json:"patterns"`
-	Rules      []engine.SimpleRule    `json:"rules"`
 	AllowTerms []string               `json:"allowTerms"`
 }
 
@@ -290,11 +244,11 @@ type ValidateValuesResult struct {
 	Warnings []ValidationError `json:"warnings"`
 }
 
-// ValidateValues checks the current entities, patterns and rules for conflicts
-// before running the pipeline. Returns blocking errors
-// (which prevent the run) and warnings (informational only).
+// ValidateValues checks the current entities and patterns for conflicts before
+// running the pipeline. Returns blocking errors (which prevent the run) and
+// warnings (informational only).
 //
-// @param req the validation request with entities, patterns, rules and allowlist
+// @param req the validation request with entities, patterns and allowlist
 // @return blocking errors (must be resolved before running) and warnings
 func (a *App) ValidateValues(req ValidateValuesRequest) (*ValidateValuesResult, error) {
 	a.mu.Lock()
@@ -307,16 +261,14 @@ func (a *App) ValidateValues(req ValidateValuesRequest) (*ValidateValuesResult, 
 
 	// Run the engine's validation
 	result := engine.ValidateValues(engine.ValidationInput{
-		Entities:       req.Entities,
+		Values:         req.Values,
 		Patterns:       req.Patterns,
-		SimpleRules:    req.Rules,
 		Allowlist:      allowlist,
 		Categories:     nil,
 		Registry:       reg,
 		SkipValidation: false,
 	})
 
-	// Convert to frontend-friendly format
 	blocking := make([]ValidationError, len(result.Blocking))
 	for i, c := range result.Blocking {
 		blocking[i] = ValidationError{
@@ -346,7 +298,7 @@ func (a *App) ValidateValues(req ValidateValuesRequest) (*ValidateValuesResult, 
 // detection needs, because an intersection depends on what would actually be
 // detected: a category switched off cannot cover anything.
 type CheckIntersectionsRequest struct {
-	Entities   []engine.Entity          `json:"entities"`
+	Values     []engine.Value           `json:"values"`
 	Patterns   []engine.CustomPattern   `json:"patterns"`
 	AllowTerms []string                 `json:"allowTerms"`
 	Categories engine.CategorySelection `json:"categories"`
@@ -390,7 +342,7 @@ func (a *App) CheckIntersections(req CheckIntersectionsRequest) (*CheckIntersect
 	// would report an overlap on a value the run has already been told to leave
 	// alone.
 	allow := a.allowlistFor(req.AllowTerms)
-	entities := engine.FilterRemoved(req.Entities, a.removedValues())
+	entities := engine.FilterRemoved(req.Values, a.removedValues())
 
 	scope := engine.NewDetectionScope(entities, req.Patterns, categories,
 		minConfidence, country, allow, req.SuppressRegexPII)

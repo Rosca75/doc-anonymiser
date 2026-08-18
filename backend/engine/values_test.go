@@ -12,47 +12,47 @@ import (
 // "variant expansion golden tests, including French particles").
 func TestExpandVariantsGolden(t *testing.T) {
 	tests := []struct {
-		name   string
-		entity Entity
-		want   []string // exact expected set, longest first
+		name  string
+		value Value
+		want  []string // exact expected set, longest first
 	}{
 		{
-			name:   "simple person",
-			entity: Entity{Category: "person_names", Canonical: "Marie Duval"},
-			want:   []string{"Marie-Duval", "Marie Duval", "M. Duval", "M.Duval", "Duval", "Marie"},
+			name:  "simple person",
+			value: Value{Category: "person_names", MainText: "Marie Duval"},
+			want:  []string{"Marie-Duval", "Marie Duval", "M. Duval", "M.Duval", "Duval", "Marie"},
 		},
 		{
-			name:   "french particles",
-			entity: Entity{Category: "person_names", Canonical: "Jean de la Croix"},
+			name:  "french particles",
+			value: Value{Category: "person_names", MainText: "Jean de la Croix"},
 			want: []string{
 				"Jean-de-la-Croix", "Jean de la Croix", "J. de la Croix",
 				"J.de la Croix", "de la Croix", "Croix", "Jean",
 			},
 		},
 		{
-			name:   "hyphenated first name",
-			entity: Entity{Category: "person_names", Canonical: "Jean-Claude Muller"},
+			name:  "hyphenated first name",
+			value: Value{Category: "person_names", MainText: "Jean-Claude Muller"},
 			want: []string{
 				"Jean Claude Muller", "Jean-Claude Muller", "Jean-Claude-Muller",
 				"J. Muller", "Jean-Claude", "J.Muller", "Muller",
 			},
 		},
 		{
-			name:   "organisation with legal suffix",
-			entity: Entity{Category: "entity_names", Canonical: "Alpine Trust S.A."},
-			want:   []string{"Alpine Trust S.A.", "Alpine Trust"},
+			name:  "organisation with legal suffix",
+			value: Value{Category: "entity_names", MainText: "Alpine Trust S.A."},
+			want:  []string{"Alpine Trust S.A.", "Alpine Trust"},
 		},
 		{
-			name:   "organisation with sarl suffix",
-			entity: Entity{Category: "entity_names", Canonical: "Borealis Partners S.à r.l."},
-			want:   []string{"Borealis Partners S.à r.l.", "Borealis Partners"},
+			name:  "organisation with sarl suffix",
+			value: Value{Category: "entity_names", MainText: "Borealis Partners S.à r.l."},
+			want:  []string{"Borealis Partners S.à r.l.", "Borealis Partners"},
 		},
 		{
 			name: "manual variants are kept",
-			entity: Entity{
-				Category:       "person_names",
-				Canonical:      "Peter Stone",
-				ManualVariants: []string{"Pete"},
+			value: Value{
+				Category:  "person_names",
+				MainText:  "Peter Stone",
+				Spellings: []string{"Pete"},
 			},
 			want: []string{"Peter-Stone", "Peter Stone", "P. Stone", "P.Stone", "Peter", "Stone", "Pete"},
 		},
@@ -60,7 +60,7 @@ func TestExpandVariantsGolden(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ExpandVariants(tt.entity)
+			got := ExpandSpellings(tt.value)
 			if len(got) != len(tt.want) {
 				t.Fatalf("variants = %v, want %v", got, tt.want)
 			}
@@ -86,7 +86,7 @@ func TestExpandVariantsGolden(t *testing.T) {
 // "Alten" fires standalone and next to punctuation, never inside
 // "Altenberg"; accented names work despite RE2's ASCII-only \b.
 func TestDetectEntitiesBoundaries(t *testing.T) {
-	entities := []Entity{{Category: "entity_names", Canonical: "Alten"}}
+	values := []Value{{Category: "entity_names", MainText: "Alten"}}
 	allow := NewEmptyAllowlist()
 
 	tests := []struct {
@@ -102,7 +102,7 @@ func TestDetectEntitiesBoundaries(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spans := DetectEntities(tt.text, entities, allow)
+			spans := DetectValues(tt.text, values, allow)
 			if len(spans) != tt.matches {
 				t.Errorf("got %d matches (%+v), want %d", len(spans), spans, tt.matches)
 			}
@@ -110,8 +110,8 @@ func TestDetectEntitiesBoundaries(t *testing.T) {
 	}
 
 	t.Run("accented name with unicode boundaries", func(t *testing.T) {
-		ents := []Entity{{Category: "person_names", Canonical: "Amélie Lefèvre"}}
-		spans := DetectEntities("Réunion avec Amélie Lefèvre demain.", ents, allow)
+		ents := []Value{{Category: "person_names", MainText: "Amélie Lefèvre"}}
+		spans := DetectValues("Réunion avec Amélie Lefèvre demain.", ents, allow)
 		var got []string
 		for _, s := range spans {
 			got = append(got, s.Original)
@@ -123,14 +123,14 @@ func TestDetectEntitiesBoundaries(t *testing.T) {
 	})
 }
 
-// TestAllowlistBeatsEntity: a term that is BOTH an entity and allowlisted
+// TestAllowlistBeatsEntity: a term that is BOTH a Value and allowlisted
 // is never replaced (manual test matrix scenario 5: "CSSF").
 func TestAllowlistBeatsEntity(t *testing.T) {
 	allow := NewAllowlist() // seeds CSSF
-	entities := []Entity{{Category: "entity_names", Canonical: "CSSF"}}
-	spans := DetectEntities("reported to the CSSF yesterday", entities, allow)
+	values := []Value{{Category: "entity_names", MainText: "CSSF"}}
+	spans := DetectValues("reported to the CSSF yesterday", values, allow)
 	if len(spans) != 0 {
-		t.Errorf("allowlisted entity was matched: %+v", spans)
+		t.Errorf("allowlisted value was matched: %+v", spans)
 	}
 
 	// And the shared filter drops allowlisted spans from other passes too.
@@ -181,18 +181,18 @@ func TestCustomPatterns(t *testing.T) {
 
 // TestEntityReplacementEndToEnd: variants + overlap resolution + registry,
 // proving longest-match-first ("Marie Duval" wins over "Marie" and
-// "Duval") and consistent placeholders for every variant of one entity.
+// "Duval") and consistent placeholders for every variant of one value.
 func TestEntityReplacementEndToEnd(t *testing.T) {
 	text := "Marie Duval met M. Duval's team; Marie signed."
-	entities := []Entity{{Category: "person_names", Canonical: "Marie Duval"}}
+	values := []Value{{Category: "person_names", MainText: "Marie Duval"}}
 	reg := NewRegistry()
 
-	spans := ResolveOverlaps(DetectEntities(text, entities, NewEmptyAllowlist()))
-	// Every variant maps to the entity's CANONICAL placeholder — the
-	// registry is keyed on Span.Canonical, so "M. Duval" and "Marie"
+	spans := ResolveOverlaps(DetectValues(text, values, NewEmptyAllowlist()))
+	// Every spelling maps to the Value's MAIN TEXT placeholder, the
+	// registry is keyed on Span.MainText, so "M. Duval" and "Marie"
 	// share [PERSON_1].
 	out := ApplySpans(text, spans, func(s Span) string {
-		return reg.Assign(s.Category, s.CanonicalOrOriginal())
+		return reg.Assign(s.Category, s.MainTextOrOriginal())
 	})
 	want := "[PERSON_1] met [PERSON_1]'s team; [PERSON_1] signed."
 	if out != want {
@@ -208,47 +208,47 @@ func TestVariantExpansionClassPerCategory(t *testing.T) {
 	// guards against is a category quietly moving between them.
 	cases := []struct {
 		name     string
-		entity   Entity
+		value    Value
 		want     []string
-		wantOnly bool // the canonical is the ONLY variant
+		wantOnly bool // the mainText is the ONLY variant
 	}{
 		{
-			name:   "a person expands into initials and surname",
-			entity: Entity{Category: CatPersonNames, Canonical: "Marie Duval"},
-			want:   []string{"M. Duval", "Duval", "Marie"},
+			name:  "a person expands into initials and surname",
+			value: Value{Category: CatPersonNames, MainText: "Marie Duval"},
+			want:  []string{"M. Duval", "Duval", "Marie"},
 		},
 		{
-			name:   "an organisation loses its legal suffix",
-			entity: Entity{Category: CatEntityNames, Canonical: "Alpine Trust S.A."},
-			want:   []string{"Alpine Trust"},
+			name:  "an organisation loses its legal suffix",
+			value: Value{Category: CatEntityNames, MainText: "Alpine Trust S.A."},
+			want:  []string{"Alpine Trust"},
 		},
 		{
-			name:   "a product is an organisation-style name",
-			entity: Entity{Category: CatProductNames, Canonical: "Meridian Suite Ltd"},
-			want:   []string{"Meridian Suite"},
+			name:  "a product is an organisation-style name",
+			value: Value{Category: CatProductNames, MainText: "Meridian Suite Ltd"},
+			want:  []string{"Meridian Suite"},
 		},
 		{
 			// Stripping a token that resembles a legal suffix off a code would
 			// invent a variant matching a DIFFERENT code.
 			name:     "a reference code is expanded literally",
-			entity:   Entity{Category: CatIdentifierNames, Canonical: "PRJ-4471-SE"},
+			value:    Value{Category: CatIdentifierNames, MainText: "PRJ-4471-SE"},
 			wantOnly: true,
 		},
 		{
 			// Nothing is known about the shape of a value filed under "other",
 			// so nothing can be inferred from it.
 			name:     "an other name is expanded literally",
-			entity:   Entity{Category: CatOtherNames, Canonical: "Helios Ltd"},
+			value:    Value{Category: CatOtherNames, MainText: "Helios Ltd"},
 			wantOnly: true,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ExpandVariants(tc.entity)
+			got := ExpandSpellings(tc.value)
 			if tc.wantOnly {
-				if len(got) != 1 || got[0] != tc.entity.Canonical {
-					t.Fatalf("want the canonical alone, got %v", got)
+				if len(got) != 1 || got[0] != tc.value.MainText {
+					t.Fatalf("want the mainText alone, got %v", got)
 				}
 				return
 			}
@@ -261,75 +261,74 @@ func TestVariantExpansionClassPerCategory(t *testing.T) {
 	}
 }
 
-func TestLiteralOnlyCategoriesStillTakeManualVariants(t *testing.T) {
+func TestLiteralOnlyCategoriesStillTakeListedSpellings(t *testing.T) {
 	// No AUTOMATIC expansion is not the same as no variants: a spelling the user
 	// typed is an explicit instruction, and the automatic rules are what cannot
 	// be trusted on a code.
-	got := ExpandVariants(Entity{
-		Category:       CatIdentifierNames,
-		Canonical:      "PRJ-4471",
-		ManualVariants: []string{"PRJ 4471"},
+	got := ExpandSpellings(Value{
+		Category:  CatIdentifierNames,
+		MainText:  "PRJ-4471",
+		Spellings: []string{"PRJ 4471"},
 	})
 	if !containsString(got, "PRJ 4471") {
 		t.Errorf("a manual variant must survive on a literal-only category, got %v", got)
 	}
 }
 
-// TestCuratedExpansion covers the curated-variant model: once AutoExpand is
-// false, ManualVariants IS the list. The chips on a value's card are then
-// exactly what the run replaces, which is what makes deleting a spelling stick
-// without recording a rule that suppresses it.
-func TestCuratedExpansion(t *testing.T) {
-	curated, expanding := false, true
+// TestCuratedSpellings covers the spelling-policy model: once the policy is
+// curated, main text plus Spellings IS the complete replacement set. The chips on
+// a Value's card are then exactly what the run replaces, which is what makes
+// deleting a spelling stick without recording a rule that suppresses it.
+func TestCuratedSpellings(t *testing.T) {
 	cases := []struct {
-		name   string
-		entity Entity
-		want   []string
+		name  string
+		value Value
+		want  []string
 	}{
 		{
-			name: "a curated value expands to exactly its list",
-			entity: Entity{
+			name: "a curated Value expands to exactly its list",
+			value: Value{
 				Category:       CatPersonNames,
-				Canonical:      "Marie Duval",
-				ManualVariants: []string{"Duval", "Mimi"},
-				AutoExpand:     &curated,
+				MainText:       "Marie Duval",
+				Spellings:      []string{"Duval", "Mimi"},
+				SpellingPolicy: SpellingPolicyCurated,
 			},
-			// No "M. Duval", no "Marie": those are derived, and this value's
+			// No "M. Duval", no "Marie": those are derived, and this Value's
 			// spellings are the user's.
 			want: []string{"Marie Duval", "Duval", "Mimi"},
 		},
 		{
-			name: "an explicit true expands as usual",
-			entity: Entity{
-				Category:   CatEntityNames,
-				Canonical:  "Alpine Trust S.A.",
-				AutoExpand: &expanding,
+			name: "an explicit automatic policy derives as usual",
+			value: Value{
+				Category:       CatEntityNames,
+				MainText:       "Alpine Trust S.A.",
+				SpellingPolicy: SpellingPolicyAutomatic,
 			},
 			want: []string{"Alpine Trust S.A.", "Alpine Trust"},
 		},
 		{
-			name: "an absent flag expands as usual",
-			entity: Entity{
-				Category:  CatEntityNames,
-				Canonical: "Alpine Trust S.A.",
+			name: "an absent policy derives as usual",
+			value: Value{
+				Category: CatEntityNames,
+				MainText: "Alpine Trust S.A.",
 			},
 			want: []string{"Alpine Trust S.A.", "Alpine Trust"},
 		},
 		{
-			name: "minVariantLen still guards a curated list",
-			entity: Entity{
-				Category:  CatPersonNames,
-				Canonical: "Marie Duval",
+			name: "minSpellingLen still guards a curated list",
+			value: Value{
+				Category: CatPersonNames,
+				MainText: "Marie Duval",
 				// "Du" is two runes: replacing it would shred ordinary text,
 				// whether it was derived or typed.
-				ManualVariants: []string{"Du", "Duval"},
-				AutoExpand:     &curated,
+				Spellings:      []string{"Du", "Duval"},
+				SpellingPolicy: SpellingPolicyCurated,
 			},
 			want: []string{"Marie Duval", "Duval"},
 		},
 	}
 	for _, tc := range cases {
-		got := ExpandVariants(tc.entity)
+		got := ExpandSpellings(tc.value)
 		if len(got) != len(tc.want) {
 			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
 			continue
@@ -347,33 +346,33 @@ func TestCuratedExpansion(t *testing.T) {
 // score, and confidence is also the MinConfidence floor's input.
 func TestDetectEntitiesStampsTheEntitysOrigin(t *testing.T) {
 	text := "Meridian and Delta Industries both appear here.\n"
-	spans := DetectEntities(text, []Entity{
-		{Category: CatEntityNames, Canonical: "Meridian", Origin: OriginAI},
-		// No origin stated: a value the user typed, which is what declared means.
-		{Category: CatEntityNames, Canonical: "Delta Industries"},
+	spans := DetectValues(text, []Value{
+		{Category: CatEntityNames, MainText: "Meridian", DiscoveryMethods: []string{MethodLocalAI}},
+		// No matchClass stated: a value the user typed, which is what declared means.
+		{Category: CatEntityNames, MainText: "Delta Industries"},
 	}, NewEmptyAllowlist())
 
 	got := map[string]string{}
 	for _, s := range spans {
-		got[s.Canonical] = s.Origin
+		got[s.MainText] = s.MatchClass
 	}
-	if got["Meridian"] != OriginAI {
-		t.Errorf("an AI entity must produce AI spans, got %q", got["Meridian"])
+	if got["Meridian"] != MatchClassLocalAIDiscovered {
+		t.Errorf("an AI value must produce AI spans, got %q", got["Meridian"])
 	}
-	if got["Delta Industries"] != OriginDeclared {
-		t.Errorf("an entity with no origin must read as declared, got %q", got["Delta Industries"])
+	if got["Delta Industries"] != MatchClassUserDefined {
+		t.Errorf("a Value with no matchClass must read as declared, got %q", got["Delta Industries"])
 	}
 }
 
 func TestOneLegalSuffixTableServesBothDetectionAndExpansion(t *testing.T) {
 	// Two tables meant smart detection could propose "Bidco SCSp" from a form
 	// only IT knew, and the expansion could then not produce "Bidco".
-	proposed := SmartDetectWithOptions("Bidco SCSp signed the deed.\n",
-		NewEmptyAllowlist(), SmartDetectOptions{})
-	if len(proposed) == 0 || proposed[0].Text != "Bidco SCSp" {
+	proposed := HeuristicDiscoverWithOptions("Bidco SCSp signed the deed.\n",
+		NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
+	if len(proposed) == 0 || proposed[0].MainText != "Bidco SCSp" {
 		t.Fatalf("detection should propose the suffixed name, got %+v", proposed)
 	}
-	expanded := ExpandVariants(Entity{Category: CatEntityNames, Canonical: proposed[0].Text})
+	expanded := ExpandSpellings(Value{Category: CatEntityNames, MainText: proposed[0].MainText})
 	if !containsString(expanded, "Bidco") {
 		t.Errorf("expansion must strip the same suffix detection recognised, got %v", expanded)
 	}

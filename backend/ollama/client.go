@@ -1,7 +1,7 @@
 // Package ollama is THE ONLY package in this repository that talks to the
 // local Ollama server over HTTP (see CLAUDE.md §4, "One-file external
 // boundary"). Everything else — in particular engine/* — consumes the
-// engine.LLM interface, never this concrete client. That keeps the planned
+// LLM boundary interface, never this concrete client. That keeps the planned
 // P4 fallback (ONNX-in-WebView) a contained refactor.
 //
 // Local-only guarantee: the base URL host is locked to the loopback address
@@ -75,7 +75,6 @@ type OllamaStatus struct {
 }
 
 // Client talks to a local Ollama server using only the Go standard library.
-// It implements engine.LLM (the deep-scan slot of the pipeline).
 type Client struct {
 	// BaseURL of the Ollama server, e.g. "http://127.0.0.1:11434".
 	// Constructed from settings; the host always remains loopback.
@@ -83,7 +82,7 @@ type Client struct {
 	// Model is the chat model to use; a user setting defaulting to
 	// DefaultModel and normally picked from the ListModels() dropdown.
 	Model string
-	// Allow, when set, vetoes LLM proposals (wired by app.go to the
+	// Allow, when set, vetoes LLM suggestions (wired by app.go to the
 	// session allowlist's Contains). The engine applies the allowlist
 	// again — belt and braces, because CLAUDE.md §5 says the allowlist
 	// wins in EVERY pass.
@@ -100,10 +99,6 @@ type Client struct {
 	probeClient *http.Client
 	chatClient  *http.Client
 }
-
-// Compile-time proof that *Client satisfies the engine's LLM interface.
-// If the interface drifts, the build breaks here with a clear message.
-var _ engine.LLM = (*Client)(nil)
 
 // New returns a Client for the given base URL (pass "" for the default).
 // Any non-loopback host is REJECTED and replaced by the default: the
@@ -201,7 +196,7 @@ func (c *Client) ListModels() ([]string, error) {
 
 // chatRequest is the POST /api/chat body. Format "json" instructs Ollama
 // to constrain the output to valid JSON (CLAUDE.md §8: discovery and
-// deep-scan prompts must set it); stream=false gives one complete reply.
+// discovery prompts must set it); stream=false gives one complete reply.
 type chatRequest struct {
 	Model    string        `json:"model"`
 	Messages []chatMessage `json:"messages"`
@@ -339,13 +334,13 @@ Rules:
 - Use [] for a category with no findings.`
 
 // Discover runs the Phase-A prompt on one document's text and returns raw
-// category → names proposals for the review screen. Long documents are
+// category → names suggestions for the review screen. Long documents are
 // CHUNKED: each chunk is scanned in sequence, ctx
-// cancellation is honoured between chunks, per-chunk proposals merge
-// through MergeProposals, and the hallucination filter runs against the
+// cancellation is honoured between chunks, per-chunk suggestions merge
+// through MergeSuggestions, and the hallucination filter runs against the
 // FULL document text (an entity split across a boundary is covered by the
 // chunk overlap). The caller (app.go) merges multi-file results.
-func (c *Client) Discover(ctx context.Context, text string) ([]engine.ProposedEntity, error) {
+func (c *Client) Discover(ctx context.Context, text string) ([]engine.Suggestion, error) {
 	return c.DiscoverWithProgress(ctx, text, nil)
 }
 
@@ -353,96 +348,60 @@ func (c *Client) Discover(ctx context.Context, text string) ([]engine.ProposedEn
 // document reports progress instead of sitting frozen on one caption for
 // minutes. onChunk is called BEFORE each chunk is sent, with the
 // 0-based index and the total; nil disables it.
-func (c *Client) DiscoverWithProgress(ctx context.Context, text string, onChunk func(index, total int)) ([]engine.ProposedEntity, error) {
+func (c *Client) DiscoverWithProgress(ctx context.Context, text string, onChunk func(index, total int)) ([]engine.Suggestion, error) {
 	return c.scanChunks(ctx, text, onChunk, func(chunk string) (string, error) {
 		return c.Chat(ctx, c.Model, discoverSystemPrompt, chunk)
 	})
 }
 
-// scanChunks is the shared chunk loop for Discover and DeepScan: chunk,
-// chat per chunk via chat(), parse, merge, then hallucination-filter
-// against the whole document. On mid-loop cancellation the proposals
-// gathered so far are returned WITH the context error, so callers can
-// keep partial results.
-func (c *Client) scanChunks(ctx context.Context, text string, onChunk func(index, total int), chat func(chunk string) (string, error)) ([]engine.ProposedEntity, error) {
+// scanChunks is the chunk loop behind Discover: chunk, chat per chunk via
+// chat(), parse, merge, then hallucination-filter against the whole document. On
+// mid-loop cancellation the Suggestions gathered so far are returned WITH the
+// context error, so callers can keep partial results.
+func (c *Client) scanChunks(ctx context.Context, text string, onChunk func(index, total int), chat func(chunk string) (string, error)) ([]engine.Suggestion, error) {
 	chunks, err := c.Chunks(text)
 	if err != nil {
 		return nil, err
 	}
-	var batches [][]engine.ProposedEntity
+	var batches [][]engine.Suggestion
 	for i, chunk := range chunks {
 		if onChunk != nil {
 			onChunk(i, len(chunks))
 		}
 		if err := ctx.Err(); err != nil {
-			return c.filterProposals(ollamaMerge(batches), text), err
+			return c.filterSuggestions(mergeBatches(batches), text), err
 		}
 		reply, err := chat(chunk)
 		if err != nil {
-			return c.filterProposals(ollamaMerge(batches), text), err
+			return c.filterSuggestions(mergeBatches(batches), text), err
 		}
-		proposals, err := parseEntityJSON(reply)
+		suggestions, err := parseSuggestionJSON(reply)
 		if err != nil {
-			return c.filterProposals(ollamaMerge(batches), text), err
+			return c.filterSuggestions(mergeBatches(batches), text), err
 		}
-		batches = append(batches, proposals)
+		batches = append(batches, suggestions)
 	}
 	// Hallucination filter (CLAUDE.md §5) against the FULL text plus the
 	// allowlist veto.
-	return c.filterProposals(ollamaMerge(batches), text), nil
+	return c.filterSuggestions(mergeBatches(batches), text), nil
 }
 
-// ollamaMerge is MergeProposals over a batch slice (tiny readability
-// helper for scanChunks).
-func ollamaMerge(batches [][]engine.ProposedEntity) []engine.ProposedEntity {
-	return MergeProposals(batches...)
+// mergeBatches is MergeSuggestions over a batch slice (a readability helper for
+// scanChunks).
+func mergeBatches(batches [][]engine.Suggestion) []engine.Suggestion {
+	return MergeSuggestions(batches...)
 }
 
-// --- Deep-scan (residual pass) -------------------------------------------
-
-const deepScanSystemPromptPrefix = `You are an entity extraction engine performing a FINAL review of a business document that was already partially anonymised (placeholders look like [ENTITY_1]).
-Find ONLY residual proper names that are still visible and were missed. Respond with ONLY a JSON object, no prose, using exactly these keys:
-{"entity_names": [], "project_names": [], "product_names": [], "brand_names": [], "person_names": [], "identifier_names": [], "other_names": []}
-Rules:
-- entity_names: named organisations, companies, teams and internal systems, whether they are clients, counterparties or internal.
-- project_names: engagement, project or workstream names and code names.
-- product_names: named products, platforms, modules and software.
-- brand_names: brand or trade names, which are how something is marketed rather than the company that owns it.
-- person_names: every natural person, including members of staff. A human being is NEVER an entity_names.
-- identifier_names: reference, contract, invoice and case codes.
-- other_names: a proper name that is none of the above. Use it sparingly, and never as a place to put something you could file elsewhere.
-- Copy every name VERBATIM from the document. Never invent names.
-- Do NOT report placeholders like [ENTITY_1] or names from the known list below.
-- Use [] for a category with no findings.`
-
-// DeepScan implements engine.LLM: it proposes residual entities for one
-// document, excluding what is already known, and applies the hallucination
-// filter and allowlist veto before returning.
-func (c *Client) DeepScan(ctx context.Context, text string, known []engine.Entity) ([]engine.ProposedEntity, error) {
-	system := deepScanSystemPromptPrefix
-	if len(known) > 0 {
-		var names []string
-		for _, e := range known {
-			names = append(names, e.Canonical)
-		}
-		system += "\nKnown (do not report): " + strings.Join(names, "; ")
-	}
-
-	return c.scanChunks(ctx, text, nil, func(chunk string) (string, error) {
-		return c.Chat(ctx, c.Model, system, chunk)
-	})
-}
-
-// filterProposals applies the hallucination filter (exact string must occur
+// filterSuggestions applies the hallucination filter (exact string must occur
 // in the source text) and the allowlist veto. The engine repeats both
 // checks — defence in depth, not redundancy to remove.
-func (c *Client) filterProposals(proposals []engine.ProposedEntity, sourceText string) []engine.ProposedEntity {
-	var out []engine.ProposedEntity
-	for _, p := range proposals {
-		if !strings.Contains(sourceText, p.Text) {
+func (c *Client) filterSuggestions(suggestions []engine.Suggestion, sourceText string) []engine.Suggestion {
+	var out []engine.Suggestion
+	for _, p := range suggestions {
+		if !strings.Contains(sourceText, p.MainText) {
 			continue // hallucinated
 		}
-		if c.Allow != nil && c.Allow(p.Text) {
+		if c.Allow != nil && c.Allow(p.MainText) {
 			continue // allowlist wins
 		}
 		out = append(out, p)
@@ -450,34 +409,22 @@ func (c *Client) filterProposals(proposals []engine.ProposedEntity, sourceText s
 	return out
 }
 
-// MergeProposals merges multi-file discovery results, deduplicating
-// case-insensitively per category while keeping first-seen spelling and
-// order.
-func MergeProposals(batches ...[]engine.ProposedEntity) []engine.ProposedEntity {
-	seen := map[string]bool{}
-	var out []engine.ProposedEntity
-	for _, batch := range batches {
-		for _, p := range batch {
-			key := p.Category + "|" + strings.ToLower(strings.TrimSpace(p.Text))
-			if strings.TrimSpace(p.Text) == "" || seen[key] {
-				continue
-			}
-			seen[key] = true
-			out = append(out, p)
-		}
-	}
-	return out
+// MergeSuggestions merges discovery results through the engine's single merge
+// rule. It is re-exported here only because this file's callers are inside the
+// Ollama boundary; the RULE lives in the engine so every producer shares one.
+func MergeSuggestions(batches ...[]engine.Suggestion) []engine.Suggestion {
+	return engine.MergeSuggestions(batches...)
 }
 
-// --- Candidate span classification ----------------------
+// --- Suggestion classification -------------------------------------------
 
-// classifySystemPrompt asks for one category per candidate, strict JSON
-// with the exact category keys. Only candidate TEXTS and short context
+// classifySystemPrompt asks for one category per suggestion, strict JSON
+// with the exact category keys. Only suggestion TEXTS and short context
 // snippets are sent, never whole documents, which structurally ends the
 // context-overflow class of bugs for this path.
 const classifySystemPrompt = `You are an entity classification engine for confidential business documents.
-The user sends a list of candidate names, each with short context snippets from the document.
-Assign every candidate to exactly ONE category and respond with ONLY a JSON object, no prose, using exactly these keys:
+The user sends a list of suggestion names, each with short context snippets from the document.
+Assign every suggestion to exactly ONE category and respond with ONLY a JSON object, no prose, using exactly these keys:
 {"entity_names": [], "project_names": [], "product_names": [], "brand_names": [], "person_names": [], "identifier_names": [], "other_names": []}
 Rules:
 - entity_names: named organisations, companies, teams and internal systems, whether they are clients, counterparties or internal.
@@ -487,28 +434,29 @@ Rules:
 - person_names: every natural person, including members of staff. A human being is NEVER an entity_names.
 - identifier_names: reference, contract, invoice and case codes.
 - other_names: a proper name that is none of the above. Use it sparingly, and never as a place to put something you could file elsewhere.
-- Copy every candidate VERBATIM into one list. Never invent, translate or reformat names.
-- Use [] for a category with no candidates.`
+- Copy every suggestion VERBATIM into one list. Never invent, translate or reformat names.
+- Use [] for a category with no suggestions.`
 
-// ClassifyCandidates refines Smart-detection candidates through the local
-// model: candidates travel in byte-budgeted batches, each reply is parsed
-// with the usual tolerant parser, and any returned text that is not one
-// of the INPUT candidates verbatim is dropped (hallucination filter), as
-// is anything the allowlist vetoes.
-func (c *Client) ClassifyCandidates(ctx context.Context, candidates []engine.Candidate) ([]engine.ProposedEntity, error) {
-	if len(candidates) == 0 {
+// ClassifySuggestions re-files Smart detection's Suggestions through the local
+// model: they travel in byte-budgeted batches, each reply is parsed with the
+// usual tolerant parser, and any returned text that is not one of the INPUT main
+// texts verbatim is dropped (hallucination filter), as is anything the allowlist
+// vetoes. Only main texts and short context snippets are sent, never whole
+// documents.
+func (c *Client) ClassifySuggestions(ctx context.Context, suggestions []engine.Suggestion) ([]engine.Suggestion, error) {
+	if len(suggestions) == 0 {
 		return nil, nil
 	}
 
 	// Verbatim-input filter set (the classification counterpart of the
 	// document hallucination filter).
-	valid := make(map[string]bool, len(candidates))
-	for _, cand := range candidates {
-		valid[cand.Text] = true
+	valid := make(map[string]bool, len(suggestions))
+	for _, sugg := range suggestions {
+		valid[sugg.MainText] = true
 	}
 
 	budget := c.promptBudgetBytes()
-	var batches [][]engine.ProposedEntity
+	var batches [][]engine.Suggestion
 	batch := strings.Builder{}
 	flush := func() error {
 		if batch.Len() == 0 {
@@ -519,40 +467,40 @@ func (c *Client) ClassifyCandidates(ctx context.Context, candidates []engine.Can
 		if err != nil {
 			return err
 		}
-		proposals, err := parseEntityJSON(reply)
+		suggestions, err := parseSuggestionJSON(reply)
 		if err != nil {
 			return err
 		}
-		batches = append(batches, proposals)
+		batches = append(batches, suggestions)
 		return nil
 	}
 
-	for _, cand := range candidates {
+	for _, sugg := range suggestions {
 		if err := ctx.Err(); err != nil {
-			return MergeProposals(batches...), err
+			return MergeSuggestions(batches...), err
 		}
-		line := "- " + cand.Text
-		if len(cand.Contexts) > 0 {
-			line += " | context: " + strings.Join(cand.Contexts, " ... ")
+		line := "- " + sugg.MainText
+		if len(sugg.Contexts) > 0 {
+			line += " | context: " + strings.Join(sugg.Contexts, " ... ")
 		}
 		line += "\n"
 		if batch.Len() > 0 && batch.Len()+len(line) > budget {
 			if err := flush(); err != nil {
-				return MergeProposals(batches...), err
+				return MergeSuggestions(batches...), err
 			}
 		}
 		batch.WriteString(line)
 	}
 	if err := flush(); err != nil {
-		return MergeProposals(batches...), err
+		return MergeSuggestions(batches...), err
 	}
 
-	var out []engine.ProposedEntity
-	for _, p := range MergeProposals(batches...) {
-		if !valid[p.Text] {
+	var out []engine.Suggestion
+	for _, p := range MergeSuggestions(batches...) {
+		if !valid[p.MainText] {
 			continue // invented or reformatted: dropped
 		}
-		if c.Allow != nil && c.Allow(p.Text) {
+		if c.Allow != nil && c.Allow(p.MainText) {
 			continue // allowlist wins
 		}
 		out = append(out, p)
@@ -562,8 +510,8 @@ func (c *Client) ClassifyCandidates(ctx context.Context, candidates []engine.Can
 
 // --- JSON reply parsing ---------------------------------------------------
 
-// entityCategories are the exact keys every prompt in this file demands, and
-// the only keys parseEntityJSON reads back.
+// promptCategories are the exact keys every prompt in this file demands, and the
+// only keys parseSuggestionJSON reads back.
 //
 // The three lists have to move together. A key in a prompt that is missing here
 // is silently dropped on parse, and a key here that no prompt requests is a
@@ -572,7 +520,7 @@ func (c *Client) ClassifyCandidates(ctx context.Context, candidates []engine.Can
 //
 // custom_patterns is deliberately absent: it is the user's own regex, and a
 // model has nothing to say about it.
-var entityCategories = []string{
+var promptCategories = []string{
 	engine.CatEntityNames,
 	engine.CatProjectNames,
 	engine.CatProductNames,
@@ -582,12 +530,16 @@ var entityCategories = []string{
 	engine.CatOtherNames,
 }
 
-// parseEntityJSON tolerantly parses the model's JSON reply: accidental
-// markdown code fences are stripped, unknown keys ignored, and each known
-// key may hold a list of strings. A reply that still fails to parse
-// produces an actionable error (the model or prompt needs attention, and
-// the user should know which model misbehaved).
-func parseEntityJSON(reply string) ([]engine.ProposedEntity, error) {
+// parseSuggestionJSON tolerantly parses the model's JSON reply into unified
+// Suggestions: accidental markdown code fences are stripped, unknown keys
+// ignored, and each known key may hold a list of strings. A reply that still
+// fails to parse produces an actionable error (the model or prompt needs
+// attention, and the user should know which model misbehaved).
+//
+// Every Suggestion it produces is stamped with the Local AI discovery method
+// HERE, at the boundary, so no caller has to remember to do it and nothing the
+// model found can reach the review list without saying where it came from.
+func parseSuggestionJSON(reply string) ([]engine.Suggestion, error) {
 	cleaned := strings.TrimSpace(reply)
 	// Strip ```json ... ``` fences some models add despite format:json.
 	if strings.HasPrefix(cleaned, "```") {
@@ -604,8 +556,8 @@ func parseEntityJSON(reply string) ([]engine.ProposedEntity, error) {
 			err, cleaned)
 	}
 
-	var out []engine.ProposedEntity
-	for _, cat := range entityCategories {
+	var out []engine.Suggestion
+	for _, cat := range promptCategories {
 		val, ok := raw[cat]
 		if !ok {
 			continue // missing key = no findings; tolerated
@@ -625,7 +577,7 @@ func parseEntityJSON(reply string) ([]engine.ProposedEntity, error) {
 		for _, n := range names {
 			n = strings.TrimSpace(n)
 			if n != "" {
-				out = append(out, engine.ProposedEntity{Category: cat, Text: n})
+				out = append(out, engine.Suggestion{Category: cat, MainText: n, Count: 1}.WithMethod(engine.MethodLocalAI))
 			}
 		}
 	}

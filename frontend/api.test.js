@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 import {
   openDocumentation, documentationURL, exportDocumentFormats, ping, runPipeline,
   valuePlaceholders, setValuePlaceholder, removeValue, restoreValue,
-  listRemovedValues, nextRulePlaceholder, validateValues, checkIntersections,
+  listRemovedValues, validateValues, checkIntersections,
   copyText,
 } from "./api.js";
 
@@ -160,7 +160,6 @@ test("the value wrappers name the Go methods BRIDGE.md documents", async () => {
     RemoveValue: record("RemoveValue"),
     RestoreValue: record("RestoreValue"),
     ListRemovedValues: record("ListRemovedValues"),
-    NextRulePlaceholder: record("NextRulePlaceholder"),
     ValidateValues: record("ValidateValues"),
     CheckIntersections: record("CheckIntersections"),
   };
@@ -171,9 +170,8 @@ test("the value wrappers name the Go methods BRIDGE.md documents", async () => {
     assert.equal(await removeValue("[ENTITY_1]"), "RemoveValue");
     assert.equal(await restoreValue("[ENTITY_1]"), "RestoreValue");
     assert.equal(await listRemovedValues(), "ListRemovedValues");
-    assert.equal(await nextRulePlaceholder(), "NextRulePlaceholder");
-    assert.equal(await validateValues({ entities: [] }), "ValidateValues");
-    assert.equal(await checkIntersections({ entities: [] }), "CheckIntersections");
+    assert.equal(await validateValues({ values: [] }), "ValidateValues");
+    assert.equal(await checkIntersections({ values: [] }), "CheckIntersections");
   });
 
   // The arguments reach Go in the documented order, which is the other half of
@@ -188,7 +186,7 @@ test("the value wrappers reject rather than throw when the bridge is absent", as
   const previous = globalThis.window;
   globalThis.window = {}; // a plain browser: no window.go
   try {
-    for (const wrapper of [valuePlaceholders, listRemovedValues, nextRulePlaceholder]) {
+    for (const wrapper of [valuePlaceholders, listRemovedValues]) {
       const promise = wrapper();
       assert.ok(promise instanceof Promise, `${wrapper.name} must be async`);
       await assert.rejects(promise, /must run inside the/, wrapper.name);

@@ -91,7 +91,7 @@ linters:
 
     # contextcheck — functions that create a fresh context.Background()
     # instead of propagating the caller's. Matters because Ollama calls must
-    # be cancellable: the user pressing Cancel on a deep scan has to actually
+    # be cancellable: the user pressing Cancel on a detection run has to actually
     # stop the request, not just stop waiting for it.
     - contextcheck
 
@@ -202,6 +202,15 @@ formatters:
     - goimports
 
   settings:
+    gofumpt:
+      # gofumpt needs to know the module path, or it treats
+      # `doc-anonymiser/...` as a third-party import and asks for it to be
+      # merged into the third-party group, while goimports below asks for the
+      # opposite. Two formatters disagreeing means no file can satisfy both and
+      # the finding can never be cleared, which is how a whole layer stops
+      # being read.
+      module-path: doc-anonymiser
+
     goimports:
       # Module-local imports go in their own final group, separated from
       # third-party ones. Makes a new external dependency visible in a diff,

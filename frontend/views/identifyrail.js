@@ -1,21 +1,18 @@
 // views/identifyrail.js, the LEFT RAIL of wizard step 2, Identify
 //
 // The rail lists the DETECTION ROUTES, one switchable section each, in the
-// order they run. It used to be four peer tabs (Scope, Smart detection, Local
-// AI, Cloud AI), which said three untrue things at once: that Scope was a
-// thing of its own rather than the scope OF smart detection, that the routes
-// were alternatives rather than independent switches, and that Cloud AI was as
-// real as the other three.
+// order they run. Scope is not a route of its own: it is the scope OF Smart
+// detection, so it is nested inside that section, and the two routes are
+// independent switches rather than alternatives.
 //
-//   Smart detection ON by default, switchable off. The offline heuristic
-//                    pass. Its SCOPE (document country, preset, the 22
-//                    detection categories, the confidence floor) and its
-//                    strictness are nested inside it, because they are the
-//                    settings this route reads.
+//   Smart detection ON by default, switchable off. Built-in pattern matching,
+//                    signal-based discovery and heuristic discovery. Its SCOPE
+//                    (document country, preset, the detection categories, the
+//                    confidence floor) and its strictness are nested inside it,
+//                    because they are the settings this route reads.
 //   Local AI OFF by default. The Ollama port (host locked to loopback,
 //                    CLAUDE.md §8), the model and the context size. Detecting
 //                    Ollama enables the switch; it never flips it.
-//   Cloud AI OFF and disabled, a placeholder.
 //
 // Nothing here gates the deterministic PII pass: that is not a detection
 // route, it is what the Anonymise step always does.
@@ -25,16 +22,18 @@
 // it is a list the user curates rather than a setting.
 //
 // Every AI-dependent control everywhere in the application gates on
-// llmEnabled(state) = useAI AND ollama.available, so the deterministic pipeline
+// llmEnabled(state) = useLocalAI AND ollama.available, so the deterministic pipeline
 // stays fully usable with Ollama absent.
 
 import { applySettings, listOllamaModels, probeOllama, loadSession, saveSession } from "../api.js";
 import {
   getState, setState,
-  applyPreset, toggleCategory, selectionPresetName, setUseAI,
-  setUseNativeDetect, setUseAutoDetect,
+  applyPreset, toggleCategory, selectionPresetName, setUseLocalAI,
+  setUseBuiltInPatterns, setUseHeuristicDiscovery,
+  setSmartDetection, smartDetectionOn,
+  SIGNAL_SOURCES, signalSourceOn, enabledSignalSources, setSignalSource,
   setCategoryGroup, setMinConfidence, setDocumentCountry,
-  setSmartDetectOptions, smartDetectOptions,
+  setHeuristicDiscoveryOptions, heuristicDiscoveryOptions,
   setAIScope,
   parsePageSpec,
   buildRunRequest,
@@ -42,7 +41,10 @@ import {
   NAME_CATEGORIES, DECLARED_CATEGORIES,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
-import { button, chipRow, sectionLabel, collapsibleGroup, wireGroups } from "../ui.js";
+import {
+  button, chipRow, sectionLabel, collapsibleGroup, wireGroups,
+  helpTooltip, wireHelpTooltips, dropdownChecklist,
+} from "../ui.js";
 import { CARDS, CONFIGURE, RAIL, VALUES, categoryLabels } from "../copy.js";
 import { examplesFor, countryOptions } from "../countries.js";
 import { categoryAppliesTo, CATEGORY_COUNTRIES } from "../countries.js";
@@ -73,12 +75,15 @@ export function llmGateTooltip(s) {
 }
 
 // RAIL_SECTIONS is the rail's shape: [id, title, settings key that switches
-// the route on]. The order is the order the routes run in. A null key marks a
-// section whose switch cannot be operated (Cloud AI).
+// the route on]. The order is the order the routes run in.
+//
+// Smart detection's third element is the sentinel "derived", not a settings key:
+// its section state is computed from its three methods and NOT stored, so a
+// settings key here would name a flag that does not exist. Local AI has a real
+// key, because it is one switch over one route.
 export const RAIL_SECTIONS = [
-  ["rail-smart", RAIL.tabSmart, "useSmartDetect"],
-  ["rail-local", RAIL.tabLocalAI, "useAI"],
-  ["rail-cloud", RAIL.tabCloudAI, null],
+  ["rail-smart", RAIL.tabSmart, "derived"],
+  ["rail-local", RAIL.tabLocalAI, "useLocalAI"],
 ];
 
 // Which sections and which category groups the user folded shut. A VIEW
@@ -86,9 +91,15 @@ export const RAIL_SECTIONS = [
 // must not travel in a session file, and putting it in the store would mean
 // every fold went through a reducer.
 //
-// Local AI and Cloud AI start folded: they are off, and an open panel of
-// disabled fields is noise above the settings that ARE in use.
-const collapsedGroups = new Set(["rail-local", "rail-cloud", "rail-profile"]);
+// Local AI starts folded: it is off, and an open panel of disabled fields is
+// noise above the settings that ARE in use.
+const collapsedGroups = new Set(["rail-local", "rail-profile"]);
+
+// Whether the signal-source checklist is showing. A VIEW preference, like the
+// folded sections: nothing downstream reads it, it must not travel in a session
+// file, and putting it in the store would mean every open and close went through
+// a reducer.
+let signalSourcesOpen = false;
 
 // PRESETS: engine level → user-facing label. "soft/medium/advanced" reads too
 // technical; Standard and Thorough say what they mean.
@@ -149,21 +160,20 @@ export function renderIdentifyRail(container) {
   wireSectionSwitches(container);
   wireScope(container);
   wireSmart(container);
+  wireSignalSources(container);
   wireLocalAI(container);
   wireProfile(container);
+  wireHelpTooltips(container);
   wireGroups(container, (id) => {
     if (collapsedGroups.has(id)) collapsedGroups.delete(id);
     else collapsedGroups.add(id);
     setState({}); // repaint; folding is view state
   });
-  // Cloud AI is a placeholder panel with a switch that cannot be operated
-  // so there is deliberately nothing to wire for it.
 }
 
 /**
- * railBody(s) renders the three route sections. Exported for the render
- * tests: which sections exist and which switch is on is exactly what reported
- * issue 3 was about.
+ * railBody(s) renders the route sections. Exported for the render tests: which
+ * sections exist and which switch is on is load-bearing for what a run does.
  *
  * Each is a collapsibleGroup whose header carries the route's switch, so the
  * one control that decides whether a section matters sits on the section
@@ -171,7 +181,7 @@ export function renderIdentifyRail(container) {
  */
 export function railBody(s) {
   const routes = RAIL_SECTIONS.map(([id, title, key]) => {
-    const on = id === "rail-smart" ? smartRouteOn(s) : (key ? !!s.settings[key] : false);
+    const on = key === "derived" ? smartRouteOn(s) : !!s.settings[key];
     return collapsibleGroup(id, title, sectionBody(s, id), {
       open: !collapsedGroups.has(id),
       cls: `rail-section${on ? "" : " route-off"}`,
@@ -184,7 +194,7 @@ export function railBody(s) {
   return routes + collapsibleGroup("rail-profile", RAIL.profileTitle, profileSection(s), {
     open: !collapsedGroups.has("rail-profile"),
     // NOT "rail-section": that class marks a detection ROUTE, and the render
-    // harness counts it to assert the rail is exactly three routes. Load profile
+    // harness counts it to assert the rail is exactly two routes. Load profile
     // is a switch-less utility panel, so it takes the parallel "rail-panel" class
     // (same layout, no route semantics).
     cls: "rail-panel",
@@ -201,7 +211,10 @@ export function railBody(s) {
 function profileSection(s) {
   const canSave = !!s.detectionRan;
   return `<div class="rail-block">` +
-    `<p class="hint">${escapeHTML(RAIL.profileHint)}</p>` +
+    `<div class="rail-label-row">` +
+    `<span class="rail-field-label">${escapeHTML(RAIL.profileTitle)}</span>` +
+    helpTooltip(RAIL.profileHelp, { label: RAIL.profileTitle }) +
+    `</div>` +
     `<div class="button-pair">` +
     button(RAIL.profileLoad, { kind: "secondary", id: "profile-load" }) +
     button(RAIL.profileSave, {
@@ -214,27 +227,26 @@ function profileSection(s) {
 }
 
 /**
- * smartRouteOn(s) is the Smart detection section's master state: the section
- * counts as on when EITHER half is on. The header switch is a master over the
- * two sub-toggles rather than a fourth independent flag.
+ * smartRouteOn(s) is the Smart detection section's state, DERIVED from its
+ * methods: the section counts as on when any of them is on.
+ *
+ * The header switch is a master over the methods, not a fourth flag beside them.
+ * A stored section boolean can disagree with the methods it claims to summarise,
+ * and a section reading "On" while every method is off lies about what a run does.
  */
 function smartRouteOn(s) {
-  return !!(s.settings.useNativeDetect || s.settings.useAutoDetect);
+  return smartDetectionOn(s);
 }
 
 /**
  * routeSwitch(s, id, key, on) is the on/off control in a section header.
- *
- * Cloud AI's is rendered disabled rather than omitted: a section with no
- * switch reads as "always on", which is the opposite of the truth.
  */
 function routeSwitch(s, id, key, on) {
-  const disabled = key === null;
-  const title = disabled ? RAIL.cloudNotYet
-    : (key === "useAI" && !s.ollama?.available ? llmDisabledTooltip(s.settings.ollamaPort) : "");
+  const title = key === "useLocalAI" && !s.ollama?.available
+    ? llmDisabledTooltip(s.settings.ollamaPort) : "";
   return `<label class="route-switch"${title ? ` title="${escapeHTML(title)}"` : ""}>` +
     `<input type="checkbox" class="route-toggle" data-route="${escapeHTML(id)}"` +
-    `${on ? " checked" : ""}${disabled ? " disabled" : ""}` +
+    `${on ? " checked" : ""}` +
     ` aria-label="${escapeHTML(RAIL.routeSwitchLabel(RAIL_SECTIONS.find(([sid]) => sid === id)?.[1] ?? id))}"/>` +
     `<span class="route-state">${escapeHTML(on ? RAIL.routeOn : RAIL.routeOff)}</span>` +
     `</label>`;
@@ -244,7 +256,6 @@ function routeSwitch(s, id, key, on) {
 function sectionBody(s, id) {
   switch (id) {
     case "rail-local": return localAISection(s);
-    case "rail-cloud": return cloudAISection();
     default: return smartSection(s);
   }
 }
@@ -258,13 +269,11 @@ function wireSectionSwitches(container) {
     box.addEventListener("change", (ev) => {
       ev.stopPropagation();
       const on = ev.target.checked;
-      if (ev.target.dataset.route === "rail-local") setUseAI(on);
-      else {
-        // The Smart detection header is a MASTER over its two sub-toggles:
-        // switching it flips both Native and Auto detection together.
-        setUseNativeDetect(on);
-        setUseAutoDetect(on);
-      }
+      if (ev.target.dataset.route === "rail-local") setUseLocalAI(on);
+      // The Smart detection header is a MASTER over its three methods: switching
+      // it flips all of them in one action, through the one reducer that knows
+      // what "all of them" means.
+      else setSmartDetection(on);
       // Turning a route on opens its section: the settings it reads are the
       // next thing the user wants.
       if (on) collapsedGroups.delete(ev.target.dataset.route);
@@ -288,59 +297,99 @@ function wireSectionSwitches(container) {
  * suggestions are wrong.
  */
 function smartSection(s) {
-  return `<p class="hint">${escapeHTML(RAIL.smartIntro)}</p>` +
-    smartToggles(s) +
+  return smartMethods(s) +
     scopeBlocks(s) +
     collapsibleGroup("rail-smart-tuning", RAIL.smartTuning, smartTuning(s), {
       open: !collapsedGroups.has("rail-smart-tuning"),
       cls: "rail-subgroup",
+      headRightHTML: helpTooltip(RAIL.smartTuningHelp, { label: RAIL.smartTuning }),
     });
 }
 
 /**
- * smartToggles(s) is the two independent halves the Smart detection route split
- * into, rendered at the very top of the section so they read as governing what
- * follows: Native detection is the master over the regex signal categories, Auto
- * detection is the offline word-frequency pass. Both default on.
+ * smartMethods(s) is Smart detection's three methods, at the top of the section
+ * so they read as governing what follows.
+ *
+ * Two are plain switches. The third is a compact CHECKLIST rather than a switch,
+ * because it is a SET of sources and one row per source would grow the panel
+ * every time a source is added. Its closed summary is what keeps it one row.
  */
-function smartToggles(s) {
-  const row = (id, checked, label, hint) =>
+function smartMethods(s) {
+  const row = (id, checked, label, help) =>
+    `<div class="rail-toggle">` +
     `<label class="cat-row">` +
     `<input type="checkbox" id="${id}"${checked ? " checked" : ""}/>` +
     `<span class="cat-label">${escapeHTML(label)}</span>` +
     `</label>` +
-    `<p class="hint">${escapeHTML(hint)}</p>`;
-  return `<div class="rail-block">` +
-    row("smart-native", s.settings.useNativeDetect !== false, RAIL.nativeDetect, RAIL.nativeDetectHint) +
-    row("smart-auto", s.settings.useAutoDetect !== false, RAIL.autoDetect, RAIL.autoDetectHint) +
+    helpTooltip(help, { label }) +
     `</div>`;
+  return `<div class="rail-block">` +
+    row("smart-built-in", s.settings.useBuiltInPatterns !== false,
+      RAIL.builtInPatterns, RAIL.builtInPatternsHelp) +
+    row("smart-heuristic", s.settings.useHeuristicDiscovery !== false,
+      RAIL.heuristicDiscovery, RAIL.heuristicDiscoveryHelp) +
+    signalSourceControl(s) +
+    `</div>`;
+}
+
+/**
+ * signalSourceControl(s) is the compact "Signal-based suggestions" control.
+ *
+ * Only sources that ACTUALLY implement discovery appear (SIGNAL_SOURCES mirrors
+ * the engine's list, guarded by ../detection_parity_test.go): a row with nothing
+ * behind it is a control that appears to do something and does not.
+ *
+ * Clearing a source stops signal-DERIVED Suggestions and leaves the signal's own
+ * anonymisation alone. That distinction is the whole reason the control exists,
+ * and it is in the help tooltip rather than in a paragraph under the row.
+ */
+function signalSourceControl(s) {
+  const names = enabledSignalSources(s).map((id) => RAIL.signalSourceLabel[id] ?? id);
+  return dropdownChecklist({
+    id: "signal-sources",
+    label: RAIL.signalSuggestions,
+    summary: RAIL.signalSourcesSummary(names),
+    listLabel: RAIL.signalSuggestionSources,
+    open: signalSourcesOpen,
+    helpHTML: helpTooltip(RAIL.signalSuggestionsHelp, { label: RAIL.signalSuggestions }),
+    rows: SIGNAL_SOURCES.map((id) => ({
+      id,
+      label: RAIL.signalSourceLabel[id] ?? id,
+      detail: RAIL.signalSourceFinds[id] ?? "",
+      checked: signalSourceOn(s, id),
+    })),
+  });
 }
 
 /** scopeBlocks(s) is the country, the preset, the REGEX categories, and the
   *  confidence floor, in that order: broadest choice first.
-  *  Entity categories appear later under "Values to detect automatically". */
+  *  The name categories appear after them, under "Auto detected values". */
 function scopeBlocks(s) {
+  // labelWithHelp keeps every block's heading to a SHORT visible label with its
+  // explanation one hover or one Tab away. A paragraph under each of these five
+  // is what made the panel taller than the window.
+  const labelWithHelp = (text, help) =>
+    `<div class="rail-label-row">` + sectionLabel(text) +
+    helpTooltip(help, { label: text }) + `</div>`;
+
   return `<div class="rail-block">` +
-    sectionLabel(RAIL.country) +
+    labelWithHelp(RAIL.country, RAIL.countryHelp) +
     countrySelect(s) +
-    `<p class="hint">${escapeHTML(RAIL.countryHint)}</p>` +
     `</div>` +
     `<div class="rail-block">` +
-    sectionLabel(RAIL.preset) +
+    labelWithHelp(RAIL.preset, CONFIGURE.presetHelp) +
     presetChips(s) +
-    `<p class="hint">${escapeHTML(CONFIGURE.presetHint)}</p>` +
     `</div>` +
     `<div class="rail-block">` +
-    sectionLabel(RAIL.whatToAnonymise) +
-    categoryGroups(s, REGEX_GROUPS, "regex", !s.settings.useNativeDetect) +
+    labelWithHelp(RAIL.categories, RAIL.categoriesHelp) +
+    categoryGroups(s, REGEX_GROUPS, "regex", !s.settings.useBuiltInPatterns) +
     `</div>` +
     `<div class="rail-block">` +
-    sectionLabel(RAIL.valuesAuto) +
+    labelWithHelp(RAIL.valuesAuto, RAIL.valuesAutoHelp) +
     categoryGroups(s, ENTITY_GROUPS, "entity") +
-    `<p class="hint">${escapeHTML(RAIL.valuesAutoHint)}</p>` +
     `</div>` +
     `<div class="rail-block">` +
-    sectionLabel(CONFIGURE.confidenceTitle) +
+    labelWithHelp(CONFIGURE.confidenceTitle, CONFIGURE.confidenceHelp) +
     confidenceControl(s) +
     `</div>`;
 }
@@ -362,7 +411,7 @@ function presetChips(s) {
   // and carries the explanation as its tooltip.
   chips.push({
     id: "custom", label: "Custom", active: current === "custom",
-    disabled: true, title: CONFIGURE.presetHint,
+    disabled: true, title: CONFIGURE.presetHelp,
   });
   return chipRow(chips, { attr: "preset", ariaLabel: RAIL.preset });
 }
@@ -375,7 +424,8 @@ function presetChips(s) {
  * overlaid on copy.js CATEGORY_LABELS at render time rather than stored five
  * times over.
  *
- * type is "regex" (static PII detection) or "entity" (auto-detection values).
+ * type is "regex" (built-in pattern categories) or "entity" (the name
+ * categories a discovery method can emit).
  *
  * blockDisabled greys the whole block out without clearing the stored selection:
  * when Native detection is off, the regex categories still show (so the user
@@ -437,13 +487,18 @@ function categoryGroups(s, groups, type = "regex", blockDisabled = false) {
  */
 function confidenceControl(s) {
   const percent = Math.round((s.settings.minConfidence ?? 0) * 100);
-  return `<p class="hint">${escapeHTML(CONFIGURE.confidenceHint)}</p>` +
-    `<div class="rail-slider">` +
+  // The value and what it excludes stay INLINE: they change as the slider moves,
+  // and dynamic information the user is watching cannot live behind a hover.
+  return `<div class="rail-slider">` +
     `<input id="min-confidence" type="range" min="0" max="100" step="5" value="${percent}"` +
     ` aria-label="${escapeHTML(CONFIGURE.confidenceLabel)}"/>` +
     `<output id="min-confidence-value" for="min-confidence">${percent}</output>` +
     `</div>` +
-    `<p class="hint" id="min-confidence-effect">${escapeHTML(confidenceEffect(percent))}</p>`;
+    // .rail-readout, not .hint: a hint is static prose, which the panel does not
+    // carry any more, while this sentence changes as the slider moves. The two
+    // need different classes so the guard against reintroducing prose can be
+    // structural rather than a list of retired sentences.
+    `<p class="rail-readout" id="min-confidence-effect">${escapeHTML(confidenceEffect(percent))}</p>`;
 }
 
 /**
@@ -538,34 +593,71 @@ function wireScope(container) {
 
 /** smartTuning(s) is the offline heuristic pass's strictness (BUILD-04 CR13). */
 function smartTuning(s) {
-  const opts = smartDetectOptions(s);
-  const numberRow = (id, label, hint, value, attrs) =>
+  const opts = heuristicDiscoveryOptions(s);
+  const fieldRow = (id, label, help, controlHTML) =>
+    `<div class="rail-field-row">` +
     `<label class="rail-field" for="${id}">` +
     `<span class="rail-field-label">${escapeHTML(label)}</span>` +
-    `<input id="${id}" type="number" ${attrs} value="${escapeHTML(String(value))}"/>` +
-    `</label><p class="hint">${escapeHTML(hint)}</p>`;
+    controlHTML +
+    `</label>` +
+    helpTooltip(help, { label }) +
+    `</div>`;
+  const numberRow = (id, label, help, value, attrs) =>
+    fieldRow(id, label, help,
+      `<input id="${id}" type="number" ${attrs} value="${escapeHTML(String(value))}"/>`);
 
   return `<div class="rail-block">` +
-    `<p class="hint">${escapeHTML(VALUES.smartSettingsHint)}</p>` +
-    `<label class="rail-field" for="smart-strictness">` +
-    `<span class="rail-field-label">${escapeHTML(VALUES.smartStrictness)}</span>` +
-    `<select id="smart-strictness">` +
-    strictnessOption("lenient", VALUES.smartStrictnessLenient, opts.strictness) +
-    strictnessOption("balanced", VALUES.smartStrictnessBalanced, opts.strictness) +
-    strictnessOption("strict", VALUES.smartStrictnessStrict, opts.strictness) +
-    `</select></label><p class="hint">${escapeHTML(VALUES.smartStrictnessHint)}</p>` +
-    numberRow("smart-min-length", VALUES.smartMinLength, VALUES.smartMinLengthHint,
+    fieldRow("smart-strictness", VALUES.smartStrictness, VALUES.smartStrictnessHelp,
+      `<select id="smart-strictness">` +
+      strictnessOption("lenient", VALUES.smartStrictnessLenient, opts.strictness) +
+      strictnessOption("balanced", VALUES.smartStrictnessBalanced, opts.strictness) +
+      strictnessOption("strict", VALUES.smartStrictnessStrict, opts.strictness) +
+      `</select>`) +
+    numberRow("smart-min-length", VALUES.smartMinLength, VALUES.smartMinLengthHelp,
       opts.minLength, `min="0" max="40" step="1"`) +
-    numberRow("smart-min-occurrences", VALUES.smartMinOccurrences, VALUES.smartMinOccurrencesHint,
+    numberRow("smart-min-occurrences", VALUES.smartMinOccurrences, VALUES.smartMinOccurrencesHelp,
       opts.minOccurrences, `min="0" max="100" step="1"`) +
-    numberRow("smart-min-confidence", VALUES.smartMinConfidence, VALUES.smartMinConfidenceHint,
+    numberRow("smart-min-confidence", VALUES.smartMinConfidence, VALUES.smartMinConfidenceHelp,
       opts.minConfidence, `min="0" max="1" step="0.05"`) +
+    `<div class="rail-toggle">` +
     `<label class="cat-row">` +
     `<input type="checkbox" id="smart-common-words"${opts.excludeCommonWords ? " checked" : ""}/>` +
     `<span class="cat-label">${escapeHTML(VALUES.smartCommonWords)}</span>` +
     `</label>` +
-    `<p class="hint">${escapeHTML(VALUES.smartCommonWordsHint)}</p>` +
+    helpTooltip(VALUES.smartCommonWordsHelp, { label: VALUES.smartCommonWords }) +
+    `</div>` +
     `</div>`;
+}
+
+/**
+ * wireSignalSources(container) wires the compact checklist: its open/close
+ * toggle, one listener per row, and Escape to close.
+ *
+ * Escape closes it for the same reason the help tooltip closes on Escape: a
+ * dropdown that can only be dismissed by clicking elsewhere is a keyboard trap.
+ */
+function wireSignalSources(container) {
+  const control = container.querySelector("#signal-sources");
+  if (!control) return;
+
+  control.querySelector(".checklist-toggle")?.addEventListener("click", () => {
+    signalSourcesOpen = !signalSourcesOpen;
+    setState({}); // repaint; the open state is view state
+  });
+  control.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Escape" || !signalSourcesOpen) return;
+    ev.stopPropagation();
+    signalSourcesOpen = false;
+    setState({});
+  });
+  for (const box of control.querySelectorAll(".checklist-box")) {
+    box.addEventListener("change", (ev) => {
+      setSignalSource(box.dataset.checklist, ev.target.checked);
+      // Pushed to Go like every other setting: which sources may derive
+      // Suggestions is what the next detection run reads.
+      pushSettings(container);
+    });
+  }
 }
 
 /** strictnessOption renders one <option>, marked selected when it is current. */
@@ -575,15 +667,15 @@ function strictnessOption(value, label, current) {
 }
 
 function wireSmart(container) {
-  // The two master toggles at the top of the section. They set their flag and
-  // push, so the disabled state of the regex block and the derived
-  // useSmartDetect update in the same round-trip.
-  container.querySelector("#smart-native")?.addEventListener("change", (ev) => {
-    setUseNativeDetect(ev.target.checked);
+  // The method switches at the top of the section. Each sets its own flag and
+  // pushes, so the disabled state of the pattern-category block and the derived
+  // section state update in the same round-trip.
+  container.querySelector("#smart-built-in")?.addEventListener("change", (ev) => {
+    setUseBuiltInPatterns(ev.target.checked);
     pushSettings(container);
   });
-  container.querySelector("#smart-auto")?.addEventListener("change", (ev) => {
-    setUseAutoDetect(ev.target.checked);
+  container.querySelector("#smart-heuristic")?.addEventListener("change", (ev) => {
+    setUseHeuristicDiscovery(ev.target.checked);
     pushSettings(container);
   });
 
@@ -596,17 +688,17 @@ function wireSmart(container) {
     container.querySelector(selector)?.addEventListener("change", (ev) => {
       const value = Number(ev.target.value);
       if (Number.isNaN(value)) return;
-      // setSmartDetectOptions validates and IGNORES a bad value rather than
+      // setHeuristicDiscoveryOptions validates and IGNORES a bad value rather than
       // storing it, so a typo shows as the field snapping back rather than as
       // smart detection quietly finding nothing.
-      setSmartDetectOptions(toPatch(value));
+      setHeuristicDiscoveryOptions(toPatch(value));
     });
   }
   container.querySelector("#smart-strictness")?.addEventListener("change", (ev) => {
-    setSmartDetectOptions({ strictness: ev.target.value });
+    setHeuristicDiscoveryOptions({ strictness: ev.target.value });
   });
   container.querySelector("#smart-common-words")?.addEventListener("change", (ev) => {
-    setSmartDetectOptions({ excludeCommonWords: ev.target.checked });
+    setHeuristicDiscoveryOptions({ excludeCommonWords: ev.target.checked });
   });
 }
 
@@ -679,8 +771,10 @@ function scopeBlock(s, gated) {
   }
 
   return `<div class="rail-block">` +
+    `<div class="rail-label-row">` +
     `<span class="rail-field-label">${escapeHTML(RAIL.scopeHeading)}</span>` +
-    `<p class="hint">${escapeHTML(RAIL.scopeIntro)}</p>` +
+    helpTooltip(RAIL.scopeHelp, { label: RAIL.scopeHeading }) +
+    `</div>` +
     `<label class="rail-field" for="ai-scope-doc">` +
     `<span class="rail-field-label">${escapeHTML(RAIL.scopeDoc)}</span>` +
     `<select id="ai-scope-doc"${gated}>${options}</select>` +
@@ -690,7 +784,7 @@ function scopeBlock(s, gated) {
 
 function localAISection(s) {
   const ollamaOK = !!s.ollama?.available;
-  const aiOn = !!s.settings.useAI;
+  const aiOn = !!s.settings.useLocalAI;
   // The model and the context size are gated, the PORT and Re-probe are not:
   // those two are how a user CONNECTS, so gating them would lock someone out of
   // fixing the very connection the gate is complaining about.
@@ -701,8 +795,13 @@ function localAISection(s) {
 
   // The route's own switch lives in the section header now, so the body opens
   // with what the switch cannot say: whether Ollama is actually there.
+  // The body opens with what the header switch cannot say: whether Ollama is
+  // actually there. That IS dynamic, so it stays inline.
   return `<div class="rail-block">` +
-    `<p class="hint">${escapeHTML(CONFIGURE.useAIHint)}</p>` +
+    `<div class="rail-label-row">` +
+    `<span class="rail-field-label">${escapeHTML(RAIL.tabLocalAI)}</span>` +
+    helpTooltip(CONFIGURE.useAIHelp, { label: RAIL.tabLocalAI }) +
+    `</div>` +
     `<div class="rail-status">` +
     `<span class="state-tag${ollamaOK ? "" : " bad"}" title="${escapeHTML(s.ollama?.detail ?? "")}">` +
     `${escapeHTML(ollamaOK ? RAIL.ollamaDetected : RAIL.ollamaMissing)}</span>` +
@@ -716,11 +815,13 @@ function localAISection(s) {
     `<span class="rail-field-label">${escapeHTML(RAIL.model)}</span>` +
     `<select id="ollama-model"${gated}>${models || `<option value="">${escapeHTML(RAIL.noModels)}</option>`}</select>` +
     `</label>` +
+    `<div class="rail-field-row">` +
     `<label class="rail-field" for="context-size">` +
     `<span class="rail-field-label">${escapeHTML(RAIL.contextSize)}</span>` +
     `<input id="context-size" type="number" min="0" step="1024" value="${escapeHTML(String(s.settings.contextSize ?? 8192))}"${gated}/>` +
     `</label>` +
-    `<p class="hint">${escapeHTML(CONFIGURE.contextSizeHint)}</p>` +
+    helpTooltip(CONFIGURE.contextSizeHelp, { label: RAIL.contextSize }) +
+    `</div>` +
     button(RAIL.reprobe, { kind: "secondary", id: "btn-reprobe", icon: "refresh" }) +
     `</div>` +
     scopeBlock(s, gated) +
@@ -731,7 +832,10 @@ function localAISection(s) {
     // tick them at all (the rendering harness fails on exactly that). The route
     // says which list it reads instead.
     `<div class="rail-block">` +
-    `<p class="hint">${escapeHTML(RAIL.localValuesHint)}</p>` +
+    `<div class="rail-label-row">` +
+    `<span class="rail-field-label">${escapeHTML(RAIL.valuesAuto)}</span>` +
+    helpTooltip(RAIL.localValuesHelp, { label: RAIL.valuesAuto }) +
+    `</div>` +
     `</div>`;
 }
 
@@ -818,26 +922,6 @@ function wireProfile(container) {
   });
 }
 
-// --- Cloud AI -------------------------------------------------------------
-
-/**
- * cloudAISection() is a placeholder panel and NOTHING else.
- *
- * Deliberately absent, because a separate improvement plan owns this feature and
- * must not have to trip over half-built scaffolding: no provider list, no
- * endpoint field, no settings shape in state.js, no BRIDGE.md row, no Go client.
- * The tab exists so the shape of the eventual feature is visible, and the copy
- * commits only to the thing that will not change about it, which is that nothing
- * leaves the machine before the user has said in writing what may.
- */
-function cloudAISection() {
-  return `<div class="rail-block">` +
-    `<div class="placeholder-panel">` +
-    `<span class="fmt-badge">${escapeHTML(RAIL.cloudNotYet)}</span>` +
-    `<p class="hint">${escapeHTML(RAIL.cloudBody)}</p>` +
-    `</div></div>`;
-}
-
 // --- Shared: push settings to Go -----------------------------------------
 
 /**
@@ -859,16 +943,18 @@ async function pushSettings(container) {
     ollamaPort: port ? (parseInt(port.value, 10) || 0) : s.settings.ollamaPort,
     model: model?.value || s.settings.model,
     contextSize: ctxSize ? (parseInt(ctxSize.value, 10) || 0) : (s.settings.contextSize ?? 8192),
-    useAI: !!s.settings.useAI,
-    useNativeDetect: s.settings.useNativeDetect !== false,
-    useAutoDetect: s.settings.useAutoDetect !== false,
-    // Derived: the section counts as on when either half is, so the header
-    // switch and any backward-compat reader keep working.
-    useSmartDetect: (s.settings.useNativeDetect !== false) || (s.settings.useAutoDetect !== false),
+    useLocalAI: !!s.settings.useLocalAI,
+    useBuiltInPatterns: s.settings.useBuiltInPatterns !== false,
+    useHeuristicDiscovery: s.settings.useHeuristicDiscovery !== false,
+    // Which built-in signals may DERIVE Suggestions. Sent as a complete map of
+    // the known sources rather than a patch, so Go and the store cannot end up
+    // disagreeing about a key one of them has never seen.
+    signalSuggestionSources: Object.fromEntries(
+      SIGNAL_SOURCES.map((source) => [source, signalSourceOn(s, source)])),
     // Read from the store, not the input: setMinConfidence already validated and
-    // stored it, and the Scope tab may not be rendered at all.
+    // stored it, and the block may not be rendered at all.
     minConfidence: s.settings.minConfidence ?? 0,
-    smartDetect: smartDetectOptions(s),
+    heuristicDiscovery: heuristicDiscoveryOptions(s),
   };
   try {
     const status = await applySettings(settings);

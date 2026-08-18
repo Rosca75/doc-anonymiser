@@ -588,7 +588,7 @@ main#view.page { overflow-y: auto; }
 .caution .icon { flex: none; margin-top: 1px; }
 .caution-text { flex: 1; min-width: 0; }
 
-/* A removable chip: the allowlist terms, an entity's variants, a pending
+/* A removable chip: the allowlist terms, a Value's spellings, a pending
    value. The label is text, the × is the only control. */
 .chip-tag {
   display: inline-flex; align-items: center; gap: 0.4rem;
@@ -825,17 +825,6 @@ input, select {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* The Cloud AI placeholder: dashed, because a dashed border is the standard
-   visual language for "this will hold something later" and it stops the panel
-   reading as a control that is merely disabled. */
-.placeholder-panel {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 0.75rem;
-  padding: 1.4rem 1.1rem;
-  border: 1px dashed var(--gray-3); border-radius: var(--card-radius);
-  background: var(--surface-subtle);
-}
-.placeholder-panel .hint { margin: 0; line-height: 1.55; }
-
 /* The settings error strip lives at the rail's foot, outside the scrolling
    body, so a rejected setting cannot scroll out of sight. */
 #settings-error { flex: none; }
@@ -1036,7 +1025,7 @@ input, select {
   padding: 0.9rem 1rem;
   border: 1px solid var(--gray-5); border-radius: var(--card-radius);
 }
-/* The drop target while a variant chip is being dragged over it. */
+/* The drop target while a spelling chip is being dragged over it. */
 .value-card.drop-target { border-color: var(--accent-light); background: var(--tint-orange-3); }
 
 .value-head { display: flex; align-items: center; gap: 0.6rem; min-width: 0; flex-wrap: wrap; }
@@ -1053,24 +1042,24 @@ input, select {
 .ph-input:focus { border-color: var(--text); color: var(--text); background: var(--bg); }
 .ph-input:disabled { color: var(--muted); cursor: not-allowed; }
 
-.variant-row { align-items: center; gap: 0.45rem; }
-.variant-row .hint { margin: 0; font-size: 0.78rem; }
+.spelling-row { align-items: center; gap: 0.45rem; }
+.spelling-row .hint { margin: 0; font-size: 0.78rem; }
 .value-note { font-size: 0.78rem; }
 .value-note .hint { margin: 0; }
 /* An error on a row: the invalid tint's foreground, no fill, so it reads as a
    correction rather than as a warning strip inside a card. */
 .hint.bad { color: var(--invalid-fg); }
 
-/* A variant chip is a DRAG HANDLE as well as a label (BUILD-02 Phase 9d): drag
+/* A spelling chip is a DRAG HANDLE as well as a label (BUILD-02 Phase 9d): drag
    it onto another value card to regroup it. The cursor says so before the user
    tries, and the text selection is suppressed because selecting text cancels a
    drag mid-gesture. */
-.variant-chip { cursor: grab; user-select: none; color: var(--text); }
-.variant-chip:active { cursor: grabbing; }
-.variant-chip:hover { background: var(--tint-orange-3); border-color: var(--accent-light); }
+.spelling-chip { cursor: grab; user-select: none; color: var(--text); }
+.spelling-chip:active { cursor: grabbing; }
+.spelling-chip:hover { background: var(--tint-orange-3); border-color: var(--accent-light); }
 /* The spelling text inside a chip is its own element so a double-click edits it
    without the remove button beside it reacting. */
-.variant-text { cursor: text; }
+.spelling-text { cursor: text; }
 
 /* --- Value editing, filtering and conflicts (My values) ----------------- */
 
@@ -1107,7 +1096,7 @@ input, select {
    text, no shouting, because a conflict is a correction to make, not an alarm. */
 .value-card.conflicted { border-color: var(--err); background: var(--invalid-bg); }
 .value-name.bad { color: var(--invalid-fg); }
-.variant-chip.bad {
+.spelling-chip.bad {
   color: var(--invalid-fg); background: var(--invalid-bg); border-color: var(--err);
 }
 .conflict-note { display: flex; flex-direction: column; gap: 0.25rem; }
@@ -1190,9 +1179,9 @@ input, select {
   white-space: nowrap;
 }
 
-/* An inline input that replaces the "add" chip, so adding a variant never opens
+/* An inline input that replaces the "add" chip, so adding a spelling never opens
    a dialog (decision 10). */
-.variant-input {
+.spelling-input {
   width: 11rem; padding: 0.15rem 0.5rem;
   font-size: 0.8rem; border-radius: 20px;
 }
@@ -1395,8 +1384,8 @@ input, select {
 /* Highlight tints per category family: black text on every fill (BUILD-02
    section 5 remapping). */
 mark { border-radius: 3px; padding: 0 2px; color: var(--text); }
-mark.pii { background: var(--tint-orange-2); border-bottom: 1px solid var(--tint-orange-1); }
-mark.entity { background: var(--gray-5); border-bottom: 1px solid var(--gray-3); }
+mark.signal { background: var(--tint-orange-2); border-bottom: 1px solid var(--tint-orange-1); }
+mark.name { background: var(--gray-5); border-bottom: 1px solid var(--gray-3); }
 mark.custom { background: var(--src-ai-bg); border-bottom: 1px solid var(--src-ai-fg); }
 
 /* The Compare search's hits. They must stay legible ON TOP of a category mark,
@@ -1531,3 +1520,104 @@ mark[data-original]:focus-visible { outline: 2px solid var(--accent); outline-of
    the accent primary the other three screens use: nothing about finishing should
    invite the same reflex click as CONTINUE. */
 .new-batch { font-weight: 700; }
+
+/* --- The help tooltip ----------------------------------------------------
+
+   An explanation on demand, so the Configure panel spends no permanent vertical
+   space on prose. The bubble is `fixed`, not `absolute`: an absolutely positioned
+   bubble inside the rail's `overflow: auto` body is CLIPPED at the container's
+   edge, which is the one failure the rendering harness exists to catch. */
+.help { position: relative; display: inline-flex; align-items: center; flex: none; }
+.help-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.15rem; height: 1.15rem; padding: 0;
+  border: 0; border-radius: 50%;
+  background: none; color: var(--muted); cursor: help;
+}
+.help-icon:hover, .help-icon:focus-visible { color: var(--accent); }
+.help-icon svg { width: 1.05rem; height: 1.05rem; }
+/* Hidden by DEFAULT and revealed by the wrapper's data-open, so the open state
+   is one attribute JavaScript owns and CSS only reacts to. */
+.help-bubble {
+  position: fixed; z-index: 60;
+  left: var(--help-x, auto); top: var(--help-y, auto);
+  display: none; max-width: 22rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--gray-3); border-radius: var(--card-radius);
+  background: var(--bg); color: var(--text);
+  font-size: 0.8rem; line-height: 1.5;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+/* The bubble sits BELOW and LEFT of the icon by default, which keeps it inside
+   the rail's width; the fixed positioning means the rail cannot clip it. */
+.help[data-open] .help-bubble {
+  display: block;
+  inset: auto auto auto auto;
+  position: absolute; top: calc(100% + 0.35rem); right: 0;
+  z-index: 60;
+}
+
+/* --- The compact checklist ----------------------------------------------
+
+   A set of switches that must not spend one permanent row per switch. Closed, it
+   is a label and a summary; open, it is the list. */
+.checklist { display: flex; flex-direction: column; gap: 0.4rem; }
+.checklist-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.checklist-title { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; }
+.checklist-toggle {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--gray-3); border-radius: var(--card-radius);
+  background: var(--bg); color: var(--text);
+  font-size: 0.78rem; cursor: pointer;
+}
+.checklist-toggle:hover, .checklist-toggle:focus-visible { border-color: var(--accent-light); }
+.checklist-toggle svg { width: 0.95rem; height: 0.95rem; }
+.checklist[data-open] .checklist-toggle svg { transform: rotate(180deg); }
+.checklist-list {
+  display: flex; flex-direction: column; gap: 0.3rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--gray-3); border-radius: var(--card-radius);
+  background: var(--surface-subtle);
+}
+.checklist-row { display: flex; align-items: center; gap: 0.45rem; font-size: 0.82rem; }
+.checklist-row input[type="checkbox"] { flex: none; accent-color: var(--text); }
+.checklist-label { flex: none; }
+.checklist-detail {
+  flex: 1; min-width: 0; text-align: right;
+  font-size: 0.78rem; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* A label with its help icon beside it, and a field with one after it. Both keep
+   the icon on the same line as the thing it explains, so the panel gains no row. */
+.rail-label-row { display: flex; align-items: center; gap: 0.35rem; }
+.rail-label-row .section-label { margin: 0; }
+.rail-toggle { display: flex; align-items: center; gap: 0.35rem; }
+.rail-toggle .cat-row { flex: 1; min-width: 0; }
+.rail-field-row { display: flex; align-items: center; gap: 0.35rem; }
+.rail-field-row .rail-field { flex: 1; min-width: 0; }
+
+/* A live read-out in the rail: a value or a sentence that CHANGES as a control
+   moves. Styled like a hint but a different class, because .hint is static prose
+   the Configure panel deliberately no longer carries. */
+.rail-readout {
+  margin: 0.25rem 0 0; font-size: 0.78rem; line-height: 1.5; color: var(--muted);
+}
+
+/* --- Discovery method chips and the evidence note ----------------------- */
+.method-chip {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--gray-3); border-radius: 999px;
+  background: var(--surface-subtle);
+  font-size: 0.72rem; color: var(--muted);
+  white-space: nowrap;
+}
+.method-manual { border-color: var(--accent-light); color: var(--text); }
+.cell-methods { display: flex; flex-wrap: wrap; gap: 0.2rem; align-items: center; min-width: 0; }
+.evidence-note { display: block; margin-top: 0.15rem; font-size: 0.75rem; }
+/* Shared evidence makes two rows RELATED, never one Value, so the note reads as
+   information rather than as a warning about a mistake. */
+.related-note { display: block; margin-top: 0.15rem; font-size: 0.75rem; }
+.sugg-spellings { font-size: 0.75rem; }

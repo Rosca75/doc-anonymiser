@@ -11,18 +11,19 @@ import assert from "node:assert/strict";
 
 import {
   resetState, getState, setState, toggleCategory,
-  addEntities, setEntityVariants, addAllowTerm, addCandidates, entityKey,
-  groupEntities, curate, acceptCandidate, setIntersections, canGoTo,
+  addValues, setValueSpellings, addAllowTerm, addSuggestions, valueKey,
+  groupValues, curate, acceptSuggestion, setIntersections, canGoTo,
+  relatedTo,
 } from "./state.js";
 import { valuesTab, suggestionsTab, visibleValues } from "./views/identifyworkspace.js";
-import { all, one, exists, textOf } from "./testhtml.js";
+import { all, one, exists, textOf, stripTags } from "./testhtml.js";
 import { WORKSPACE } from "./copy.js";
 
-/** seed(category, canonical, variants) adds one accepted value with a settled
- *  variant list, the shape the tab renders. */
-function seed(category, canonical, variants = [canonical]) {
-  addEntities([{ category, canonical }]);
-  setEntityVariants(category, canonical, variants);
+/** seed(category, mainText, derivedSpellings) adds one accepted value with a settled
+ *  spelling list, the shape the tab renders. */
+function seed(category, mainText, derivedSpellings = [mainText]) {
+  addValues([{ category, mainText }]);
+  setValueSpellings(category, mainText, derivedSpellings);
 }
 
 test("a value card shows the name and a type dropdown set to its category", () => {
@@ -73,10 +74,10 @@ test("a shared spelling tints the chip, not the whole name", () => {
   seed("person_names", "Marie Dupont", ["Marie Dupont", "Marie"]);
   const html = valuesTab(getState());
   // The "Marie" chip is the one at fault on each card.
-  const badChips = all(html, "span.variant-chip")
+  const badChips = all(html, "span.spelling-chip")
     .filter((c) => c.attrs.class.includes("bad"));
   assert.ok(badChips.length >= 2, "the shared spelling is flagged on both cards");
-  assert.ok(badChips.every((c) => c.attrs["data-variant"] === "Marie"));
+  assert.ok(badChips.every((c) => c.attrs["data-spelling"] === "Marie"));
   // The distinct names are not themselves in conflict.
   assert.ok(all(html, "button.value-name").every((n) => !n.attrs.class.includes("bad")));
 });
@@ -94,7 +95,7 @@ test("visibleValues matches a value by its name or any of its spellings", () => 
   resetState();
   seed("entity_names", "Meridian Consulting", ["Meridian Consulting", "Meridian", "Merid"]);
   seed("person_names", "Marie Duval", ["Marie Duval"]);
-  const es = getState().entities;
+  const es = getState().values;
   assert.equal(visibleValues(es, { search: "meridian" }).length, 1);
   // A spelling the name does not contain still finds the card.
   assert.equal(visibleValues(es, { search: "merid" }).length, 1);
@@ -106,32 +107,32 @@ test("visibleValues narrows to one type", () => {
   resetState();
   seed("entity_names", "Acme");
   seed("person_names", "Marie Duval");
-  const es = getState().entities;
+  const es = getState().values;
   assert.equal(visibleValues(es, { type: "person_names" }).length, 1);
-  assert.equal(visibleValues(es, { type: "person_names" })[0].canonical, "Marie Duval");
+  assert.equal(visibleValues(es, { type: "person_names" })[0].mainText, "Marie Duval");
 });
 
 test("spellings show by default, and the toggle offers to hide them", () => {
   resetState();
   seed("person_names", "Marie Duval", ["Marie Duval", "Marie"]);
   const html = valuesTab(getState());
-  assert.ok(exists(html, "span.variant-chip"), "spellings are shown by default");
+  assert.ok(exists(html, "span.spelling-chip"), "spellings are shown by default");
   // The toggle is a live control that names the action it would take next.
-  assert.match(textOf(html, "button#btn-toggle-variants"), /Hide spellings/);
+  assert.match(textOf(html, "button#btn-toggle-derivedSpellings"), /Hide spellings/);
 });
 
 test("a suggestion row carries a type dropdown set to its guessed category", () => {
   resetState();
-  addCandidates([{ text: "Meridian", category: "person_names", count: 2 }], "smart");
-  const shown = getState().candidates;
+  addSuggestions([{ discoveryMethods: ["heuristic"], mainText: "Meridian", category: "person_names", count: 2 }]);
+  const shown = getState().suggestions;
   const html = suggestionsTab(getState(), shown);
-  const type = one(html, "select.cand-type");
+  const type = one(html, "select.sugg-type");
   assert.match(type.inner, /value="person_names" selected/);
   assert.equal(type.attrs["data-text"], "Meridian");
 });
 
 // CR1: Group with asks which participating value survives. The picker feeds the
-// CHOSEN value to groupEntities as the target and the rest as sources, so a user
+// CHOSEN value to groupValues as the target and the rest as sources, so a user
 // can fold the card's value INTO a source rather than the other way round. This
 // pins the reducer path the wiring takes when a source is chosen as the main.
 test("grouping three values and choosing a source as the main keeps that source as survivor", () => {
@@ -140,18 +141,18 @@ test("grouping three values and choosing a source as the main keeps that source 
   seed("person_names", "Marie Duval", ["Marie Duval", "Marie"]);  // a source, chosen as the main
   seed("entity_names", "Acme Corp");                              // another source
 
-  const main = { category: "person_names", canonical: "Marie Duval" };
+  const main = { category: "person_names", mainText: "Marie Duval" };
   const rest = [
-    { category: "entity_names", canonical: "Acme" },
-    { category: "entity_names", canonical: "Acme Corp" },
+    { category: "entity_names", mainText: "Acme" },
+    { category: "entity_names", mainText: "Acme Corp" },
   ];
-  assert.equal(groupEntities(main, rest), 2, "both other values were folded");
+  assert.equal(groupValues(main, rest), 2, "both other values were folded");
 
-  const es = getState().entities;
+  const es = getState().values;
   assert.equal(es.length, 1, "only the chosen survivor remains");
-  assert.equal(es[0].canonical, "Marie Duval");
+  assert.equal(es[0].mainText, "Marie Duval");
   assert.equal(es[0].category, "person_names");
-  const folded = es[0].manualVariants ?? [];
+  const folded = es[0].spellings ?? [];
   assert.ok(folded.includes("Acme"), "the card value folded in as a spelling");
   assert.ok(folded.includes("Acme Corp"), "the other source folded in as a spelling");
 });
@@ -162,35 +163,57 @@ test("a curated value shows its chips and no pending placeholder", () => {
   // because nothing is left for Go to derive.
   resetState();
   seed("entity_names", "Delta Industries", ["Delta Industries", "Delta"]);
-  const before = getState().entities[0];
-  setState({ entities: [curate(before, ["Delta Industries"])] });
+  const before = getState().values[0];
+  setState({ values: [curate(before, ["Delta Industries"])] });
 
   const html = valuesTab(getState());
-  assert.deepEqual(all(html, "span.variant-chip").map((c) => c.attrs["data-variant"]),
+  assert.deepEqual(all(html, "span.spelling-chip").map((c) => c.attrs["data-spelling"]),
     ["Delta Industries"], "only the curated spellings are chips");
-  assert.ok(!html.includes(WORKSPACE.variantsPending),
+  assert.ok(!html.includes(WORKSPACE.spellingsPending),
     "a curated row is settled, so it never shows the pending placeholder");
 });
 
-test("a value card names the route that found it", () => {
-  // Origin is DISPLAYED, not just stored: a precedence rule whose inputs the
-  // user cannot see is indistinguishable from randomness, which is how the old
-  // behaviour came to be reported.
+test("a Value card names EVERY method that found it", () => {
+  // Provenance is DISPLAYED, not merely stored: a precedence rule whose inputs
+  // the user cannot see is indistinguishable from randomness. It is a SET,
+  // because two methods agreeing is a different position from either alone.
   resetState();
-  addCandidates([{ text: "Meridian", category: "entity_names" }], "smart");
-  acceptCandidate("Meridian");
-  setEntityVariants("entity_names", "Meridian", ["Meridian"]);
+  addSuggestions([{
+    discoveryMethods: ["signal", "heuristic"], mainText: "Meridian", category: "entity_names",
+  }]);
+  acceptSuggestion("Meridian");
+  setValueSpellings("entity_names", "Meridian", ["Meridian"]);
 
-  const chip = one(valuesTab(getState()), "span.origin-chip");
-  assert.equal(chip.inner, WORKSPACE.originLabel.auto);
-  assert.match(chip.attrs.class, /origin-auto/);
+  const chips = all(valuesTab(getState()), "span.method-chip");
+  assert.deepEqual(chips.map((c) => c.inner),
+    [WORKSPACE.methodLabel.signal, WORKSPACE.methodLabel.heuristic]);
+  assert.match(chips[0].attrs.class, /method-signal/);
 });
 
-test("a value the user typed is labelled as theirs", () => {
+test("a Value card explains the evidence behind it", () => {
+  // A Suggestion the user accepted because an email address pointed at it should
+  // still say so afterwards: the explanation is why they said yes.
+  resetState();
+  addSuggestions([{
+    discoveryMethods: ["signal"], mainText: "Pierre Dupont", category: "person_names",
+    evidence: [{
+      kind: "email_local_part", signalCategory: "email",
+      signalText: "pierre.dupont@tpps.com", documents: ["engagement.md"],
+    }],
+  }]);
+  acceptSuggestion("Pierre Dupont");
+  setValueSpellings("person_names", "Pierre Dupont", ["Pierre Dupont"]);
+
+  const note = textOf(valuesTab(getState()), "span.evidence-note");
+  assert.match(note, /pierre\.dupont@tpps\.com/, "the evidence names what can be checked");
+  assert.match(note, /engagement\.md/, "and where it was found");
+});
+
+test("a Value the user typed is labelled as theirs", () => {
   resetState();
   seed("entity_names", "Alpine");
-  const chip = one(valuesTab(getState()), "span.origin-chip");
-  assert.equal(chip.inner, WORKSPACE.originLabel.declared);
+  const chip = one(valuesTab(getState()), "span.method-chip");
+  assert.equal(chip.inner, WORKSPACE.methodLabel.manual);
 });
 
 // --- Intersections on the value card -------------------------------------
@@ -198,8 +221,9 @@ test("a value the user typed is labelled as theirs", () => {
 /** overlap(patch) is an intersection row as Go sends it. */
 function overlap(patch = {}) {
   return {
-    value: "marie.duval@example.com", category: "person_names", origin: "declared",
-    winnerValue: "marie.duval@example.com", winnerCategory: "email", winnerOrigin: "native",
+    value: "marie.duval@example.com", category: "person_names", matchClass: "user_defined",
+    winnerValue: "marie.duval@example.com", winnerCategory: "email",
+    winnerMatchClass: "built_in_pattern",
     occurrences: 2, totalOccurrences: 2,
     ...patch,
   };
@@ -214,8 +238,9 @@ test("a fully covered value says it is never replaced under its own type", () =>
   const note = one(html, "div.intersection-note");
   assert.ok(note.inner.includes("Every occurrence"),
     "a value nothing leaves alone is the case worth shouting about");
-  // The route is named in the same words the origin chip uses.
-  assert.ok(note.inner.includes(WORKSPACE.originLabel.native));
+  // The winning method is named in the same words the method chip uses.
+  assert.ok(note.inner.includes(WORKSPACE.matchClassLabel.built_in_pattern),
+    "the warning names the winning method, never an internal rank");
   assert.ok(note.inner.includes("Priority order"), "the rule that decided is stated");
 });
 
@@ -224,7 +249,8 @@ test("a partly covered value gets the milder count sentence", () => {
   seed("entity_names", "Meridian");
   setIntersections([overlap({
     value: "Meridian", category: "entity_names",
-    winnerValue: "Meridian-4471", winnerCategory: "custom_patterns", winnerOrigin: "declared",
+    winnerValue: "Meridian-4471", winnerCategory: "custom_patterns",
+    winnerMatchClass: "user_defined",
     occurrences: 1, totalOccurrences: 3,
   })]);
   const note = one(valuesTab(getState()), "div.intersection-note");
@@ -265,25 +291,125 @@ test("a card with no intersection renders no note", () => {
   assert.ok(!/intersects/.test(one(html, "div.value-card").attrs.class));
 });
 
-test("a folded family is ONE suggestion row that names its spellings", () => {
+test("a folded family is ONE Suggestion row that names its spellings", () => {
   // Three rows for "Alpine Trust", "Alpine Trust S.A." and "Alpine Trust Ltd."
   // invite three separate accept decisions for one company. Accepting the one
   // row accepts the spellings too, so the row has to say which.
   resetState();
-  addCandidates([{
-    text: "Alpine Trust", category: "entity_names", count: 5,
-    variants: ["Alpine Trust S.A."],
-  }], "smart");
-  const html = suggestionsTab(getState(), getState().candidates);
+  addSuggestions([{
+    discoveryMethods: ["heuristic"], mainText: "Alpine Trust", category: "entity_names",
+    count: 5, spellings: ["Alpine Trust S.A."],
+  }]);
+  const html = suggestionsTab(getState(), getState().suggestions);
 
   assert.equal(all(html, "div.grid-row").length, 1, "one family, one row");
-  assert.ok(textOf(html, "span.cand-spellings").includes("Alpine Trust S.A."),
+  assert.ok(textOf(html, "span.sugg-spellings").includes("Alpine Trust S.A."),
     "the row names what accepting it will also replace");
 });
 
 test("a suggestion with no folded spellings says nothing extra", () => {
   resetState();
-  addCandidates([{ text: "Meridian", category: "entity_names", count: 2 }], "smart");
-  const html = suggestionsTab(getState(), getState().candidates);
-  assert.ok(!exists(html, "span.cand-spellings"));
+  addSuggestions([{ discoveryMethods: ["heuristic"], mainText: "Meridian", category: "entity_names", count: 2 }]);
+  const html = suggestionsTab(getState(), getState().suggestions);
+  assert.ok(!exists(html, "span.sugg-spellings"));
+});
+
+// --- Relatedness: shared evidence, never automatic grouping ---------------
+//
+// Two organisations reached through one email domain may genuinely be two legal
+// entities or two country branches. Folding them automatically would give one
+// placeholder to two companies, and the mapping CSV would then state that two
+// different organisations were the same one. So shared evidence produces a NOTE
+// and the grouping stays the user's decision.
+
+/** domainEvidence(text) is one piece of domain evidence, as Go sends it. */
+function domainEvidence() {
+  return [{
+    kind: "email_domain", signalCategory: "email",
+    signalText: "pierre.dupont@tpps.com", documents: ["mail.md"],
+  }];
+}
+
+test("two Suggestions sharing evidence are named as related, not merged", () => {
+  resetState();
+  addSuggestions([
+    { mainText: "Tpps France", category: "entity_names", count: 2, discoveryMethods: ["signal"], evidence: domainEvidence() },
+    { mainText: "Tpps Holdings", category: "entity_names", count: 1, discoveryMethods: ["signal"], evidence: domainEvidence() },
+  ]);
+  const shown = getState().suggestions;
+  assert.equal(shown.length, 2, "shared evidence must NOT collapse two rows into one");
+
+  const html = suggestionsTab(getState(), shown);
+  const notes = all(html, "span.related-note").map((n) => stripTags(n.inner));
+  assert.equal(notes.length, 2, "each row names the other");
+  assert.match(notes[0], /Tpps Holdings/);
+  assert.match(notes[1], /Tpps France/);
+  // Neither has quietly taken the other on as a spelling, which is what an
+  // automatic fold would look like from the outside.
+  for (const row of shown) {
+    assert.deepEqual(row.spellings, [], `${row.mainText} must carry no folded rival`);
+  }
+});
+
+test("relatedness is by the RELATIONSHIP, not by the document it was found in", () => {
+  // The same email domain seen in two files is one relationship. Keying on the
+  // document list would make two rows from two files look unrelated.
+  resetState();
+  addSuggestions([
+    {
+      mainText: "Tpps France", category: "entity_names", discoveryMethods: ["signal"],
+      evidence: [{ kind: "email_domain", signalCategory: "email", signalText: "a@tpps.com", documents: ["one.md"] }],
+    },
+    {
+      mainText: "Tpps Holdings", category: "entity_names", discoveryMethods: ["signal"],
+      evidence: [{ kind: "email_domain", signalCategory: "email", signalText: "a@tpps.com", documents: ["two.md"] }],
+    },
+  ]);
+  assert.deepEqual(relatedTo(getState().suggestions[0], getState().suggestions), ["Tpps Holdings"]);
+});
+
+test("rows with different evidence are not related", () => {
+  resetState();
+  addSuggestions([
+    {
+      mainText: "Tpps France", category: "entity_names", discoveryMethods: ["signal"],
+      evidence: [{ kind: "email_domain", signalCategory: "email", signalText: "a@tpps.com" }],
+    },
+    {
+      mainText: "Meridian", category: "entity_names", discoveryMethods: ["signal"],
+      evidence: [{ kind: "email_domain", signalCategory: "email", signalText: "b@meridian.com" }],
+    },
+  ]);
+  assert.deepEqual(relatedTo(getState().suggestions[0], getState().suggestions), []);
+  assert.equal(all(suggestionsTab(getState(), getState().suggestions), "span.related-note").length, 0);
+});
+
+test("a row with no evidence is related to nothing", () => {
+  // A heuristic finding carries no evidence, so it must not be swept into every
+  // other evidence-free row's related list.
+  resetState();
+  addSuggestions([
+    { mainText: "Alpha", category: "entity_names", discoveryMethods: ["heuristic"] },
+    { mainText: "Beta", category: "entity_names", discoveryMethods: ["heuristic"] },
+  ]);
+  assert.deepEqual(relatedTo(getState().suggestions[0], getState().suggestions), []);
+});
+
+test("an accepted Value keeps naming the Values that share its evidence", () => {
+  // The note survives the accept, because the question it answers ("are these the
+  // same company?") is still open afterwards.
+  resetState();
+  addSuggestions([
+    { mainText: "Tpps France", category: "entity_names", discoveryMethods: ["signal"], evidence: domainEvidence() },
+    { mainText: "Tpps Holdings", category: "entity_names", discoveryMethods: ["signal"], evidence: domainEvidence() },
+  ]);
+  acceptSuggestion("Tpps France");
+  acceptSuggestion("Tpps Holdings");
+  for (const v of getState().values) {
+    setValueSpellings("entity_names", v.mainText, [v.mainText]);
+  }
+
+  const notes = all(valuesTab(getState()), "span.related-note").map((n) => stripTags(n.inner));
+  assert.equal(notes.length, 2);
+  assert.match(notes[0], /Tpps Holdings/);
 });

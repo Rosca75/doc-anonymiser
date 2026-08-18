@@ -189,7 +189,7 @@ export function tabbar(tabs, opts = {}) {
  *   disabled?: boolean, title?: string}>} chips
  * @param {object} [opts]
  * @param {string} [opts.attr] data attribute name (default "chip")
- * @param {boolean} [opts.square] the squarer, smaller variant used by the rail
+ * @param {boolean} [opts.square] the squarer, smaller spelling used by the rail
  * @param {string} [opts.ariaLabel] accessible name for the row
  * @returns {string} safe HTML
  */
@@ -214,7 +214,7 @@ export function chipRow(chips, opts = {}) {
  *
  * @param {string} text
  * @param {object} [opts]
- * @param {boolean} [opts.mini] the smaller variant used for column captions
+ * @param {boolean} [opts.mini] the smaller spelling used for column captions
  * @returns {string} safe HTML
  */
 export function sectionLabel(text, opts = {}) {
@@ -274,6 +274,149 @@ export function collapsibleGroup(id, title, bodyHTML, opts = {}) {
     `</span></div>` +
     `<div class="cgroup-body">${bodyHTML}</div>` +
     `</section>`;
+}
+
+/**
+ * helpTooltip(text, opts) is the ONE way an explanation reaches the interface
+ * without taking permanent vertical space.
+ *
+ * The Configure panel used to carry a paragraph under every control. Read once,
+ * they are useful; read on every visit, they are what pushes the panel taller
+ * than the window and buries the controls that ARE in use. So the explanation
+ * moves here: a small information icon beside the label, and the text on demand.
+ *
+ * The behaviour is fixed and not negotiable per call site, because an
+ * explanation the keyboard cannot reach is an explanation half the users do not
+ * have:
+ *
+ *   - it opens on POINTER HOVER and on KEYBOARD FOCUS, so it is reachable by
+ *     Tab as well as by mouse;
+ *   - it stays readable while either the icon or the bubble itself has focus or
+ *     hover, so a pointer can travel into it to select the text;
+ *   - it closes on pointer leave, on blur and on Escape;
+ *   - it is wired with aria-describedby, so a screen reader announces it as the
+ *     description of the control rather than as a stray paragraph;
+ *   - it is NOT a native dialog (frontend/CLAUDE.md: no confirm/alert/prompt),
+ *     and it is not a `title` attribute either, because a title is invisible to
+ *     touch, slow to appear, and unstyleable.
+ *
+ * POSITIONING: the bubble is rendered inside the trigger but positioned
+ * `fixed` by CSS, so it escapes the rail's clipping scroll container. A bubble
+ * positioned `absolute` inside an `overflow: auto` ancestor is clipped at the
+ * container's edge, which is exactly the failure the rendering harness checks
+ * for.
+ *
+ * @param {string} text the explanation, from copy.js
+ * @param {object} [opts]
+ * @param {string} [opts.id] the bubble's id; derived from the text when omitted
+ * @param {string} [opts.label] the icon's accessible name; defaults to a generic
+ *   "More about this"
+ * @returns {string} safe HTML
+ */
+export function helpTooltip(text, opts = {}) {
+  if (!text) return "";
+  const id = opts.id ?? `help-${hashText(text)}`;
+  const label = opts.label ?? "More about this";
+  return `<span class="help" data-help>` +
+    `<button type="button" class="help-icon" aria-label="${escapeHTML(label)}"` +
+    ` aria-describedby="${escapeHTML(id)}">${icon("info")}</button>` +
+    `<span class="help-bubble" id="${escapeHTML(id)}" role="tooltip">${escapeHTML(text)}</span>` +
+    `</span>`;
+}
+
+/**
+ * hashText(text) is a short stable id from a string, so a tooltip's bubble can be
+ * referenced by aria-describedby without every call site inventing an id (and
+ * without two of them colliding on the same one).
+ */
+function hashText(text) {
+  let h = 0;
+  for (let i = 0; i < text.length; i++) {
+    h = (h * 31 + text.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h).toString(36);
+}
+
+/**
+ * wireHelpTooltips(container) attaches the open/close behaviour to every
+ * helpTooltip in the container.
+ *
+ * The open state is a data attribute on the wrapper rather than a class, so CSS
+ * owns the appearance and this owns only WHEN. Hover and focus are tracked
+ * separately and the bubble stays open while EITHER holds: with one flag, moving
+ * the pointer from the icon into the bubble closes the bubble the pointer is
+ * moving towards.
+ *
+ * @param {HTMLElement} container the view container after innerHTML
+ */
+export function wireHelpTooltips(container) {
+  for (const help of container.querySelectorAll("[data-help]")) {
+    let hovered = false;
+    let focused = false;
+    const sync = () => {
+      if (hovered || focused) help.setAttribute("data-open", "true");
+      else help.removeAttribute("data-open");
+    };
+    help.addEventListener("pointerenter", () => { hovered = true; sync(); });
+    help.addEventListener("pointerleave", () => { hovered = false; sync(); });
+    help.addEventListener("focusin", () => { focused = true; sync(); });
+    help.addEventListener("focusout", () => { focused = false; sync(); });
+    // Escape closes it and gives up the hover too, so the bubble does not
+    // reappear the instant the pointer twitches without leaving.
+    help.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Escape") return;
+      ev.stopPropagation();
+      hovered = false;
+      focused = false;
+      sync();
+      help.querySelector(".help-icon")?.blur();
+    });
+  }
+}
+
+/**
+ * dropdownChecklist(opts) is a compact summary control that opens a small list of
+ * checkboxes.
+ *
+ * It exists so a set of switches can live in the rail without spending one row
+ * per switch forever. The CLOSED state is a summary the user can read at a
+ * glance; the open state is the list. That trade is what keeps the panel short as
+ * sources are added.
+ *
+ * It is DATA-DRIVEN: the rows come from the caller's list, so a new entry needs
+ * no new markup and no new persisted flag.
+ *
+ * @param {object} opts
+ * @param {string} opts.id the control's element id
+ * @param {string} opts.label the label beside the summary
+ * @param {string} opts.summary the closed read-out ("Off", a name, "N sources")
+ * @param {string} opts.listLabel the heading over the open list
+ * @param {boolean} opts.open whether the list is showing
+ * @param {Array<{id: string, label: string, detail?: string, checked: boolean}>} opts.rows
+ * @param {string} [opts.helpHTML] a helpTooltip to sit beside the label
+ * @returns {string} safe HTML
+ */
+export function dropdownChecklist(opts) {
+  const rows = (opts.rows ?? []).map((row) =>
+    `<label class="checklist-row">` +
+    `<input type="checkbox" class="checklist-box" data-checklist="${escapeHTML(row.id)}"` +
+    `${row.checked ? " checked" : ""}/>` +
+    `<span class="checklist-label">${escapeHTML(row.label)}</span>` +
+    (row.detail ? `<span class="checklist-detail">${escapeHTML(row.detail)}</span>` : "") +
+    `</label>`).join("");
+
+  return `<div class="checklist" id="${escapeHTML(opts.id)}"${opts.open ? ` data-open="true"` : ""}>` +
+    `<div class="checklist-head">` +
+    `<span class="checklist-title">${escapeHTML(opts.label)}${opts.helpHTML ?? ""}</span>` +
+    `<button type="button" class="checklist-toggle" aria-expanded="${opts.open ? "true" : "false"}"` +
+    ` aria-controls="${escapeHTML(opts.id)}-list">` +
+    `<span class="checklist-summary">${escapeHTML(opts.summary)}</span>${icon("expand_more")}` +
+    `</button>` +
+    `</div>` +
+    `<div class="checklist-list" id="${escapeHTML(opts.id)}-list"${opts.open ? "" : " hidden"}>` +
+    sectionLabel(opts.listLabel, { mini: true }) +
+    rows +
+    `</div></div>`;
 }
 
 /**

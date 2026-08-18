@@ -11,7 +11,6 @@ package engine
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 )
 
@@ -22,15 +21,15 @@ import (
 // run. Without them the frontend would receive Go's capitalised field names and
 // the report would silently disagree with what the engine produced.
 type ValueRef struct {
-	Kind      string `json:"kind"`             // "regex" | "entity" | "custom_pattern" | "simple_rule"
-	Category  string `json:"category"`         // category the value belongs to
-	Canonical string `json:"canonical"`        // lower-cased value
-	Detail    string `json:"detail,omitempty"` // extra context (e.g., the regex pattern)
+	Kind     string `json:"kind"`             // "regex" | "value" | "custom_pattern"
+	Category string `json:"category"`         // category the value belongs to
+	MainText string `json:"mainText"`         // lower-cased value
+	Detail   string `json:"detail,omitempty"` // extra context (e.g., the regex pattern)
 }
 
 // Conflict is a value that violates an invariant and must be resolved.
 type Conflict struct {
-	Kind     string     `json:"kind"`           // "ambiguity" | "overlap" | "collision" | "reserved"
+	Kind     string     `json:"kind"`           // "ambiguity" | "overlap" | "collision"
 	Severity string     `json:"severity"`       // "block" | "warn"
 	Value    string     `json:"value"`          // the problematic value
 	Refs     []ValueRef `json:"refs,omitempty"` // all places this value appears
@@ -46,9 +45,8 @@ type ValidationResult struct {
 
 // ValidationInput is what ValidateValues needs to check.
 type ValidationInput struct {
-	Entities       []Entity          // declared entities
+	Values         []Value           // the accepted Values
 	Patterns       []CustomPattern   // user-written regex patterns
-	SimpleRules    []SimpleRule      // find-and-replace rules
 	Allowlist      *Allowlist        // terms never to replace
 	Categories     CategorySelection // which categories are active
 	Registry       *Registry         // may be nil before the first run
@@ -78,26 +76,25 @@ func ValidateValues(in ValidationInput) ValidationResult {
 		return ValidationResult{}
 	}
 
-	active := activeEntities(in.Entities, in.Categories)
+	active := activeValues(in.Values, in.Categories)
 
 	var result ValidationResult
 	result.Blocking = append(result.Blocking, checkDuplicateValues(active)...)
 	result.Blocking = append(result.Blocking, checkVariantCollisions(active)...)
 	result.Blocking = append(result.Blocking, checkAllowlistCollisions(active, in.Allowlist)...)
-	result.Blocking = append(result.Blocking, checkSimpleRuleConflicts(in.SimpleRules, in.Registry)...)
 	return result
 }
 
-// activeEntities keeps the entities whose category is switched on. A nil
+// activeValues keeps the values whose category is switched on. A nil
 // selection means "no selection was supplied", which every caller inside Run
 // resolves before calling, so it is read as "everything is active" rather than
 // "nothing is".
-func activeEntities(entities []Entity, categories CategorySelection) []Entity {
+func activeValues(values []Value, categories CategorySelection) []Value {
 	if categories == nil {
-		return entities
+		return values
 	}
-	out := make([]Entity, 0, len(entities))
-	for _, e := range entities {
+	out := make([]Value, 0, len(values))
+	for _, e := range values {
 		if categories[e.Category] {
 			out = append(out, e)
 		}
@@ -111,29 +108,29 @@ func activeEntities(entities []Entity, categories CategorySelection) []Entity {
 // replacement string. The registry enforces it at assignment time too, by
 // keeping the FIRST category that claimed a string; blocking here is what tells
 // the user, because the registry's silent resolution is correct and invisible.
-func checkDuplicateValues(entities []Entity) []Conflict {
+func checkDuplicateValues(values []Value) []Conflict {
 	var conflicts []Conflict
-	owner := map[string]string{} // lower(canonical) -> category
+	owner := map[string]string{} // lower(mainText) -> category
 
-	for _, e := range entities {
-		canonical := strings.ToLower(e.Canonical)
-		previous, seen := owner[canonical]
+	for _, e := range values {
+		mainText := strings.ToLower(e.MainText)
+		previous, seen := owner[mainText]
 		if seen && previous != e.Category {
 			conflicts = append(conflicts, Conflict{
 				Kind:     "ambiguity",
 				Severity: "block",
-				Value:    e.Canonical,
+				Value:    e.MainText,
 				Refs: []ValueRef{
-					{Kind: "entity", Category: previous, Canonical: canonical},
-					{Kind: "entity", Category: e.Category, Canonical: canonical},
+					{Kind: "value", Category: previous, MainText: mainText},
+					{Kind: "value", Category: e.Category, MainText: mainText},
 				},
 				Message: fmt.Sprintf(
 					"the value %q is declared under both %q and %q, and one value can only have one replacement",
-					e.Canonical, previous, e.Category),
+					e.MainText, previous, e.Category),
 				Fix: "Delete the value from one of the two categories, or switch one category off.",
 			})
 		}
-		owner[canonical] = e.Category
+		owner[mainText] = e.Category
 	}
 	return conflicts
 }
@@ -145,30 +142,30 @@ func checkDuplicateValues(entities []Entity) []Conflict {
 // resolver picks per occurrence, the other value silently loses occurrences it
 // was supposed to own. It is also the case the drag-and-drop regrouping exists
 // for, caught for the user who never did the drag.
-func checkVariantCollisions(entities []Entity) []Conflict {
+func checkVariantCollisions(values []Value) []Conflict {
 	var conflicts []Conflict
-	owner := map[string]string{} // lower(variant) -> the canonical that claimed it
+	owner := map[string]string{} // lower(variant) -> the mainText that claimed it
 
-	for _, e := range entities {
-		for _, variant := range ExpandVariants(e) {
+	for _, e := range values {
+		for _, variant := range ExpandSpellings(e) {
 			key := strings.ToLower(variant)
 			previous, seen := owner[key]
-			if seen && !strings.EqualFold(previous, e.Canonical) {
+			if seen && !strings.EqualFold(previous, e.MainText) {
 				conflicts = append(conflicts, Conflict{
 					Kind:     "collision",
 					Severity: "block",
 					Value:    variant,
 					Refs: []ValueRef{
-						{Kind: "entity", Category: e.Category, Canonical: strings.ToLower(previous), Detail: previous},
-						{Kind: "entity", Category: e.Category, Canonical: strings.ToLower(e.Canonical), Detail: e.Canonical},
+						{Kind: "value", Category: e.Category, MainText: strings.ToLower(previous), Detail: previous},
+						{Kind: "value", Category: e.Category, MainText: strings.ToLower(e.MainText), Detail: e.MainText},
 					},
 					Message: fmt.Sprintf(
 						"%q is a spelling of both %q and %q, so an occurrence of it belongs to neither",
-						variant, previous, e.Canonical),
+						variant, previous, e.MainText),
 					Fix: "Drag the spelling onto the value it belongs to in the variant list, or remove one of the two values.",
 				})
 			}
-			owner[key] = e.Canonical
+			owner[key] = e.MainText
 		}
 	}
 	return conflicts
@@ -180,89 +177,31 @@ func checkVariantCollisions(entities []Entity) []Conflict {
 // The allowlist wins, by every pass, so the value is simply never replaced.
 // That is a defensible rule and a terrible silence: the user listed the value
 // on purpose and nothing anywhere says why it survived the run.
-func checkAllowlistCollisions(entities []Entity, allowlist *Allowlist) []Conflict {
+func checkAllowlistCollisions(values []Value, allowlist *Allowlist) []Conflict {
 	if allowlist == nil {
 		return nil
 	}
 	var conflicts []Conflict
-	for _, e := range entities {
-		if !allowlist.Contains(e.Canonical) {
+	for _, e := range values {
+		if !allowlist.Contains(e.MainText) {
 			continue
 		}
 		conflicts = append(conflicts, Conflict{
 			Kind:     "collision",
 			Severity: "block",
-			Value:    e.Canonical,
+			Value:    e.MainText,
 			Refs: []ValueRef{
-				{Kind: "entity", Category: e.Category, Canonical: strings.ToLower(e.Canonical)},
-				{Kind: "allowlist", Canonical: strings.ToLower(e.Canonical)},
+				{Kind: "value", Category: e.Category, MainText: strings.ToLower(e.MainText)},
+				{Kind: "allowlist", MainText: strings.ToLower(e.MainText)},
 			},
 			Message: fmt.Sprintf(
 				"%q is listed both as a value to replace and as a term never to anonymise, and the never-anonymise list always wins",
-				e.Canonical),
+				e.MainText),
 			Fix: "Remove it from one of the two lists, so the run does what you expect.",
 		})
 	}
 	return conflicts
 }
-
-// checkSimpleRuleConflicts finds find-and-replace rules that would corrupt the
-// re-identification key.
-//
-// Two shapes, and only two:
-//
-//	a FIND containing a placeholder. The rules run last, after the passes, so
-//	such a rule rewrites anonymised output and the key stops describing the
-//	text it claims to describe.
-//	a REPLACE naming a placeholder the registry has already given to a value.
-//	The exported key would then have two originals behind one placeholder.
-//
-// An UNASSIGNED placeholder-shaped replace is allowed on purpose: that is the
-// shipped select-and-replace flow, which mints a [CUSTOM_N] the App reserves.
-func checkSimpleRuleConflicts(rules []SimpleRule, registry *Registry) []Conflict {
-	var conflicts []Conflict
-	for _, rule := range rules {
-		if placeholder := placeholderInsideRe.FindString(rule.Find); placeholder != "" {
-			conflicts = append(conflicts, Conflict{
-				Kind:     "reserved",
-				Severity: "block",
-				Value:    rule.Find,
-				Refs:     []ValueRef{{Kind: "simple_rule", Detail: rule.Find}},
-				Message: fmt.Sprintf(
-					"the find-and-replace rule looks for %q, which is a placeholder this run produces, so the rule would rewrite anonymised text",
-					placeholder),
-				Fix: "Change what the rule looks for to the original text, not the placeholder.",
-			})
-			continue
-		}
-		if registry == nil || !placeholderShapeRe.MatchString(rule.Replace) {
-			continue
-		}
-		owner, assigned := registry.PlaceholderOwner(rule.Replace)
-		if !assigned {
-			continue // free, and the App reserves it when it hands it out
-		}
-		conflicts = append(conflicts, Conflict{
-			Kind:     "reserved",
-			Severity: "block",
-			Value:    rule.Replace,
-			Refs: []ValueRef{
-				{Kind: "simple_rule", Detail: rule.Find},
-				{Kind: "entity", Category: owner.Category, Canonical: strings.ToLower(owner.Original)},
-			},
-			Message: fmt.Sprintf(
-				"the rule replaces text with %s, which this session already assigned to %q, so the exported key would have two values behind one placeholder",
-				rule.Replace, owner.Original),
-			Fix: "Pick a different replacement. The select-and-replace action on step 3 mints a free one for you.",
-		})
-	}
-	return conflicts
-}
-
-// placeholderInsideRe matches a placeholder ANYWHERE in a string, unlike
-// placeholderShapeRe, which anchors. A rule looking for "call [PERSON_1] back"
-// is the same mistake as one looking for "[PERSON_1]".
-var placeholderInsideRe = regexp.MustCompile(`\[[A-Z][A-Z0-9_]*_[0-9]+\]`)
 
 // maxOverlapWarnings caps how many overlap warnings one run reports, and
 // maxOverlapSpansExamined caps how much work finding them may cost.
@@ -323,7 +262,7 @@ func (w *overlapWarnings) add(dropped []Span) {
 			return
 		}
 		w.examined++
-		value := span.CanonicalOrOriginal()
+		value := span.MainTextOrOriginal()
 		key := span.Category + "|" + strings.ToLower(value)
 		if w.seen[key] {
 			continue
@@ -333,7 +272,7 @@ func (w *overlapWarnings) add(dropped []Span) {
 			Kind:     "overlap",
 			Severity: "warn",
 			Value:    value,
-			Refs:     []ValueRef{{Kind: "detection", Category: span.Category, Canonical: strings.ToLower(value)}},
+			Refs:     []ValueRef{{Kind: "detection", Category: span.Category, MainText: strings.ToLower(value)}},
 			Message: fmt.Sprintf(
 				"%q was detected as %s but a stronger detection covered the same text, so the stronger one was used",
 				value, span.Category),
@@ -358,7 +297,7 @@ func (w *overlapWarnings) addOwnershipLosses(losses []ownershipLoss) {
 			return
 		}
 		w.examined++
-		value := loss.loser.CanonicalOrOriginal()
+		value := loss.loser.MainTextOrOriginal()
 		key := loss.loser.Category + "|" + strings.ToLower(value)
 		if w.seen[key] {
 			continue
@@ -368,28 +307,28 @@ func (w *overlapWarnings) addOwnershipLosses(losses []ownershipLoss) {
 			Kind:     "overlap",
 			Severity: "warn",
 			Value:    value,
-			Refs:     []ValueRef{{Kind: "detection", Category: loss.loser.Category, Canonical: strings.ToLower(value)}},
+			Refs:     []ValueRef{{Kind: "detection", Category: loss.loser.Category, MainText: strings.ToLower(value)}},
 			Message: fmt.Sprintf(
 				"%q was found by %s as %s and by %s as %s. %s takes priority, so it is replaced as %s everywhere.",
 				value,
-				originWord(loss.loser.Origin), loss.loser.Category,
-				originWord(loss.winner.Origin), loss.winner.Category,
-				originWord(loss.winner.Origin), loss.winner.Category),
+				matchClassWord(loss.loser.MatchClass), loss.loser.Category,
+				matchClassWord(loss.winner.MatchClass), loss.winner.Category,
+				matchClassWord(loss.winner.MatchClass), loss.winner.Category),
 			Fix: "If the other one should win, switch off the type that covered it, narrow the pattern, or add the covering term to the never anonymise list.",
 		})
 	}
 }
 
-// originWord is the route named in a warning sentence. The engine's identifiers
+// matchClassWord is the route named in a warning sentence. The engine's identifiers
 // are contracts, not prose, so a message that printed "ai" would read as jargon;
-// these are the same words the value card's origin chip uses.
-func originWord(origin string) string {
-	switch origin {
-	case OriginNative:
+// these are the same words the value card's matchClass chip uses.
+func matchClassWord(matchClass string) string {
+	switch matchClass {
+	case MatchClassBuiltInPattern:
 		return "native detection"
-	case OriginAuto:
+	case MatchClassSmartDiscovered:
 		return "Smart detection"
-	case OriginAI:
+	case MatchClassLocalAIDiscovered:
 		return "the local AI"
 	default:
 		return "your own values and patterns"

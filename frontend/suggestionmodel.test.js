@@ -1,62 +1,63 @@
-// candidatemodel.test.js, tests for the suggestions-table view-model
+// suggestionmodel.test.js, tests for the Suggestions-tab view-model.
 //
-// The table gained a search box, a type selector and a sort toggle. All
-// three run through visibleCandidates, and the bulk Accept all / Deny all
-// buttons act on exactly what it returns, so a bug here would either hide
-// rows a bulk action then swept up, or act on rows the user could not see.
-// That makes this the highest-value pure function in the Values step.
+// The table has a search box, a type selector, a discovery-method selector and a
+// sort toggle. All four run through visibleSuggestions, and the bulk accept and
+// reject buttons act on exactly what it returns, so a bug here would either hide
+// rows a bulk action then swept up, or act on rows the user could not see. That
+// makes this the highest-value pure function on the Identify step.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  visibleCandidates,
-  toggleCountSort, toggleValueSort, DEFAULT_CANDIDATE_FILTER,
-} from "./candidatemodel.js";
+  visibleSuggestions,
+  toggleCountSort, toggleValueSort, DEFAULT_SUGGESTION_FILTER,
+} from "./suggestionmodel.js";
 
-/** fixture() is the shared candidate list: mixed categories and counts. */
+/** fixture() is the shared Suggestion list: mixed categories, counts and
+ *  discovery methods, including one row two methods found. */
 function fixture() {
   return [
-    { text: "Marie Duval", category: "person_names", count: 7, source: "smart" },
-    { text: "Alpine Trust", category: "entity_names", count: 3, source: "smart" },
-    { text: "Anouk Berger", category: "person_names", count: 3, source: "local-ai" },
-    { text: "Project Borealis", category: "project_names", count: 1, source: "smart" },
-    { text: "Helpdesk", category: "entity_names", count: 12, source: "smart" },
+    { mainText: "Marie Duval", category: "person_names", count: 7, discoveryMethods: ["heuristic", "signal"] },
+    { mainText: "Alpine Trust", category: "entity_names", count: 3, discoveryMethods: ["heuristic"] },
+    { mainText: "Anouk Berger", category: "person_names", count: 3, discoveryMethods: ["local_ai"] },
+    { mainText: "Project Borealis", category: "project_names", count: 1, discoveryMethods: ["heuristic"] },
+    { mainText: "Helpdesk", category: "entity_names", count: 12, discoveryMethods: ["heuristic"] },
   ];
 }
 
-const texts = (rows) => rows.map((r) => r.text);
+const texts = (rows) => rows.map((r) => r.mainText);
 
 // --- The neutral filter --------------------------------------------------
 
 test("the default filter shows everything, most frequent first", () => {
-  const rows = visibleCandidates(fixture(), DEFAULT_CANDIDATE_FILTER);
+  const rows = visibleSuggestions(fixture(), DEFAULT_SUGGESTION_FILTER);
   assert.deepEqual(texts(rows), [
     "Helpdesk", "Marie Duval", "Alpine Trust", "Anouk Berger", "Project Borealis",
   ]);
 });
 
 test("an omitted filter behaves as the default", () => {
-  assert.deepEqual(texts(visibleCandidates(fixture())), texts(visibleCandidates(fixture(), DEFAULT_CANDIDATE_FILTER)));
+  assert.deepEqual(texts(visibleSuggestions(fixture())), texts(visibleSuggestions(fixture(), DEFAULT_SUGGESTION_FILTER)));
 });
 
 test("the input list is never mutated", () => {
   const input = fixture();
   const before = texts(input);
-  visibleCandidates(input, { ...DEFAULT_CANDIDATE_FILTER, sort: "value-asc" });
+  visibleSuggestions(input, { ...DEFAULT_SUGGESTION_FILTER, sort: "value-asc" });
   assert.deepEqual(texts(input), before,
-    "the store's candidate order must survive a view sort");
+    "the store's suggestion order must survive a view sort");
 });
 
 test("an empty or missing list is handled", () => {
-  assert.deepEqual(visibleCandidates([], DEFAULT_CANDIDATE_FILTER), []);
-  assert.deepEqual(visibleCandidates(undefined, DEFAULT_CANDIDATE_FILTER), []);
+  assert.deepEqual(visibleSuggestions([], DEFAULT_SUGGESTION_FILTER), []);
+  assert.deepEqual(visibleSuggestions(undefined, DEFAULT_SUGGESTION_FILTER), []);
 });
 
 // --- the value search ----------------------------------------------------
 
 test("the search matches anywhere in the value, case-insensitively", () => {
-  const search = (q) => texts(visibleCandidates(fixture(), { ...DEFAULT_CANDIDATE_FILTER, search: q }));
+  const search = (q) => texts(visibleSuggestions(fixture(), { ...DEFAULT_SUGGESTION_FILTER, search: q }));
   assert.deepEqual(search("duv"), ["Marie Duval"]);
   assert.deepEqual(search("DUVAL"), ["Marie Duval"]);
   assert.deepEqual(search("berger"), ["Anouk Berger"]);
@@ -68,29 +69,29 @@ test("the search matches anywhere in the value, case-insensitively", () => {
 });
 
 test("the search ignores accidental surrounding spaces", () => {
-  const rows = visibleCandidates(fixture(), { ...DEFAULT_CANDIDATE_FILTER, search: "  alpine  " });
+  const rows = visibleSuggestions(fixture(), { ...DEFAULT_SUGGESTION_FILTER, search: "  alpine  " });
   assert.deepEqual(texts(rows), ["Alpine Trust"]);
 });
 
 test("a search matching nothing returns an empty list, not everything", () => {
-  const rows = visibleCandidates(fixture(), { ...DEFAULT_CANDIDATE_FILTER, search: "zzzz" });
+  const rows = visibleSuggestions(fixture(), { ...DEFAULT_SUGGESTION_FILTER, search: "zzzz" });
   assert.deepEqual(rows, []);
 });
 
 // --- the type selector ---------------------------------------------------
 
 test("the category filter keeps only that type", () => {
-  const rows = visibleCandidates(fixture(), { ...DEFAULT_CANDIDATE_FILTER, category: "person_names" });
+  const rows = visibleSuggestions(fixture(), { ...DEFAULT_SUGGESTION_FILTER, category: "person_names" });
   assert.deepEqual(texts(rows), ["Marie Duval", "Anouk Berger"]);
 });
 
 test("an empty category means all types", () => {
-  assert.equal(visibleCandidates(fixture(), { ...DEFAULT_CANDIDATE_FILTER, category: "" }).length, 5);
+  assert.equal(visibleSuggestions(fixture(), { ...DEFAULT_SUGGESTION_FILTER, category: "" }).length, 5);
 });
 
 test("search and category compose", () => {
-  const rows = visibleCandidates(fixture(), {
-    ...DEFAULT_CANDIDATE_FILTER, category: "person_names", search: "anouk",
+  const rows = visibleSuggestions(fixture(), {
+    ...DEFAULT_SUGGESTION_FILTER, category: "person_names", search: "anouk",
   });
   assert.deepEqual(texts(rows), ["Anouk Berger"]);
 });
@@ -98,34 +99,34 @@ test("search and category compose", () => {
 // --- the sorts -----------------------------------------------------------
 
 test("occurrences sort both ways", () => {
-  const desc = visibleCandidates(fixture(), { ...DEFAULT_CANDIDATE_FILTER, sort: "count-desc" });
+  const desc = visibleSuggestions(fixture(), { ...DEFAULT_SUGGESTION_FILTER, sort: "count-desc" });
   assert.deepEqual(desc.map((r) => r.count), [12, 7, 3, 3, 1]);
-  const asc = visibleCandidates(fixture(), { ...DEFAULT_CANDIDATE_FILTER, sort: "count-asc" });
+  const asc = visibleSuggestions(fixture(), { ...DEFAULT_SUGGESTION_FILTER, sort: "count-asc" });
   assert.deepEqual(asc.map((r) => r.count), [1, 3, 3, 7, 12]);
 });
 
 test("equal counts tie-break by value, so rows never jump between renders", () => {
-  const rows = visibleCandidates(fixture(), { ...DEFAULT_CANDIDATE_FILTER, sort: "count-desc" });
-  const tied = rows.filter((r) => r.count === 3).map((r) => r.text);
+  const rows = visibleSuggestions(fixture(), { ...DEFAULT_SUGGESTION_FILTER, sort: "count-desc" });
+  const tied = rows.filter((r) => r.count === 3).map((r) => r.mainText);
   assert.deepEqual(tied, ["Alpine Trust", "Anouk Berger"]);
   // Same input, same output, every time.
   for (let i = 0; i < 5; i++) {
-    assert.deepEqual(texts(visibleCandidates(fixture(), { ...DEFAULT_CANDIDATE_FILTER, sort: "count-desc" })), texts(rows));
+    assert.deepEqual(texts(visibleSuggestions(fixture(), { ...DEFAULT_SUGGESTION_FILTER, sort: "count-desc" })), texts(rows));
   }
 });
 
 test("value sort both ways", () => {
-  const asc = visibleCandidates(fixture(), { ...DEFAULT_CANDIDATE_FILTER, sort: "value-asc" });
+  const asc = visibleSuggestions(fixture(), { ...DEFAULT_SUGGESTION_FILTER, sort: "value-asc" });
   assert.deepEqual(texts(asc), [
     "Alpine Trust", "Anouk Berger", "Helpdesk", "Marie Duval", "Project Borealis",
   ]);
-  const desc = visibleCandidates(fixture(), { ...DEFAULT_CANDIDATE_FILTER, sort: "value-desc" });
+  const desc = visibleSuggestions(fixture(), { ...DEFAULT_SUGGESTION_FILTER, sort: "value-desc" });
   assert.deepEqual(texts(desc), texts(asc).reverse());
 });
 
 test("an unknown sort key falls back to the default instead of throwing", () => {
-  const rows = visibleCandidates(fixture(), { ...DEFAULT_CANDIDATE_FILTER, sort: "colour-desc" });
-  assert.deepEqual(texts(rows), texts(visibleCandidates(fixture(), DEFAULT_CANDIDATE_FILTER)));
+  const rows = visibleSuggestions(fixture(), { ...DEFAULT_SUGGESTION_FILTER, sort: "colour-desc" });
+  assert.deepEqual(texts(rows), texts(visibleSuggestions(fixture(), DEFAULT_SUGGESTION_FILTER)));
 });
 
 test("the sort toggles flip and adopt", () => {
@@ -146,88 +147,88 @@ test("the sort toggles flip and adopt", () => {
 //
 // The suggestions table sorts and filters across EVERY category at once, so
 // "shown" is not a category: it is whatever survived the search, the type filter
-// and the source filter. acceptAllInCategory cannot express that, which is why
+// and the method filter. A per-category button cannot express that, which is why
 // acceptAllShown / rejectAllShown exist beside it rather than replacing it.
 
 import {
-  resetState, getState, subscribe, addCandidates, acceptAllShown, rejectAllShown,
+  resetState, getState, subscribe, addSuggestions, acceptAllShown, rejectAllShown,
 } from "./state.js";
 
-/** threeCandidates() seeds a list spanning two categories and two sources. */
-function threeCandidates() {
+/** threeSuggestions() seeds a list spanning two categories and two methods. */
+function threeSuggestions() {
   resetState();
-  addCandidates([
-    { text: "Marie Duval", category: "person_names", count: 14 },
-    { text: "Thomas Berger", category: "person_names", count: 9 },
-  ], "smart");
-  addCandidates([
-    { text: "Meridian Consulting", category: "organisation_names", count: 6 },
-  ], "local-ai");
+  addSuggestions([
+    { discoveryMethods: ["heuristic"], mainText: "Marie Duval", category: "person_names", count: 14 },
+    { discoveryMethods: ["heuristic"], mainText: "Thomas Berger", category: "person_names", count: 9 },
+  ]);
+  addSuggestions([
+    { discoveryMethods: ["local_ai"], mainText: "Meridian Consulting", category: "entity_names", count: 6 },
+  ]);
 }
 
 test("acceptAllShown promotes rows ACROSS categories in one action", () => {
-  threeCandidates();
+  threeSuggestions();
   const added = acceptAllShown(["Marie Duval", "Meridian Consulting"]);
   assert.equal(added, 2);
   const s = getState();
   // Each keeps its OWN category: the bulk action is about which rows, not about
   // what they are.
   assert.deepEqual(
-    s.entities.map((e) => `${e.category}:${e.canonical}`).sort(),
-    ["organisation_names:Meridian Consulting", "person_names:Marie Duval"]);
+    s.values.map((e) => `${e.category}:${e.mainText}`).sort(),
+    ["entity_names:Meridian Consulting", "person_names:Marie Duval"]);
   // The row that was not shown is still waiting.
-  assert.deepEqual(s.candidates.map((c) => c.text), ["Thomas Berger"]);
+  assert.deepEqual(s.suggestions.map((r) => r.mainText), ["Thomas Berger"]);
 });
 
-test("acceptAllShown ignores values that are not candidates", () => {
-  // The view passes the filtered list; a stale entry in it must not invent an
-  // entity out of nothing.
-  threeCandidates();
+test("acceptAllShown ignores values that are not suggestions", () => {
+  // The view passes the filtered list; a stale entry in it must not invent a
+  // Value out of nothing.
+  threeSuggestions();
   const added = acceptAllShown(["Marie Duval", "Never Proposed"]);
   assert.equal(added, 1);
-  assert.equal(getState().entities.length, 1);
+  assert.equal(getState().values.length, 1);
 });
 
 test("acceptAllShown on an empty selection changes nothing", () => {
-  threeCandidates();
+  threeSuggestions();
   for (const empty of [[], undefined, null]) {
     assert.equal(acceptAllShown(empty), 0, JSON.stringify(empty));
-    assert.equal(getState().candidates.length, 3);
-    assert.equal(getState().entities.length, 0);
+    assert.equal(getState().suggestions.length, 3);
+    assert.equal(getState().values.length, 0);
   }
 });
 
-test("acceptAllShown matches case-insensitively, like every candidate lookup", () => {
-  threeCandidates();
+test("acceptAllShown matches case-insensitively, like every suggestion lookup", () => {
+  threeSuggestions();
   assert.equal(acceptAllShown(["marie duval"]), 1);
-  assert.equal(getState().entities[0].canonical, "Marie Duval",
+  assert.equal(getState().values[0].mainText, "Marie Duval",
     "the stored value keeps the spelling that was proposed");
 });
 
 test("rejectAllShown drops rows without promoting any", () => {
-  threeCandidates();
+  threeSuggestions();
   const removed = rejectAllShown(["Marie Duval", "Meridian Consulting"]);
   assert.equal(removed, 2);
   const s = getState();
-  assert.deepEqual(s.entities, [], "rejecting must add nothing");
-  assert.deepEqual(s.candidates.map((c) => c.text), ["Thomas Berger"]);
+  assert.deepEqual(s.values, [], "rejecting must add nothing");
+  assert.deepEqual(s.suggestions.map((r) => r.mainText), ["Thomas Berger"]);
 });
 
 test("rejectAllShown remembers nothing, so a later run may propose it again", () => {
   // A rejection is "stop taking up review space", not a permanent veto: the
   // alternative would be a hidden deny-list nobody can see or edit.
-  threeCandidates();
+  threeSuggestions();
   rejectAllShown(["Marie Duval"]);
-  const added = addCandidates([{ text: "Marie Duval", category: "person_names" }], "smart");
+  const added = addSuggestions([{ discoveryMethods: ["heuristic"], mainText: "Marie Duval", category: "person_names" }]);
   assert.equal(added, 1, "a rejected value must be proposable again");
 });
 
 test("the bulk actions repaint once, not once per row", () => {
-  threeCandidates();
+  threeSuggestions();
   let paints = 0;
   const off = subscribe(() => paints++);
   acceptAllShown(["Marie Duval", "Thomas Berger", "Meridian Consulting"]);
-  // addEntities and the candidate removal are two setState calls; three rows
+  // addValues and the suggestion removal are two setState calls; three rows
   // must not mean six repaints.
   assert.ok(paints <= 2, `${paints} repaints for a three-row bulk accept`);
   off();

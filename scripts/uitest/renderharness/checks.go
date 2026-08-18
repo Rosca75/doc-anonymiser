@@ -199,7 +199,7 @@ func checkImportPreview(c *cdpClient, r *reporter, fx fixture) {
 			"separately.")
 }
 
-// --- Reported issue 3: the Configure rail -----------------------------------
+// --- The Configure rail -----------------------------------------------------
 
 type railResult struct {
 	Error              string   `json:"error"`
@@ -208,23 +208,20 @@ type railResult struct {
 	Routes             []string `json:"routes"`
 	SmartOn            *bool    `json:"smartOn"`
 	LocalOn            *bool    `json:"localOn"`
-	CloudDisabled      *bool    `json:"cloudDisabled"`
-	CloudOn            *bool    `json:"cloudOn"`
 	Categories         int      `json:"categories"`
 	CategoriesWithSize int      `json:"categoriesWithSize"`
 }
 
-// checkConfigureRail asserts the rail is three detection-route sections with the
-// documented default switch positions and every category on screen.
+// checkConfigureRail asserts the rail is the two detection-route sections with
+// the documented default switch positions and every category on screen.
 //
-// Reported issue 3: Configure stopped being a screen and became the left rail of
-// Identify, restructured as three switchable DETECTION ROUTES rather than four
-// peer tabs (root CLAUDE.md section 5, frontend/CLAUDE.md discipline rules).
-// Smart detection is on by default and owns the scope controls; Local AI is off
-// by default because sending the document to a model is the user's decision;
-// Cloud AI renders disabled because a section with no switch reads as "always on".
+// The Configure choices are the left rail of Identify, restructured as
+// switchable DETECTION ROUTES rather than peer tabs (root CLAUDE.md section 5,
+// frontend/CLAUDE.md discipline rules). Smart detection is on by default and
+// owns the scope controls; Local AI is off by default because handing the
+// document to a model is the user's decision.
 func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
-	r.step("The Configure rail is three detection routes")
+	r.step("The Configure rail is the two detection routes")
 
 	var got railResult
 	if err := c.eval("__uiProbes.configureRail()", &got); err != nil {
@@ -238,28 +235,22 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 		return
 	}
 
-	r.assert("the rail is three route sections", got.Sections == 3,
-		"3 .rail-section elements", fmt.Sprintf("%d, routes: %s", got.Sections, strings.Join(got.Routes, ", ")),
-		"views/identifyrail.js RAIL_SECTIONS defines Smart detection, Local AI and Cloud AI.")
+	r.assert("the rail is two route sections", got.Sections == 2,
+		"2 .rail-section elements", fmt.Sprintf("%d, routes: %s", got.Sections, strings.Join(got.Routes, ", ")),
+		"views/identifyrail.js RAIL_SECTIONS defines Smart detection and Local AI.")
 
 	r.assert("the old tab strip is gone", got.RailTabs == 0,
 		"0 [data-railtab] chips anywhere in the document", fmt.Sprintf("%d", got.RailTabs),
-		"The rail switches sections on and off; it does not tab between them (BUILD-06).")
+		"The rail switches sections on and off; it does not tab between them.")
 
 	r.assert("Smart detection is on by default", boolIs(got.SmartOn, true),
 		"the rail-smart route switch checked", describeBool(got.SmartOn),
-		"state.js settings.useSmartDetect defaults to true.")
+		"Every Smart detection method defaults on, so the derived section state reads on.")
 
 	r.assert("Local AI is off by default", boolIs(got.LocalOn, false),
 		"the rail-local route switch unchecked", describeBool(got.LocalOn),
 		"state.js settings.useAI defaults to false. Detecting Ollama ENABLES this switch, "+
 			"it never flips it.")
-
-	r.assert("Cloud AI cannot be switched on",
-		boolIs(got.CloudDisabled, true) && boolIs(got.CloudOn, false),
-		"the rail-cloud route switch present, unchecked and disabled",
-		fmt.Sprintf("disabled: %s, checked: %s", describeBool(got.CloudDisabled), describeBool(got.CloudOn)),
-		"Cloud AI is not built (BUILD-05 decision 8) and renders disabled rather than omitted.")
 
 	r.assert("every category checkbox is present", got.Categories == fx.CategoryCount,
 		fmt.Sprintf("exactly %d .cat-toggle checkboxes", fx.CategoryCount),
@@ -275,6 +266,139 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 		fmt.Sprintf("%d of %d have a height", got.CategoriesWithSize, got.Categories),
 		"A checkbox inside a folded group is in the DOM but not something the user can tick: the "+
 			"category groups open by default.")
+}
+
+// --- The Configure panel's height and its help tooltips ---------------------
+
+type panelFitResult struct {
+	Error           string `json:"error"`
+	ScrollHeight    int    `json:"scrollHeight"`
+	ClientHeight    int    `json:"clientHeight"`
+	PageOverflows   *bool  `json:"pageOverflows"`
+	FootReachable   *bool  `json:"footReachable"`
+	ProseParagraphs int    `json:"proseParagraphs"`
+	ProseHeight     int    `json:"proseHeight"`
+	HelpTooltips    int    `json:"helpTooltips"`
+}
+
+// checkConfigurePanelFit asserts the Configure panel FITS, and that its
+// explanations are tooltips rather than prose.
+//
+// The panel used to carry a paragraph under every control. Read once they are
+// useful; read on every visit they are what pushes the panel past the window and
+// buries the controls that are actually in use. The explanations moved into help
+// tooltips, and this is the measurement that keeps them there: a string test can
+// count paragraphs but cannot see whether the result fits.
+func checkConfigurePanelFit(c *cdpClient, r *reporter) {
+	r.step("The Configure panel fits, and explains itself on demand")
+
+	var got panelFitResult
+	if err := c.eval("__uiProbes.configurePanelFit()", &got); err != nil {
+		r.assert("the panel-fit probe runs", false, "a rendered Identify rail", err.Error(),
+			"views/identifyrail.js must render the rail from a seeded Identify state.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the panel-fit probe runs", false, "#identify-rail on the Identify screen",
+			got.Error, "views/identify.js renders the rail and hands it to renderIdentifyRail.")
+		return
+	}
+
+	// Measured in PIXELS, not counted by class: a paragraph given a different
+	// class would pass a class count and still occupy the panel.
+	r.assert("the panel spends no vertical space on prose",
+		got.ProseParagraphs == 0 && got.ProseHeight == 0,
+		"0 static paragraphs, 0px of them",
+		fmt.Sprintf("%d paragraph(s), %dpx", got.ProseParagraphs, got.ProseHeight),
+		"An explanation belongs in a help tooltip. Live read-outs carry .rail-readout and are "+
+			"excluded, so this measures prose only.")
+
+	r.assert("the explanations are still reachable", got.HelpTooltips >= 8,
+		"at least 8 help tooltips in the rail", fmt.Sprintf("%d", got.HelpTooltips),
+		"Removing the paragraphs must MOVE the explanations, not delete them: ui.js helpTooltip "+
+			"is where each one now lives.")
+
+	// The panel is allowed to scroll: it holds twenty-four category checkboxes and
+	// the window is what it is. Two things are not allowed, and both are
+	// visible-only properties a string test cannot reach.
+	r.assert("the panel scrolls inside its own body, not the page",
+		boolIs(got.PageOverflows, false),
+		"a document no taller than the window", describeBool(got.PageOverflows),
+		"The fixed-height layout contract: scrolling happens inside a card body and nowhere "+
+			"else, so every link from #view down needs min-height: 0.")
+
+	r.assert("the foot of the panel is reachable", boolIs(got.FootReachable, true),
+		"the last block painted after scrolling the panel to its end",
+		describeBool(got.FootReachable),
+		"Prose under every control is what put the controls at the foot out of reach. Scrolling "+
+			"to the end must land on them.")
+}
+
+type helpTooltipResult struct {
+	Error             string `json:"error"`
+	ClosedVisible     *bool  `json:"closedVisible"`
+	OpenedOnHover     *bool  `json:"openedOnHover"`
+	OnScreen          *bool  `json:"onScreen"`
+	NotClipped        *bool  `json:"notClipped"`
+	OverflowsScroller *bool  `json:"overflowsScroller"`
+	ClosedOnLeave     *bool  `json:"closedOnLeave"`
+	OpenedOnFocus     *bool  `json:"openedOnFocus"`
+	ClosedOnEscape    *bool  `json:"closedOnEscape"`
+}
+
+// checkHelpTooltip asserts a help tooltip opens, is PAINTED rather than clipped,
+// and closes again, through both the pointer and the keyboard.
+//
+// A bubble positioned inside the rail's `overflow: auto` body is cut off at the
+// container's edge, and no assertion over an HTML string can see that. It is the
+// same class of failure as the Compare-pane tooltip this layer already covers, so
+// it gets the same treatment: a real pointer event, then a hit test at the
+// bubble's own coordinates.
+func checkHelpTooltip(c *cdpClient, r *reporter) {
+	r.step("A Configure help tooltip opens, is painted, and closes")
+
+	var got helpTooltipResult
+	if err := c.eval("__uiProbes.helpTooltipVisibility()", &got); err != nil {
+		r.assert("the help-tooltip probe runs", false, "a rendered help tooltip", err.Error(),
+			"views/identifyrail.js renders ui.js helpTooltip beside each explained label.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the help-tooltip probe runs", false, "a help tooltip in the Identify rail",
+			got.Error, "Every explained label in the rail carries one.")
+		return
+	}
+
+	r.assert("the bubble is hidden until asked for", boolIs(got.ClosedVisible, false),
+		"a zero-height bubble before any interaction", describeBool(got.ClosedVisible),
+		"An always-visible bubble is the paragraph the tooltip replaced, with extra steps.")
+
+	r.assert("hover opens it", boolIs(got.OpenedOnHover, true),
+		"a painted bubble after pointerenter", describeBool(got.OpenedOnHover),
+		"ui.js wireHelpTooltips sets data-open on pointerenter; style.css reveals it.")
+
+	r.assert("the bubble is on screen", boolIs(got.OnScreen, true),
+		"the whole bubble inside the viewport", describeBool(got.OnScreen),
+		"A bubble that opens off the edge of the window is a bubble nobody reads.")
+
+	r.assert("the bubble is painted, not clipped by the scrolling panel",
+		boolIs(got.NotClipped, true),
+		"the bubble itself under a hit test at its own coordinates",
+		describeBool(got.NotClipped),
+		"This is the reason the bubble is positioned outside the rail's clipping context. An "+
+			"absolutely positioned bubble inside an overflow:auto ancestor is cut at the "+
+			"container's edge, and only a hit test can see it.")
+
+	r.assert("leaving closes it", boolIs(got.ClosedOnLeave, true),
+		"a zero-height bubble after pointerleave", describeBool(got.ClosedOnLeave), "")
+
+	r.assert("keyboard focus opens it too", boolIs(got.OpenedOnFocus, true),
+		"a painted bubble after focusin", describeBool(got.OpenedOnFocus),
+		"An explanation only a pointer can reach is one half the users never get.")
+
+	r.assert("Escape closes it", boolIs(got.ClosedOnEscape, true),
+		"a zero-height bubble after Escape", describeBool(got.ClosedOnEscape),
+		"A tooltip the keyboard can open and not dismiss is a keyboard trap.")
 }
 
 // --- The scroll-position contract -------------------------------------------

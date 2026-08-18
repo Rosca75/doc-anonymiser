@@ -2,11 +2,11 @@
 //
 // Two things are locked here, and the first matters more than the second:
 //
-//  1. The DEFAULT changes nothing. A zero MinConfidence must reproduce the
-//     pre- output byte for byte, because a setting that quietly
-//     removes replacements would be a data-leak bug, not a preference.
-//  2. Above the AI tier, values only the local AI proposed stop being
-//     replaced while everything the user listed keeps being replaced.
+//  1. The DEFAULT changes nothing. A zero MinConfidence must keep replacing
+//     everything, because a setting that quietly removes replacements would be
+//     a data-leak bug, not a preference.
+//  2. Above the AI tier, values accepted from a Local AI Suggestion stop being
+//     replaced while everything the user declared keeps being replaced.
 package engine
 
 import (
@@ -15,29 +15,22 @@ import (
 	"testing"
 )
 
-// stubLLM proposes a fixed list of entities, standing in for a deep-scan.
-type stubLLM struct{ proposals []ProposedEntity }
-
-func (s stubLLM) DeepScan(ctx context.Context, text string, known []Entity) ([]ProposedEntity, error) {
-	return s.proposals, nil
-}
-
-// runWith is the shared harness: one document, one listed value, one AI
-// proposal, at the given confidence floor.
+// runWith is the shared harness: one document, one declared value, one value
+// accepted from a Local AI Suggestion, at the given confidence floor.
 func runWith(t *testing.T, minConfidence float32) string {
 	t.Helper()
 	const text = "Marie Duval met Anouk Berger about the audit.\n"
 	res, err := Run(context.Background(), PipelineInput{
 		Documents: []Document{{Name: "note.txt", Format: FormatTXT, Markdown: text}},
-		// A value the user listed themselves: high trust.
-		Entities:      []Entity{{Category: "person_names", Canonical: "Marie Duval"}},
+		Values: []Value{
+			// A value the user declared themselves: high trust.
+			{Category: "person_names", MainText: "Marie Duval"},
+			// A value accepted from a Local AI Suggestion: lower trust.
+			{Category: "person_names", MainText: "Anouk Berger", DiscoveryMethods: []string{MethodLocalAI}, Confidence: ConfidenceLLMDefault},
+		},
 		Level:         LevelMedium,
 		MinConfidence: minConfidence,
 		Allowlist:     NewEmptyAllowlist(),
-		// A value only the model proposed: lower trust.
-		LLM: stubLLM{proposals: []ProposedEntity{
-			{Category: "person_names", Text: "Anouk Berger"},
-		}},
 	})
 	if err != nil {
 		t.Fatalf("Run returned an unexpected error: %v", err)
@@ -67,18 +60,18 @@ func TestMinConfidenceAboveAITierKeepsListedValuesOnly(t *testing.T) {
 		t.Errorf("a value the user listed must still be replaced, got:\n%s", got)
 	}
 	if !strings.Contains(got, "Anouk Berger") {
-		t.Errorf("a value only the AI proposed must be left alone above its tier, got:\n%s", got)
+		t.Errorf("a value accepted from an AI Suggestion must be left alone above its tier, got:\n%s", got)
 	}
 }
 
 func TestMinConfidenceAboveUserTierKeepsPatternMatchesOnly(t *testing.T) {
-	// 0.99 is above every entity tier, so only pattern matches survive.
+	// 0.99 is above every value tier, so only pattern matches survive.
 	res, err := Run(context.Background(), PipelineInput{
 		Documents: []Document{{
 			Name: "note.txt", Format: FormatTXT,
 			Markdown: "Marie Duval, marie@example.com\n",
 		}},
-		Entities:      []Entity{{Category: "person_names", Canonical: "Marie Duval"}},
+		Values:        []Value{{Category: "person_names", MainText: "Marie Duval"}},
 		Level:         LevelMedium,
 		MinConfidence: 0.99,
 		Allowlist:     NewEmptyAllowlist(),
@@ -100,7 +93,7 @@ func TestFilterByMinConfidence(t *testing.T) {
 		{Category: CatEmail, Original: "a@b.c", Confidence: 1.0},
 		{Category: "person_names", Original: "Marie", Confidence: ConfidenceManualDefault},
 		{Category: "person_names", Original: "Anouk", Confidence: ConfidenceLLMDefault},
-		// A pre- span with no confidence set counts as 1.0.
+		// A span that states no confidence counts as 1.0.
 		{Category: CatPhone, Original: "+352 621 000 000"},
 	}
 	cases := []struct {
@@ -112,7 +105,7 @@ func TestFilterByMinConfidence(t *testing.T) {
 		{"negative is a no-op", -1, 4},
 		{"below every tier keeps everything", 0.5, 4},
 		{"above the AI tier drops the AI span", 0.9, 3},
-		{"above the user tier drops both entity spans", 0.99, 2},
+		{"above the user tier drops both value spans", 0.99, 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -129,13 +122,13 @@ func TestFilterByMinConfidence(t *testing.T) {
 }
 
 func TestEntityConfidenceDefaultsToManual(t *testing.T) {
-	// An entity that states nothing is a value the user listed, and must
+	// A value that states nothing is one the user declared, and must
 	// never be filterable as if it were a machine guess.
-	spans := DetectEntities("Marie Duval called.",
-		[]Entity{{Category: "person_names", Canonical: "Marie Duval"}},
+	spans := DetectValues("Marie Duval called.",
+		[]Value{{Category: "person_names", MainText: "Marie Duval"}},
 		NewEmptyAllowlist())
 	if len(spans) == 0 {
-		t.Fatal("expected at least one entity span")
+		t.Fatal("expected at least one value span")
 	}
 	for _, s := range spans {
 		if s.Confidence != ConfidenceManualDefault {
@@ -146,11 +139,11 @@ func TestEntityConfidenceDefaultsToManual(t *testing.T) {
 }
 
 func TestEntityConfidenceIsKeptWhenStated(t *testing.T) {
-	spans := DetectEntities("Anouk Berger called.",
-		[]Entity{{Category: "person_names", Canonical: "Anouk Berger", Confidence: ConfidenceLLMDefault}},
+	spans := DetectValues("Anouk Berger called.",
+		[]Value{{Category: "person_names", MainText: "Anouk Berger", Confidence: ConfidenceLLMDefault}},
 		NewEmptyAllowlist())
 	if len(spans) == 0 {
-		t.Fatal("expected at least one entity span")
+		t.Fatal("expected at least one value span")
 	}
 	for _, s := range spans {
 		if s.Confidence != ConfidenceLLMDefault {

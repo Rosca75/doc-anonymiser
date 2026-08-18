@@ -33,31 +33,31 @@
 // percentage, and no longer decides which routes run.
 //
 // Naming note: the visible labels
-// have changed twice now, from "Entities" to "Values" to this half of
+// have changed twice now, from "Values" to "Values" to this half of
 // "Identify". The ENGINE identifiers this module manipulates (the category keys
-// entity_names, person_names, ... and the state.entities array) have not changed
+// entity_names, person_names, ... and the state.values array) have not changed
 // once, on purpose: a label is a display string, an identifier is a contract.
 
 import {
   runDetection, cancelDetection, countTermMatches, patternMatches,
-  expandVariants, validatePattern, checkIntersections,
+  expandSpellings, validatePattern, checkIntersections,
 } from "../api.js";
 import {
   getState, setState, llmEnabled, detectionRoutesOn,
-  addEntities, removeEntity, entityKey,
-  setEntityVariants, setEntityVariantError, addManualVariant,
-  addCandidates, acceptCandidate, rejectCandidate,
-  acceptAllShown, rejectAllShown, moveVariant,
+  addValues, deleteValue, valueKey,
+  setValueSpellings, setValueSpellingError, addSpelling,
+  addSuggestions, acceptSuggestion, rejectSuggestion,
+  acceptAllShown, rejectAllShown, moveSpelling,
   addPattern, removePattern, NAME_CATEGORIES,
-  renameEntity, renameVariant, changeEntityCategory, changeCandidateCategory,
-  groupEntities, clearAllEntities, entityConflicts, spellingsOf, removeAllowTerm, addAllowTerm,
+  renameValue, renameSpelling, changeValueCategory, changeSuggestionCategory,
+  groupValues, clearAllValues, valueConflicts, spellingsOf, removeAllowTerm, addAllowTerm,
   aiScopeArg, curate, setIntersections, intersectionsFor, buildIntersectionRequest,
-  foldIntoFamily,
+  foldIntoFamily, DISCOVERY_METHODS, relatedTo,
 } from "../state.js";
-import { pendingExpansions } from "../entitymodel.js";
+import { pendingExpansions } from "../valuemodel.js";
 import {
-  visibleCandidates, toggleCountSort, toggleValueSort, DEFAULT_CANDIDATE_FILTER,
-} from "../candidatemodel.js";
+  visibleSuggestions, toggleCountSort, toggleValueSort, DEFAULT_SUGGESTION_FILTER,
+} from "../suggestionmodel.js";
 import { escapeHTML } from "../html.js";
 import { button, tabbar, icon, toastHTML } from "../ui.js";
 import { askConfirm, askChoice } from "../modal.js";
@@ -118,16 +118,16 @@ export const WORKSPACE_TABS = ["suggestions", "values", "allow", "patterns"];
 // make a view preference part of the application's business state.
 
 let activeTab = "suggestions";
-let candidateFilter = { ...DEFAULT_CANDIDATE_FILTER, source: "" };
+let suggestionFilter = { ...DEFAULT_SUGGESTION_FILTER };
 // The My values tab's own filters, kept out of the store for the same reason
-// candidateFilter is: nothing downstream reads them and they must not travel in
-// a session file. `showVariants` folds the spelling rows away so a long list is
+// suggestionFilter is: nothing downstream reads them and they must not travel in
+// a session file. `showSpellings` folds the spelling rows away so a long list is
 // scannable; `type` narrows to one category; `search` matches a name OR any of
 // its spellings.
-let valuesFilter = { search: "", type: "", showVariants: true };
+let valuesFilter = { search: "", type: "", showSpellings: true };
 // Which value card has an inline panel open, and which panel. Only one is open
 // at a time: a stack of open "group with" pickers down the list would be noise.
-// key is an entityKey; kind is "group" | "solve" | null.
+// key is an valueKey; kind is "group" | "solve" | null.
 let openValuePanel = { key: null, kind: null };
 // The suggestions search's debounce timer. That search re-renders (its result
 // is the bulk-action scope), so it cannot filter in place like the My values
@@ -140,10 +140,10 @@ const drafts = {
   // The live "found N times in M documents" read-out under the add row.
   valueMatches: "",
 };
-// Per-entity inline feedback (a refused placeholder, a duplicate variant),
-// keyed by entityKey. Cleared for a row as soon as it succeeds at anything.
+// Per-Value inline feedback (a refused placeholder, a duplicate spelling),
+// keyed by valueKey. Cleared for a row as soon as it succeeds at anything.
 const rowFeedback = new Map();
-// The variant chip currently being dragged, or null. It is held here rather than
+// The spelling chip currently being dragged, or null. It is held here rather than
 // only in the DataTransfer because a dragover handler is not allowed to read
 // DataTransfer contents, and the drop target has to know where the drag started
 // to refuse a drop onto its own card.
@@ -164,7 +164,7 @@ let dragging = null;
  */
 export function renderIdentifyWorkspace(container, opts = {}) {
   const s = getState();
-  const shown = visibleCandidates(s.candidates, candidateFilter);
+  const shown = visibleSuggestions(s.suggestions, suggestionFilter);
   const busy = s.discovery?.running === true;
 
   container.innerHTML =
@@ -200,8 +200,8 @@ let lastIntersectionSignature = "";
  * every document again.
  */
 function intersectionSignature(s) {
-  const values = s.entities
-    .map((e) => `${e.category}|${e.canonical}|${e.origin ?? "declared"}`)
+  const values = s.values
+    .map((e) => `${e.category}|${e.mainText}|${(e.discoveryMethods ?? []).join(",")}`)
     .join("\n");
   const patterns = (s.patterns ?? []).map((p) => p.expr).join("\n");
   const categories = Object.entries(s.settings?.categories ?? {})
@@ -209,7 +209,7 @@ function intersectionSignature(s) {
   // JSON rather than a joined string: a value or a pattern may contain any
   // separator character, and a collision here reads as "nothing changed".
   return JSON.stringify([
-    values, patterns, categories, s.allowlist, s.settings?.useNativeDetect === true,
+    values, patterns, categories, s.allowlist, s.settings?.useBuiltInPatterns === true,
   ]);
 }
 
@@ -218,7 +218,7 @@ function intersectionSignature(s) {
 function head(s, busy) {
   const search =
     `<label class="search-box">${icon("search")}` +
-    `<input id="workspace-search" value="${escapeHTML(candidateFilter.search)}"` +
+    `<input id="workspace-search" value="${escapeHTML(suggestionFilter.search)}"` +
     ` placeholder="${escapeHTML(VALUES.searchPlaceholder)}"` +
     ` aria-label="${escapeHTML(VALUES.searchPlaceholder)}"/></label>`;
 
@@ -249,8 +249,8 @@ function head(s, busy) {
 
 /** subtitle(s) is the live count beside the heading. */
 function subtitle(s) {
-  const waiting = s.candidates.length;
-  const accepted = s.entities.filter((e) => e.status === "accepted").length;
+  const waiting = s.suggestions.length;
+  const accepted = s.values.filter((e) => e.status === "accepted").length;
   return WORKSPACE.subtitle(waiting, accepted);
 }
 
@@ -299,8 +299,8 @@ export function detectionCaption(d) {
 
 function tabs(s) {
   const counts = {
-    suggestions: s.candidates.length,
-    values: s.entities.length,
+    suggestions: s.suggestions.length,
+    values: s.values.length,
     allow: s.allowlist.length,
     patterns: s.patterns.length,
   };
@@ -338,7 +338,9 @@ export function suggestionsTab(s, shown) {
     }) +
     `</div>`;
 
-  const rows = shown.map((c) => suggestionRow(c)).join("");
+  // Relatedness is computed against every SHOWN row, not the whole store: the
+  // note points at rows the user can see and act on, not at ones a filter hides.
+  const rows = shown.map((row) => suggestionRow(row, shown)).join("");
   const body = rows ||
     `<div class="grid-empty">${escapeHTML(VALUES.noMatchingSuggestions)}</div>`;
 
@@ -357,8 +359,8 @@ export function suggestionsTab(s, shown) {
  */
 function suggestionHeader(s) {
   const sortState = (column) => {
-    const active = candidateFilter.sort.startsWith(column);
-    const asc = candidateFilter.sort.endsWith("-asc");
+    const active = suggestionFilter.sort.startsWith(column);
+    const asc = suggestionFilter.sort.endsWith("-asc");
     return { active, asc };
   };
   const sortButton = (column, label, id, title) => {
@@ -373,14 +375,15 @@ function suggestionHeader(s) {
   // The filter options are whatever is ACTUALLY present, not every category the
   // engine has: a filter listing twenty types when the run found two is a list
   // the user has to read past.
-  const typeOptions = distinct(s.candidates, "category")
+  const typeOptions = distinct(s.suggestions, "category")
     .map((key) => ({ value: key, label: (CATEGORY_LABELS[key]?.[0] ?? key).toUpperCase() }));
-  // Sources render whatever is present. "Pattern" is deliberately
-  // absent: deterministic PII matches are applied without review by design and
-  // never enter state.candidates, so offering it as a filter would promise rows
-  // that cannot appear.
-  const sourceOptions = distinct(s.candidates, "source")
-    .map((key) => ({ value: key, label: (WORKSPACE.sourceLabels[key] ?? key).toUpperCase() }));
+  // Discovery methods render whatever is actually present, for the same reason.
+  // Built-in and custom pattern matching are deliberately absent: they produce
+  // DIRECT MATCHES applied without review, never Suggestions, so offering them as
+  // a filter would promise rows that cannot appear.
+  const methodOptions = DISCOVERY_METHODS
+    .filter((m) => (s.suggestions ?? []).some((r) => (r.discoveryMethods ?? []).includes(m)))
+    .map((key) => ({ value: key, label: (WORKSPACE.methodLabel[key] ?? key).toUpperCase() }));
 
   const select = (id, label, value, options, title) =>
     `<select class="head-select${value ? " filtered" : ""}" id="${id}" title="${escapeHTML(title)}"` +
@@ -393,54 +396,99 @@ function suggestionHeader(s) {
 
   return `<div class="grid-head" style="grid-template-columns:${SUGGESTION_COLUMNS}">` +
     sortButton("value", WORKSPACE.colValue, "sort-value", VALUES.sortValueHint) +
-    select("filter-type", WORKSPACE.allTypes, candidateFilter.category, typeOptions,
+    select("filter-type", WORKSPACE.allTypes, suggestionFilter.category, typeOptions,
       WORKSPACE.filterTypeTitle) +
     sortButton("count", WORKSPACE.colCount, "sort-count", VALUES.sortCountHint) +
-    select("filter-source", WORKSPACE.allSources, candidateFilter.source, sourceOptions,
-      WORKSPACE.filterSourceTitle) +
+    select("filter-method", WORKSPACE.allMethods, suggestionFilter.method, methodOptions,
+      WORKSPACE.filterMethodTitle) +
     `<span class="col-actions">${escapeHTML(WORKSPACE.colActions)}</span>` +
     `</div>`;
 }
 
 /**
- * spellingsOfCandidate(c) names the longer forms folded into a suggestion.
+ * spellingsOfSuggestion(row) names the longer forms folded into a Suggestion.
  *
  * A family arrives as ONE row, which is the point: three rows for "Coca-Cola",
- * "Coca-Cola company" and "Coca-Cola Ltd." invite three separate accept
- * decisions for one company. But accepting the row also accepts the spellings,
- * so the row has to say which ones, or the user is agreeing to something they
- * cannot see.
+ * "Coca-Cola company" and "Coca-Cola Ltd." invite three separate accept decisions
+ * for one company. But accepting the row also accepts the spellings, so the row
+ * has to say which ones, or the user is agreeing to something they cannot see.
  */
-function spellingsOfCandidate(c) {
-  const variants = c.variants ?? [];
-  if (variants.length === 0) return "";
-  return ` <span class="cand-spellings hint">${escapeHTML(WORKSPACE.alsoSpelled(variants))}</span>`;
+function spellingsOfSuggestion(row) {
+  const spellings = row.spellings ?? [];
+  if (spellings.length === 0) return "";
+  return ` <span class="sugg-spellings hint">${escapeHTML(WORKSPACE.alsoSpelled(spellings))}</span>`;
 }
 
-function suggestionRow(c) {
-  const source = WORKSPACE.sourceLabels[c.source] ?? c.source;
-  // The type is a dropdown, not a label: Smart detection and the local AI guess
-  // which KIND of name a value is from its shape, and are often wrong about it.
-  // Retyping here means the value lands in the right type the moment it is
-  // accepted, rather than being accepted wrong and moved on the next tab.
-  const type = categorySelect(c.category, {
-    cls: "cell-type-select cand-type", title: WORKSPACE.retypeSuggestionTitle,
-    ariaLabel: WORKSPACE.retypeSuggestionTitle, data: { text: c.text },
+/**
+ * methodChips(methods) names every method that found a Suggestion or Value.
+ *
+ * A SET, not one badge, because two routes agreeing is worth seeing: the user
+ * judging a Suggestion is deciding how much to trust it, and "the heuristic and
+ * the local AI both found this" is a different position from either alone.
+ */
+function methodChips(methods) {
+  const list = (methods ?? []).filter((m) => DISCOVERY_METHODS.includes(m));
+  if (list.length === 0) return "";
+  return list.map((m) =>
+    `<span class="method-chip method-${escapeHTML(m)}" title="${escapeHTML(WORKSPACE.methodTitle)}">` +
+    `${escapeHTML(WORKSPACE.methodLabel[m] ?? m)}</span>`).join("");
+}
+
+/**
+ * relatedNote(row, rows) names the other rows that share evidence with this one.
+ *
+ * It is a NOTE, never a fold: two organisations reached through one email domain
+ * may genuinely be two legal entities, and giving them one placeholder would make
+ * the mapping CSV say they were the same company. The user confirms grouping, with
+ * the action the card already carries.
+ */
+function relatedNote(row, rows) {
+  const others = relatedTo(row, rows);
+  if (others.length === 0) return "";
+  return `<span class="related-note hint">${escapeHTML(WORKSPACE.relatedValues(others))}</span>`;
+}
+
+/**
+ * evidenceNote(evidence) explains WHY a discovery method produced a row.
+ *
+ * The engine returns evidence STRUCTURED, and the sentence is built here from
+ * copy.js, because an engine returning prose makes the copy a contract nobody can
+ * check and puts the explanation out of reach of the copy guards.
+ */
+function evidenceNote(evidence) {
+  const list = evidence ?? [];
+  if (list.length === 0) return "";
+  const lines = list.map((e) => WORKSPACE.evidenceSentence(e)).filter(Boolean);
+  if (lines.length === 0) return "";
+  return `<span class="evidence-note hint" title="${escapeHTML(WORKSPACE.evidenceTitle)}">` +
+    `${escapeHTML(lines.join(" "))}</span>`;
+}
+
+function suggestionRow(row, rows) {
+  // The type is a dropdown, not a label: discovery guesses which KIND of name a
+  // value is from its shape, and is often wrong about it. Retyping here means the
+  // Value lands in the right type the moment it is accepted, rather than being
+  // accepted wrong and moved on the next tab.
+  const type = categorySelect(row.category, {
+    cls: "cell-type-select sugg-type", title: WORKSPACE.retypeSuggestionTitle,
+    ariaLabel: WORKSPACE.retypeSuggestionTitle, data: { text: row.mainText },
   });
   return `<div class="grid-row" style="grid-template-columns:${SUGGESTION_COLUMNS}"` +
-    ` data-text="${escapeHTML(c.text)}">` +
-    `<span class="cell-value" title="${escapeHTML(c.text)}">${escapeHTML(c.text)}${spellingsOfCandidate(c)}</span>` +
+    ` data-text="${escapeHTML(row.mainText)}">` +
+    `<span class="cell-value" title="${escapeHTML(row.mainText)}">` +
+    `${escapeHTML(row.mainText)}${spellingsOfSuggestion(row)}` +
+    `${evidenceNote(row.evidence)}${relatedNote(row, rows)}</span>` +
     type +
-    `<span class="cell-count mono">${escapeHTML(String(c.count ?? 0))}</span>` +
-    `<span class="src-badge src-${escapeHTML(c.source)}">${escapeHTML(source)}</span>` +
+    `<span class="cell-count mono">${escapeHTML(String(row.count ?? 0))}</span>` +
+    `<span class="cell-methods">${methodChips(row.discoveryMethods)}</span>` +
     `<span class="cell-actions">` +
     button("", {
-      kind: "ghost", cls: "cand-accept icon-action boxed ok", icon: "check_circle",
-      ariaLabel: `Accept ${c.text}`, title: WORKSPACE.accept,
+      kind: "ghost", cls: "sugg-accept icon-action boxed ok", icon: "check_circle",
+      ariaLabel: `Accept ${row.mainText}`, title: WORKSPACE.accept,
     }) +
     button("", {
-      kind: "ghost", cls: "cand-reject icon-action boxed danger", icon: "close",
-      ariaLabel: `Reject ${c.text}`, title: WORKSPACE.reject,
+      kind: "ghost", cls: "sugg-reject icon-action boxed danger", icon: "close",
+      ariaLabel: `Reject ${row.mainText}`, title: WORKSPACE.reject,
     }) +
     `</span></div>`;
 }
@@ -453,18 +501,18 @@ function distinct(rows, field) {
 // --- My values ------------------------------------------------------------
 
 /**
- * visibleValues(entities, filter) applies the My values tab's search and type
+ * visibleValues(values, filter) applies the My values tab's search and type
  * filter. A search matches a value's NAME or any of its spellings, so a user
- * who only remembers a variant still finds the card. Pure, and exported for the
+ * who only remembers a spelling still finds the card. Pure, and exported for the
  * render test.
  */
-export function visibleValues(entities, filter) {
+export function visibleValues(values, filter) {
   const q = (filter.search ?? "").trim().toLowerCase();
   const type = filter.type ?? "";
-  return (entities ?? []).filter((e) => {
+  return (values ?? []).filter((e) => {
     if (type && e.category !== type) return false;
     if (!q) return true;
-    if (e.canonical.toLowerCase().includes(q)) return true;
+    if (e.mainText.toLowerCase().includes(q)) return true;
     for (const [lower] of spellingsOf(e)) if (lower.includes(q)) return true;
     return false;
   });
@@ -492,7 +540,7 @@ function valuesFilterBar(s) {
 
   // The type filter lists only the types actually present, so it never offers a
   // category the current list cannot show.
-  const typeOptions = distinct(s.entities, "category")
+  const typeOptions = distinct(s.values, "category")
     .map((key) =>
       `<option value="${escapeHTML(key)}"${key === valuesFilter.type ? " selected" : ""}>` +
       `${escapeHTML(categoryLabel(key).toUpperCase())}</option>`).join("");
@@ -502,15 +550,15 @@ function valuesFilterBar(s) {
     ` aria-label="${escapeHTML(WORKSPACE.valuesFilterTypeTitle)}">` +
     `<option value="">${escapeHTML(WORKSPACE.valuesAllTypes)}</option>${typeOptions}</select>`;
 
-  const toggle = button(valuesFilter.showVariants ? WORKSPACE.hideVariants : WORKSPACE.showVariants, {
-    kind: "secondary", id: "btn-toggle-variants",
-    icon: valuesFilter.showVariants ? "expand_less" : "expand_more",
-    title: valuesFilter.showVariants ? WORKSPACE.hideVariantsTitle : WORKSPACE.showVariantsTitle,
+  const toggle = button(valuesFilter.showSpellings ? WORKSPACE.hideSpellings : WORKSPACE.showSpellings, {
+    kind: "secondary", id: "btn-toggle-derivedSpellings",
+    icon: valuesFilter.showSpellings ? "expand_less" : "expand_more",
+    title: valuesFilter.showSpellings ? WORKSPACE.hideVariantsTitle : WORKSPACE.showVariantsTitle,
   });
 
   const clear = button(WORKSPACE.clearAll, {
     kind: "secondary", id: "btn-clear-values", icon: "delete",
-    disabled: s.entities.length === 0, title: WORKSPACE.clearAllTitle,
+    disabled: s.values.length === 0, title: WORKSPACE.clearAllTitle,
   });
 
   return `<div class="values-toolbar">${search}${typeFilter}${toggle}${clear}</div>`;
@@ -535,17 +583,17 @@ export function valuesTab(s) {
 
   // Conflicts are computed ONCE for the whole list, because a collision is a
   // relationship BETWEEN two values: each card needs to know about the other.
-  const conflicts = entityConflicts(s);
+  const conflicts = valueConflicts(s);
   // Intersections come from Go and are keyed the same way, so a card attaches
   // its own with no searching.
   const overlaps = intersectionsFor(s);
-  const shown = visibleValues(s.entities, valuesFilter);
-  const cards = s.entities.length === 0
+  const shown = visibleValues(s.values, valuesFilter);
+  const cards = s.values.length === 0
     ? `<div class="grid-empty">${escapeHTML(WORKSPACE.noValues)}</div>`
     : (shown.length === 0
       ? `<div class="grid-empty">${escapeHTML(WORKSPACE.noValuesMatch)}</div>`
       : shown.map((e) => {
-        const key = entityKey(e.category, e.canonical);
+        const key = valueKey(e.category, e.mainText);
         return valueCard(e, conflicts.get(key), s, overlaps.get(key));
       }).join("") +
         // Shown only by the live search when it hides every card: the toolbar
@@ -558,9 +606,9 @@ export function valuesTab(s) {
 
 /**
  * valueCard(e, conflict, s, overlap) renders one value: its editable name, its
- * type dropdown, the group/solve/remove actions, and its variant chips.
+ * type dropdown, the group/solve/remove actions, and its spelling chips.
  *
- * `conflict` is this value's entry from entityConflicts (or undefined when it is
+ * `conflict` is this value's entry from valueConflicts (or undefined when it is
  * clean). A conflict tints the card, and the exact name or chip at fault, so a
  * user can see BEFORE the Anonymise step which values would refuse the run.
  *
@@ -570,15 +618,15 @@ export function valuesTab(s) {
  * own quieter tint and note, and it does not touch the step 2 to 3 gate.
  */
 function valueCard(e, conflict, s, overlap) {
-  const key = entityKey(e.category, e.canonical);
+  const key = valueKey(e.category, e.mainText);
   const feedback = rowFeedback.get(key);
   const nameBad = !!(conflict && conflict.nameConflicts.length);
-  const variantConflicts = conflict ? conflict.variantConflicts : new Map();
+  const spellingConflicts = conflict ? conflict.spellingConflicts : new Map();
 
   // Every lower-cased spelling this value would match, joined for the live
   // search: the toolbar filters cards imperatively (see applyValuesSearchFilter)
   // rather than re-rendering per keystroke, so it reads this instead of the
-  // card's text. It mirrors visibleValues' matching, and holds the variant
+  // card's text. It mirrors visibleValues' matching, and holds the spelling
   // spellings even when the spelling rows are folded away.
   const searchText = [...spellingsOf(e).keys()].join(" ");
 
@@ -587,19 +635,19 @@ function valueCard(e, conflict, s, overlap) {
   // step 3 action; this renames the value ITSELF.
   const nameBtn =
     `<button type="button" class="value-name${nameBad ? " bad" : ""}"` +
-    ` title="${escapeHTML(WORKSPACE.editValueTitle)}">${escapeHTML(e.canonical)}</button>`;
+    ` title="${escapeHTML(WORKSPACE.editValueTitle)}">${escapeHTML(e.mainText)}</button>`;
 
   const typeSelect = categorySelect(e.category, {
     cls: "value-type", title: WORKSPACE.changeTypeLabel, ariaLabel: WORKSPACE.changeTypeLabel,
   });
 
-  // Which route found this value. It is shown, not just stored, because the
-  // precedence rule between routes is only meaningful to a user who can see
-  // which route owns a value: an unexplained decision reads as randomness.
-  const origin = e.origin ?? "declared";
-  const originChip =
-    `<span class="origin-chip origin-${escapeHTML(origin)}" title="${escapeHTML(WORKSPACE.originTitle)}">` +
-    `${escapeHTML(WORKSPACE.originLabel[origin] ?? origin)}</span>`;
+  // Which methods found this Value, and why. Both are SHOWN, not merely stored:
+  // the precedence rule between routes is only meaningful to a user who can see
+  // which route owns a Value, and an unexplained decision reads as randomness.
+  // The evidence is the other half of that: a Suggestion the user accepted
+  // because an email address pointed at it should still say so afterwards.
+  const methods = methodChips(e.discoveryMethods?.length ? e.discoveryMethods : ["manual"]);
+  const evidence = evidenceNote(e.evidence) + relatedNote(e, s.values);
 
   const actions =
     button(WORKSPACE.groupWith, {
@@ -610,41 +658,41 @@ function valueCard(e, conflict, s, overlap) {
     }) : "") +
     button("", {
       kind: "ghost", cls: "value-remove icon-action danger", icon: "close",
-      ariaLabel: `Remove ${e.canonical}`, title: WORKSPACE.removeValue,
+      ariaLabel: `Remove ${e.mainText}`, title: WORKSPACE.removeValue,
     });
 
-  // The chips are DRAGGABLE onto another value card, which is how a variant is
+  // The chips are DRAGGABLE onto another value card, which is how a spelling is
   // regrouped when the expansion attached it to the wrong value. The text is a
   // separate span so a double-click edits only the spelling, not the remove
   // button beside it.
-  const variants = [...(e.variants ?? []), ...(e.manualVariants ?? [])];
-  const chips = variants.map((v) => {
-    const bad = variantConflicts.has(v.trim().toLowerCase());
-    return `<span class="chip-tag variant-chip${bad ? " bad" : ""}" draggable="true" data-variant="${escapeHTML(v)}"` +
-      ` title="${escapeHTML(WORKSPACE.variantDragHint)}">` +
-      `<span class="variant-text" title="${escapeHTML(WORKSPACE.editVariantTitle)}">${escapeHTML(v)}</span>` +
+  const derivedSpellings = [...(e.derivedSpellings ?? []), ...(e.spellings ?? [])];
+  const chips = derivedSpellings.map((v) => {
+    const bad = spellingConflicts.has(v.trim().toLowerCase());
+    return `<span class="chip-tag spelling-chip${bad ? " bad" : ""}" draggable="true" data-spelling="${escapeHTML(v)}"` +
+      ` title="${escapeHTML(WORKSPACE.spellingDragHint)}">` +
+      `<span class="spelling-text" title="${escapeHTML(WORKSPACE.editSpellingTitle)}">${escapeHTML(v)}</span>` +
       button("", {
-        kind: "ghost", cls: "chip-remove variant-del", icon: "close",
-        ariaLabel: `Remove variant ${v}`, title: WORKSPACE.removeVariant,
-        data: { variant: v },
+        kind: "ghost", cls: "chip-remove spelling-del", icon: "close",
+        ariaLabel: `Remove spelling ${v}`, title: WORKSPACE.removeSpelling,
+        data: { spelling: v },
       }) +
       `</span>`;
   }).join("");
 
-  // "pending" is a real state, not an absence: null variants mean an expansion
+  // "pending" is a real state, not an absence: null derivedSpellings mean an expansion
   // is in flight, [] means it finished and found none.
-  const variantNote = e.variantError
-    ? `<span class="hint bad">${escapeHTML(e.variantError)}</span>`
-    : (e.variants === null || e.variants === undefined)
-      ? `<span class="hint">${escapeHTML(WORKSPACE.variantsPending)}</span>`
-      : (variants.length === 0 ? `<span class="hint">${escapeHTML(WORKSPACE.noVariants)}</span>` : "");
+  const spellingNote = e.spellingsError
+    ? `<span class="hint bad">${escapeHTML(e.spellingsError)}</span>`
+    : (e.derivedSpellings === null || e.derivedSpellings === undefined)
+      ? `<span class="hint">${escapeHTML(WORKSPACE.spellingsPending)}</span>`
+      : (derivedSpellings.length === 0 ? `<span class="hint">${escapeHTML(WORKSPACE.noSpellings)}</span>` : "");
 
-  const variantRow = valuesFilter.showVariants
-    ? `<div class="chip-row variant-row">` +
-      `<span class="hint">${escapeHTML(WORKSPACE.variants)}</span>${chips}` +
-      button(WORKSPACE.addVariant, { kind: "ghost", cls: "chip-add variant-add", icon: "add" }) +
+  const spellingRow = valuesFilter.showSpellings
+    ? `<div class="chip-row spelling-row">` +
+      `<span class="hint">${escapeHTML(WORKSPACE.derivedSpellings)}</span>${chips}` +
+      button(WORKSPACE.addSpelling, { kind: "ghost", cls: "chip-add spelling-add", icon: "add" }) +
       `</div>` +
-      (variantNote ? `<div class="value-note">${variantNote}</div>` : "")
+      (spellingNote ? `<div class="value-note">${spellingNote}</div>` : "")
     : "";
 
   const conflictNote = conflict
@@ -662,15 +710,16 @@ function valueCard(e, conflict, s, overlap) {
     : "";
 
   return `<div class="value-card${conflict ? " conflicted" : ""}${overlap ? " intersects" : ""}" data-key="${escapeHTML(key)}"` +
-    ` data-category="${escapeHTML(e.category)}" data-canonical="${escapeHTML(e.canonical)}"` +
+    ` data-category="${escapeHTML(e.category)}" data-mainText="${escapeHTML(e.mainText)}"` +
     ` data-search="${escapeHTML(searchText)}">` +
     `<div class="row-between">` +
-    `<div class="value-head">${nameBtn}${typeSelect}${originChip}</div>` +
+    `<div class="value-head">${nameBtn}${typeSelect}${methods}</div>` +
     `<div class="value-actions">${actions}</div>` +
     `</div>` +
     conflictNote +
     intersectionNote +
-    variantRow +
+    (evidence ? `<div class="value-note">${evidence}</div>` : "") +
+    spellingRow +
     (feedback ? `<div class="value-note"><span class="hint bad">${escapeHTML(feedback)}</span></div>` : "") +
     panel +
     `</div>`;
@@ -679,8 +728,8 @@ function valueCard(e, conflict, s, overlap) {
 /** groupPanel(e, s) is the inline picker for "Group with": the other values,
  *  each a checkbox, folded into this one on Apply. */
 function groupPanel(e, s) {
-  const selfKey = entityKey(e.category, e.canonical);
-  const others = s.entities.filter((o) => entityKey(o.category, o.canonical) !== selfKey);
+  const selfKey = valueKey(e.category, e.mainText);
+  const others = s.values.filter((o) => valueKey(o.category, o.mainText) !== selfKey);
   if (others.length === 0) {
     return `<div class="value-panel"><p class="hint">${escapeHTML(WORKSPACE.groupNone)}</p>` +
       `<div class="panel-actions">` +
@@ -690,8 +739,8 @@ function groupPanel(e, s) {
   const rows = others.map((o) =>
     `<label class="group-option">` +
     `<input type="checkbox" class="group-pick"` +
-    ` data-category="${escapeHTML(o.category)}" data-canonical="${escapeHTML(o.canonical)}"/>` +
-    `<span class="group-option-name">${escapeHTML(o.canonical)}</span>` +
+    ` data-category="${escapeHTML(o.category)}" data-mainText="${escapeHTML(o.mainText)}"/>` +
+    `<span class="group-option-name">${escapeHTML(o.mainText)}</span>` +
     `<span class="fmt-badge">${escapeHTML(categoryLabel(o.category))}</span>` +
     `</label>`).join("");
   return `<div class="value-panel group-panel">` +
@@ -716,7 +765,9 @@ function groupPanel(e, s) {
  * the same actions the card already carries.
  */
 function intersectionNoteHTML(overlap) {
-  const route = WORKSPACE.originLabel[overlap.winnerOrigin] ?? overlap.winnerOrigin;
+  // The warning names the winning METHOD, never the internal rank: the rank is
+  // an engine input, and a user reading "rank 1" learns nothing.
+  const route = WORKSPACE.matchClassLabel[overlap.winnerMatchClass] ?? overlap.winnerMatchClass;
   const covered = overlap.occurrences ?? 0;
   const total = overlap.totalOccurrences ?? covered;
   // Fully covered means the value is NEVER replaced under its own type, which
@@ -746,7 +797,7 @@ function solvePanel(e, conflict) {
     if (c.kind === "collision") {
       acts =
         button(WORKSPACE.solveDropVariant, {
-          kind: "ghost", cls: "solve-action", data: { act: "drop-variant", spelling: c.spelling },
+          kind: "ghost", cls: "solve-action", data: { act: "drop-spelling", spelling: c.spelling },
         }) +
         button(WORKSPACE.solveGroupOtherLabel(c.withValue), {
           kind: "ghost", cls: "solve-action",
@@ -847,7 +898,7 @@ function wire(container, s, shown) {
     // it has to re-render. Debouncing keeps the input alive through a burst of
     // keystrokes so focus is not lost mid-type; the caret is restored on the
     // repaint that lands.
-    candidateFilter = { ...candidateFilter, search: search.value };
+    suggestionFilter = { ...suggestionFilter, search: search.value };
     const caret = search.selectionStart;
     if (workspaceSearchTimer) clearTimeout(workspaceSearchTimer);
     workspaceSearchTimer = setTimeout(() => {
@@ -908,10 +959,10 @@ function wireDetection(container) {
 
     try {
       const result = await runDetection(all, getState().allowlist, aiScopeArg());
-      const added =
-        addCandidates(result?.candidates ?? [], "smart") +
-        addCandidates(
-          (result?.proposals ?? []).map((p) => ({ text: p.text, category: p.category })), "local-ai");
+      // ONE list, one call. Every row already says which methods found it, so
+      // there is no per-route mapping step here for a field to fall out of: the
+      // Local AI route's folded spellings used to be lost in exactly such a step.
+      const added = addSuggestions(result?.suggestions ?? []);
 
       // A file the AI could not read is reported, not silently dropped.
       for (const skip of result?.skipped ?? []) {
@@ -932,7 +983,7 @@ function wireDetection(container) {
       // Belt and braces: the terminal event already clears this (main.js), so
       // a lost event cannot strand the bar, and a lost promise cannot either.
       setState({ discovery: null });
-      // Land the user on the fresh candidate list, which is what they ran for.
+      // Land the user on the fresh suggestion list, which is what they ran for.
       activeTab = "suggestions";
       setState({});
     }
@@ -943,41 +994,41 @@ function wireDetection(container) {
 
 function wireSuggestions(container, shown) {
   container.querySelector("#sort-value")?.addEventListener("click", () => {
-    candidateFilter = { ...candidateFilter, sort: toggleValueSort(candidateFilter.sort) };
+    suggestionFilter = { ...suggestionFilter, sort: toggleValueSort(suggestionFilter.sort) };
     setState({});
   });
   container.querySelector("#sort-count")?.addEventListener("click", () => {
-    candidateFilter = { ...candidateFilter, sort: toggleCountSort(candidateFilter.sort) };
+    suggestionFilter = { ...suggestionFilter, sort: toggleCountSort(suggestionFilter.sort) };
     setState({});
   });
   container.querySelector("#filter-type")?.addEventListener("change", (ev) => {
-    candidateFilter = { ...candidateFilter, category: ev.target.value };
+    suggestionFilter = { ...suggestionFilter, category: ev.target.value };
     setState({});
   });
-  container.querySelector("#filter-source")?.addEventListener("change", (ev) => {
-    candidateFilter = { ...candidateFilter, source: ev.target.value };
+  container.querySelector("#filter-method")?.addEventListener("change", (ev) => {
+    suggestionFilter = { ...suggestionFilter, method: ev.target.value };
     setState({});
   });
 
   for (const row of container.querySelectorAll(".grid-row[data-text]")) {
     const text = row.dataset.text;
-    row.querySelector(".cand-accept")?.addEventListener("click", async () => {
-      acceptCandidate(text);
+    row.querySelector(".sugg-accept")?.addEventListener("click", async () => {
+      acceptSuggestion(text);
       await refreshVariants();
     });
-    row.querySelector(".cand-reject")?.addEventListener("click", () => {
-      rejectCandidate(text);
+    row.querySelector(".sugg-reject")?.addEventListener("click", () => {
+      rejectSuggestion(text);
     });
     // Retyping a suggestion before it is accepted.
-    row.querySelector(".cand-type")?.addEventListener("change", (ev) => {
-      changeCandidateCategory(text, ev.target.value);
+    row.querySelector(".sugg-type")?.addEventListener("change", (ev) => {
+      changeSuggestionCategory(text, ev.target.value);
     });
   }
 
   // The two bulk buttons act on exactly the rows on screen, which is why they
   // are passed the FILTERED list rather than re-deriving it: a bulk action must
   // never be a surprise.
-  const texts = shown.map((c) => c.text);
+  const texts = shown.map((r) => r.mainText);
   container.querySelector("#btn-accept-shown")?.addEventListener("click", async () => {
     const n = acceptAllShown(texts);
     notify(WORKSPACE.acceptedN(n), n ? "ok" : "info");
@@ -1042,7 +1093,7 @@ function wireValues(container) {
       return;
     }
 
-    const n = addEntities([{ category: drafts.valueCategory, canonical: value }]);
+    const n = addValues([{ category: drafts.valueCategory, mainText: value }]);
     if (n === 0) notify(WORKSPACE.valueAlreadyThere(value), "info");
     setState({});
     await refreshVariants();
@@ -1053,18 +1104,18 @@ function wireValues(container) {
   wireValuesToolbar(container);
 
   for (const cardEl of container.querySelectorAll(".value-card")) {
-    const { category: cat, canonical, key } = cardEl.dataset;
+    const { category: cat, mainText, key } = cardEl.dataset;
 
     // Renaming the value: click the name to reveal an inline input.
     cardEl.querySelector(".value-name")?.addEventListener("click", () => {
-      revealNameInput(cardEl, cat, canonical, key);
+      revealNameInput(cardEl, cat, mainText, key);
     });
 
     // Changing the type re-expands the row (a person and an organisation expand
     // differently).
     cardEl.querySelector(".value-type")?.addEventListener("change", async (ev) => {
-      const reason = changeEntityCategory(cat, canonical, ev.target.value);
-      if (reason === "duplicate") notify(WORKSPACE.typeChangeDuplicate(canonical), "warn");
+      const reason = changeValueCategory(cat, mainText, ev.target.value);
+      if (reason === "duplicate") notify(WORKSPACE.typeChangeDuplicate(mainText), "warn");
       else await refreshVariants();
     });
 
@@ -1091,43 +1142,43 @@ function wireValues(container) {
     cardEl.querySelector(".value-remove")?.addEventListener("click", () => {
       rowFeedback.delete(key);
       if (openValuePanel.key === key) openValuePanel = { key: null, kind: null };
-      removeEntity(cat, canonical);
+      deleteValue(cat, mainText);
     });
 
-    // The add-variant control reveals an INLINE input rather than opening a
+    // The add-spelling control reveals an INLINE input rather than opening a
     // dialog: native dialogs are banned, and an inline field is
     // fewer steps than a dialog anyway.
-    cardEl.querySelector(".variant-add")?.addEventListener("click", () => {
-      revealVariantInput(cardEl, cat, canonical, key);
+    cardEl.querySelector(".spelling-add")?.addEventListener("click", () => {
+      revealVariantInput(cardEl, cat, mainText, key);
     });
 
     // Editing a spelling: double-click its text (a single click would fight the
     // drag handle the chip is).
-    for (const text of cardEl.querySelectorAll(".variant-text")) {
+    for (const text of cardEl.querySelectorAll(".spelling-text")) {
       text.addEventListener("dblclick", () => {
-        revealVariantEditInput(text, cat, canonical, key);
+        revealVariantEditInput(text, cat, mainText, key);
       });
     }
 
-    for (const del of cardEl.querySelectorAll(".variant-del")) {
+    for (const del of cardEl.querySelectorAll(".spelling-del")) {
       del.addEventListener("click", async (ev) => {
         // The chip itself is a drag handle, so the remove button has to stop the
         // click reaching it.
         ev.stopPropagation();
         // Deleting a spelling curates the value: the remaining chips become its
-        // whole list. moveVariant is for regrouping; here the spelling simply
+        // whole list. moveSpelling is for regrouping; here the spelling simply
         // stops applying to anything.
-        const gone = del.dataset.variant;
-        deleteVariant(cat, canonical, gone);
+        const gone = del.dataset.spelling;
+        deleteVariant(cat, mainText, gone);
         await refreshVariants();
         // The nudge towards the tab that IS for negative rules: this deletion
         // stops the spelling belonging to THIS value, not to every value.
-        notify(WORKSPACE.variantDeleted(gone), "info");
+        notify(WORKSPACE.spellingDeleted(gone), "info");
       });
     }
 
-    wireGroupPanel(cardEl, cat, canonical);
-    wireSolvePanel(cardEl, cat, canonical);
+    wireGroupPanel(cardEl, cat, mainText);
+    wireSolvePanel(cardEl, cat, mainText);
   }
 
   wireVariantDrag(container);
@@ -1194,23 +1245,23 @@ export function wireValuesToolbar(container) {
     setState({});
   });
 
-  container.querySelector("#btn-toggle-variants")?.addEventListener("click", () => {
-    valuesFilter = { ...valuesFilter, showVariants: !valuesFilter.showVariants };
+  container.querySelector("#btn-toggle-derivedSpellings")?.addEventListener("click", () => {
+    valuesFilter = { ...valuesFilter, showSpellings: !valuesFilter.showSpellings };
     setState({});
   });
 
   container.querySelector("#btn-clear-values")?.addEventListener("click", async () => {
-    const n = getState().entities.length;
+    const n = getState().values.length;
     if (n === 0) return;
     if (!await askConfirm({ title: WORKSPACE.clearAll, body: WORKSPACE.clearAllConfirm(n) })) return;
     openValuePanel = { key: null, kind: null };
-    const cleared = clearAllEntities();
+    const cleared = clearAllValues();
     rowFeedback.clear();
     notify(WORKSPACE.clearedN(cleared), cleared ? "ok" : "info");
   });
 }
 
-/** wireGroupPanel(cardEl, cat, canonical) wires the Group with picker's Apply
+/** wireGroupPanel(cardEl, cat, mainText) wires the Group with picker's Apply
  *  and Cancel.
  *
  *  Apply does NOT assume the card's value is the survivor: the merge folds
@@ -1218,19 +1269,19 @@ export function wireValuesToolbar(container) {
  *  decision, not a side effect of which card they opened the picker from. So it
  *  asks (askChoice) which participating value becomes the main one, then folds
  *  the rest into it. Cancelling the pick abandons the merge. */
-function wireGroupPanel(cardEl, cat, canonical) {
+function wireGroupPanel(cardEl, cat, mainText) {
   cardEl.querySelector(".group-apply")?.addEventListener("click", async () => {
     const sources = [...cardEl.querySelectorAll(".group-pick:checked")].map((cb) => ({
-      category: cb.dataset.category, canonical: cb.dataset.canonical,
+      category: cb.dataset.category, mainText: cb.dataset.mainText,
     }));
     if (sources.length === 0) return;
 
-    // The card's own value participates too: it is one of the candidates to
+    // The card's own value participates too: it is one of the suggestions to
     // become the survivor, not automatically the survivor.
-    const participants = [{ category: cat, canonical }, ...sources];
+    const participants = [{ category: cat, mainText }, ...sources];
     const choices = participants.map((p) => ({
-      id: entityKey(p.category, p.canonical),
-      label: `${p.canonical} (${categoryLabel(p.category)})`,
+      id: valueKey(p.category, p.mainText),
+      label: `${p.mainText} (${categoryLabel(p.category)})`,
     }));
     const mainKey = await askChoice({
       title: WORKSPACE.groupMainTitle, body: WORKSPACE.groupMainBody, choices,
@@ -1239,13 +1290,13 @@ function wireGroupPanel(cardEl, cat, canonical) {
     // the values untouched.
     if (!mainKey) { setState({}); return; }
 
-    const main = participants.find((p) => entityKey(p.category, p.canonical) === mainKey);
+    const main = participants.find((p) => valueKey(p.category, p.mainText) === mainKey);
     if (!main) { setState({}); return; }
-    const rest = participants.filter((p) => entityKey(p.category, p.canonical) !== mainKey);
+    const rest = participants.filter((p) => valueKey(p.category, p.mainText) !== mainKey);
 
     openValuePanel = { key: null, kind: null };
-    const n = groupEntities(main, rest);
-    if (n) notify(WORKSPACE.groupedN(n, main.canonical), "ok");
+    const n = groupValues(main, rest);
+    if (n) notify(WORKSPACE.groupedN(n, main.mainText), "ok");
     await refreshVariants();
   });
   cardEl.querySelector(".panel-cancel")?.addEventListener("click", () => {
@@ -1254,24 +1305,24 @@ function wireGroupPanel(cardEl, cat, canonical) {
   });
 }
 
-/** wireSolvePanel(cardEl, cat, canonical) wires each resolve action inside the
+/** wireSolvePanel(cardEl, cat, mainText) wires each resolve action inside the
  *  Solve conflicts panel. */
-function wireSolvePanel(cardEl, cat, canonical) {
+function wireSolvePanel(cardEl, cat, mainText) {
   for (const action of cardEl.querySelectorAll(".solve-action")) {
     action.addEventListener("click", async () => {
       const { act } = action.dataset;
       openValuePanel = { key: null, kind: null };
       if (act === "remove-value") {
-        removeEntity(cat, canonical);
+        deleteValue(cat, mainText);
       } else if (act === "remove-allow") {
-        removeAllowTerm(canonical);
-      } else if (act === "drop-variant") {
-        deleteVariant(cat, canonical, action.dataset.spelling);
+        removeAllowTerm(mainText);
+      } else if (act === "drop-spelling") {
+        deleteVariant(cat, mainText, action.dataset.spelling);
         await refreshVariants();
       } else if (act === "merge") {
-        groupEntities(
-          { category: cat, canonical },
-          [{ category: action.dataset.withcategory, canonical: action.dataset.withvalue }]);
+        groupValues(
+          { category: cat, mainText },
+          [{ category: action.dataset.withcategory, mainText: action.dataset.withvalue }]);
         await refreshVariants();
       }
     });
@@ -1279,7 +1330,7 @@ function wireSolvePanel(cardEl, cat, canonical) {
 }
 
 /**
- * wireVariantDrag(container) makes a variant chip draggable onto another value
+ * wireVariantDrag(container) makes a spelling chip draggable onto another value
  * card, which regroups it.
  *
  * The payload is carried in a module-local variable rather than only in the
@@ -1288,16 +1339,16 @@ function wireSolvePanel(cardEl, cat, canonical) {
  * know which card the drag STARTED from so it can refuse a drop onto itself.
  */
 function wireVariantDrag(container) {
-  for (const chip of container.querySelectorAll(".variant-chip")) {
+  for (const chip of container.querySelectorAll(".spelling-chip")) {
     chip.addEventListener("dragstart", (ev) => {
       const card = chip.closest(".value-card");
       dragging = {
-        variant: chip.dataset.variant,
+        spelling: chip.dataset.spelling,
         fromCategory: card?.dataset.category,
-        fromCanonical: card?.dataset.canonical,
+        fromMainText: card?.dataset.mainText,
       };
       // Setting the data is still required, or some WebViews cancel the drag.
-      ev.dataTransfer?.setData("text/plain", chip.dataset.variant ?? "");
+      ev.dataTransfer?.setData("text/plain", chip.dataset.spelling ?? "");
       if (ev.dataTransfer) ev.dataTransfer.effectAllowed = "move";
     });
     chip.addEventListener("dragend", () => { dragging = null; });
@@ -1306,7 +1357,7 @@ function wireVariantDrag(container) {
   for (const card of container.querySelectorAll(".value-card")) {
     card.addEventListener("dragover", (ev) => {
       if (!dragging) return;
-      if (card.dataset.canonical === dragging.fromCanonical &&
+      if (card.dataset.mainText === dragging.fromMainText &&
           card.dataset.category === dragging.fromCategory) {
         return; // a drop onto its own card would be a no-op
       }
@@ -1318,35 +1369,35 @@ function wireVariantDrag(container) {
       ev.preventDefault();
       card.classList.remove("drop-target");
       if (!dragging) return;
-      const moved = moveVariant(
-        dragging.fromCategory, dragging.fromCanonical,
-        card.dataset.category, card.dataset.canonical, dragging.variant);
-      const { variant } = dragging;
+      const moved = moveSpelling(
+        dragging.fromCategory, dragging.fromMainText,
+        card.dataset.category, card.dataset.mainText, dragging.spelling);
+      const { spelling } = dragging;
       dragging = null;
       if (!moved) return; // a stale drop: the reducer refused it, say nothing
-      notify(WORKSPACE.variantMoved(variant, card.dataset.canonical), "ok");
+      notify(WORKSPACE.spellingMoved(spelling, card.dataset.mainText), "ok");
       await refreshVariants();
     });
   }
 }
 
 /**
- * revealVariantInput(cardEl, category, canonical, key) swaps the "add" chip for
+ * revealVariantInput(cardEl, category, mainText, key) swaps the "add" chip for
  * an inline text input, because bans prompt() and an inline field is
  * fewer steps than a dialog anyway.
  *
  * It does NOT go through a state change: the input is transient, and a repaint
- * would destroy it. It commits through addManualVariant, which does repaint.
+ * would destroy it. It commits through addSpelling, which does repaint.
  */
-function revealVariantInput(cardEl, category, canonical, key) {
-  const row = cardEl.querySelector(".variant-row");
-  const addChip = row?.querySelector(".variant-add");
+function revealVariantInput(cardEl, category, mainText, key) {
+  const row = cardEl.querySelector(".spelling-row");
+  const addChip = row?.querySelector(".spelling-add");
   if (!row || !addChip) return;
 
   const input = cardEl.ownerDocument.createElement("input");
-  input.className = "variant-input";
-  input.placeholder = WORKSPACE.addVariantPlaceholder;
-  input.setAttribute("aria-label", WORKSPACE.addVariantPlaceholder);
+  input.className = "spelling-input";
+  input.placeholder = WORKSPACE.addSpellingPlaceholder;
+  input.setAttribute("aria-label", WORKSPACE.addSpellingPlaceholder);
   addChip.replaceWith(input);
   input.focus();
 
@@ -1356,11 +1407,11 @@ function revealVariantInput(cardEl, category, canonical, key) {
       setState({}); // repaint puts the add chip back
       return;
     }
-    const before = variantCount(category, canonical);
-    addManualVariant(category, canonical, value);
-    if (variantCount(category, canonical) === before) {
+    const before = spellingCount(category, mainText);
+    addSpelling(category, mainText, value);
+    if (spellingCount(category, mainText) === before) {
       // A duplicate: say so, rather than looking like nothing happened.
-      rowFeedback.set(key, WORKSPACE.variantAlreadyThere(value));
+      rowFeedback.set(key, WORKSPACE.spellingAlreadyThere(value));
       setState({});
       return;
     }
@@ -1376,20 +1427,20 @@ function revealVariantInput(cardEl, category, canonical, key) {
 }
 
 /**
- * revealNameInput(cardEl, category, canonical, key) swaps the value name for an
+ * revealNameInput(cardEl, category, mainText, key) swaps the value name for an
  * inline input, so a mis-detected value can be corrected in place. It commits
- * through renameEntity, which re-expands the row.
+ * through renameValue, which re-expands the row.
  *
- * Like the variant input, it is transient DOM: no state change reveals it, and
+ * Like the spelling input, it is transient DOM: no state change reveals it, and
  * a repaint puts the read-only name back.
  */
-function revealNameInput(cardEl, category, canonical, key) {
+function revealNameInput(cardEl, category, mainText, key) {
   const nameEl = cardEl.querySelector(".value-name");
   if (!nameEl) return;
 
   const input = cardEl.ownerDocument.createElement("input");
   input.className = "value-name-input";
-  input.value = canonical;
+  input.value = mainText;
   input.placeholder = WORKSPACE.editValuePlaceholder;
   input.setAttribute("aria-label", WORKSPACE.editValueTitle);
   nameEl.replaceWith(input);
@@ -1401,11 +1452,11 @@ function revealNameInput(cardEl, category, canonical, key) {
     if (done) return;
     done = true;
     const value = input.value.trim();
-    if (!value || value === canonical) {
+    if (!value || value === mainText) {
       setState({}); // repaint puts the name back unchanged
       return;
     }
-    const reason = renameEntity(category, canonical, value);
+    const reason = renameValue(category, mainText, value);
     if (reason === "duplicate") {
       rowFeedback.set(key, WORKSPACE.valueRenamedDuplicate(value));
       setState({});
@@ -1423,18 +1474,18 @@ function revealNameInput(cardEl, category, canonical, key) {
 }
 
 /**
- * revealVariantEditInput(textEl, category, canonical, key) swaps one spelling's
- * text for an inline input. It commits through renameVariant, which excludes the
+ * revealVariantEditInput(textEl, category, mainText, key) swaps one spelling's
+ * text for an inline input. It commits through renameSpelling, which excludes the
  * old spelling and adds the new one, then re-expands.
  */
-function revealVariantEditInput(textEl, category, canonical, key) {
+function revealVariantEditInput(textEl, category, mainText, key) {
   const old = textEl.textContent;
 
   const input = textEl.ownerDocument.createElement("input");
-  input.className = "variant-input";
+  input.className = "spelling-input";
   input.value = old;
   input.placeholder = WORKSPACE.editVariantPlaceholder;
-  input.setAttribute("aria-label", WORKSPACE.editVariantTitle);
+  input.setAttribute("aria-label", WORKSPACE.editSpellingTitle);
   // Stop the chip's drag machinery from reacting while the field is focused.
   input.setAttribute("draggable", "false");
   textEl.replaceWith(input);
@@ -1451,7 +1502,7 @@ function revealVariantEditInput(textEl, category, canonical, key) {
       return;
     }
     rowFeedback.delete(key);
-    renameVariant(category, canonical, old, value);
+    renameSpelling(category, mainText, old, value);
     await refreshVariants();
   };
 
@@ -1464,7 +1515,7 @@ function revealVariantEditInput(textEl, category, canonical, key) {
 }
 
 /**
- * deleteVariant(category, canonical, variant) removes one spelling from a
+ * deleteVariant(category, mainText, spelling) removes one spelling from a
  * value.
  *
  * It CURATES the row: the remaining chips become the value's whole list and the
@@ -1476,30 +1527,30 @@ function revealVariantEditInput(textEl, category, canonical, key) {
  * curated row's list is settled. The value list's scroll survives the repaint
  * because scroll offsets are preserved centrally (scroll.js).
  */
-function deleteVariant(category, canonical, variant) {
+function deleteVariant(category, mainText, spelling) {
   const s = getState();
-  const lower = variant.toLowerCase();
+  const lower = spelling.toLowerCase();
   setState({
-    entities: s.entities.map((e) => {
-      if (entityKey(e.category, e.canonical) !== entityKey(category, canonical)) return e;
+    values: s.values.map((e) => {
+      if (valueKey(e.category, e.mainText) !== valueKey(category, mainText)) return e;
       return curate(e, [...spellingsOf(e).values()].filter((x) => x.toLowerCase() !== lower));
     }),
   });
 }
 
-/** variantCount(category, canonical) is how many spellings a value carries right
+/** spellingCount(category, mainText) is how many spellings a value carries right
  *  now, automatic and manual together. The add flow compares it before and after
  *  so a duplicate gets an explanation instead of silence. */
-function variantCount(category, canonical) {
-  const e = getState().entities.find(
-    (x) => entityKey(x.category, x.canonical) === entityKey(category, canonical));
+function spellingCount(category, mainText) {
+  const e = getState().values.find(
+    (x) => valueKey(x.category, x.mainText) === valueKey(category, mainText));
   if (!e) return 0;
-  return (e.variants?.length ?? 0) + (e.manualVariants?.length ?? 0);
+  return (e.derivedSpellings?.length ?? 0) + (e.spellings?.length ?? 0);
 }
 
 /**
- * refreshVariants() asks Go to expand every value whose variants are PENDING
- * (variants === null: just added, edited, or variant-amended). Settled rows,
+ * refreshVariants() asks Go to expand every value whose derivedSpellings are PENDING
+ * (derivedSpellings === null: just added, edited, or spelling-amended). Settled rows,
  * including "expanded, none found" ([]), are never re-expanded.
  *
  * Sequential on purpose: the lists are tiny and ordering keeps the UI
@@ -1509,19 +1560,20 @@ async function refreshVariants() {
   // The snapshot is taken ONCE, before any await. Every expansion below writes
   // to the store and therefore repaints, and re-reading the list mid-loop would
   // mean expanding rows a repaint had already settled.
-  const pending = pendingExpansions(getState().entities);
+  const pending = pendingExpansions(getState().values);
   for (const e of pending) {
     try {
-      const variants = await expandVariants({
-        category: e.category, canonical: e.canonical,
-        manualVariants: e.manualVariants, autoExpand: e.autoExpand !== false,
+      const derivedSpellings = await expandSpellings({
+        category: e.category, mainText: e.mainText,
+        spellings: e.spellings,
+        spellingPolicy: e.spellingPolicy === "curated" ? "curated" : "automatic",
       });
-      setEntityVariants(e.category, e.canonical, variants ?? []);
+      setValueSpellings(e.category, e.mainText, derivedSpellings ?? []);
     } catch (err) {
       // A failure becomes a VISIBLE error on the row, and settles it, so the
       // placeholder cannot spin forever and the row is not retried on every
       // repaint.
-      setEntityVariantError(e.category, e.canonical, String(err?.message ?? err));
+      setValueSpellingError(e.category, e.mainText, String(err?.message ?? err));
     }
   }
   return pending.length;

@@ -9,11 +9,11 @@ import (
 	"time"
 )
 
-// findCandidate returns the candidate with the given text, or nil.
-func findCandidate(cands []Candidate, text string) *Candidate {
-	for i := range cands {
-		if cands[i].Text == text {
-			return &cands[i]
+// findSuggestion returns the suggestion with the given text, or nil.
+func findSuggestion(suggestions []Suggestion, text string) *Suggestion {
+	for i := range suggestions {
+		if suggestions[i].MainText == text {
+			return &suggestions[i]
 		}
 	}
 	return nil
@@ -22,18 +22,18 @@ func findCandidate(cands []Candidate, text string) *Candidate {
 // smartDetectCountry is the test-side country-aware wrapper: it runs the
 // offline pass with a document country so the country-scoped org-keyword signal
 // applies. It lives here (not in discover.go) because the only non-test caller
-// that needs a country, the App layer, calls SmartDetectContext directly; a
+// that needs a country, the App layer, calls HeuristicDiscoverContext directly; a
 // production wrapper would be unreachable from any main package (deadcode).
-func smartDetectCountry(text string, allow *Allowlist, opts SmartDetectOptions, country string) []Candidate {
-	cands, _ := SmartDetectContext(context.Background(), text, allow, opts, country)
-	return cands
+func smartDetectCountry(text string, allow *Allowlist, opts HeuristicDiscoveryOptions, country string) []Suggestion {
+	suggestions, _ := HeuristicDiscoverContext(context.Background(), text, allow, opts, country)
+	return suggestions
 }
 
 func TestSmartDetectSuffixGazetteer(t *testing.T) {
 	cases := []struct {
 		name string
 		text string
-		want string // expected client candidate text
+		want string // expected client suggestion text
 	}{
 		{"sarl long form", "We audited Acme Solutions S.à r.l. in March.", "Acme Solutions S.à r.l."},
 		{"sarl compact", "Contract with Bidco Sàrl was signed.", "Bidco Sàrl"},
@@ -46,53 +46,53 @@ func TestSmartDetectSuffixGazetteer(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := SmartDetectWithOptions(tc.text, NewEmptyAllowlist(), SmartDetectOptions{})
-			c := findCandidate(got, tc.want)
+			got := HeuristicDiscoverWithOptions(tc.text, NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
+			c := findSuggestion(got, tc.want)
 			if c == nil {
-				t.Fatalf("candidate %q missing, got %+v", tc.want, got)
+				t.Fatalf("suggestion %q missing, got %+v", tc.want, got)
 			}
 			if c.Category != "entity_names" {
-				t.Errorf("suffix candidate category = %s, want entity_names", c.Category)
+				t.Errorf("suffix suggestion category = %s, want entity_names", c.Category)
 			}
 		})
 	}
 }
 
-func TestSmartDetectSuffixAloneIsNotACandidate(t *testing.T) {
+func TestHeuristicSuffixAloneIsNotASuggestion(t *testing.T) {
 	// A legal form with no preceding name must not be proposed.
-	got := SmartDetectWithOptions("The GmbH structure is common. The GmbH form works.", NewEmptyAllowlist(), SmartDetectOptions{})
-	if c := findCandidate(got, "GmbH"); c != nil {
-		t.Errorf("bare suffix must not be a candidate: %+v", c)
+	got := HeuristicDiscoverWithOptions("The GmbH structure is common. The GmbH form works.", NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
+	if c := findSuggestion(got, "GmbH"); c != nil {
+		t.Errorf("bare suffix must not be a suggestion: %+v", c)
 	}
 }
 
 func TestSmartDetectCapitalisedRuns(t *testing.T) {
 	text := "Yesterday we met Jean-Pierre Muller at the office. " +
 		"Later, Anouk van den Berg joined the call with everyone."
-	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), SmartDetectOptions{})
+	got := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
 
-	jp := findCandidate(got, "Jean-Pierre Muller")
+	jp := findSuggestion(got, "Jean-Pierre Muller")
 	if jp == nil {
 		t.Fatalf("hyphenated multi-word name missing: %+v", got)
 	}
 	if jp.Category != "person_names" {
 		t.Errorf("multi-word run default category = %s, want person_names", jp.Category)
 	}
-	if findCandidate(got, "Anouk van den Berg") == nil {
+	if findSuggestion(got, "Anouk van den Berg") == nil {
 		t.Errorf("particle name missing: %+v", got)
 	}
 }
 
 func TestSmartDetectSentenceStartRule(t *testing.T) {
 	// "Ensuite" opens a sentence once: sentence-case noise, dropped.
-	once := SmartDetectWithOptions("Nous avons signé. Ensuite tout le monde est parti.", NewEmptyAllowlist(), SmartDetectOptions{})
-	if c := findCandidate(once, "Ensuite"); c != nil {
+	once := HeuristicDiscoverWithOptions("Nous avons signé. Ensuite tout le monde est parti.", NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
+	if c := findSuggestion(once, "Ensuite"); c != nil {
 		t.Errorf("single sentence-start run must be dropped: %+v", c)
 	}
 
 	// "Borealis" opens two sentences: repeated sentence-start is kept.
-	twice := SmartDetectWithOptions("Borealis grew fast. Borealis hired again.", NewEmptyAllowlist(), SmartDetectOptions{})
-	if findCandidate(twice, "Borealis") == nil {
+	twice := HeuristicDiscoverWithOptions("Borealis grew fast. Borealis hired again.", NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
+	if findSuggestion(twice, "Borealis") == nil {
 		t.Errorf("repeated sentence-start run must be kept: %+v", twice)
 	}
 }
@@ -100,13 +100,13 @@ func TestSmartDetectSentenceStartRule(t *testing.T) {
 func TestSmartDetectSingleWordFrequency(t *testing.T) {
 	// A single-word run appearing once mid-sentence, no suffix, no title:
 	// dropped as noise.
-	got := SmartDetectWithOptions("The meeting covered Zephyr briefly today.", NewEmptyAllowlist(), SmartDetectOptions{})
-	if c := findCandidate(got, "Zephyr"); c != nil {
+	got := HeuristicDiscoverWithOptions("The meeting covered Zephyr briefly today.", NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
+	if c := findSuggestion(got, "Zephyr"); c != nil {
 		t.Errorf("single-occurrence single-word run must be dropped: %+v", c)
 	}
 	// The same word twice qualifies.
-	got = SmartDetectWithOptions("We value Zephyr highly. Everyone likes working with Zephyr daily.", NewEmptyAllowlist(), SmartDetectOptions{})
-	if findCandidate(got, "Zephyr") == nil {
+	got = HeuristicDiscoverWithOptions("We value Zephyr highly. Everyone likes working with Zephyr daily.", NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
+	if findSuggestion(got, "Zephyr") == nil {
 		t.Errorf("repeated run must qualify: %+v", got)
 	}
 }
@@ -121,14 +121,14 @@ func TestSmartDetectTitleCues(t *testing.T) {
 		{"Selon M. Dupont, tout va bien.", "Dupont"},
 	}
 	for _, tc := range cases {
-		got := SmartDetectWithOptions(tc.text, NewEmptyAllowlist(), SmartDetectOptions{})
-		c := findCandidate(got, tc.want)
+		got := HeuristicDiscoverWithOptions(tc.text, NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
+		c := findSuggestion(got, tc.want)
 		if c == nil {
 			t.Errorf("title-cued name %q missing in %q: %+v", tc.want, tc.text, got)
 			continue
 		}
 		if c.Category != "person_names" {
-			t.Errorf("title-cued candidate %q category = %s, want person_names", tc.want, c.Category)
+			t.Errorf("title-cued suggestion %q category = %s, want person_names", tc.want, c.Category)
 		}
 	}
 }
@@ -136,10 +136,10 @@ func TestSmartDetectTitleCues(t *testing.T) {
 func TestSmartDetectFrequencyAndContexts(t *testing.T) {
 	text := "Alpine Trust leads. We audit Alpine Trust yearly. " +
 		"The Alpine Trust burden grows. Alpine Trust again. Alpine Trust once more."
-	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), SmartDetectOptions{})
-	c := findCandidate(got, "Alpine Trust")
+	got := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
+	c := findSuggestion(got, "Alpine Trust")
 	if c == nil {
-		t.Fatalf("frequent candidate missing: %+v", got)
+		t.Fatalf("frequent suggestion missing: %+v", got)
 	}
 	if c.Count < 3 {
 		t.Errorf("count = %d, want at least 3", c.Count)
@@ -149,12 +149,12 @@ func TestSmartDetectFrequencyAndContexts(t *testing.T) {
 	}
 	for _, ctx := range c.Contexts {
 		if !strings.Contains(ctx, "Alpine Trust") {
-			t.Errorf("context snippet must contain the candidate: %q", ctx)
+			t.Errorf("context snippet must contain the suggestion: %q", ctx)
 		}
 	}
-	// Ranking: the most frequent candidate comes first.
+	// Ranking: the most frequent suggestion comes first.
 	if len(got) > 1 && got[0].Count < got[1].Count {
-		t.Errorf("candidates not ranked by count: %+v", got)
+		t.Errorf("suggestions not ranked by count: %+v", got)
 	}
 }
 
@@ -164,48 +164,48 @@ func TestSmartDetectAllowlistWins(t *testing.T) {
 	allow.Add("Luxembourg")
 	text := "The CSSF reviewed our Luxembourg filing. The CSSF asked again. " +
 		"Luxembourg rules apply. Alpine Trust S.A. responded."
-	got := SmartDetectWithOptions(text, allow, SmartDetectOptions{})
-	if findCandidate(got, "CSSF") != nil || findCandidate(got, "Luxembourg") != nil {
+	got := HeuristicDiscoverWithOptions(text, allow, HeuristicDiscoveryOptions{})
+	if findSuggestion(got, "CSSF") != nil || findSuggestion(got, "Luxembourg") != nil {
 		t.Errorf("allowlisted terms must never be emitted: %+v", got)
 	}
-	if findCandidate(got, "Alpine Trust S.A.") == nil {
-		t.Errorf("non-allowlisted candidate must survive: %+v", got)
+	if findSuggestion(got, "Alpine Trust S.A.") == nil {
+		t.Errorf("non-allowlisted suggestion must survive: %+v", got)
 	}
 }
 
 func TestSmartDetectFrenchFixture(t *testing.T) {
 	text := "Réunion avec Mme Amélie Lefèvre et la société Lumière Conseil Sàrl. " +
 		"Le projet Lumière Conseil Sàrl continue à Esch-sur-Alzette avec Amélie Lefèvre."
-	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), SmartDetectOptions{})
-	if c := findCandidate(got, "Amélie Lefèvre"); c == nil || c.Category != "person_names" {
+	got := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
+	if c := findSuggestion(got, "Amélie Lefèvre"); c == nil || c.Category != "person_names" {
 		t.Errorf("accented person name missing or misrouted: %+v", got)
 	}
-	if c := findCandidate(got, "Lumière Conseil Sàrl"); c == nil || c.Category != "entity_names" {
+	if c := findSuggestion(got, "Lumière Conseil Sàrl"); c == nil || c.Category != "entity_names" {
 		t.Errorf("French company with Sàrl suffix missing or misrouted: %+v", got)
 	}
 }
 
-// --- SmartDetectOptions --------------------------------------------------
+// --- HeuristicDiscoveryOptions --------------------------------------------------
 
-// TestSmartDetectCandidatesCarryAScore: every candidate must carry the
+// TestHeuristicSuggestionsCarryAScore: every suggestion must carry the
 // heuristic score, whether or not filtering is on, because the review UI
 // sorts and filters on it without re-running detection.
-func TestSmartDetectCandidatesCarryAScore(t *testing.T) {
-	got := SmartDetectWithOptions("Alpine Trust S.A. signed. Marie Duval signed too.\n", NewEmptyAllowlist(), SmartDetectOptions{})
+func TestHeuristicSuggestionsCarryAScore(t *testing.T) {
+	got := HeuristicDiscoverWithOptions("Alpine Trust S.A. signed. Marie Duval signed too.\n", NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
 	if len(got) == 0 {
-		t.Fatal("expected candidates")
+		t.Fatal("expected suggestions")
 	}
 	for _, c := range got {
 		if c.Confidence <= 0 || c.Confidence > 1 {
-			t.Errorf("candidate %q scored %v, want a score in (0, 1]", c.Text, c.Confidence)
+			t.Errorf("suggestion %q scored %v, want a score in (0, 1]", c.MainText, c.Confidence)
 		}
 	}
 }
 
-// TestCandidateScoreLadder pins the score each detector signal earns, in
+// TestSuggestionScoreLadder pins the score each detector signal earns, in
 // English and French. The ladder is the thing a future tuning change has
 // to argue with, so it is asserted directly.
-func TestCandidateScoreLadder(t *testing.T) {
+func TestSuggestionScoreLadder(t *testing.T) {
 	cases := []struct {
 		name string
 		text string
@@ -229,10 +229,10 @@ func TestCandidateScoreLadder(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := SmartDetectWithOptions(tc.text, NewEmptyAllowlist(), SmartDetectOptions{})
+			got := HeuristicDiscoverWithOptions(tc.text, NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
 			scores := map[string]float32{}
 			for _, c := range got {
-				scores[c.Text] = c.Confidence
+				scores[c.MainText] = c.Confidence
 			}
 			for text, want := range tc.want {
 				if scores[text] != want {
@@ -244,7 +244,7 @@ func TestCandidateScoreLadder(t *testing.T) {
 }
 
 // TestSmartDetectOptionsFilters walks each option independently, so a
-// failure names the knob that broke rather than "fewer candidates".
+// failure names the knob that broke rather than "fewer suggestions".
 func TestSmartDetectOptionsFilters(t *testing.T) {
 	// Anouk Berger sits MID-sentence on purpose: a name whose only
 	// occurrence opens a sentence is dropped by the sentence-start rule,
@@ -252,9 +252,9 @@ func TestSmartDetectOptionsFilters(t *testing.T) {
 	const text = "Marie Duval called. Later Marie Duval wrote. March was busy. March was long.\n" +
 		"Later that week Anouk Berger replied once.\n"
 
-	has := func(cands []Candidate, want string) bool {
-		for _, c := range cands {
-			if c.Text == want {
+	has := func(suggestions []Suggestion, want string) bool {
+		for _, c := range suggestions {
+			if c.MainText == want {
 				return true
 			}
 		}
@@ -263,42 +263,42 @@ func TestSmartDetectOptionsFilters(t *testing.T) {
 
 	cases := []struct {
 		name     string
-		opts     SmartDetectOptions
+		opts     HeuristicDiscoveryOptions
 		mustKeep []string
 		mustDrop []string
 	}{
 		{
 			name:     "no options keeps the noise",
-			opts:     SmartDetectOptions{},
+			opts:     HeuristicDiscoveryOptions{},
 			mustKeep: []string{"Marie Duval", "March", "Anouk Berger"},
 		},
 		{
-			name:     "MinLength drops short candidates",
-			opts:     SmartDetectOptions{MinLength: 6},
+			name:     "MinLength drops short suggestions",
+			opts:     HeuristicDiscoveryOptions{MinLength: 6},
 			mustKeep: []string{"Marie Duval", "Anouk Berger"},
 			mustDrop: []string{"March"},
 		},
 		{
 			name:     "MinOccurrences drops the single sighting",
-			opts:     SmartDetectOptions{MinOccurrences: 2},
+			opts:     HeuristicDiscoveryOptions{MinOccurrences: 2},
 			mustKeep: []string{"Marie Duval", "March"},
 			mustDrop: []string{"Anouk Berger"},
 		},
 		{
 			name:     "ExcludeCommonWords drops the month, keeps the names",
-			opts:     SmartDetectOptions{ExcludeCommonWords: true},
+			opts:     HeuristicDiscoveryOptions{ExcludeCommonWords: true},
 			mustKeep: []string{"Marie Duval", "Anouk Berger"},
 			mustDrop: []string{"March"},
 		},
 		{
 			name:     "MinConfidence drops the single-word repeat",
-			opts:     SmartDetectOptions{MinConfidence: 0.5},
+			opts:     HeuristicDiscoveryOptions{MinConfidence: 0.5},
 			mustKeep: []string{"Marie Duval", "Anouk Berger"},
 			mustDrop: []string{"March"},
 		},
 		{
 			name:     "the shipped defaults keep the names and drop the noise",
-			opts:     DefaultSmartDetectOptions(),
+			opts:     DefaultHeuristicDiscoveryOptions(),
 			mustKeep: []string{"Marie Duval", "Anouk Berger"},
 			mustDrop: []string{"March"},
 		},
@@ -306,7 +306,7 @@ func TestSmartDetectOptionsFilters(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := SmartDetectWithOptions(text, NewEmptyAllowlist(), tc.opts)
+			got := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), tc.opts)
 			for _, want := range tc.mustKeep {
 				if !has(got, want) {
 					t.Errorf("%q must survive, got %+v", want, got)
@@ -325,13 +325,13 @@ func TestSmartDetectOptionsFilters(t *testing.T) {
 // perfectly good company name and must not be dropped just because one of
 // its words is a month.
 func TestExcludeCommonWordsKeepsNamesContainingOne(t *testing.T) {
-	got := SmartDetectWithOptions(
+	got := HeuristicDiscoverWithOptions(
 		"March Consulting signed. March Consulting invoiced.\n",
 		NewEmptyAllowlist(),
-		SmartDetectOptions{ExcludeCommonWords: true})
+		HeuristicDiscoveryOptions{ExcludeCommonWords: true})
 	found := false
 	for _, c := range got {
-		if c.Text == "March Consulting" {
+		if c.MainText == "March Consulting" {
 			found = true
 		}
 	}
@@ -343,12 +343,12 @@ func TestExcludeCommonWordsKeepsNamesContainingOne(t *testing.T) {
 // TestExcludeCommonWordsFrench: the word list covers French too, since
 // testdata carries French fixtures (CLAUDE.md section 6).
 func TestExcludeCommonWordsFrench(t *testing.T) {
-	got := SmartDetectWithOptions(
+	got := HeuristicDiscoverWithOptions(
 		"Cependant le dossier avance. Cependant rien n'est signe.\n",
 		NewEmptyAllowlist(),
-		SmartDetectOptions{ExcludeCommonWords: true})
+		HeuristicDiscoveryOptions{ExcludeCommonWords: true})
 	for _, c := range got {
-		if c.Text == "Cependant" {
+		if c.MainText == "Cependant" {
 			t.Errorf("a French sentence opener must be dropped, got %+v", got)
 		}
 	}
@@ -359,10 +359,10 @@ func TestExcludeCommonWordsFrench(t *testing.T) {
 func TestAllowlistStillWinsOverTuning(t *testing.T) {
 	allow := NewEmptyAllowlist()
 	allow.Add("Alpine Trust S.A.")
-	got := SmartDetectWithOptions(
-		"Alpine Trust S.A. signed the mandate.\n", allow, SmartDetectOptions{})
+	got := HeuristicDiscoverWithOptions(
+		"Alpine Trust S.A. signed the mandate.\n", allow, HeuristicDiscoveryOptions{})
 	for _, c := range got {
-		if c.Text == "Alpine Trust S.A." {
+		if c.MainText == "Alpine Trust S.A." {
 			t.Errorf("an allowlisted term must never be proposed, got %+v", got)
 		}
 	}
@@ -413,12 +413,12 @@ func TestSmartDetectContextIsInterruptible(t *testing.T) {
 	cancel()
 
 	start := time.Now()
-	got, err := SmartDetectContext(ctx, text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), "")
+	got, err := HeuristicDiscoverContext(ctx, text, NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions(), "")
 	if err == nil {
 		t.Fatal("a cancelled context must be reported, not ignored")
 	}
 	if got != nil {
-		t.Errorf("a cancelled scan returns no candidates, got %d", len(got))
+		t.Errorf("a cancelled scan returns no suggestions, got %d", len(got))
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("cancellation took %v, which is not a cancellation", elapsed)
@@ -429,18 +429,18 @@ func TestSmartDetectContextIsInterruptible(t *testing.T) {
 // find exactly what the old one did when nothing cancels it.
 func TestSmartDetectContextMatchesTheLegacyCall(t *testing.T) {
 	text := "Alpine Trust S.A. met Marie Duval. Alpine Trust signed with Borealis Fund GmbH."
-	opts := DefaultSmartDetectOptions()
-	want := SmartDetectWithOptions(text, NewEmptyAllowlist(), opts)
-	got, err := SmartDetectContext(context.Background(), text, NewEmptyAllowlist(), opts, "")
+	opts := DefaultHeuristicDiscoveryOptions()
+	want := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), opts)
+	got, err := HeuristicDiscoverContext(context.Background(), text, NewEmptyAllowlist(), opts, "")
 	if err != nil {
 		t.Fatalf("an uncancelled scan must not fail: %v", err)
 	}
 	if len(got) != len(want) {
-		t.Fatalf("got %d candidates, want %d", len(got), len(want))
+		t.Fatalf("got %d suggestions, want %d", len(got), len(want))
 	}
 	for i := range got {
-		if got[i].Text != want[i].Text || got[i].Category != want[i].Category {
-			t.Errorf("candidate %d differs: %+v vs %+v", i, got[i], want[i])
+		if got[i].MainText != want[i].MainText || got[i].Category != want[i].Category {
+			t.Errorf("suggestion %d differs: %+v vs %+v", i, got[i], want[i])
 		}
 	}
 }
@@ -451,7 +451,7 @@ func TestProductDetection(t *testing.T) {
 	cases := []struct {
 		name string
 		text string
-		want string // the candidate text expected under product_names
+		want string // the suggestion text expected under product_names
 	}{
 		{
 			name: "a trademark mark is the high-precision signal",
@@ -477,16 +477,16 @@ func TestProductDetection(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := SmartDetectWithOptions(tc.text, NewEmptyAllowlist(), SmartDetectOptions{})
+			got := HeuristicDiscoverWithOptions(tc.text, NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
 			for _, c := range got {
-				if c.Text == tc.want {
+				if c.MainText == tc.want {
 					if c.Category != CatProductNames {
-						t.Fatalf("%q was filed as %s, want %s", c.Text, c.Category, CatProductNames)
+						t.Fatalf("%q was filed as %s, want %s", c.MainText, c.Category, CatProductNames)
 					}
 					return
 				}
 			}
-			t.Fatalf("no candidate %q in %+v", tc.want, got)
+			t.Fatalf("no suggestion %q in %+v", tc.want, got)
 		})
 	}
 }
@@ -494,9 +494,9 @@ func TestProductDetection(t *testing.T) {
 func TestALegalFormBeatsAProductNoun(t *testing.T) {
 	// A company that happens to sell a platform is still a company. The cue
 	// ladder is ordered on purpose and this is its one ambiguous rung.
-	got := SmartDetectWithOptions("Alpine Trust S.A. platform is live.\n",
-		NewEmptyAllowlist(), SmartDetectOptions{})
-	if len(got) == 0 || got[0].Text != "Alpine Trust S.A." {
+	got := HeuristicDiscoverWithOptions("Alpine Trust S.A. platform is live.\n",
+		NewEmptyAllowlist(), HeuristicDiscoveryOptions{})
+	if len(got) == 0 || got[0].MainText != "Alpine Trust S.A." {
 		t.Fatalf("want the suffixed name first, got %+v", got)
 	}
 	if got[0].Category != CatEntityNames {
@@ -508,12 +508,12 @@ func TestCodesReachTheOfflineRoute(t *testing.T) {
 	// The code detector is a second scanner, folded into the offline route so
 	// every caller gets it. A detector nothing calls is a detector that does not
 	// exist, which is what the retired organisation_names category was.
-	got := SmartDetectWithOptions("Ref. INV-88213 covers the projet ATLAS-2024.\n",
-		NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	got := HeuristicDiscoverWithOptions("Ref. INV-88213 covers the projet ATLAS-2024.\n",
+		NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions())
 
-	byText := map[string]Candidate{}
+	byText := map[string]Suggestion{}
 	for _, c := range got {
-		byText[c.Text] = c
+		byText[c.MainText] = c
 	}
 	if c, ok := byText["INV-88213"]; !ok || c.Category != CatIdentifierNames {
 		t.Errorf("want INV-88213 as an identifier, got %+v", got)
@@ -531,8 +531,8 @@ func TestCodesReachTheOfflineRoute(t *testing.T) {
 // highest-value offline signal on real correspondence.
 func TestSmartDetectEmailDerivedNameCategorisesAndBoosts(t *testing.T) {
 	text := "Please contact Johannes Borch <johannes.borch@pwc.lu> about the file.\n"
-	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
-	c := findCandidate(got, "Johannes Borch")
+	got := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions())
+	c := findSuggestion(got, "Johannes Borch")
 	if c == nil {
 		t.Fatalf("email-named person missing: %+v", got)
 	}
@@ -550,8 +550,8 @@ func TestSmartDetectEmailDerivedNameCategorisesAndBoosts(t *testing.T) {
 func TestSmartDetectEmailDerivedSurnameAlone(t *testing.T) {
 	text := "From: Thierry Kremser <thierry.kremser@pwc.lu>\n" +
 		"Kremser approved the request yesterday.\n"
-	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
-	if c := findCandidate(got, "Kremser"); c == nil || c.Category != CatPersonNames {
+	got := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions())
+	if c := findSuggestion(got, "Kremser"); c == nil || c.Category != CatPersonNames {
 		t.Errorf("bare surname not recognised as its email-named person: %+v", got)
 	}
 }
@@ -561,8 +561,8 @@ func TestSmartDetectEmailDerivedSurnameAlone(t *testing.T) {
 func TestSmartDetectEmailAccentFold(t *testing.T) {
 	text := "Cc: José Teixeira <jose.teixeira@pwc.lu> was copied. " +
 		"José Teixeira replied.\n"
-	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
-	if c := findCandidate(got, "José Teixeira"); c == nil || c.Category != CatPersonNames {
+	got := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions())
+	if c := findSuggestion(got, "José Teixeira"); c == nil || c.Category != CatPersonNames {
 		t.Errorf("accented name not matched to its ASCII address: %+v", got)
 	}
 }
@@ -581,8 +581,8 @@ func TestSmartDetectEmailIgnoresRoleMailbox(t *testing.T) {
 // suffix stays an organisation even if its words also appear in an address.
 func TestSmartDetectEmailNameDoesNotOverrideLegalSuffix(t *testing.T) {
 	text := "Alpine Trust S.A. <alpine.trust@example.com> signed the deed.\n"
-	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
-	if c := findCandidate(got, "Alpine Trust S.A."); c == nil || c.Category != CatEntityNames {
+	got := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions())
+	if c := findSuggestion(got, "Alpine Trust S.A."); c == nil || c.Category != CatEntityNames {
 		t.Errorf("a legal-suffix run must stay an organisation: %+v", got)
 	}
 }
@@ -596,14 +596,14 @@ func TestSmartDetectNegativeGazetteerDropsBusinessPhrases(t *testing.T) {
 	text := "Revenue Management improved. Revenue Management improved again. " +
 		"Extra Holiday Buying was approved. General Terms of Sale apply. " +
 		"The auditor Marie Duval signed the note.\n"
-	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
+	got := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions())
 
 	for _, noise := range []string{"Revenue Management", "Extra Holiday Buying", "General Terms of Sale"} {
-		if c := findCandidate(got, noise); c != nil {
+		if c := findSuggestion(got, noise); c != nil {
 			t.Errorf("business-noun phrase %q must be dropped, got it as %+v", noise, c)
 		}
 	}
-	if findCandidate(got, "Marie Duval") == nil {
+	if findSuggestion(got, "Marie Duval") == nil {
 		t.Errorf("a real name in the same text must survive: %+v", got)
 	}
 }
@@ -615,8 +615,8 @@ func TestSmartDetectNegativeGazetteerDropsBusinessPhrases(t *testing.T) {
 // person guess a bare multi-word run would get.
 func TestSmartDetectOrgKeywordCommon(t *testing.T) {
 	text := "We met Delta Group about the deal. Delta Group agreed.\n"
-	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
-	c := findCandidate(got, "Delta Group")
+	got := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions())
+	c := findSuggestion(got, "Delta Group")
 	if c == nil {
 		t.Fatalf("an org-keyword run must be proposed: %+v", got)
 	}
@@ -634,13 +634,13 @@ func TestSmartDetectOrgKeywordCommon(t *testing.T) {
 func TestSmartDetectOrgKeywordCountryScoped(t *testing.T) {
 	text := "Signed by PwC Société on Monday. PwC Société confirmed.\n"
 
-	lu := smartDetectCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryLU)
-	if c := findCandidate(lu, "PwC Société"); c == nil || c.Category != CatEntityNames {
+	lu := smartDetectCountry(text, NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions(), CountryLU)
+	if c := findSuggestion(lu, "PwC Société"); c == nil || c.Category != CatEntityNames {
 		t.Errorf("Luxembourg must read \"Société\" as a company: %+v", lu)
 	}
 
-	uk := smartDetectCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryUK)
-	if c := findCandidate(uk, "PwC Société"); c != nil && c.Category == CatEntityNames {
+	uk := smartDetectCountry(text, NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions(), CountryUK)
+	if c := findSuggestion(uk, "PwC Société"); c != nil && c.Category == CatEntityNames {
 		t.Errorf("the UK has no French keyword, so \"Société\" must not vouch a company: %+v", c)
 	}
 }
@@ -650,8 +650,8 @@ func TestSmartDetectOrgKeywordCountryScoped(t *testing.T) {
 // name ("PwC Société coopérative"), not the capitalised prefix alone.
 func TestSmartDetectOrgKeywordAbsorbsLowercaseTail(t *testing.T) {
 	text := "Issued by PwC Société coopérative today. PwC Société coopérative billed.\n"
-	got := smartDetectCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryLU)
-	if c := findCandidate(got, "PwC Société coopérative"); c == nil || c.Category != CatEntityNames {
+	got := smartDetectCountry(text, NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions(), CountryLU)
+	if c := findSuggestion(got, "PwC Société coopérative"); c == nil || c.Category != CatEntityNames {
 		t.Errorf("the lowercase tail must be absorbed into the company name: %+v", got)
 	}
 }
@@ -660,8 +660,8 @@ func TestSmartDetectOrgKeywordAbsorbsLowercaseTail(t *testing.T) {
 // so a German organisation word vouches a company there.
 func TestSmartDetectOrgKeywordGermanForLuxembourg(t *testing.T) {
 	text := "Vertrag mit Alpen Gesellschaft unterschrieben. Alpen Gesellschaft zahlte.\n"
-	got := smartDetectCountry(text, NewEmptyAllowlist(), DefaultSmartDetectOptions(), CountryLU)
-	if c := findCandidate(got, "Alpen Gesellschaft"); c == nil || c.Category != CatEntityNames {
+	got := smartDetectCountry(text, NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions(), CountryLU)
+	if c := findSuggestion(got, "Alpen Gesellschaft"); c == nil || c.Category != CatEntityNames {
 		t.Errorf("a German org word must vouch a company in Luxembourg: %+v", got)
 	}
 }
@@ -670,10 +670,10 @@ func TestSmartDetectOrgKeywordGermanForLuxembourg(t *testing.T) {
 // vouched, so strict strictness keeps it (unlike a bare capitalised run).
 func TestSmartDetectOrgKeywordSurvivesStrict(t *testing.T) {
 	text := "We met Delta Group once.\n"
-	strict := DefaultSmartDetectOptions()
+	strict := DefaultHeuristicDiscoveryOptions()
 	strict.Strictness = StrictnessStrict
 	got := smartDetectCountry(text, NewEmptyAllowlist(), strict, CountryUK)
-	if findCandidate(got, "Delta Group") == nil {
+	if findSuggestion(got, "Delta Group") == nil {
 		t.Errorf("strict must keep an org-keyword company: %+v", got)
 	}
 }
@@ -693,25 +693,25 @@ func TestSmartDetectOrgKeywordNeedsMoreThanTheKeyword(t *testing.T) {
 // --- strictness lever -------------------------------------------------------
 
 // TestSmartDetectStrictRequiresAnAnchor: strict strictness emits only
-// structurally-vouched candidates. A bare multi-word run (no suffix, title or
+// structurally-vouched suggestions. A bare multi-word run (no suffix, title or
 // email name) is dropped however it scored; a legal-suffix company survives.
 func TestSmartDetectStrictRequiresAnAnchor(t *testing.T) {
 	text := "The auditor Marie Duval reviewed it. Alpine Trust S.A. billed us.\n"
 
-	strict := DefaultSmartDetectOptions()
+	strict := DefaultHeuristicDiscoveryOptions()
 	strict.Strictness = StrictnessStrict
-	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), strict)
-	if findCandidate(got, "Marie Duval") != nil {
+	got := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), strict)
+	if findSuggestion(got, "Marie Duval") != nil {
 		t.Errorf("strict must drop a bare multi-word run: %+v", got)
 	}
-	if findCandidate(got, "Alpine Trust S.A.") == nil {
+	if findSuggestion(got, "Alpine Trust S.A.") == nil {
 		t.Errorf("strict must keep a legal-suffix company: %+v", got)
 	}
 
 	// Balanced (the default) keeps the same bare run: strictness is the lever
 	// that changed the outcome, nothing else.
-	bal := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
-	if findCandidate(bal, "Marie Duval") == nil {
+	bal := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions())
+	if findSuggestion(bal, "Marie Duval") == nil {
 		t.Errorf("balanced must keep the bare multi-word run: %+v", bal)
 	}
 }
@@ -720,10 +720,10 @@ func TestSmartDetectStrictRequiresAnAnchor(t *testing.T) {
 // structurally vouched, so strict keeps it even though it has no legal suffix.
 func TestSmartDetectStrictKeepsEmailNamedPerson(t *testing.T) {
 	text := "Contact Johannes Borch <johannes.borch@pwc.lu> today.\n"
-	strict := DefaultSmartDetectOptions()
+	strict := DefaultHeuristicDiscoveryOptions()
 	strict.Strictness = StrictnessStrict
-	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), strict)
-	if findCandidate(got, "Johannes Borch") == nil {
+	got := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), strict)
+	if findSuggestion(got, "Johannes Borch") == nil {
 		t.Errorf("strict must keep an email-named person: %+v", got)
 	}
 }
@@ -734,16 +734,16 @@ func TestSmartDetectStrictKeepsEmailNamedPerson(t *testing.T) {
 func TestSmartDetectLenientKeepsRareSingleWord(t *testing.T) {
 	text := "We discussed Zephyr briefly.\n"
 
-	lenient := DefaultSmartDetectOptions()
+	lenient := DefaultHeuristicDiscoveryOptions()
 	lenient.Strictness = StrictnessLenient
 	lenient.MinConfidence = 0
-	if findCandidate(SmartDetectWithOptions(text, NewEmptyAllowlist(), lenient), "Zephyr") == nil {
+	if findSuggestion(HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), lenient), "Zephyr") == nil {
 		t.Errorf("lenient with no floor must keep a rare single-word run")
 	}
 
-	bal := DefaultSmartDetectOptions()
+	bal := DefaultHeuristicDiscoveryOptions()
 	bal.MinConfidence = 0
-	if findCandidate(SmartDetectWithOptions(text, NewEmptyAllowlist(), bal), "Zephyr") != nil {
+	if findSuggestion(HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), bal), "Zephyr") != nil {
 		t.Errorf("balanced must drop a single-word single-occurrence run even with no floor")
 	}
 }
@@ -754,8 +754,8 @@ func TestSmartDetectLenientKeepsRareSingleWord(t *testing.T) {
 func TestSmartDetectSuppressesStreetAddress(t *testing.T) {
 	text := "Our office is at 2, rue Gerhard Mercator in the capital. " +
 		"Post to 2, rue Gerhard Mercator as well.\n"
-	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
-	if c := findCandidate(got, "Gerhard Mercator"); c != nil {
+	got := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions())
+	if c := findSuggestion(got, "Gerhard Mercator"); c != nil {
 		t.Errorf("a street name must not be proposed, got %+v", c)
 	}
 }
@@ -764,8 +764,8 @@ func TestSmartDetectSuppressesStreetAddress(t *testing.T) {
 // ("Place de la Gare"), not only the word before it.
 func TestSmartDetectAddressCueInsideRun(t *testing.T) {
 	text := "The venue is Place de la Gare downtown. Place de la Gare hosts it.\n"
-	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
-	if c := findCandidate(got, "Place de la Gare"); c != nil {
+	got := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions())
+	if c := findSuggestion(got, "Place de la Gare"); c != nil {
 		t.Errorf("an address phrase must be suppressed, got %+v", c)
 	}
 }
@@ -777,11 +777,11 @@ func TestSmartDetectPersonAboveOwnAddressSurvives(t *testing.T) {
 	text := "Best regards, Oscar Liber <oscar.liber@pwc.lu>\n" +
 		"2, rue Gerhard Mercator, Luxembourg.\n" +
 		"Oscar Liber signed.\n"
-	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
-	if findCandidate(got, "Oscar Liber") == nil {
+	got := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions())
+	if findSuggestion(got, "Oscar Liber") == nil {
 		t.Errorf("the signer named by an address must survive: %+v", got)
 	}
-	if c := findCandidate(got, "Gerhard Mercator"); c != nil {
+	if c := findSuggestion(got, "Gerhard Mercator"); c != nil {
 		t.Errorf("the street on the address line must be dropped, got %+v", c)
 	}
 }
@@ -790,15 +790,15 @@ func TestSmartDetectPersonAboveOwnAddressSurvives(t *testing.T) {
 // overrides address suppression, so a company at its own address survives.
 func TestSmartDetectStreetCueDoesNotSuppressSuffixedCompany(t *testing.T) {
 	text := "rue Alpine Trust S.A. is a coincidence. Alpine Trust S.A. billed us.\n"
-	got := SmartDetectWithOptions(text, NewEmptyAllowlist(), DefaultSmartDetectOptions())
-	if findCandidate(got, "Alpine Trust S.A.") == nil {
+	got := HeuristicDiscoverWithOptions(text, NewEmptyAllowlist(), DefaultHeuristicDiscoveryOptions())
+	if findSuggestion(got, "Alpine Trust S.A.") == nil {
 		t.Errorf("a legal-suffix company must survive an address cue: %+v", got)
 	}
 }
 
 // TestSmartDetectConnectorsInsideCommonPhrase: "Terms of Sale" is all-common
 // only if the connector "of" is skipped like a particle; without that skip the
-// phrase would leak through as a candidate.
+// phrase would leak through as a suggestion.
 func TestSmartDetectConnectorsInsideCommonPhrase(t *testing.T) {
 	if !isCommonWordRun("General Terms of Sale") {
 		t.Errorf("a phrase of common nouns joined by a connector must read as all-common")

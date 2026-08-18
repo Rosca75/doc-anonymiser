@@ -149,10 +149,23 @@ unknown height is not a contract.
   in it, so there is real anonymised text for a view to reach for by mistake; a
   state with no placeholders anywhere would pass for the wrong reason. The pane is
   also asserted to be non-empty, for the same reason.
-- **the Configure rail is three route sections**, no `[data-railtab]` chips, Smart
-  detection on, Local AI off, Cloud AI present but disabled, and all 24 category
-  checkboxes present **and laid out with a non-zero height** (issue 3). Present in
-  the DOM is not the same as reachable.
+- **the Configure rail is the two route sections**, no `[data-railtab]` chips,
+  Smart detection on, Local AI off, and every category checkbox present **and
+  laid out with a non-zero height** (issue 3). Present in the DOM is not the same
+  as reachable. The count is an EQUALITY against the fixture, not a floor: with a
+  floor, adding a category and leaving the fixture behind keeps the harness green.
+- **the Configure panel spends 0px on prose, keeps its explanations, does not
+  make the page scroll, and has a reachable foot.** Prose is measured in PIXELS
+  rather than counted by class, because a paragraph given a different class would
+  pass a class count and still occupy the panel. The foot is measured by scrolling
+  the panel to its end and checking the last section is painted, which is the
+  property that actually failed when every control carried a paragraph.
+- **a help tooltip opens on hover AND on keyboard focus, is painted rather than
+  clipped, and closes on leave and on Escape.** The bubble is positioned outside
+  the rail's clipping scroll container, and the only way to see that it worked is
+  a hit test at the bubble's own coordinates: the rect of a clipped element is
+  still a full-size rect. The keyboard path is driven too, because an explanation
+  only a pointer can reach is one half the users never get.
 - **a real `mouseenter` on a `mark[data-original]` produces a visible
   `#mark-tooltip`** (issue 6). Three marks are hovered: the first, and the two
   nearest the pane's right and bottom edges, because the middle of the pane was

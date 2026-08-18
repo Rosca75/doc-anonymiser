@@ -4,16 +4,17 @@
 //
 // Fixed pass order (CLAUDE.md §5):
 //  1. Deterministic PII regex pass (pii.go).
-//  2. Known-entity pass: entities expanded into variants, plus user
-//     custom patterns, longest-match-first (entities.go).
-//  3. Optional LLM deep-scan (behind the LLM interface; nil = skipped).
-//     Every proposal passes the hallucination filter (exact string must
-//     occur in the source text) and the allowlist.
-//  4. Post-pass: the FULL registry is re-applied to every document, so an
-//     entity discovered late (e.g. in doc 40) is also replaced in docs
-//     processed earlier — same real-world entity, same placeholder,
-//     everywhere.
-//     Finally the ordered simple-replace rules run (simplereplace.go).
+//  2. Known-value pass: values expanded into variants, plus user
+//     custom patterns, longest-match-first (values.go).
+//  3. Post-pass: the FULL registry is re-applied to every document, so a
+//     value declared late (e.g. matched first in doc 40) is also replaced in
+//     the documents processed earlier — same real-world subject, same
+//     placeholder, everywhere.
+//
+// Anonymise is DETERMINISTIC end to end. No discovery method runs here, and no
+// value is created by the run itself: the local AI is an Identify-time
+// discovery route whose findings the user accepts as Suggestions first. A run
+// that could mint a value the user never saw would walk past the review gate.
 //
 // Run executes those passes in THREE phases rather than one loop, because
 // ownership has to be decided over the whole batch:
@@ -48,31 +49,8 @@ import (
 	"time"
 )
 
-// ProposedEntity is what the LLM deep-scan returns: a candidate entity the
-// deterministic passes missed. It still has to survive the hallucination
-// filter and the allowlist before it is used.
-type ProposedEntity struct {
-	Category string `json:"category"`
-	Text     string `json:"text"`
-	// Variants are the longer spellings folded into this one, for the same
-	// reason Candidate carries them: the review list shows one value with its
-	// spellings rather than two rivals.
-	Variants []string `json:"variants,omitempty"`
-}
-
-// LLM is the interface the engine consumes for the deep-scan slot
-// (CLAUDE.md §4: engine/* receives an interface, never the concrete Ollama
-// client — the P4 ONNX fallback would implement the same interface).
-type LLM interface {
-	// DeepScan proposes residual entities in text, given what is already
-	// known. Implementations must honour ctx cancellation (the UI cancel
-	// button interrupts mid-call).
-	DeepScan(ctx context.Context, text string, known []Entity) ([]ProposedEntity, error)
-}
-
 // ProgressEvent is emitted before each per-document stage so the UI can
-// render live progress. Stage is one of "deterministic",
-// "deep-scan", "post-pass".
+// render live progress. Stage is one of "deterministic" or "post-pass".
 type ProgressEvent struct {
 	Stage    string `json:"stage"`
 	DocIndex int    `json:"docIndex"` // 0-based
@@ -83,7 +61,7 @@ type ProgressEvent struct {
 // PipelineInput bundles everything Run needs.
 type PipelineInput struct {
 	Documents []Document
-	Entities  []Entity
+	Values    []Value
 	Patterns  []CustomPattern
 	// Level is the preset shorthand; kept for reports and as the fallback
 	// when Categories is nil.
@@ -100,13 +78,13 @@ type PipelineInput struct {
 	// Country scopes the country-specific regex categories. Empty falls back to
 	// Luxembourg, the documented application default.
 	Country string
-	// SuppressRegexPII is the "Native detection" master switch, inverted: when
+	// SuppressRegexPII is the Built-in patterns switch, inverted: when
 	// true, pass 1 (the deterministic regex PII pass in pii.go) is skipped
 	// entirely, so NO signal category (email, VAT, IBAN, amount, date, ...) is
 	// replaced regardless of what Categories selects. The Categories map is
 	// left untouched on purpose: the user's per-category selection is
 	// remembered so turning Native detection back on restores it exactly. Only
-	// the regex signal categories are affected; the entity pass, custom
+	// the regex signal categories are affected; the Value pass, custom
 	// patterns, the code detector and everything else run unchanged.
 	SuppressRegexPII bool
 	Allowlist        *Allowlist
@@ -114,10 +92,6 @@ type PipelineInput struct {
 	// runs to keep placeholders stable for the whole session; nil creates
 	// a fresh one (fresh numbering).
 	Registry *Registry
-	// LLM is the deep-scan slot; nil skips pass 3 (the report notes it).
-	LLM LLM
-	// SimpleRules run last, in order (simplereplace.go).
-	SimpleRules []SimpleRule
 	// Removed tracks values the user deleted from the session.
 	// They must not appear in any run without explicit restoration.
 	Removed []RemovedValue
@@ -156,7 +130,7 @@ type ResultDocument struct {
 	Format Format `json:"format"`
 	// Anonymised is the rewritten markdown working form.
 	Anonymised string `json:"anonymised"`
-	// Grid is the anonymised cell grid for CSV-origin documents (nil
+	// Grid is the anonymised cell grid for CSV-matchClass documents (nil
 	// otherwise) — the source for CSV round-trip export.
 	Grid [][]string `json:"grid,omitempty"`
 	// JSON is the anonymised structured JSON for complex xlsx sheets.
@@ -166,20 +140,20 @@ type ResultDocument struct {
 	// Warnings carries the document's ingestion warnings through to the
 	// results screen and report.
 	Warnings []string `json:"warnings,omitempty"`
-	// OccurrenceVariants records, per placeholder, the ordered spellings that
+	// OccurrenceSpellings records, per placeholder, the ordered spellings that
 	// produced each occurrence of that placeholder in Anonymised. Slot i holds
 	// the text the i-th occurrence of that placeholder replaced ("Borch"), or
-	// "" when that occurrence matched the canonical value itself. It lets the
-	// results view show the exact variant a mark replaced next to the canonical
+	// "" when that occurrence matched the mainText value itself. It lets the
+	// results view show the exact variant a mark replaced next to the mainText
 	// value ("Borch (Johannes Borch)"). A placeholder absent from this map, or a
-	// "" slot, means "the canonical value" and needs no bracketed original.
+	// "" slot, means "the mainText value" and needs no bracketed original.
 	//
 	// It is deliberately PER DOCUMENT: the Compare view zips this positionally
 	// with the placeholder occurrences it renders for the one document on
-	// screen. Only occurrences that carry a non-canonical spelling are worth the
-	// bytes, so a document whose every hit was the canonical value serialises
+	// screen. Only occurrences that carry a non-mainText spelling are worth the
+	// bytes, so a document whose every hit was the mainText value serialises
 	// nothing here.
-	OccurrenceVariants map[string][]string `json:"occurrenceVariants,omitempty"`
+	OccurrenceSpellings map[string][]string `json:"occurrenceSpellings,omitempty"`
 }
 
 // Results is the full outcome of one pipeline run.
@@ -203,7 +177,7 @@ func detectedCategoriesFromCounts(counts map[string]int) []string {
 	return out
 }
 
-// Entity category identifiers. They are engine CONTRACTS: they appear in
+// Value category identifiers. They are engine CONTRACTS: they appear in
 // session files and in the exported re-identification key, so they are never
 // renamed to follow a display label. The labels live on the frontend
 // (copy.js CATEGORY_LABELS), cross-checked by ../category_parity_test.go.
@@ -225,7 +199,7 @@ const (
 
 // CategorySelection is the granular per-category switch set the pipeline
 // obeys: every PII category (email, url, iban, vat,
-// matricule, phone, amount, date) and every entity category maps to on/off.
+// matricule, phone, amount, date) and every value category maps to on/off.
 // Levels are PRESETS that fill this map (PresetSelection); the UI may then
 // flip individual switches ("custom" mode).
 type CategorySelection map[string]bool
@@ -242,16 +216,16 @@ var AllPIICategories = []string{
 	CatDatabaseURI, CatDESteuerID, CatESNIF,
 }
 
-// AllEntityCategories lists the entity categories in a stable order, mirrored
+// AllValueCategories lists the value categories in a stable order, mirrored
 // by frontend/state.js and checked by ../category_parity_test.go.
-var AllEntityCategories = []string{
+var AllValueCategories = []string{
 	CatEntityNames, CatProjectNames, CatProductNames, CatBrandNames,
 	CatPersonNames, CatIdentifierNames, CatOtherNames, CatCustomPatterns,
 }
 
 // PresetSelection fills a CategorySelection from a level (CLAUDE.md §5):
 //
-//	soft     = hard PII + entity, project and identifier names + custom patterns
+//	soft     = hard PII + value, project and identifier names + custom patterns
 //	medium   = soft + person, product and brand names (the default)
 //	advanced = medium + amounts, dates and other names
 //
@@ -310,11 +284,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 			GeneratedAt: time.Now(),
 			Level:       in.Level,
 			ByCategory:  map[string]int{},
-			LLMPass:     "skipped (Ollama not available)",
 		},
-	}
-	if in.LLM != nil {
-		res.Report.LLMPass = "completed"
 	}
 
 	// The preamble, in this order and no other:
@@ -326,15 +296,12 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	//   2. validation second, over what is left, BEFORE any text is touched. A
 	//      half-run that assigned placeholders for a configuration the user was
 	//      just told is invalid is unrecoverable without a new session.
-	//   3. reservations third, so a rule's replacement cannot be handed to an
-	//      automatic assignment during the run that follows.
 	ApplyRemovals(in.Allowlist, in.Removed)
-	entities := FilterRemoved(filterEntities(in.Entities, sel), in.Removed)
+	values := FilterRemoved(filterValues(in.Values, sel), in.Removed)
 
 	res.Validation = ValidateValues(ValidationInput{
-		Entities:       entities,
+		Values:         values,
 		Patterns:       in.Patterns,
-		SimpleRules:    in.SimpleRules,
 		Allowlist:      in.Allowlist,
 		Categories:     sel,
 		Registry:       reg,
@@ -342,12 +309,6 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	})
 	if len(res.Validation.Blocking) > 0 {
 		return res, nil
-	}
-
-	for _, rule := range in.SimpleRules {
-		// An error means the placeholder is already taken, which validation has
-		// just cleared, so there is nothing left to report.
-		_ = reg.Reserve(rule.Replace)
 	}
 
 	// Overlap warnings come from the ONE place the decision is made, the span
@@ -358,14 +319,9 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	// Nothing is replaced here, and no placeholder is minted. Detection has to
 	// finish across the whole batch before ownership can be decided by rule
 	// rather than by the order the documents happen to be in.
-	//
-	// llmDurations records per-document deep-scan timing for the report
-	// (soft budget 30 s / 50 KB, surfaced per).
-	llmDurations := make([]int64, len(in.Documents))
 	plans := make([]documentPlan, 0, len(in.Documents))
 	for i, doc := range in.Documents {
-		// Cancellation is honoured between documents;
-		// mid-LLM cancellation is the LLM implementation's job via ctx.
+		// Cancellation is honoured between documents.
 		if err := ctx.Err(); err != nil {
 			res.Report.Warnings = append(res.Report.Warnings,
 				fmt.Sprintf("run cancelled after %d of %d documents", i, len(in.Documents)))
@@ -374,33 +330,8 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		}
 		emit(in.Progress, ProgressEvent{Stage: "deterministic", DocIndex: i, DocCount: len(in.Documents), DocName: doc.Name})
 
-		// Pass 3 preparation: deep-scan proposals become extra entities
-		// for THIS document (they enter the registry, so the post-pass
-		// spreads them to every other document too).
-		docEntities := append([]Entity(nil), entities...)
-		if in.LLM != nil {
-			emit(in.Progress, ProgressEvent{Stage: "deep-scan", DocIndex: i, DocCount: len(in.Documents), DocName: doc.Name})
-			llmStart := time.Now()
-			proposals, err := in.LLM.DeepScan(ctx, doc.Markdown, entities)
-			llmMS := time.Since(llmStart).Milliseconds()
-			if err != nil {
-				if ctx.Err() != nil { // cancelled mid-call
-					finishReport(res, start, overlaps)
-					return res, ctx.Err()
-				}
-				// Ollama died mid-run: degrade THIS pass with a warning,
-				// keep the batch going (CLAUDE.md §4 graceful degradation).
-				res.Report.LLMPass = fmt.Sprintf("degraded: %v", err)
-				res.Report.Warnings = append(res.Report.Warnings,
-					fmt.Sprintf("deep-scan failed on %q, deterministic passes still applied: %v", doc.Name, err))
-			} else {
-				docEntities = append(docEntities, acceptProposals(proposals, doc.Markdown, in.Allowlist, sel)...)
-			}
-			llmDurations[i] = llmMS
-		}
-
 		scope := detectionScope{
-			entities:         docEntities,
+			values:           values,
 			patterns:         in.Patterns,
 			categories:       sel,
 			minConfidence:    in.MinConfidence,
@@ -434,9 +365,9 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		res.Documents = append(res.Documents, rd)
 	}
 
-	// --- Pass 4: registry post-pass across ALL documents. ---------------
-	// Late-discovered entities (or values first seen in doc N) are now in
-	// the registry; re-apply every known mapping everywhere.
+	// --- Pass 3: registry post-pass across ALL documents. ---------------
+	// Values first seen in document N are now in the registry; re-apply every
+	// known mapping everywhere.
 	entries := reg.Entries() // longest original first
 	for i := range res.Documents {
 		if err := ctx.Err(); err != nil {
@@ -447,22 +378,11 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		applyRegistryPostPass(&res.Documents[i], entries)
 	}
 
-	// --- Final pass: ordered simple-replace rules. -----------------------
-	// Per-document, per-rule counts are kept so the report can name what each
-	// rule rewrote instead of a bare "simple_replace" total.
-	simpleCounts := make([][]int, len(res.Documents))
-	if len(in.SimpleRules) > 0 {
-		for i := range res.Documents {
-			simpleCounts[i] = applySimpleRulesToResult(&res.Documents[i], in.SimpleRules)
-		}
-	}
-
-	// Placeholders whose every occurrence matched the canonical value carry no
+	// Placeholders whose every occurrence matched the mainText value carry no
 	// bracketed original, so their all-"" variant slices are dropped to keep the
-	// per-document payload small. Runs after the simple-replace pass so a rule
-	// that rewrites to a placeholder keeps its recorded find text.
+	// per-document payload small.
 	for i := range res.Documents {
-		pruneCanonicalOnlyVariants(&res.Documents[i])
+		pruneMainTextOnlySpellings(&res.Documents[i])
 	}
 
 	// --- Report assembly. -------------------------------------------------
@@ -470,7 +390,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	// once, here. They used to be recomputed in JavaScript on every repaint of
 	// the report card, and they were absent from the exported report entirely.
 	entries = reg.Entries()
-	for i, rd := range res.Documents {
+	for _, rd := range res.Documents {
 		docTotal := 0
 		byCat := map[string]int{}
 		for cat, n := range rd.ByCategory {
@@ -486,15 +406,10 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 			Warnings:           rd.Warnings,
 			DetectedCategories: detectedCategoriesFromCounts(byCat),
 		}
-		if i < len(llmDurations) {
-			dr.LLMDurationMS = llmDurations[i]
-		}
 		dr.Values = valueReports(entries, []ResultDocument{rd})
-		dr.Values = appendSimpleRuleValues(dr.Values, in.SimpleRules, simpleCounts[i])
 		res.Report.Documents = append(res.Report.Documents, dr)
 	}
 	res.Report.Values = valueReports(entries, res.Documents)
-	res.Report.Values = appendSimpleRuleValues(res.Report.Values, in.SimpleRules, sumRuleCounts(in.SimpleRules, simpleCounts))
 	res.Report.DetectedCategories = detectedCategoriesFromCounts(res.Report.ByCategory)
 	finishReport(res, start, overlaps)
 	return res, nil
@@ -505,8 +420,8 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 //
 // The count is taken from the FINISHED text rather than from the registry's
 // own counter, for two reasons: the registry counts per SESSION, so it cannot
-// answer a per-document question, and the post-pass and the simple-replace
-// rules both rewrite text after the counter was incremented. Counting
+// answer a per-document question, and the post-pass rewrites text after the
+// counter was incremented. Counting
 // placeholders in the text that will be exported is the only figure that
 // matches what the user will see.
 //
@@ -547,54 +462,17 @@ func sortValueReports(out []ValueReport) {
 	})
 }
 
-// appendSimpleRuleValues folds the manual find-and-replace rules into a value
-// report list and re-sorts the result. Without it the "simple_replace"
-// category shows a total in the by-category breakdown but drills down to
-// nothing, because the rules never touch the registry the other rows come
-// from. A rule that matched nothing, or whose replacement is not a value the
-// user would recognise, is still listed by find text so the drill-down agrees
-// with the total.
-func appendSimpleRuleValues(values []ValueReport, rules []SimpleRule, counts []int) []ValueReport {
-	for i, rule := range rules {
-		if i >= len(counts) || counts[i] == 0 || rule.Find == "" {
-			continue
-		}
-		values = append(values, ValueReport{
-			Original:    rule.Find,
-			Placeholder: rule.Replace,
-			Category:    "simple_replace",
-			Count:       counts[i],
-		})
-	}
-	sortValueReports(values)
-	return values
-}
-
-// sumRuleCounts totals each rule's replacements across every document, so the
-// run-level report aggregates what the per-document reports split.
-func sumRuleCounts(rules []SimpleRule, perDoc [][]int) []int {
-	totals := make([]int, len(rules))
-	for _, counts := range perDoc {
-		for i, c := range counts {
-			if i < len(totals) {
-				totals[i] += c
-			}
-		}
-	}
-	return totals
-}
-
-// pruneCanonicalOnlyVariants drops every placeholder whose recorded
-// occurrences were all the canonical value. Those need no bracketed original
+// pruneMainTextOnlySpellings drops every placeholder whose recorded
+// occurrences were all the mainText value. Those need no bracketed original
 // (the tooltip falls back to the mapping), so keeping their all-"" slices only
-// grows the payload. A placeholder with even one non-canonical spelling is kept
+// grows the payload. A placeholder with even one non-mainText spelling is kept
 // whole, "" slots included, so the frontend can line each occurrence up with
 // the placeholder it renders.
-func pruneCanonicalOnlyVariants(rd *ResultDocument) {
-	if rd.OccurrenceVariants == nil {
+func pruneMainTextOnlySpellings(rd *ResultDocument) {
+	if rd.OccurrenceSpellings == nil {
 		return
 	}
-	for ph, variants := range rd.OccurrenceVariants {
+	for ph, variants := range rd.OccurrenceSpellings {
 		keep := false
 		for _, v := range variants {
 			if v != "" {
@@ -603,11 +481,11 @@ func pruneCanonicalOnlyVariants(rd *ResultDocument) {
 			}
 		}
 		if !keep {
-			delete(rd.OccurrenceVariants, ph)
+			delete(rd.OccurrenceSpellings, ph)
 		}
 	}
-	if len(rd.OccurrenceVariants) == 0 {
-		rd.OccurrenceVariants = nil
+	if len(rd.OccurrenceSpellings) == 0 {
+		rd.OccurrenceSpellings = nil
 	}
 }
 
@@ -628,49 +506,14 @@ func finishReport(res *Results, start time.Time, overlaps *overlapWarnings) {
 	}
 }
 
-// filterEntities keeps the entities whose category is active at the
-// current level.
-func filterEntities(entities []Entity, active map[string]bool) []Entity {
-	var out []Entity
-	for _, e := range entities {
-		if active[e.Category] {
-			out = append(out, e)
+// filterValues keeps the Values whose category is active in the current
+// selection.
+func filterValues(values []Value, active map[string]bool) []Value {
+	var out []Value
+	for _, v := range values {
+		if active[v.Category] {
+			out = append(out, v)
 		}
-	}
-	return out
-}
-
-// acceptProposals applies the HALLUCINATION FILTER and the allowlist to
-// LLM proposals (CLAUDE.md §5): a proposal is dropped unless its exact
-// string occurs in the source text; allowlisted terms are dropped; and
-// categories inactive at the current level are dropped. Survivors become
-// regular entities (variant expansion included).
-func acceptProposals(proposals []ProposedEntity, sourceText string, allow *Allowlist, active map[string]bool) []Entity {
-	var out []Entity
-	for _, p := range proposals {
-		if !strings.Contains(sourceText, p.Text) {
-			continue // hallucinated: the model invented a string
-		}
-		if allow.Contains(p.Text) {
-			continue // allowlist wins
-		}
-		if !active[p.Category] {
-			continue // e.g. organisation_names proposed at medium level
-		}
-		// An AI proposal is trusted LESS than a value the user listed
-		// stamping ConfidenceLLMDefault here is what lets
-		// PipelineInput.MinConfidence separate the two tiers.
-		out = append(out, Entity{
-			Category:   p.Category,
-			Canonical:  p.Text,
-			Confidence: ConfidenceLLMDefault,
-			// The route, recorded separately from the score. Confidence
-			// decides whether the MinConfidence floor keeps this value at all;
-			// origin decides who wins when it and another route claim the same
-			// text. One number cannot answer both without raising the floor
-			// silently reordering precedence.
-			Origin: OriginAI,
-		})
 	}
 	return out
 }
@@ -681,14 +524,14 @@ func acceptProposals(proposals []ProposedEntity, sourceText string, allow *Allow
 // sites is a shape where a swapped pair compiles and silently changes what gets
 // replaced.
 type detectionScope struct {
-	entities      []Entity
+	values        []Value
 	patterns      []CustomPattern
 	categories    CategorySelection
 	minConfidence float32
 	country       string
 	allow         *Allowlist
-	// suppressRegexPII, when true, skips pass 1 (the regex PII detectors) for
-	// this run: the "Native detection" master switch is off. The entity and
+	// suppressRegexPII, when true, skips pass 1 (the built-in pattern detectors)
+	// for this run, because Built-in patterns is switched off. The Value and
 	// custom-pattern passes are unaffected.
 	suppressRegexPII bool
 }
@@ -713,7 +556,7 @@ type ownershipLoss struct {
 // entry's category after the fact would change its placeholder text, and a
 // placeholder that has left the machine can never be re-numbered.
 //
-// The winner is picked by OriginRank first, then by the same tie-breaks
+// The winner is picked by MatchClassRank first, then by the same tie-breaks
 // resolution uses. Start offset is deliberately NOT among them: comparing
 // offsets across documents would reintroduce exactly the file-order dependence
 // this function exists to remove, so the last tie-break is the category name.
@@ -721,13 +564,13 @@ type ownershipLoss struct {
 // @param plans every document's detections; regions are rewritten in place
 // @return the overruled claims, so the run can warn about them
 func unifyOwnership(plans []documentPlan) []ownershipLoss {
-	// Which (category, canonical, origin) owns each string, keyed by the
+	// Which (category, mainText, matchClass) owns each string, keyed by the
 	// lower-cased registry key the span would use.
 	winners := map[string]Span{}
 	for _, plan := range plans {
 		for _, region := range plan.regions {
 			for _, s := range region.spans {
-				key := strings.ToLower(s.CanonicalOrOriginal())
+				key := strings.ToLower(s.MainTextOrOriginal())
 				cur, seen := winners[key]
 				if !seen || supersedesForOwnership(s, cur) {
 					winners[key] = s
@@ -760,10 +603,10 @@ func unifyOwnership(plans []documentPlan) []ownershipLoss {
 			seen := make(map[claim]bool, len(spans))
 			kept := spans[:0]
 			for _, s := range spans {
-				key := strings.ToLower(s.CanonicalOrOriginal())
+				key := strings.ToLower(s.MainTextOrOriginal())
 				win := winners[key]
-				if s.Category != win.Category || s.Origin != win.Origin {
-					lossKey := s.Origin + "|" + s.Category + "|" + key
+				if s.Category != win.Category || s.MatchClass != win.MatchClass {
+					lossKey := s.MatchClass + "|" + s.Category + "|" + key
 					if !reported[lossKey] {
 						reported[lossKey] = true
 						losses = append(losses, ownershipLoss{loser: s, winner: win})
@@ -773,10 +616,10 @@ func unifyOwnership(plans []documentPlan) []ownershipLoss {
 					// Original stay as they are: they describe THIS occurrence,
 					// and the text being replaced has not changed.
 					s.Category = win.Category
-					s.Origin = win.Origin
-					s.Canonical = win.CanonicalOrOriginal()
+					s.MatchClass = win.MatchClass
+					s.MainText = win.MainTextOrOriginal()
 				}
-				id := claim{s.Start, s.End, s.Category, strings.ToLower(s.CanonicalOrOriginal())}
+				id := claim{s.Start, s.End, s.Category, strings.ToLower(s.MainTextOrOriginal())}
 				if seen[id] {
 					continue
 				}
@@ -794,7 +637,7 @@ func unifyOwnership(plans []documentPlan) []ownershipLoss {
 // span in a group covers the same value, so length cannot separate them, and
 // start would make the answer depend on file order.
 func supersedesForOwnership(a, b Span) bool {
-	ra, rb := OriginRank(a.Origin), OriginRank(b.Origin)
+	ra, rb := MatchClassRank(a.MatchClass), MatchClassRank(b.MatchClass)
 	if ra != rb {
 		return ra < rb
 	}
@@ -833,7 +676,7 @@ type documentPlan struct {
 	regions []planRegion
 }
 
-// detectDocument runs passes 1 and 2 (with the already-merged pass-3 entities)
+// detectDocument runs passes 1 and 2 (with the already-merged pass-3 values)
 // over one document and returns what it found, replacing nothing. Grid
 // documents are detected cell by cell, exactly as they are replaced, so the
 // preview and the CSV round-trip cannot disagree.
@@ -878,32 +721,32 @@ func detectDocument(doc Document, scope detectionScope) documentPlan {
 //
 // @param traceEnabled collects the resolved spans for the caller's OnTrace hook
 func applyPlan(plan documentPlan, reg *Registry,
-	overlaps *overlapWarnings, traceEnabled bool) (ResultDocument, []SpanTrace) {
-
+	overlaps *overlapWarnings, traceEnabled bool,
+) (ResultDocument, []SpanTrace) {
 	doc := plan.doc
 	rd := ResultDocument{
-		Name:               doc.Name,
-		Format:             doc.Format,
-		ByCategory:         map[string]int{},
-		Warnings:           doc.Warnings,
-		OccurrenceVariants: map[string][]string{},
+		Name:                doc.Name,
+		Format:              doc.Format,
+		ByCategory:          map[string]int{},
+		Warnings:            doc.Warnings,
+		OccurrenceSpellings: map[string][]string{},
 	}
 
 	assign := func(s Span) string {
 		rd.ByCategory[s.Category]++
-		canonical := s.CanonicalOrOriginal()
-		ph := reg.Assign(s.Category, canonical)
+		mainText := s.MainTextOrOriginal()
+		ph := reg.Assign(s.Category, mainText)
 		// Record the spelling this occurrence actually matched. "" when it was
-		// the canonical value, so the tooltip needs no bracketed original; the
-		// matched text otherwise ("Borch" for canonical "Johannes Borch"). The
+		// the mainText value, so the tooltip needs no bracketed original; the
+		// matched text otherwise ("Borch" for mainText "Johannes Borch"). The
 		// closure is ApplySpans' single choke point and it is called in
 		// left-to-right offset order, which is exactly the order the frontend
 		// walks placeholders in, so slot i lines up with occurrence i.
 		variant := ""
-		if !strings.EqualFold(s.Original, canonical) {
+		if !strings.EqualFold(s.Original, mainText) {
 			variant = s.Original
 		}
-		rd.OccurrenceVariants[ph] = append(rd.OccurrenceVariants[ph], variant)
+		rd.OccurrenceSpellings[ph] = append(rd.OccurrenceSpellings[ph], variant)
 		return ph
 	}
 
@@ -966,16 +809,16 @@ func applyPlan(plan documentPlan, reg *Registry,
 // than per region.
 //
 // The category selection gates BOTH the PII categories (pass 1) and the
-// custom-pattern pass; entity categories were already filtered by the caller
-// (filterEntities). When scope.suppressRegexPII is set (the "Native detection"
+// custom-pattern pass; value categories were already filtered by the caller
+// (filterValues). When scope.suppressRegexPII is set (the "Native detection"
 // master switch is off) pass 1 is skipped entirely, so no signal category is
-// replaced; the entity and custom-pattern passes still run.
+// replaced; the value and custom-pattern passes still run.
 func detectText(text string, scope detectionScope) []Span {
 	var spans []Span
 	if !scope.suppressRegexPII {
 		spans = FilterAllowed(DetectPIISelected(text, scope.categories, scope.country), scope.allow)
 	}
-	spans = append(spans, DetectEntities(text, scope.entities, scope.allow)...)
+	spans = append(spans, DetectValues(text, scope.values, scope.allow)...)
 	if scope.categories[CatCustomPatterns] {
 		spans = append(spans, DetectCustomPatterns(text, scope.patterns, scope.allow)...)
 	}
@@ -990,8 +833,8 @@ func detectText(text string, scope detectionScope) []Span {
 // batch, so resolution here only decides which of two OVERLAPPING stretches of
 // text to replace, never which route owns a value.
 func applySpansToText(text string, spans []Span, assign func(Span) string,
-	traceFn func([]Span), overlaps *overlapWarnings) string {
-
+	traceFn func([]Span), overlaps *overlapWarnings,
+) string {
 	// The losers are collected only while the warning collector still wants
 	// them. Gathering them regardless costs an allocation per discarded span on
 	// a path that runs over every document, and a document full of name
@@ -1039,7 +882,7 @@ func applyRegistryPostPass(rd *ResultDocument, entries []MappingEntry) {
 }
 
 // replaceKnownOriginal substitutes one registry entry in text with
-// word-boundary anchoring (same unicode-aware rule as the entity pass) and
+// word-boundary anchoring (same unicode-aware rule as the Value pass) and
 // without touching existing placeholders. onHit is called per replacement
 // for statistics.
 func replaceKnownOriginal(text string, e MappingEntry, onHit func()) string {
@@ -1081,7 +924,7 @@ func replaceKnownOriginal(text string, e MappingEntry, onHit func()) string {
 
 // DetectKnownOriginals returns spans for every remaining occurrence of a
 // known registry original in text, word-boundary anchored and never
-// inside an existing placeholder. The span's Canonical is the registry
+// inside an existing placeholder. The span's MainText is the registry
 // original, so Registry.Assign maps it back to the SAME placeholder.
 // Callers (the same-format export) combine these with
 // the pass-1/2 spans and run ResolveOverlaps; pass entries longest-first
@@ -1111,84 +954,19 @@ func DetectKnownOriginals(text string, entries []MappingEntry) []Span {
 				continue
 			}
 			spans = append(spans, Span{
-				Start:     m[0],
-				End:       m[1],
-				Category:  e.Category,
-				Original:  text[m[0]:m[1]],
-				Canonical: e.Original,
+				Start:    m[0],
+				End:      m[1],
+				Category: e.Category,
+				Original: text[m[0]:m[1]],
+				MainText: e.Original,
 				// A registry entry is ownership that is already DECIDED: the
 				// string earned this placeholder in an earlier pass or an
 				// earlier document, and a placeholder that has left the machine
 				// can never be re-numbered. So it outranks a fresh detection
 				// rather than being re-litigated by one.
-				Origin: OriginNative,
+				MatchClass: MatchClassBuiltInPattern,
 			})
 		}
 	}
 	return spans
-}
-
-// applySimpleRulesToResult runs the ordered manual rules over every
-// representation of the document and records counts under the
-// "simple_replace" category. It returns the per-rule replacement counts for
-// this document so the report can name what each rule rewrote.
-func applySimpleRulesToResult(rd *ResultDocument, rules []SimpleRule) []int {
-	perRule := make([]int, len(rules))
-	add := func(counts []int) {
-		for i, c := range counts {
-			if i < len(perRule) {
-				perRule[i] += c
-			}
-		}
-	}
-	if rd.Grid != nil {
-		for r, row := range rd.Grid {
-			for c, cell := range row {
-				out, counts := ApplySimpleRules(cell, rules)
-				rd.Grid[r][c] = out
-				add(counts)
-			}
-		}
-		rd.Anonymised = GridToMarkdownTable(rd.Grid)
-	} else if rd.JSON != "" {
-		out, counts := ApplySimpleRules(rd.JSON, rules)
-		rd.JSON = out
-		rd.Anonymised = "```json\n" + out + "\n```\n"
-		add(counts)
-	} else {
-		out, counts := ApplySimpleRules(rd.Anonymised, rules)
-		rd.Anonymised = out
-		add(counts)
-	}
-	total := 0
-	for _, c := range perRule {
-		total += c
-	}
-	if total > 0 {
-		rd.ByCategory["simple_replace"] += total
-	}
-	recordSimpleRuleVariants(rd, rules, perRule)
-	return perRule
-}
-
-// recordSimpleRuleVariants notes the find text behind each placeholder a rule
-// produced, so a mark the rule created hovers with the text it replaced
-// ("PwC") rather than only the placeholder's canonical owner. Only a rule
-// whose whole replacement IS a placeholder leaves a mark to hover; a rule that
-// rewrites to plain text produces nothing the tooltip can land on.
-func recordSimpleRuleVariants(rd *ResultDocument, rules []SimpleRule, counts []int) {
-	if rd.OccurrenceVariants == nil {
-		rd.OccurrenceVariants = map[string][]string{}
-	}
-	for i, rule := range rules {
-		if i >= len(counts) || counts[i] == 0 {
-			continue
-		}
-		if placeholderRe.FindString(rule.Replace) != rule.Replace {
-			continue
-		}
-		for n := 0; n < counts[i]; n++ {
-			rd.OccurrenceVariants[rule.Replace] = append(rd.OccurrenceVariants[rule.Replace], rule.Find)
-		}
-	}
 }
