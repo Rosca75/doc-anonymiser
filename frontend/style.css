@@ -418,7 +418,14 @@ main#view.page { overflow-y: auto; }
   font-size: 0.85rem;
 }
 .grid-row:hover { background: var(--surface-subtle); }
-.grid-box { border: 1px solid var(--gray-5); border-radius: var(--card-radius); overflow: hidden; }
+/* flex: none is load-bearing, not cosmetic. The grid-box is a flex item in the
+   .card-body.stack column, and its own overflow is hidden so the rounded
+   corners clip the rows. Without flex: none it keeps the default flex-shrink: 1,
+   so a long suggestion list shrinks the box to the space available and the
+   hidden overflow clips every row past the fold with NO scrollbar anywhere. Kept
+   at natural height instead, it overflows the card body, whose overflow-y: auto
+   is THE scroll owner and shows the scrollbar. */
+.grid-box { border: 1px solid var(--gray-5); border-radius: var(--card-radius); overflow: hidden; flex: none; }
 .grid-empty { padding: 2rem 1rem; text-align: center; font-size: 0.85rem; color: var(--muted); }
 
 /* A sort button looks like the heading it replaces, not like an action: the
