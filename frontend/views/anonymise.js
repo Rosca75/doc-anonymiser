@@ -285,7 +285,7 @@ export function selectedCard(s, mark = selectedMark) {
     : [];
   const suggestions = matches.map((m) =>
     `<button class="btn btn-secondary reassign-pick"` +
-    ` data-category="${escapeHTML(m.category)}" data-mainText="${escapeHTML(m.mainText)}">` +
+    ` data-category="${escapeHTML(m.category)}" data-main-text="${escapeHTML(m.mainText)}">` +
     `${escapeHTML(m.mainText)}` +
     `<span class="hint">${escapeHTML(CATEGORY_LABELS[m.category]?.[0] ?? m.category)}</span>` +
     `</button>`).join("");

@@ -171,6 +171,7 @@ func run(frontendDir, probesPath, artifactDir string, keepArtifacts bool) error 
 	checkLayout(client, r)
 	checkImportPreview(client, r, fx)
 	checkConfigureRail(client, r, fx)
+	checkValueCardActions(client, r)
 	checkConfigurePanelFit(client, r)
 	checkHelpTooltip(client, r)
 	checkScrollRetention(client, r)

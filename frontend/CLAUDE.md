@@ -192,6 +192,12 @@ Windows it steals focus from the window it belongs to.
   rather than that the output contains a substring. Views build HTML strings,
   so exporting a builder (`previewBody`, `compareCard`, …) is all it takes to
   test a whole screen without a browser.
+- `testdom.js` — dev-time only: `testhtml.js`'s wiring counterpart, a minimal
+  DOM (`container`, `fire`) whose parser LOWER-CASES attribute names exactly as
+  a browser's does. A render test reads the string a view wrote; a wiring test
+  has to read what a parser made of it, which is why a camel-case `data-`
+  attribute is invisible to the first kind and fatal in the second. Use it
+  whenever the assertion is about what a control DOES, not what it shows.
 
 ## Typography and brand (BUILD-04 CR2)
 

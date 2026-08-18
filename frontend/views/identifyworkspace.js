@@ -710,7 +710,7 @@ function valueCard(e, conflict, s, overlap) {
     : "";
 
   return `<div class="value-card${conflict ? " conflicted" : ""}${overlap ? " intersects" : ""}" data-key="${escapeHTML(key)}"` +
-    ` data-category="${escapeHTML(e.category)}" data-mainText="${escapeHTML(e.mainText)}"` +
+    ` data-category="${escapeHTML(e.category)}" data-main-text="${escapeHTML(e.mainText)}"` +
     ` data-search="${escapeHTML(searchText)}">` +
     `<div class="row-between">` +
     `<div class="value-head">${nameBtn}${typeSelect}${methods}</div>` +
@@ -739,7 +739,7 @@ function groupPanel(e, s) {
   const rows = others.map((o) =>
     `<label class="group-option">` +
     `<input type="checkbox" class="group-pick"` +
-    ` data-category="${escapeHTML(o.category)}" data-mainText="${escapeHTML(o.mainText)}"/>` +
+    ` data-category="${escapeHTML(o.category)}" data-main-text="${escapeHTML(o.mainText)}"/>` +
     `<span class="group-option-name">${escapeHTML(o.mainText)}</span>` +
     `<span class="fmt-badge">${escapeHTML(categoryLabel(o.category))}</span>` +
     `</label>`).join("");
@@ -1103,8 +1103,20 @@ function wireValues(container) {
 
   wireValuesToolbar(container);
 
+  // A card with no identity cannot act on a Value, and it has to SAY so: a
+  // handler that silently returns is indistinguishable from a button that is not
+  // wired, which is the failure this guard exists to prevent. The saying happens
+  // ONCE, after the loop, and only when the strip is not already showing it: a
+  // notice inside the loop repaints, the repaint re-wires, and the message would
+  // renew itself forever.
+  let identityLost = false;
+
   for (const cardEl of container.querySelectorAll(".value-card")) {
     const { category: cat, mainText, key } = cardEl.dataset;
+    if (!cat || !mainText) {
+      identityLost = true;
+      continue;
+    }
 
     // Renaming the value: click the name to reveal an inline input.
     cardEl.querySelector(".value-name")?.addEventListener("click", () => {
@@ -1179,6 +1191,10 @@ function wireValues(container) {
 
     wireGroupPanel(cardEl, cat, mainText);
     wireSolvePanel(cardEl, cat, mainText);
+  }
+
+  if (identityLost && getState().notice?.text !== WORKSPACE.cardIdentityLost) {
+    notify(WORKSPACE.cardIdentityLost, "warn");
   }
 
   wireVariantDrag(container);

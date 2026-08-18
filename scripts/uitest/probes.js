@@ -163,6 +163,25 @@
     await settle();
   }
 
+  // The two accepted Values the value-card probe acts on. Their spellings are
+  // already settled (derivedSpellings set, so nothing is "pending"), because the
+  // bridge is absent here and a value awaiting expansion would render a spinner
+  // instead of the controls under test.
+  const CARD_VALUES = [
+    {
+      category: "person_names", mainText: "Marie Duval",
+      spellings: [], derivedSpellings: ["Marie Duval", "Marie"],
+      spellingsError: null, discoveryMethods: ["manual"], evidence: [],
+      spellingPolicy: "automatic", status: "accepted",
+    },
+    {
+      category: "entity_names", mainText: "Meridian Consulting",
+      spellings: [], derivedSpellings: ["Meridian Consulting"],
+      spellingsError: null, discoveryMethods: ["manual"], evidence: [],
+      spellingPolicy: "automatic", status: "accepted",
+    },
+  ];
+
   /** rect(el) is getBoundingClientRect as plain, transferable numbers. */
   const rect = (el) => {
     const r = el.getBoundingClientRect();
@@ -341,6 +360,75 @@
         // not assumed.
         categoriesWithSize: [...rail.querySelectorAll(".cat-toggle")]
           .filter((c) => c.getBoundingClientRect().height > 0).length,
+      };
+    },
+
+    /**
+     * valueCardActions() drives a value card's controls in the real browser and
+     * reports what reached the store.
+     *
+     * This is the only layer that can see the defect it exists for. A card names
+     * the Value its handlers act on through `data-` attributes, and the BROWSER
+     * lower-cases attribute names while a string test preserves them: a
+     * camel-case `data-mainText` renders, satisfies every string assertion, and
+     * arrives as `dataset.maintext`, so `dataset.mainText` is undefined and
+     * renaming, removing, dropping a spelling and merging all silently do
+     * nothing. Nothing throws, so nothing anywhere else notices.
+     *
+     * It reports the store's own answer after each action, never the markup: the
+     * markup rendering correctly is exactly the state the bug leaves it in.
+     */
+    async valueCardActions() {
+      const s = await store();
+      await seed("identify");
+      s.setState({ values: CARD_VALUES.map((v) => ({ ...v })) });
+      await settle();
+
+      // The workspace opens on Suggestions; My values is a click away, and view
+      // state inside the module, so it is only reachable the way a user reaches
+      // it.
+      const tab = document.querySelector('[data-wstab="values"]');
+      if (!tab) return { error: "no [data-wstab] tabs rendered in the Identify workspace" };
+      tab.click();
+      await settle();
+
+      const cardFor = (mainText) => [...document.querySelectorAll(".value-card")]
+        .find((c) => c.dataset.mainText === mainText) ?? null;
+
+      const before = [...document.querySelectorAll(".value-card")];
+      const identified = before.filter((c) => c.dataset.category && c.dataset.mainText).length;
+      if (before.length === 0) return { error: "the My values tab rendered no .value-card" };
+
+      // 1. Rename. Clicking the name reveals an inline input; typing and blurring
+      // commits it.
+      let renamed = null;
+      const target = cardFor("Marie Duval");
+      if (target) {
+        target.querySelector(".value-name")?.click();
+        await settle(80);
+        const input = target.querySelector(".value-name-input");
+        if (input) {
+          input.value = "Marie Dupont";
+          input.dispatchEvent(new Event("blur"));
+          await settle();
+          renamed = s.getState().values.some((v) => v.mainText === "Marie Dupont");
+        }
+      }
+
+      // 2. Remove. The count in the store is the answer; the card disappearing
+      // is not, because a repaint reads the store either way.
+      const countBeforeRemove = s.getState().values.length;
+      const removable = cardFor("Meridian Consulting");
+      removable?.querySelector(".value-remove")?.click();
+      await settle();
+
+      return {
+        cards: before.length,
+        cardsWithIdentity: identified,
+        inlineInputAppeared: !!target && !!document.querySelector(".value-card") && renamed !== null,
+        renamed,
+        removedOne: s.getState().values.length === countBeforeRemove - 1,
+        valuesAfter: s.getState().values.map((v) => v.mainText),
       };
     },
 

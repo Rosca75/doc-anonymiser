@@ -58,6 +58,8 @@ doc-anonymiser/
 ├── category_parity_test.go    # JS↔Go category parity guard (package main)
 ├── detection_parity_test.go   # JS↔Go discovery-method, match-class and
 │                              #   signal-source parity guards (package main)
+├── dataset_parity_test.go     # no camel-case data attribute is rendered: a browser
+│                              #   lower-cases attribute NAMES, so dataset.x is dead
 ├── value_shape_test.go        # the Value wire shape: no retired key comes back,
 │                              #   and every current field is present
 ├── copy_guard_test.go         # no em dashes in Go user-facing strings (package main)
@@ -81,6 +83,8 @@ doc-anonymiser/
 │   ├── docs/                  # bundled offline user docs (SECOND window, embedded only)
 │   ├── assets/icons/          # vendored Material Symbols SVGs + LICENSE
 │   ├── testhtml.js            # dev-time HTML query helper for the render tests
+│   ├── testdom.js             # dev-time minimal DOM for the WIRING tests: its parser
+│   │                          #   lower-cases attribute names, as a browser does
 │   └── *.test.js              # node --test "frontend/**/*.test.js" (zero npm deps)
 ├── backend/                   # ALL Go business logic + the Wails bound-app layer (package backend)
 │   ├── CLAUDE.md              # backend charter (see above)

@@ -268,6 +268,67 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 			"category groups open by default.")
 }
 
+// --- A value card's actions actually reach the store ------------------------
+
+type valueCardResult struct {
+	Error               string   `json:"error"`
+	Cards               int      `json:"cards"`
+	CardsWithIdentity   int      `json:"cardsWithIdentity"`
+	InlineInputAppeared *bool    `json:"inlineInputAppeared"`
+	Renamed             *bool    `json:"renamed"`
+	RemovedOne          *bool    `json:"removedOne"`
+	ValuesAfter         []string `json:"valuesAfter"`
+}
+
+// checkValueCardActions asserts a value card's controls CHANGE something.
+//
+// This is the layer that sees attribute lower-casing, and it is the only one
+// that can. A card names the Value its handlers act on through `data-`
+// attributes; a browser lower-cases attribute NAMES while a string test
+// preserves them, so a camel-case `data-mainText` renders, matches every string
+// assertion, and reaches the handler as an undefined `dataset.mainText`. Rename,
+// remove, drop-a-spelling and merge then all silently do nothing, which is
+// indistinguishable from a button that was never wired.
+func checkValueCardActions(c *cdpClient, r *reporter) {
+	r.step("A value card's actions reach the store")
+
+	var got valueCardResult
+	if err := c.eval("__uiProbes.valueCardActions()", &got); err != nil {
+		r.assert("the value-card probe runs", false, "a rendered My values tab", err.Error(),
+			"views/identifyworkspace.js valuesTab must render from a seeded values list.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the value-card probe runs", false, "value cards on the My values tab", got.Error,
+			"views/identifyworkspace.js renders one .value-card per accepted Value.")
+		return
+	}
+
+	r.assert("the seeded values render as cards", got.Cards == 2,
+		"2 .value-card elements", fmt.Sprintf("%d", got.Cards),
+		"The probe seeds two accepted Values, one per card.")
+
+	r.assert("every card carries its own identity", got.Cards > 0 && got.CardsWithIdentity == got.Cards,
+		"every card readable as dataset.category + dataset.mainText",
+		fmt.Sprintf("%d of %d", got.CardsWithIdentity, got.Cards),
+		"The card renders data-category and data-main-text. A camel-case data-mainText is "+
+			"lower-cased by the parser, so dataset.mainText is undefined and every action on the "+
+			"card resolves against it.")
+
+	r.assert("clicking the name reveals an inline input", boolIs(got.InlineInputAppeared, true),
+		"a .value-name-input in place of the name button", describeBool(got.InlineInputAppeared),
+		"revealNameInput replaces the name button; native dialogs are banned.")
+
+	r.assert("committing the input renames the Value", boolIs(got.Renamed, true),
+		"the new name in state.values", describeBool(got.Renamed),
+		"revealNameInput commits through renameValue, which needs the card's mainText.")
+
+	r.assert("the card's remove control deletes the Value", boolIs(got.RemovedOne, true),
+		"one fewer value in the store",
+		fmt.Sprintf("%s, values now: %s", describeBool(got.RemovedOne), strings.Join(got.ValuesAfter, ", ")),
+		"The .value-remove handler calls deleteValue(category, mainText) from the card's dataset.")
+}
+
 // --- The Configure panel's height and its help tooltips ---------------------
 
 type panelFitResult struct {

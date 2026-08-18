@@ -243,7 +243,11 @@ func main() {
 //   - frontend/testhtml.js is a dev-time HTML query helper written FOR the
 //     render tests (see the repository layout in CLAUDE.md §3). Every export
 //     being imported only by *.test.js is the file working as intended.
-const defaultExcludes = "frontend/testhtml.js"
+//   - frontend/testdom.js is its wiring counterpart, a minimal DOM that
+//     lower-cases attribute names the way a browser's parser does, so a handler
+//     reading dataset fails in a test for the same reason it fails in the app.
+//     Written FOR the wiring tests, same reasoning as above.
+const defaultExcludes = "frontend/testhtml.js,frontend/testdom.js"
 
 // scan walks root, builds the module graph and applies the three rules.
 // Files matching excludes contribute to the graph as importers but never

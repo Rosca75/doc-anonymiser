@@ -171,7 +171,8 @@ read as evidence.
 
 **The parity guards are load-bearing.** `category_parity_test.go`,
 `detection_parity_test.go`, `value_shape_test.go`, `step_parity_test.go`,
-`copy_guard_test.go`, `uitest_parity_test.go` and `frontend_tests_test.go` each
+`copy_guard_test.go`, `uitest_parity_test.go`, `dataset_parity_test.go` and
+`frontend_tests_test.go` each
 exist because the mistake it catches already happened once and passed every
 other test. When one fails it is naming a real inconsistency; fix the
 inconsistency, not the guard. When a guard reports a false positive, tighten what
@@ -190,6 +191,15 @@ is how the mistake comes back.
   and assert what a pane SHOWS with `frontend/testhtml.js` (`textOf`, `all`,
   `attr`). Four bugs about what a pane displayed lived happily beside green tests
   that only checked the output contained a substring somewhere.
+- **Wiring tests over render tests, when the question is what a control DOES.**
+  A render test reads the HTML string a view wrote; a browser re-reads it, and
+  its parser LOWER-CASES attribute names. So a camel-case `data-` attribute
+  renders, matches every string assertion, and is unreachable as `dataset.x` in
+  every handler: seven controls on one card were reported dead while the suite
+  stayed green. `frontend/testdom.js` (`container`, `fire`) is the minimal DOM
+  whose parser behaves the same way, so a handler wired against it fails for the
+  reason it fails in the application. `dataset_parity_test.go` is the permanent
+  half of the same rule.
 - **The three UI layers** (Go end-to-end, node render, the CDP harness) and how
   to run each are in `UITESTING.md`. That file owns the UI-layer detail; this
   file owns the tier model.

@@ -259,6 +259,7 @@ function Invoke-DevChecks {
                 Test-Layout $cdp
                 Test-ImportPreview $cdp
                 Test-ConfigureRail $cdp
+                Test-ValueCardActions $cdp
                 Test-ConfigurePanelFit $cdp
                 Test-HelpTooltip $cdp
                 Test-ScrollRetention $cdp
@@ -393,6 +394,40 @@ function Test-ConfigureRail([CdpSession]$cdp) {
         -Expected 'all of them laid out with a non-zero height' `
         -Actual "$($r.categoriesWithSize) of $($r.categories) have a height" `
         -Hint 'A checkbox inside a folded group is in the DOM but not something the user can tick.'
+}
+
+# A value card's controls must CHANGE something. This is the layer that sees
+# attribute lower-casing: a card names the Value its handlers act on through
+# data- attributes, and a browser lower-cases attribute NAMES while a string test
+# preserves them, so a camel-case data-mainText renders, matches every string
+# assertion, and reaches the handler as an undefined dataset.mainText. Rename,
+# remove, drop-a-spelling and merge then all silently do nothing.
+function Test-ValueCardActions([CdpSession]$cdp) {
+    Write-Step "A value card's actions reach the store"
+    $r = $cdp.Eval('__uiProbes.valueCardActions()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the value-card probe runs' -Condition $false `
+            -Expected 'value cards on the My values tab' -Actual $r.error `
+            -Hint 'views/identifyworkspace.js renders one .value-card per accepted Value.'
+        return
+    }
+    Assert-That -Name 'the seeded values render as cards' -Condition ($r.cards -eq 2) `
+        -Expected '2 .value-card elements' -Actual "$($r.cards)" `
+        -Hint 'The probe seeds two accepted Values, one per card.'
+    Assert-That -Name 'every card carries its own identity' `
+        -Condition ($r.cards -gt 0 -and $r.cardsWithIdentity -eq $r.cards) `
+        -Expected 'every card readable as dataset.category + dataset.mainText' `
+        -Actual "$($r.cardsWithIdentity) of $($r.cards)" `
+        -Hint 'The card renders data-category and data-main-text. A camel-case data-mainText is lower-cased by the parser, so dataset.mainText is undefined and every action on the card resolves against it.'
+    Assert-That -Name 'clicking the name reveals an inline input' -Condition ($r.inlineInputAppeared -eq $true) `
+        -Expected 'a .value-name-input in place of the name button' -Actual "$($r.inlineInputAppeared)" `
+        -Hint 'revealNameInput replaces the name button; native dialogs are banned.'
+    Assert-That -Name 'committing the input renames the Value' -Condition ($r.renamed -eq $true) `
+        -Expected 'the new name in state.values' -Actual "$($r.renamed)" `
+        -Hint 'revealNameInput commits through renameValue, which needs the card mainText.'
+    Assert-That -Name "the card's remove control deletes the Value" -Condition ($r.removedOne -eq $true) `
+        -Expected 'one fewer value in the store' -Actual "$($r.removedOne), values now: $($r.valuesAfter -join ', ')" `
+        -Hint 'The .value-remove handler calls deleteValue(category, mainText) from the card dataset.'
 }
 
 # A scrolled panel keeps its position across a repaint. This is a visible-only

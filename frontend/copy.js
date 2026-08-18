@@ -715,6 +715,13 @@ export const WORKSPACE = {
   typeChangeDuplicate(v) {
     return `${v} already exists under that type. Use "Group with" to merge them instead.`;
   },
+  /**
+   * cardIdentityLost is what a value card says when its own markup no longer
+   * carries the category and main text its actions act on. It names a recovery
+   * the user can perform, because the alternative is a row of buttons that
+   * appear enabled and change nothing.
+   */
+  cardIdentityLost: "This value card lost its identity, so its actions are disabled. Leave the step and come back to rebuild the list.",
 
   // Group with: fold other values (and their spellings) into this one.
   groupWith: "Group with",

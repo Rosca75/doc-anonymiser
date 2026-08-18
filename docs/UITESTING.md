@@ -65,6 +65,15 @@ To bring a new screen under test, export its builder (`previewBody`,
 `compareCard`, `reportCard`, `railBody`, `progressStrip` are already exported)
 and assert against it.
 
+A string, though, is what the view WROTE, and the browser answers with what its
+parser MADE of it: attribute names come back lower-cased, so a camel-case
+`data-` attribute is unreachable as `dataset.x` while every string assertion
+about it passes. When the question is what a control DOES rather than what it
+shows, render into `frontend/testdom.js`'s `container()` and drive it with
+`fire()`: its parser lower-cases attribute names too, so the handler fails here
+for the reason it fails in the application. `frontend/identifyactions.test.js`
+is the worked example, and `../dataset_parity_test.go` is the permanent guard.
+
 ### These tests move with the code, in the same change
 
 A frontend test that passes while asserting what a view USED to render is worse
