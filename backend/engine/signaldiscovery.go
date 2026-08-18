@@ -30,6 +30,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // SignalDiscoveryInput is everything signal-based discovery reads.
@@ -64,11 +65,22 @@ func DiscoverFromSignals(in SignalDiscoveryInput) []Suggestion {
 	return discoverFromEmails(in)
 }
 
-// emailSeed is one candidate string an email address suggests, with the
-// evidence that produced it.
+// emailSeed is one string an email address suggests, with the evidence that
+// produced it.
 type emailSeed struct {
-	// folded is the accent-folded, lower-cased form the search matches on.
+	// folded is the accent-folded, lower-cased form the search matches on. It is
+	// the MAIN form: whatever it matches becomes a Suggestion's main text.
 	folded string
+	// alsoFolded are further forms to search for whose matches become SPELLINGS of
+	// the main form's Suggestion rather than Suggestions of their own.
+	//
+	// This is the difference between one reviewable Value and several rivals. An
+	// address gives a full name and its parts, and the parts are spellings of the
+	// same person: emitted as their own rows they would be folded afterwards by
+	// FoldValueFamilies, which promotes the SHORTEST member to main text, and the
+	// row would end up named "Dupont" rather than "Pierre Dupont". Attaching them
+	// here keeps the main text the form the user recognises.
+	alsoFolded []string
 	// category is where an accepted Value would be filed.
 	category string
 	// evidence explains the seed. One piece per address that produced it.
@@ -132,10 +144,25 @@ func addSeed(seeds map[string]*emailSeed, seed emailSeed) {
 	key := seed.category + "|" + seed.folded
 	if existing, ok := seeds[key]; ok {
 		existing.evidence.Documents = mergeDocuments(existing.evidence.Documents, seed.evidence.Documents)
+		for _, extra := range seed.alsoFolded {
+			if !containsFolded(existing.alsoFolded, extra) {
+				existing.alsoFolded = append(existing.alsoFolded, extra)
+			}
+		}
 		return
 	}
 	copied := seed
 	seeds[key] = &copied
+}
+
+// containsFolded reports whether a folded form is already listed.
+func containsFolded(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 // emailPatternRe is the address shape used for EVIDENCE. It is deliberately the
@@ -166,20 +193,22 @@ const minSeedLen = 3
 // Only a local part that is genuinely structured as several name tokens is
 // treated as naming a person.
 //
-// The seeds are the FULL name and each part of it, because a document that
-// writes the address once usually writes "Pierre Dupont" in one place and
-// "Dupont" in another, and both should reach the review list as spellings of one
-// Value. A part that is an ordinary word ("may", "will") is not seeded alone.
+// The main seed is the FULL name, and each part of it is an ADDITIONAL form,
+// because a document that writes the address once usually writes "Pierre Dupont"
+// in one place and "Dupont" in another. Both belong to one Value, and the full
+// name is the main text: it is the form the user recognises, and it is what the
+// placeholder ends up standing for. A part that is an ordinary word ("may",
+// "will") is not searched for at all.
 func personSeeds(local, address, docName string) []emailSeed {
 	lower := strings.ToLower(local)
 	if nonNameMailboxes[lower] {
 		return nil
 	}
-	parts := strings.FieldsFunc(lower, func(r rune) bool {
+	tokens := strings.FieldsFunc(lower, func(r rune) bool {
 		return r == '.' || r == '_' || r == '-' || r == '+'
 	})
 	var words []string
-	for _, p := range parts {
+	for _, p := range tokens {
 		if len([]rune(p)) >= 2 && !isAllDigits(p) && !nonNameMailboxes[p] {
 			words = append(words, foldAccentsLower(p))
 		}
@@ -194,18 +223,19 @@ func personSeeds(local, address, docName string) []emailSeed {
 		SignalText:     address,
 		Documents:      []string{docName},
 	}
-	seeds := []emailSeed{{
-		folded:   strings.Join(words, " "),
-		category: CatPersonNames,
-		evidence: evidence,
-	}}
+	var bareForms []string
 	for _, w := range []string{words[0], words[len(words)-1]} {
-		if smartCommonWords[w] || len([]rune(w)) < minSeedLen {
+		if smartCommonWords[w] || len([]rune(w)) < minSeedLen || containsFolded(bareForms, w) {
 			continue
 		}
-		seeds = append(seeds, emailSeed{folded: w, category: CatPersonNames, evidence: evidence})
+		bareForms = append(bareForms, w)
 	}
-	return seeds
+	return []emailSeed{{
+		folded:     strings.Join(words, " "),
+		alsoFolded: bareForms,
+		category:   CatPersonNames,
+		evidence:   evidence,
+	}}
 }
 
 // organisationSeeds derives organisation seeds from an address's domain.
@@ -292,15 +322,70 @@ var infrastructureLabels = map[string]bool{
 // the ones that are spellings of one Value, using the same rules every other
 // method's output goes through.
 func matchSeed(seed emailSeed, in SignalDiscoveryInput, spans map[string][][2]int) []Suggestion {
-	// The seed's words, so the search can require them in order with ordinary
-	// separators between: a single regexp built from the folded form cannot,
-	// because folding has already removed the accents the document may carry.
-	words := strings.Fields(seed.folded)
-	if len(words) == 0 {
+	found := map[string]*Suggestion{}
+	collectSeedForm(seed, seed.folded, in, spans, found)
+
+	if len(found) == 0 {
+		// No occurrence of the main form, so there is nothing for the additional
+		// forms to be spellings OF. Suggesting a bare surname on its own would be
+		// a Value named after a fragment.
 		return nil
 	}
 
-	found := map[string]*Suggestion{}
+	// The additional forms become SPELLINGS of whatever the main form matched, so
+	// one person is one reviewable row.
+	spellings := map[string]bool{}
+	for _, extra := range seed.alsoFolded {
+		extraHits := map[string]*Suggestion{}
+		collectSeedForm(seed, extra, in, spans, extraHits)
+		for _, hit := range extraHits {
+			spellings[hit.MainText] = true
+		}
+	}
+
+	out := make([]Suggestion, 0, len(found))
+	for _, s := range found {
+		if len(spellings) > 0 {
+			list := make([]string, 0, len(spellings))
+			for text := range spellings {
+				list = append(list, text)
+			}
+			sort.Strings(list)
+			s.Spellings = MergeSpellings(s.Spellings, list, s.MainText)
+		}
+		out = append(out, s.WithMethod(MethodSignal))
+	}
+	// A bare organisation label is dropped when a longer name built on it was
+	// also found. Keeping both would hand FoldValueFamilies a stem that folds
+	// every extension into one family, and "Tpps France" and "Tpps Holdings"
+	// would silently become one Value with one placeholder. Shared domain
+	// evidence makes them RELATED; only the user can say they are the same.
+	if seed.category == CatEntityNames {
+		out = dropBareStems(out, seed.folded)
+	}
+	// Deterministic order: most frequent first, ties by text.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].MainText < out[j].MainText
+	})
+	return out
+}
+
+// collectSeedForm searches the whole batch for ONE folded form and accumulates a
+// Suggestion per distinct spelling found, keyed on the lower-cased matched text.
+func collectSeedForm(seed emailSeed, form string, in SignalDiscoveryInput,
+	spans map[string][][2]int, found map[string]*Suggestion,
+) {
+	// The form's words, so the search can require them in order with ordinary
+	// separators between: a single regexp built from the folded form cannot,
+	// because folding has already removed the accents the document may carry.
+	words := strings.Fields(form)
+	if len(words) == 0 {
+		return
+	}
+
 	for _, doc := range in.Documents {
 		for _, hit := range findSeedRuns(doc.Markdown, words) {
 			if insideAnySpan(hit.start, hit.end, spans[doc.Name]) {
@@ -349,27 +434,6 @@ func matchSeed(seed emailSeed, in SignalDiscoveryInput, spans map[string][][2]in
 		}
 	}
 
-	// A bare organisation label is dropped when a longer name built on it was
-	// also found. Keeping both would hand FoldValueFamilies a stem that folds
-	// every extension into one family, and "Tpps France" and "Tpps Holdings"
-	// would silently become one Value with one placeholder. Shared domain
-	// evidence makes them RELATED; only the user can say they are the same.
-	if seed.category == CatEntityNames {
-		dropBareStems(found, seed.folded)
-	}
-
-	out := make([]Suggestion, 0, len(found))
-	for _, s := range found {
-		out = append(out, s.WithMethod(MethodSignal))
-	}
-	// Deterministic order: most frequent first, ties by text.
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Count != out[j].Count {
-			return out[i].Count > out[j].Count
-		}
-		return out[i].MainText < out[j].MainText
-	})
-	return out
 }
 
 // seedRun is one occurrence of a seed in a document, as byte offsets.
@@ -448,15 +512,25 @@ func insideAnySpan(start, end int, spans [][2]int) bool {
 // @return the byte offset just past the extended name
 func extendOrganisationRun(text string, end int) int {
 	tokens := tokenize(text[end:])
+	// stop is the end of the last token that is part of the NAME. A particle or a
+	// connector ("de", "of", "and") is only part of a name when a capitalised word
+	// follows it, so it is accepted into `pending` and only committed when one
+	// does. Without that, "Tpps France for approval" extends through "for" and the
+	// Suggestion is a phrase rather than a name.
 	stop := 0
+	pending := 0
 	for i, tok := range tokens {
-		// Only ordinary single separators continue a name; a newline or a comma
-		// ends it, because a name does not span a list item or a line break.
-		between := text[end+stop : end+tok.start]
-		if i == 0 {
-			between = text[end : end+tok.start]
+		// Only an ordinary single space continues a name; a newline, a comma or a
+		// double space ends it, because a name does not span a list item or a line
+		// break.
+		from := end + stop
+		if pending > stop {
+			from = end + pending
 		}
-		if !strings.HasPrefix(between, " ") || strings.TrimSpace(between) != "" || len(between) > 1 {
+		if i == 0 {
+			from = end
+		}
+		if text[from:end+tok.start] != " " {
 			break
 		}
 		word := tok.text
@@ -468,30 +542,82 @@ func extendOrganisationRun(text string, end int) int {
 				break
 			}
 		}
-		if !isCapWord(word) && !isSuffix && !smartParticles[folded] && !smartConnectors[folded] {
-			break
+		switch {
+		case isCapWord(word) || isSuffix:
+			stop = tok.end
+			pending = tok.end
+		case smartParticles[folded] || smartConnectors[folded]:
+			pending = tok.end
+		default:
+			return end + appendLegalSuffix(text[end:], stop)
 		}
-		stop = tok.end
 	}
-	return end + stop
+	return end + appendLegalSuffix(text[end:], stop)
 }
 
-// dropBareStems removes the suggestion whose text is exactly the seed label when
-// a longer name built on it is also present.
+// appendLegalSuffix extends a run over a trailing legal form matched LITERALLY in
+// the raw text.
 //
-// The map is keyed on lower-cased text, so the stem is looked up directly rather
-// than searched for.
-func dropBareStems(found map[string]*Suggestion, stem string) {
-	if len(found) < 2 {
-		return
+// It cannot be done in the token walk above, because the tokenizer splits on
+// non-letters and "S.à r.l." is four tokens of one or two letters each. Matching
+// the suffix as a string is the only way to keep it whole, and keeping it whole
+// matters: the suffix is part of the name as written, and pass 2's own derivation
+// is what later matches the form without it.
+//
+// legalSuffixes is ordered longest first, so "S.à r.l." wins over "S.A.".
+//
+// @param rest the text from the end of the seed match onwards
+// @param stop the offset within `rest` the token walk reached
+// @return the offset within `rest` including any trailing legal form
+func appendLegalSuffix(rest string, stop int) int {
+	for _, suffix := range legalSuffixes {
+		candidate := " " + suffix
+		if len(rest) < stop+len(candidate) {
+			continue
+		}
+		if !strings.EqualFold(rest[stop:stop+len(candidate)], candidate) {
+			continue
+		}
+		// The suffix must END the name: a letter or digit straight after it means
+		// the match landed inside a longer word.
+		after := stop + len(candidate)
+		if after < len(rest) && isWordChar(firstRuneAt(rest, after)) {
+			continue
+		}
+		return after
 	}
-	if _, ok := found[stem]; !ok {
-		return
+	return stop
+}
+
+// isWordChar reports whether a rune is a letter or a digit, which is the boundary
+// rule the rest of the engine uses.
+func isWordChar(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+// dropBareStems removes the Suggestion whose text is exactly the seed label when
+// a longer name built on it is also present.
+func dropBareStems(out []Suggestion, stem string) []Suggestion {
+	if len(out) < 2 {
+		return out
 	}
-	for key := range found {
+	longerExists := false
+	for _, s := range out {
+		key := strings.ToLower(s.MainText)
 		if key != stem && containsAtWordBoundary(key, stem) {
-			delete(found, stem)
-			return
+			longerExists = true
+			break
 		}
 	}
+	if !longerExists {
+		return out
+	}
+	kept := make([]Suggestion, 0, len(out))
+	for _, s := range out {
+		if strings.ToLower(s.MainText) == stem {
+			continue
+		}
+		kept = append(kept, s)
+	}
+	return kept
 }

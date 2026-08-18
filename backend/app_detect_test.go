@@ -574,3 +574,169 @@ func TestDetectionFoldsFamiliesAcrossRoutes(t *testing.T) {
 		t.Error("a folded family must still say which methods found it")
 	}
 }
+
+// --- Signal-based discovery, end to end through the bound app ---------------
+//
+// The engine tests cover the rules; these cover the WIRING, which is where the
+// feature would silently do nothing: a phase that never runs, a source setting
+// nobody reads, or findings that reach a list the frontend does not read.
+
+// signalApp is an App with an email address in one file and the text it points at
+// in another, which is the shape signal-based discovery exists for.
+func signalApp() *App {
+	app := NewApp()
+	app.docs = []engine.Document{
+		{Name: "mail.md", Format: engine.FormatTXT,
+			Markdown: "From pierre.dupont@tpps.com about the fee note.\n"},
+		{Name: "engagement.md", Format: engine.FormatTXT,
+			Markdown: "Contact Pierre Dupont at Tpps France for approval.\n"},
+	}
+	// Heuristic discovery off, so what comes back is the signal method's work and
+	// not a heuristic finding that happens to agree with it.
+	app.settings.UseHeuristicDiscovery = false
+	app.settings.UseLocalAI = false
+	return app
+}
+
+// findSuggestion returns the suggestion with the given main text, or nil.
+func findSuggestion(res *DetectionResult, text string) *engine.Suggestion {
+	for i := range res.Suggestions {
+		if strings.EqualFold(res.Suggestions[i].MainText, text) {
+			return &res.Suggestions[i]
+		}
+	}
+	return nil
+}
+
+// TestSignalDiscoveryRunsAsPartOfSmartDetection is acceptance criterion 2: with
+// the source enabled and the text present elsewhere, the person and the
+// organisation come back as Suggestions carrying their evidence.
+func TestSignalDiscoveryRunsAsPartOfSmartDetection(t *testing.T) {
+	app := signalApp()
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"mail.md", "engagement.md"}, nil, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	// The phase ran even with heuristic discovery off: signal-based discovery is a
+	// Smart detection method in its own right.
+	if len(res.Phases) != 1 || res.Phases[0] != PhaseSmart {
+		t.Fatalf("the smart phase must run for the signal method alone, got %v", res.Phases)
+	}
+
+	person := findSuggestion(res, "Pierre Dupont")
+	if person == nil {
+		t.Fatalf("the local part must find the person, got %+v", res.Suggestions)
+	}
+	if person.Category != engine.CatPersonNames {
+		t.Errorf("the person must be filed under person_names, got %q", person.Category)
+	}
+	if len(person.DiscoveryMethods) != 1 || person.DiscoveryMethods[0] != engine.MethodSignal {
+		t.Errorf("the method must be signal, got %v", person.DiscoveryMethods)
+	}
+	if len(person.Evidence) == 0 || person.Evidence[0].SignalText != "pierre.dupont@tpps.com" {
+		t.Errorf("the evidence must name the address it came from, got %+v", person.Evidence)
+	}
+
+	if org := findSuggestion(res, "Tpps France"); org == nil {
+		t.Errorf("the domain must find the organisation name, got %+v", res.Suggestions)
+	} else if org.Category != engine.CatEntityNames {
+		t.Errorf("the organisation must be filed under entity_names, got %q", org.Category)
+	}
+}
+
+// TestSignalFindingsAreSuggestionsNeverValues is acceptance criterion 3: a
+// signal-derived finding follows the same review lifecycle as every other
+// Suggestion, so a run cannot replace anything on its strength alone.
+func TestSignalFindingsAreSuggestionsNeverValues(t *testing.T) {
+	app := signalApp()
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"mail.md", "engagement.md"}, nil, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	if len(res.Suggestions) == 0 {
+		t.Fatal("the fixture must produce at least one suggestion for this to mean anything")
+	}
+
+	// Nothing was accepted, so a run right now replaces the email (a direct match)
+	// and leaves the person and the organisation in clear text.
+	out := runOnce(t, app, RunRequest{})
+	text := out.Documents[1].Anonymised
+	if !strings.Contains(text, "Pierre Dupont") {
+		t.Errorf("an unreviewed suggestion must NOT be replaced: %q", text)
+	}
+	if strings.Contains(out.Documents[0].Anonymised, "pierre.dupont@tpps.com") {
+		t.Errorf("the email itself is a direct match and must be replaced: %q",
+			out.Documents[0].Anonymised)
+	}
+}
+
+// TestDisablingTheEmailSourceKeepsEmailAnonymisation is acceptance criterion 4,
+// through the bound app: the setting stops the Suggestions and nothing else.
+func TestDisablingTheEmailSourceKeepsEmailAnonymisation(t *testing.T) {
+	app := signalApp()
+	app.settings.SignalSuggestionSources = engine.SignalSourceSelection{
+		engine.SignalSourceEmail: false,
+	}
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"mail.md", "engagement.md"}, nil, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	if len(res.Suggestions) != 0 {
+		t.Errorf("with the source off there must be no signal suggestions, got %+v", res.Suggestions)
+	}
+	// With every discovery method off there is no phase to run, and the status
+	// says so rather than reporting a scan that found nothing.
+	if len(res.Phases) != 0 {
+		t.Errorf("no discovery method is on, so no phase should run, got %v", res.Phases)
+	}
+
+	// The address is still anonymised: that is Built-in patterns and the email
+	// category, neither of which this setting touches.
+	out := runOnce(t, app, RunRequest{})
+	if strings.Contains(out.Documents[0].Anonymised, "pierre.dupont@tpps.com") {
+		t.Errorf("switching off email-derived Suggestions must not stop email anonymisation: %q",
+			out.Documents[0].Anonymised)
+	}
+}
+
+// TestAcceptedSignalSuggestionKeepsItsEvidence is acceptance criterion 6 at the
+// bound-app boundary: a Value the frontend sends back with its methods and
+// evidence is replaced, and its provenance decides precedence rather than being
+// dropped somewhere in the middle.
+func TestAcceptedSignalSuggestionKeepsItsEvidence(t *testing.T) {
+	app := signalApp()
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"mail.md", "engagement.md"}, nil, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	person := findSuggestion(res, "Pierre Dupont")
+	if person == nil {
+		t.Fatalf("no person suggestion to accept, got %+v", res.Suggestions)
+	}
+
+	// Exactly what the frontend sends when the user accepts the row.
+	accepted := engine.Value{
+		Category:         person.Category,
+		MainText:         person.MainText,
+		Spellings:        person.Spellings,
+		DiscoveryMethods: person.DiscoveryMethods,
+		Evidence:         person.Evidence,
+	}
+	out := runOnce(t, app, RunRequest{Values: []engine.Value{accepted}})
+	if strings.Contains(out.Documents[1].Anonymised, "Pierre Dupont") {
+		t.Errorf("an accepted Value must be replaced: %q", out.Documents[1].Anonymised)
+	}
+	// The match class it resolves to is the one its methods imply, not the
+	// user-defined fallback a lost provenance would produce.
+	if got := engine.MatchClassForMethods(accepted.DiscoveryMethods); got != engine.MatchClassSmartDiscovered {
+		t.Errorf("a signal-derived Value must rank as smart_discovered, got %q", got)
+	}
+}

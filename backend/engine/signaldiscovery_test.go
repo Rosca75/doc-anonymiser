@@ -68,6 +68,82 @@ func TestEmailLocalPartFindsThePerson(t *testing.T) {
 	}
 }
 
+// TestTheFullNameIsTheMainTextAndTheParticularsAreSpellings pins the shape of a
+// person Suggestion.
+//
+// An address gives a full name and its parts, and they are ONE person. Emitted as
+// separate rows they would be folded afterwards by FoldValueFamilies, which
+// promotes the SHORTEST member, and the row the user reviews would be called
+// "Dupont" rather than "Pierre Dupont". The full name is what the user recognises
+// and what the placeholder ends up standing for, so it is the main text and the
+// parts are its spellings.
+func TestTheFullNameIsTheMainTextAndTheParticularsAreSpellings(t *testing.T) {
+	docs := batch(
+		"mail.md", "From pierre.dupont@tpps.com.\n",
+		"body.md", "Contact Pierre Dupont for approval. Dupont signed it.\n")
+
+	got := discover(t, docs)
+	people := 0
+	for _, s := range got {
+		if s.Category == CatPersonNames {
+			people++
+		}
+	}
+	if people != 1 {
+		t.Fatalf("one person is one reviewable row, got %d: %+v", people, got)
+	}
+
+	person := find(got, "Pierre Dupont")
+	if person == nil {
+		t.Fatalf("the full name is the main text, got %+v", got)
+	}
+	if !containsString(person.Spellings, "Dupont") {
+		t.Errorf("the bare surname must be a SPELLING of the person, got %v", person.Spellings)
+	}
+}
+
+// TestABareSurnameAloneIsNotSuggested: the parts of a name are spellings of the
+// person, so with no occurrence of the full name there is nothing for them to be
+// spellings OF. Suggesting "Dupont" on its own would be a Value named after a
+// fragment of a name the documents never write.
+func TestABareSurnameAloneIsNotSuggested(t *testing.T) {
+	docs := batch(
+		"mail.md", "From pierre.dupont@tpps.com.\n",
+		"body.md", "Dupont signed it, and Dupont countersigned.\n")
+
+	for _, s := range discover(t, docs) {
+		if s.Category == CatPersonNames {
+			t.Errorf("no full name occurs, so no person should be suggested, got %+v", s)
+		}
+	}
+}
+
+// TestAnOrganisationRunStopsAtTheEndOfTheName is the rule that keeps the
+// extension a NAME rather than a phrase. A connector or a particle is part of a
+// name only when a capitalised word follows it, so "Tpps France for approval"
+// must extend to "Tpps France" and stop.
+func TestAnOrganisationRunStopsAtTheEndOfTheName(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want string
+	}{
+		{"a lower-cased word ends it", "Tpps France for approval.", "Tpps France"},
+		{"a comma ends it", "Tpps France, a subsidiary.", "Tpps France"},
+		{"a legal suffix is part of the name", "Tpps France S.A. signed.", "Tpps France S.A."},
+		{"a connector between capitals is kept", "Tpps Bank of Luxembourg replied.", "Tpps Bank of Luxembourg"},
+		{"a trailing connector is not", "Tpps Holdings and the rest.", "Tpps Holdings"},
+		{"the end of the line ends it", "Tpps France", "Tpps France"},
+	}
+	for _, tc := range cases {
+		docs := batch("mail.md", "pierre.dupont@tpps.com\n", "body.md", tc.text+"\n")
+		got := discover(t, docs)
+		if find(got, tc.want) == nil {
+			t.Errorf("%s: want a Suggestion for %q, got %+v", tc.name, tc.want, got)
+		}
+	}
+}
+
 // TestEmailDomainFindsTheOrganisation: the domain's registrable label is the
 // START of the organisation's name, so the Suggestion is the whole capitalised
 // name as the document writes it, not the bare label. Suggesting "Tpps" alone
