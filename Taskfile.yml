@@ -237,22 +237,93 @@ tasks:
     cmds:
       - cmd: '{{if eq OS "windows"}}powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue {{.OUT}}"{{else}}rm -rf {{.OUT}}{{end}}'
 
-  # ── The existing suites, for convenience ───────────────────────────────────
+  # ── The test tiers ─────────────────────────────────────────────────────────
   # These are NOT part of the audit. They are here so that `task --list` shows
   # everything a contributor runs, rather than half of it.
+  #
+  # Three tiers, gated by Go build tags and assigned by REQUIREMENTS and COST,
+  # never by how sophisticated a test is. The full rule, the category prefix
+  # vocabulary and the per-change scoping procedure live in docs/TESTING.md;
+  # read it before writing or moving a test.
+  #
+  #   unit         no build tag. Pure functions, in-package logic, small
+  #                committed fixtures. Deterministic and hermetic. Whole tier
+  #                under 10s. This is `test`.
+  #   integration  //go:build integration. Real file I/O, full pipeline wiring,
+  #                format round-trips, spawned binaries (python for the SARIF
+  #                converter). Still deterministic and hermetic (no network).
+  #   deep         //go:build deep. Non-deterministic, slow or dependency-heavy:
+  #                the wall-clock performance budgets, the future real-Ollama
+  #                pass, -fuzz, and the CDP render harness. Run on demand, not
+  #                on every push.
+  #
+  # Go build tags are ADDITIVE: `-tags=integration` runs the integration tests
+  # AND every untagged unit test, and `-tags=integration,deep` is the whole
+  # suite in one command. That is why `test:all` needs only the one tag set.
+  # docs/TESTING.md records which overlap CI keeps and why.
 
   test:
-    desc: Run both gating suites (go test and the frontend node --test suite).
+    desc: "Unit tier: the Go unit tests plus the frontend node suite. Under 10s, every push."
     cmds:
       - cmd: go test ./...
       - cmd: node --test "frontend/**/*.test.js"
 
+  test:integration:
+    desc: "Integration tier (additive: also runs the unit tier). Real I/O, round-trips, spawned binaries."
+    cmds:
+      - cmd: go test -tags=integration ./...
+
+  test:deep:
+    desc: "Deep tier (additive: also runs unit + integration) plus the render harness. On demand only."
+    summary: |
+      The deep tier is where the non-deterministic and dependency-heavy checks
+      live: the wall-clock performance budgets, -fuzz, the future real-Ollama
+      pass (which t.Skips when Ollama is not reachable, never fails), and the
+      Linux CDP render harness.
+
+      The render harness needs a Chromium-family browser on PATH. It reports
+      what to install if none is found; on the owner's Windows laptop the real
+      WebView2 check is scripts/uitest/Invoke-UITest.ps1 instead (see
+      docs/UITESTING.md).
+    cmds:
+      - cmd: go test -tags=integration,deep ./...
+      # The render harness is a command, not a `go test`, so it runs separately.
+      # It is the canonical deep check: a real browser over the DevTools
+      # Protocol. Left to report its own actionable error if no browser is found.
+      - cmd: go run ./scripts/uitest/renderharness
+        ignore_error: true
+
+  test:all:
+    desc: "Every tier in one run: the whole Go suite (all tags), the frontend suite, and the render harness."
+    summary: |
+      For pre-release and for a deliberate full sweep, not for per-change work.
+      Per change, scope to the tiers and categories the change touches
+      (docs/TESTING.md, "Scoping tests for a change").
+    cmds:
+      - cmd: go test -tags=integration,deep ./...
+      - cmd: node --test "frontend/**/*.test.js"
+      - cmd: go run ./scripts/uitest/renderharness
+        ignore_error: true
+
   test:go:
-    desc: Run the Go suite.
+    desc: "The Go unit tier only (no frontend suite)."
     cmds:
       - cmd: go test ./...
 
   test:web:
-    desc: Run the frontend suite.
+    desc: "The frontend node suite only."
     cmds:
       - cmd: node --test "frontend/**/*.test.js"
+
+  cover:
+    desc: "Coverage on the UNIT tier only (the one tier that gates on coverage). Prints the total."
+    summary: |
+      Coverage is measured and gated on the unit tier alone. The higher tiers
+      are reported without gating: an integration or deep test exists to cover
+      what a unit test structurally cannot, so holding them to a line-coverage
+      number would reward re-testing unit-covered logic at a higher tier, which
+      is exactly the waste the tiers exist to remove.
+    cmds:
+      - task: mkdir
+      - cmd: go test -coverprofile={{.OUT}}/coverage.out ./...
+      - cmd: go tool cover -func={{.OUT}}/coverage.out
