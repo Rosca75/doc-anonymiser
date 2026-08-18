@@ -801,9 +801,10 @@ function valueCard(e, conflict, s, overlap) {
     });
 
   // The visible chips stay DRAG SOURCES, which is the quick way to regroup a
-  // spelling the expansion attached to the wrong value. They carry no per-chip
-  // delete and no inline add: those grew the row, and they live in the popup now,
-  // which is also where a spelling in the overflow is regrouped from.
+  // spelling the expansion attached to the wrong value. Each also carries a small
+  // delete "x", the quick way to drop a spelling the expansion should not have
+  // attached. The full list and every gesture that manages it still live in the
+  // popup, which is also where a spelling in the overflow is reached.
   const all = [...(e.derivedSpellings ?? []), ...(e.spellings ?? [])];
   const { shown, hidden } = previewSpellings(all);
   const chips = shown.map((v) => {
@@ -811,7 +812,13 @@ function valueCard(e, conflict, s, overlap) {
     return `<span class="chip-tag spelling-chip${bad ? " bad" : ""}" draggable="true"` +
       ` data-spelling="${escapeHTML(v)}"` +
       ` title="${escapeHTML(WORKSPACE.spellingDragHint)}">` +
-      `<span class="spelling-text">${escapeHTML(v)}</span></span>`;
+      `<span class="spelling-text">${escapeHTML(v)}</span>` +
+      button("", {
+        kind: "ghost", cls: "chip-remove spelling-del", icon: "close",
+        ariaLabel: `Remove spelling ${v}`, title: WORKSPACE.removeSpelling,
+        data: { spelling: v },
+      }) +
+      `</span>`;
   }).join("");
 
   // "pending" is a real state, not an absence: null derivedSpellings mean an
@@ -1596,6 +1603,23 @@ function wireValues(container) {
     cardEl.querySelector(".spelling-more")?.addEventListener("click", () => {
       openSpellingsPopup(cat, mainText, false);
     });
+
+    // The small delete "x" on a visible chip drops that spelling without opening
+    // the popup. Deleting one CURATES the value: the remaining chips become its
+    // whole list, so the deletion sticks without a negative rule.
+    for (const del of cardEl.querySelectorAll(".spelling-del")) {
+      del.addEventListener("click", async (ev) => {
+        // The chip itself is a drag handle, so the remove button has to stop the
+        // click reaching it.
+        ev.stopPropagation();
+        const gone = del.dataset.spelling;
+        deleteVariant(cat, mainText, gone);
+        await refreshVariants();
+        // Point the user at the ONE place a negative rule lives: this deletion
+        // stops the spelling belonging to THIS value, not to every value.
+        notify(WORKSPACE.spellingDeleted(gone), "info");
+      });
+    }
 
     wireGroupPanel(cardEl, cat, mainText);
     wireSolvePanel(cardEl, cat, mainText);
