@@ -142,8 +142,10 @@ func TestApplySettingsRoundTrip(t *testing.T) {
 // pipeline:done payload embeds the mapping next to the results fields.
 func TestPipelineDonePayloadIncludesMapping(t *testing.T) {
 	app := NewApp()
-	app.docs = []engine.Document{{Name: "a.txt", Format: engine.FormatTXT,
-		Markdown: "mail one@example.com from Alpine"}}
+	app.docs = []engine.Document{{
+		Name: "a.txt", Format: engine.FormatTXT,
+		Markdown: "mail one@example.com from Alpine",
+	}}
 
 	res, err := app.runPipelineBlocking(context.Background(), RunRequest{
 		Values: []engine.Value{{Category: "entity_names", MainText: "Alpine"}},

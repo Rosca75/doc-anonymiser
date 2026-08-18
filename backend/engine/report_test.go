@@ -19,10 +19,14 @@ func runForReport(t *testing.T) *Results {
 	t.Helper()
 	res, err := Run(context.Background(), PipelineInput{
 		Documents: []Document{
-			{Name: "a.txt", Format: FormatTXT,
-				Markdown: "Marie Duval met Marie Duval again at Meridian Consulting."},
-			{Name: "b.txt", Format: FormatTXT,
-				Markdown: "Thomas Berger wrote to marie.duval@example.com."},
+			{
+				Name: "a.txt", Format: FormatTXT,
+				Markdown: "Marie Duval met Marie Duval again at Meridian Consulting.",
+			},
+			{
+				Name: "b.txt", Format: FormatTXT,
+				Markdown: "Thomas Berger wrote to marie.duval@example.com.",
+			},
 		},
 		Values: []Value{
 			{Category: "person_names", MainText: "Marie Duval"},

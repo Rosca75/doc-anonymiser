@@ -373,8 +373,8 @@ func mergeInto(existing []engine.Suggestion, batches [][]engine.Suggestion) []en
 // a small local model small. The Smart route is unaffected — it already read
 // everything.
 func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *ollama.Client,
-	scope *AIScope, res *DetectionResult, report func(DetectionProgress)) {
-
+	scope *AIScope, res *DetectionResult, report func(DetectionProgress),
+) {
 	// scanUnit pairs a document with the exact text the AI should read for it:
 	// the whole markdown normally, or the selected pages when scoped.
 	type scanUnit struct {

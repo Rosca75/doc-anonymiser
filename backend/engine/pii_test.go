@@ -169,10 +169,14 @@ func TestOverlapOriginBeatsEverythingElse(t *testing.T) {
 			// Identical offsets, identical confidence, identical length: the
 			// matchClass is the ONLY thing separating them.
 			spans := []Span{
-				{Start: 0, End: 5, Category: "b_weaker", Original: "Delta",
-					Confidence: ConfidenceDeterministic, MatchClass: weaker},
-				{Start: 0, End: 5, Category: "a_stronger", Original: "Delta",
-					Confidence: ConfidenceDeterministic, MatchClass: stronger},
+				{
+					Start: 0, End: 5, Category: "b_weaker", Original: "Delta",
+					Confidence: ConfidenceDeterministic, MatchClass: weaker,
+				},
+				{
+					Start: 0, End: 5, Category: "a_stronger", Original: "Delta",
+					Confidence: ConfidenceDeterministic, MatchClass: stronger,
+				},
 			}
 			kept := ResolveOverlaps(spans)
 			if len(kept) != 1 {
@@ -191,11 +195,15 @@ func TestOverlapOriginBeatsEverythingElse(t *testing.T) {
 func TestOverlapOriginBeatsLength(t *testing.T) {
 	spans := []Span{
 		// The declared value covers more characters...
-		{Start: 0, End: 16, Category: CatCustomPatterns, Original: "Delta Industries",
-			Confidence: ConfidenceDeterministic, MatchClass: MatchClassUserDefined},
+		{
+			Start: 0, End: 16, Category: CatCustomPatterns, Original: "Delta Industries",
+			Confidence: ConfidenceDeterministic, MatchClass: MatchClassUserDefined,
+		},
 		// ...and the native signal still wins, because it is native.
-		{Start: 0, End: 5, Category: CatEmail, Original: "Delta",
-			Confidence: ConfidenceDeterministic, MatchClass: MatchClassBuiltInPattern},
+		{
+			Start: 0, End: 5, Category: CatEmail, Original: "Delta",
+			Confidence: ConfidenceDeterministic, MatchClass: MatchClassBuiltInPattern,
+		},
 	}
 	kept := ResolveOverlaps(spans)
 	if len(kept) != 1 {
@@ -211,10 +219,14 @@ func TestOverlapOriginBeatsLength(t *testing.T) {
 // both of those spans are native, so it is unaffected by matchClass.
 func TestOverlapLengthStillDecidesWithinOneRoute(t *testing.T) {
 	spans := []Span{
-		{Start: 11, End: 35, Category: CatEmail, Original: "marie.duval@example.com",
-			Confidence: ConfidenceDeterministic, MatchClass: MatchClassBuiltInPattern},
-		{Start: 0, End: 40, Category: CatURL, Original: "https://example.com/u/marie.duval@ex.com",
-			Confidence: ConfidenceDeterministic, MatchClass: MatchClassBuiltInPattern},
+		{
+			Start: 11, End: 35, Category: CatEmail, Original: "marie.duval@example.com",
+			Confidence: ConfidenceDeterministic, MatchClass: MatchClassBuiltInPattern,
+		},
+		{
+			Start: 0, End: 40, Category: CatURL, Original: "https://example.com/u/marie.duval@ex.com",
+			Confidence: ConfidenceDeterministic, MatchClass: MatchClassBuiltInPattern,
+		},
 	}
 	kept := ResolveOverlaps(spans)
 	if len(kept) != 1 || kept[0].Category != CatURL {

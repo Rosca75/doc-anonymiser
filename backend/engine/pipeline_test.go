@@ -458,8 +458,10 @@ func TestOwnershipIsDecidedByRuleNotByDocumentOrder(t *testing.T) {
 func TestUserDefinedBeatsSmartDiscovered(t *testing.T) {
 	reg := NewRegistry()
 	res, err := Run(context.Background(), PipelineInput{
-		Documents: []Document{{Name: "a.txt", Format: FormatTXT,
-			Markdown: "Project PRJ-4471 is on track. PRJ-4471 again.\n"}},
+		Documents: []Document{{
+			Name: "a.txt", Format: FormatTXT,
+			Markdown: "Project PRJ-4471 is on track. PRJ-4471 again.\n",
+		}},
 		// The user's own regex...
 		Patterns: []CustomPattern{{Expr: `PRJ-[0-9]+`}},
 		// ...and the same string as something Smart detection discovered.
@@ -497,10 +499,14 @@ func TestUserDefinedBeatsSmartDiscovered(t *testing.T) {
 // the reason the reversed order can be demanded to match.
 func TestRunIsDeterministic(t *testing.T) {
 	docs := []Document{
-		{Name: "a.txt", Format: FormatTXT,
-			Markdown: "Alpine Trust S.A. wrote to marie.duval@example.com.\n"},
-		{Name: "b.txt", Format: FormatTXT,
-			Markdown: "Alpine Trust and Meridian appear here, plus marie.duval@example.com.\n"},
+		{
+			Name: "a.txt", Format: FormatTXT,
+			Markdown: "Alpine Trust S.A. wrote to marie.duval@example.com.\n",
+		},
+		{
+			Name: "b.txt", Format: FormatTXT,
+			Markdown: "Alpine Trust and Meridian appear here, plus marie.duval@example.com.\n",
+		},
 	}
 	input := func(order []Document, reg *Registry) PipelineInput {
 		return PipelineInput{

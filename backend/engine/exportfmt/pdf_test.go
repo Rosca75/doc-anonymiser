@@ -4,12 +4,12 @@
 package exportfmt
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"bytes"
 	ledongthuc "github.com/ledongthuc/pdf"
 
 	"doc-anonymiser/backend/engine"

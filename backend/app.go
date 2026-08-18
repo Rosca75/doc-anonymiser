@@ -379,8 +379,10 @@ func (a *App) DocumentationURL() string {
 // (CLAUDE.md §5). The same extension check happens again in engine.LoadAll,
 // so drag-drop cannot smuggle unsupported files in.
 var dialogFilters = []runtime.FileFilter{
-	{DisplayName: "Documents (*.txt, *.csv, *.md, *.docx, *.pptx, *.xlsx, *.pdf)",
-		Pattern: "*.txt;*.csv;*.md;*.docx;*.pptx;*.xlsx;*.pdf"},
+	{
+		DisplayName: "Documents (*.txt, *.csv, *.md, *.docx, *.pptx, *.xlsx, *.pdf)",
+		Pattern:     "*.txt;*.csv;*.md;*.docx;*.pptx;*.xlsx;*.pdf",
+	},
 }
 
 // ImportFiles opens the native multi-file dialog and loads the selection.

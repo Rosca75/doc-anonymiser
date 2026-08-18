@@ -162,8 +162,10 @@ func TestValidateAndTestPattern(t *testing.T) {
 		t.Errorf("invalid pattern needs an actionable message, got %q", msg)
 	}
 
-	app.docs = []engine.Document{{Name: "a.txt", Format: engine.FormatTXT,
-		Markdown: "codes PRJ-1 PRJ-2 PRJ-1 here"}}
+	app.docs = []engine.Document{{
+		Name: "a.txt", Format: engine.FormatTXT,
+		Markdown: "codes PRJ-1 PRJ-2 PRJ-1 here",
+	}}
 	samples, err := app.PatternMatches("PRJ-[0-9]+")
 	if err != nil {
 		t.Fatalf("PatternMatches: %v", err)
@@ -195,7 +197,7 @@ func TestDetectionCancellationKeepsWhatItFound(t *testing.T) {
 	// Cancel as soon as the second file starts: the run stops after the file in
 	// flight and keeps its proposals.
 	old := runtimeEventsEmit
-	runtimeEventsEmit = func(a *App, name string, payload interface{}) {
+	runtimeEventsEmit = func(a *App, _ string, payload interface{}) {
 		if p, ok := payload.(DetectionProgress); ok && p.DocIndex == 1 {
 			a.CancelDetection()
 		}
@@ -229,7 +231,7 @@ func TestDetectionReportsProgressPerFile(t *testing.T) {
 
 	var named []string
 	old := runtimeEventsEmit
-	runtimeEventsEmit = func(a *App, name string, payload interface{}) {
+	runtimeEventsEmit = func(_ *App, _ string, payload interface{}) {
 		if p, ok := payload.(DetectionProgress); ok && p.ChunkCount == 0 {
 			named = append(named, p.DocName)
 		}
@@ -308,8 +310,10 @@ func TestOfflineRouteReturnsSuggestionsNotValues(t *testing.T) {
 	app := NewApp()
 	app.settings.HeuristicDiscovery = engine.HeuristicDiscoveryOptions{} // no filtering
 	app.docs = []engine.Document{
-		{Name: "a.txt", Format: engine.FormatTXT,
-			Markdown: "Meeting with Marie Duval about Alpine Trust S.A. Later Marie Duval called again."},
+		{
+			Name: "a.txt", Format: engine.FormatTXT,
+			Markdown: "Meeting with Marie Duval about Alpine Trust S.A. Later Marie Duval called again.",
+		},
 	}
 
 	res, err := app.RunDetection([]string{"a.txt"}, []string{"CSSF"}, nil)
