@@ -1,30 +1,28 @@
-# ci.yml — build + test on every push and pull request.
+# ci.yml — the fast, always-on tiers on every push and pull request.
 #
-# All compilation happens here on GitHub Actions, never on the developer
-# laptop (see CLAUDE.md). This workflow:
-#   1. checks out the code,
-#   2. installs the pinned Go toolchain (1.26.x),
-#   3. installs the pinned Wails CLI (v2.13.0) and FAILS with an actionable
-#      message if the CLI version diverges from the Wails library version
-#      required in go.mod (they are a coupled pair — see CLAUDE.md §7),
-#   4. runs `go vet` and `go test`,
-#   5. runs the frontend node tests,
-#   6. runs the LINUX RENDERING HARNESS (layer 3, docs/UITESTING.md): a real
-#      Chromium over the DevTools Protocol, asserting what a user would SEE.
-#      This one BLOCKS: the seven issues reported against the built application
-#      all passed the tests above it, and the questions it answers (does the
-#      screen fit, is the tooltip visible or clipped) are answerable only by a
-#      renderer,
-#   7. does a Linux `wails build` as a build-sanity check (the Ubuntu runner
-#      needs GTK + WebKit dev headers, installed below).
+# The test suite is organised into three tiers by build tag (docs/TESTING.md).
+# This workflow runs the two that gate broadly:
+#
+#   unit         every push and PR, with -race and a coverage gate. Pure,
+#                in-package, deterministic, hermetic. Under 10s.
+#   integration  on PRs to main (and pushes to main). Real file I/O, format
+#                round-trips, the mock-Ollama detection flow, the python SARIF
+#                converter. Because Go build tags are ADDITIVE, this job re-runs
+#                the unit tier too; that overlap is kept on purpose as a
+#                single-command safety net on the merge gate (docs/TESTING.md).
+#
+# The deep tier (wall-clock budgets, real Ollama) runs on demand in deep.yml.
+# The layer-3 rendering harness runs per-push-on-UI-change in ui.yml. Neither
+# is repeated here.
+#
+# The compile-rot guard below compiles and vets EVERY tier once, because
+# build-tagged files are invisible to the compiler and go vet unless the tag is
+# set; without it a tagged file could rot unnoticed between the runs that use it.
 name: CI
 
 on:
   push:
   pull_request:
-  # The Windows UI job is opt-in: it needs the packaged .exe and the real
-  # WebView2, so it runs on demand and on tags rather than on every push. The
-  # rendering checks themselves gate on ubuntu-latest in the job below.
   workflow_dispatch:
 
 env:
@@ -32,15 +30,110 @@ env:
   # Must match the github.com/wailsapp/wails/v2 version in go.mod.
   WAILS_CLI_VERSION: v2.13.0
 
-# Least privilege for the automatically provided GITHUB_TOKEN. This workflow
-# only checks out code and runs build/test steps, so read access to the
-# repository contents is all it needs; nothing here writes to the repo, issues,
-# or packages. Setting this at the top level applies it to every job.
+# Least privilege: this workflow only reads the repository.
 permissions:
   contents: read
 
 jobs:
-  build-and-test:
+  # ---------------------------------------------------------------------------
+  # UNIT TIER, every push and PR. Plus the compile-rot guard and gofmt, which
+  # are cheap and belong on every push.
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.26.x
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+
+      # Formatting is a guard, not a preference: an unformatted file fails every
+      # future diff review before it fails anything else.
+      - name: gofmt
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "${UNFORMATTED}" ]; then
+            echo "::error::These files are not gofmt-clean:"
+            echo "${UNFORMATTED}"
+            echo "::error::Fix: run 'gofmt -w .' and commit the result."
+            exit 1
+          fi
+
+      # Compile-rot guard (mandatory, docs/TESTING.md). Build-tagged files are
+      # invisible to the compiler and go vet unless the tag is set, so this
+      # compiles and vets EVERY tier once. One step, not one per tier: this also
+      # covers the plain unit build, because tags are additive.
+      - name: Compile-rot guard (vet + build, all tiers)
+        run: |
+          go vet -tags=integration,deep ./...
+          go build -tags=integration,deep ./...
+
+      # The unit tier itself: -race every push (race instrumentation costs
+      # ~5-10x, so it runs here and not on the integration job), plus coverage,
+      # which gates on this tier only.
+      - name: Unit tier (go test -race, with coverage)
+        run: |
+          start=$(date +%s)
+          go test -race -coverprofile=cover.out ./...
+          end=$(date +%s)
+          pct=$(go tool cover -func=cover.out | tail -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+          {
+            echo "### Unit tier"
+            echo "Wall-clock: $((end - start))s (with -race; build/test cache enabled, no -count=1)."
+            echo "Coverage: ${pct}% (gate: >= 45%)."
+          } >> "$GITHUB_STEP_SUMMARY"
+          awk "BEGIN{ exit !(${pct} >= 45.0) }" || {
+            echo "::error::Unit-tier coverage ${pct}% fell below the 45% floor. Add or restore unit tests."
+            exit 1
+          }
+
+      # Layer 2: the frontend unit tests. Plain `node --test`, zero npm deps
+      # (node ships on the runner). The pattern is RECURSIVE and QUOTED; the flat
+      # frontend/*.test.js silently skipped everything under frontend/views/, and
+      # ../frontend_tests_test.go expands this exact pattern and fails if any test
+      # file on disk would be missed by it.
+      - name: Frontend unit tests (node --test)
+        run: node --test "frontend/**/*.test.js"
+
+  # ---------------------------------------------------------------------------
+  # INTEGRATION TIER, on PRs to main and pushes to main. Additive: it re-runs
+  # the unit tier as a single-command safety net (the documented, kept overlap).
+  # It excludes the deep tier by simply not passing that tag.
+  integration:
+    if: (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.26.x
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+
+      # The integration tier: unit + integration. Python is already on the
+      # ubuntu image, which the SARIF-converter tests need; a missing
+      # interpreter would t.Skip, never fail. No -race here: it would only
+      # re-instrument the unit tests this job re-runs, at 5-10x cost and no new
+      # information.
+      - name: Integration tier (go test -tags=integration)
+        run: |
+          start=$(date +%s)
+          go test -tags=integration ./...
+          end=$(date +%s)
+          {
+            echo "### Integration tier"
+            echo "Wall-clock: $((end - start))s (build/test cache enabled, no -count=1)."
+            echo "Ran unit + integration; the deep tier is excluded on purpose."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # BUILD SANITY: a Linux `wails build` so a broken build is caught here rather
+  # than at release. Also the coupled-version check between the Wails CLI and
+  # go.mod, which belongs beside the build that depends on it.
+  build-sanity:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -52,8 +145,7 @@ jobs:
           go-version: "1.26.x"
 
       # Wails on Linux compiles against GTK3 and WebKit2GTK. Ubuntu 24.04
-      # runners ship webkit2gtk 4.1, hence the -tags webkit2_41 build flag
-      # used further down.
+      # runners ship webkit2gtk 4.1, hence the -tags webkit2_41 build flag below.
       - name: Install Linux WebView build dependencies
         run: |
           sudo apt-get update
@@ -62,9 +154,9 @@ jobs:
       - name: Install pinned Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_CLI_VERSION}
 
-      # The Wails CLI and the Wails Go library (go.mod) must be the same
-      # version — mixed versions cause confusing build/runtime errors.
-      # This step compares them and fails loudly with instructions.
+      # The Wails CLI and the Wails Go library (go.mod) must be the same version
+      # (they are a coupled pair). This fails loudly with instructions if they
+      # diverge.
       - name: Verify Wails CLI version matches go.mod
         run: |
           GOMOD_VERSION=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2)
@@ -76,100 +168,20 @@ jobs:
             exit 1
           fi
 
-      # Formatting is a guard, not a preference: an unformatted file fails
-      # every future diff review before it fails anything else.
-      - name: gofmt
-        run: |
-          UNFORMATTED=$(gofmt -l .)
-          if [ -n "${UNFORMATTED}" ]; then
-            echo "::error::These files are not gofmt-clean:"
-            echo "${UNFORMATTED}"
-            echo "::error::Fix: run 'gofmt -w .' and commit the result."
-            exit 1
-          fi
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: go test
-        run: go test ./...
-
-      # Layer 2: the frontend unit tests. Plain `node --test`, zero npm
-      # dependencies (node ships on the runner; see BUILD.md Phase 6).
-      #
-      # The pattern is RECURSIVE and it is QUOTED, and both matter. The flat
-      # `frontend/*.test.js` this used to be silently ignored anything under
-      # frontend/views/, so a test file added next to a view module would never
-      # run and CI would stay green: a false pass, which is worse than no test.
-      # The quotes hand the pattern to node rather than to bash, whose globstar
-      # is off by default and would expand `**` as a single `*`, reintroducing
-      # the same hole from the other direction.
-      #
-      # ../frontend_tests_test.go expands this exact pattern and fails if any
-      # test file on disk would be missed by it.
-      - name: frontend unit tests (node --test)
-        run: node --test "frontend/**/*.test.js"
-
-      # Layer 3 of the test strategy (docs/UITESTING.md), and the first version
-      # of it that actually runs anywhere. It serves frontend/ over loopback,
-      # drives a headless Chromium over the DevTools Protocol, and asserts the
-      # things only a renderer can answer: no wizard screen scrolls or clips the
-      # page, the Import preview shows source text rather than placeholders, the
-      # Configure rail is three detection routes with the documented default
-      # switches, a real hover produces a tooltip that is visibly inside the
-      # Compare card, and nothing logged an error.
-      #
-      # It BLOCKS, deliberately. Every one of the seven reported issues passed
-      # the steps above; a check that catches them and does not gate is a
-      # comment. It needs no new dependency (a small RFC 6455 client in the
-      # harness) and no service, and the whole run is a few seconds.
-      #
-      # No install step: the GitHub ubuntu runner image already ships Google
-      # Chrome, and the harness finds it on PATH. Nothing is downloaded, no npm
-      # is involved (Playwright would need it), and CI spends no time on it. If a
-      # future runner image drops Chrome, this step is where it will say so
-      # rather than the harness failing further down.
-      - name: Locate the browser for the rendering harness
-        run: |
-          BROWSER=$(command -v google-chrome || command -v chromium-browser || command -v chromium || true)
-          if [ -z "${BROWSER}" ]; then
-            echo "::error::No Chromium-family browser on PATH, so the rendering harness cannot run."
-            echo "::error::Fix: add an install step (apt-get install -y chromium), or set CHROME to a browser binary."
-            exit 1
-          fi
-          echo "Using ${BROWSER}"
-          "${BROWSER}" --version
-
-      - name: UI rendering harness (Linux, layer 3)
-        run: go run ./scripts/uitest/renderharness -keep-artifacts
-
-      - name: Upload rendering-harness artefacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-rendering-linux
-          path: scripts/uitest/artifacts/
-          if-no-files-found: ignore
-
-      # Build sanity only — we do not ship the Linux CI binary from here
-      # (release.yml handles real artefacts on tags).
       - name: wails build (Linux sanity check)
         run: wails build -platform linux/amd64 -tags webkit2_41
 
   # ---------------------------------------------------------------------------
   # The ADDITIONAL PLATFORM CHECK (docs/UITESTING.md): Windows, the real
-  # WebView2 engine, and the packaged .exe.
-  #
-  # The rendering assertions themselves already gated on ubuntu-latest above, in
-  # Chromium. This job exists for the two things Linux cannot do: run them
-  # against the engine the user actually gets, and inspect the accessibility
-  # tree of the built binary, which is what catches a white-screen boot. It
-  # shares its probes with the Linux harness (scripts/uitest/probes.js), so the
-  # assertions are not duplicated, only the plumbing.
+  # WebView2 engine, and the packaged .exe. Opt-in: it needs the packaged .exe
+  # and the real WebView2, so it runs on demand and on tags rather than on every
+  # push. The Linux rendering assertions gate in ui.yml. It shares its probes
+  # with the Linux harness (scripts/uitest/probes.js), so only the plumbing is
+  # duplicated, not the assertions.
   #
   # STILL UNVERIFIED: this script has never been executed on a Windows machine,
-  # which is exactly why it is continue-on-error. Promote it to a gate by
-  # deleting that line once it has passed a few times.
+  # which is why it is continue-on-error. Promote it to a gate by deleting that
+  # line once it has passed a few times.
   ui-windows:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest

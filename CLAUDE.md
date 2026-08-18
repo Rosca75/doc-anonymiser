@@ -122,7 +122,7 @@ doc-anonymiser/
 ├── scripts/
 │   ├── genicon.go             # standalone icon generator (//go:build ignore)
 │   ├── to_sarif.py            # deadcode/deadexports JSON -> SARIF 2.1.0 (stdlib only)
-│   ├── to_sarif_test.go       # its tests, in Go so `go test ./...` gates them
+│   ├── to_sarif_integration_test.go  # its tests, in Go; //go:build integration (spawns python)
 │   ├── audit_summary.py       # per-tool finding counts, read from the SARIF
 │   ├── deadexports/           # frontend dead-export scanner (knip's job, no npm)
 │   └── uitest/                # the real-rendering test layer (docs/UITESTING.md)
@@ -513,32 +513,12 @@ doc-anonymiser/
   state the RULE and the failure it prevents, in the present tense.
 - Go standard library first. No new dependency without adding it to the
   BUILD.md dependency table AND the pinned-versions table below.
-- **A change is not finished until its tests move with it.** This is a hard
-  rule, not an aspiration, because the alternative is not "fewer tests", it is
-  a suite that reports safety it no longer provides. Every one of the seven
-  issues reported against the built application passed a green suite. In the
-  SAME change that alters behaviour: update the tests that asserted the old
-  behaviour, add a test for the new behaviour, and delete the tests for
-  behaviour that no longer exists. A test left asserting a retired contract is
-  worse than no test, and a test deleted without a replacement is a silent loss
-  of coverage. Never make a test pass by weakening what it asserts.
-- **Both suites are the deliverable, and both gate.** `go test ./...` for the
-  engine and the bound app; `node --test "frontend/**/*.test.js"` for the
-  frontend. The frontend suite is not optional or secondary: `frontend/` holds
-  the whole user interface, so a change there is exactly as testable, and
-  exactly as capable of regressing, as one in `backend/`. Layer detail and how
-  to bring a new screen under test: `docs/UITESTING.md`.
-- Table-driven unit tests for all engine logic; `backend/testdata/` fixtures
-  in the supported formats, in English and French. Keep `testdata/` under
-  `backend/` so the engine tests' relative fixture paths stay valid.
-- **The parity guards are load-bearing.** `category_parity_test.go`,
-  `detection_parity_test.go`, `value_shape_test.go`, `step_parity_test.go`,
-  `copy_guard_test.go`, `uitest_parity_test.go` and `frontend_tests_test.go`
-  exist because each one is a mistake that already happened once and passed
-  every other test. When one fails it is naming a real inconsistency; fix the
-  inconsistency, not the guard. When a guard reports a false positive, tighten
-  what it matches rather than deleting it: a guard that cries wolf gets deleted,
-  which is how the mistake comes back.
+- **Testing: all conventions, tiers and commands are defined in
+  `docs/TESTING.md`. Read it before writing or running any test.** It owns the
+  three tiers (what a test requires and costs), the per-change scoping
+  procedure, the "a change is not finished until its tests move with it" rule,
+  the both-suites-gate rule, the load-bearing parity guards, the
+  `backend/testdata/` fixture rules (English and French), and coverage.
 - Frontend coding and typography rules live in `frontend/CLAUDE.md` (ES
   modules, no framework/build/CDN; Helvetica with Arial fallback, no Georgia,
   headings at regular weight; `--font-heading` in `brand.css` is the single

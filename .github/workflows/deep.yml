@@ -1,0 +1,49 @@
+# deep.yml — the DEEP test tier, on demand only.
+#
+# The deep tier holds the non-deterministic and dependency-heavy Go checks: the
+# wall-clock performance budgets and (when it exists) the real-Ollama pass. They
+# assert on elapsed time or need a service that is not installed, so they have
+# no rational per-push trigger and must never gate a push. This workflow runs
+# only when a human asks for it (workflow_dispatch), which is exactly what
+# "run strictly when it needs to" means for a tier a clock cannot justify.
+#
+# It runs `go test -tags=deep`, NOT `-tags=integration,deep`. Build tags are
+# additive, so -tags=deep runs the unit tier plus the deep tier and DELIBERATELY
+# leaves the integration tier out: that is the narrowest mechanism for the
+# exclusion the testing policy asks for (docs/TESTING.md, "CI triggers"). A deep
+# test whose dependency is absent (no Ollama) t.Skips with an actionable
+# message rather than failing.
+#
+# The CDP render harness is also a deep-class check, but it is a `go run`, not a
+# `go test`, and it runs per-push-on-UI-change in ui.yml, so it is not repeated
+# here.
+name: Deep tier
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.26.x
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+
+      # The deep tier: unit + deep, never integration (see the header). Timed so
+      # a regression in test cost is visible in the run summary.
+      - name: Deep tier (go test -tags=deep)
+        run: |
+          start=$(date +%s)
+          go test -tags=deep ./...
+          end=$(date +%s)
+          echo "### Deep tier" >> "$GITHUB_STEP_SUMMARY"
+          echo "Wall-clock: $((end - start))s (build/test cache enabled; no -count=1)." >> "$GITHUB_STEP_SUMMARY"
+          echo "Ran unit + deep; the integration tier is excluded on purpose." >> "$GITHUB_STEP_SUMMARY"

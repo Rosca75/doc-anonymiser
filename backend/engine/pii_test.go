@@ -11,10 +11,7 @@
 package engine
 
 import (
-	"fmt"
-	"strings"
 	"testing"
-	"time"
 )
 
 // TestDetectPIICategories runs one positive and one negative case per
@@ -278,37 +275,5 @@ func TestRegistryStability(t *testing.T) {
 		if e.Placeholder == "[EMAIL_1]" && e.Count != 2 {
 			t.Errorf("[EMAIL_1] count = %d, want 2", e.Count)
 		}
-	}
-}
-
-// TestCSVImportBudget measures the Phase-2 performance row: CSV import →
-// markdown-table render for 10 000 rows × 20 cols must stay ≤ 2 s.
-// Measured 2026-07-23 on the CI-class Linux container: ~36 ms.
-func TestCSVImportBudget(t *testing.T) {
-	// Build the synthetic CSV once (not part of the timed section).
-	var b strings.Builder
-	for r := 0; r < 10000; r++ {
-		for c := 0; c < 20; c++ {
-			if c > 0 {
-				b.WriteByte(',')
-			}
-			fmt.Fprintf(&b, "cell_%d_%d", r, c)
-		}
-		b.WriteByte('\n')
-	}
-	raw := []byte(b.String())
-
-	start := time.Now()
-	doc, err := Load("big.csv", raw)
-	elapsed := time.Since(start)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(doc.Grid) != 10000 {
-		t.Fatalf("grid rows = %d, want 10000", len(doc.Grid))
-	}
-	t.Logf("10000×20 CSV import + markdown render took %v (budget 2 s)", elapsed)
-	if elapsed > 2*time.Second {
-		t.Errorf("CSV budget breached: %v > 2 s", elapsed)
 	}
 }
