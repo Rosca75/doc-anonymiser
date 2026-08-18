@@ -403,19 +403,42 @@ function Test-ConfigureRail([CdpSession]$cdp) {
         -Expected 'every category checkbox laid out once its group is opened' `
         -Actual "$($r.categoriesWithSizeAfterExpand) of $($r.categories) have a height after opening every group" `
         -Hint 'A folded group is only useful if it opens: collapsibleGroup + wireGroups reveal the checkboxes.'
-    # The signal control is a tree, built from the frontend lists the Go parity guard
-    # holds to the engine. One group per signal, one master per group.
-    $signalGroups = @($r.signalGroups)
+    # The signal control is a tree hanging off the category row of the signal it
+    # reads, built from the frontend lists the Go parity guard holds to the engine.
+    # One drill-down per signal, one master per drill-down.
+    $signalRows = @($r.signalRows)
     $signalMasters = @($r.signalMasters)
-    Assert-That -Name 'the signal control is one group per signal' -Condition ($signalGroups.Count -eq 1) `
-        -Expected '1 .checklist-group (one implemented signal source)' `
-        -Actual "$($signalGroups.Count): $($signalGroups -join ', ')" `
-        -Hint 'views/identifyrail.js builds the groups from state.js SIGNAL_SOURCES.'
-    Assert-That -Name 'every signal group has its own master switch' `
-        -Condition ($signalMasters.Count -eq $signalGroups.Count) `
-        -Expected 'one .checklist-master per group' `
-        -Actual "$($signalMasters.Count) masters for $($signalGroups.Count) groups" `
+    Assert-That -Name 'each signal has a drill-down on its own category row' -Condition ($signalRows.Count -eq 1) `
+        -Expected '1 .signal-row (one implemented signal source)' `
+        -Actual "$($signalRows.Count): $($signalRows -join ', ')" `
+        -Hint 'views/identifyrail.js hangs a signalDrillDown off the category row of every state.js SIGNAL_SOURCES entry.'
+    Assert-That -Name 'every drill-down has its own master switch' `
+        -Condition ($signalMasters.Count -eq $signalRows.Count) `
+        -Expected 'one .signal-master per drill-down' `
+        -Actual "$($signalMasters.Count) masters for $($signalRows.Count) drill-downs" `
         -Hint 'The master is what saves switching a whole signal off one reading at a time.'
+    # "On the row" is geometry: markup order proves nothing, since a row narrower
+    # than its contents wraps the same markup onto two lines.
+    $line = $r.signalRowLine
+    if ($null -eq $line) {
+        Assert-That -Name 'the signal row renders its drill-down and help icon' -Condition $false `
+            -Expected '.cat-label, .signal-drill and span.help in one .signal-row-head' -Actual 'one of them is missing' `
+            -Hint 'views/identifyrail.js signalCategoryRow passes the row, the button and the help tooltip to ui.js signalDrillDown.'
+    }
+    else {
+        Assert-That -Name 'the drill-down and its help icon sit on the category row' -Condition ($line.sameRow -eq $true) `
+            -Expected 'the label, the button and the icon at the same y (within 2px)' `
+            -Actual "sameRow=$($line.sameRow) ($($line.widths))" `
+            -Hint 'style.css .signal-row-head is one flex line. A drill-down that wraps below its own label no longer reads as belonging to it.'
+        Assert-That -Name 'they are ordered label, drill-down, help icon' `
+            -Condition ($line.drillIsAfterLabel -eq $true -and $line.helpIsAfterDrill -eq $true) `
+            -Expected 'the button after the label, the icon after the button' `
+            -Actual "drillAfterLabel=$($line.drillIsAfterLabel), helpAfterDrill=$($line.helpIsAfterDrill)" `
+            -Hint 'The icon explains what the button opens, so it follows the button.'
+        Assert-That -Name 'the row still fits the rail' -Condition ($line.fitsTheRail -eq $true) `
+            -Expected 'no horizontal overflow in .signal-row-head' -Actual "$($line.widths)" `
+            -Hint 'The rail is the narrowest column in the application and the page body never scrolls sideways.'
+    }
     # "Side by side" is a claim about geometry, so geometry answers it: markup order
     # proves nothing, since a column-flex parent stacks the same markup.
     $pair = $r.methodPairRow
@@ -438,24 +461,25 @@ function Test-ConfigureRail([CdpSession]$cdp) {
         -Hint 'A pair of ellipses is worse than two rows. Below the rail measure the pair stacks instead.'
 }
 
-# Expanding a signal must REVEAL its readings, and each must be switchable on its
-# own. Collapsed the readings are in the DOM at zero height: present to a string
-# test and absent to the user, so only this layer can tell the two states apart.
+# Opening a signal's drill-down must REVEAL its readings, and each must be
+# switchable on its own. Collapsed the readings are in the DOM at zero height:
+# present to a string test and absent to the user, so only this layer can tell the
+# two states apart.
 function Test-SignalDerivations([CdpSession]$cdp) {
-    Write-Step 'Expanding a signal reveals its readings, each switchable on its own'
+    Write-Step "Opening a signal's drill-down reveals its readings, each switchable on its own"
     $r = $cdp.Eval('__uiProbes.signalDerivations()')
     if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
         Assert-That -Name 'the signal-derivation probe runs' -Condition $false `
-            -Expected '#signal-sources in the Identify rail' -Actual $r.error `
-            -Hint 'views/identifyrail.js signalSourceControl renders ui.js expandableChecklist.'
+            -Expected '.signal-row in the Identify rail' -Actual $r.error `
+            -Hint 'views/identifyrail.js signalCategoryRow renders ui.js signalDrillDown.'
         return
     }
-    Assert-That -Name 'a collapsed signal costs no vertical space' `
-        -Condition ($r.collapsedRows -gt 0 -and $r.collapsedVisible -eq 0) `
-        -Expected "$($r.collapsedRows) readings in the DOM, none of them laid out" `
-        -Actual "$($r.collapsedRows) readings, $($r.collapsedVisible) with a height" `
-        -Hint 'Collapsed the group is one row. That trade is what keeps the panel short as sources and readings are added.'
-    Assert-That -Name 'expanding it reveals every reading' -Condition ($r.openedVisible -eq $r.collapsedRows) `
+    Assert-That -Name 'a collapsed drill-down costs no vertical space' `
+        -Condition ($r.collapsedRows -gt 0 -and $r.collapsedVisible -eq 0 -and $r.rowLaidOut -eq $true) `
+        -Expected "the category row laid out, its $($r.collapsedRows) readings not" `
+        -Actual "row laid out=$($r.rowLaidOut), $($r.collapsedRows) readings, $($r.collapsedVisible) with a height" `
+        -Hint 'Collapsed the readings cost no row at all. That trade is what keeps the panel short as signals and readings are added.'
+    Assert-That -Name 'opening it reveals every reading' -Condition ($r.openedVisible -eq $r.collapsedRows) `
         -Expected "all $($r.collapsedRows) readings laid out with a height after one click" `
         -Actual "$($r.openedVisible) of $($r.collapsedRows)" `
         -Hint 'A checkbox in the DOM at zero height is not something the user can tick.'
@@ -465,11 +489,11 @@ function Test-SignalDerivations([CdpSession]$cdp) {
     Assert-That -Name 'the other readings are untouched' -Condition ($r.otherReadingsStillOn -eq $true) `
         -Expected 'every other reading of that signal still on' -Actual "$($r.otherReadingsStillOn)" `
         -Hint 'The independence is the whole point of the per-reading switches; the engine honours each on its own.'
-    Assert-That -Name 'ticking a reading does not fold the group' -Condition ($r.groupStayedOpenAfterTicking -eq $true) `
+    Assert-That -Name 'ticking a reading does not close the drill-down' -Condition ($r.groupStayedOpenAfterTicking -eq $true) `
         -Expected 'the readings still laid out after the tick' -Actual "$($r.groupStayedOpenAfterTicking)" `
-        -Hint 'The checkbox stops the click reaching the head. A group that folds as you tick it makes switching two readings a four-click job.'
+        -Hint 'The checkbox stops the click reaching anything else. A drill-down that closes as you tick it makes switching two readings a four-click job.'
     Assert-That -Name 'the master stays on while any reading is on' -Condition ($r.masterAfterTick -eq $true) `
-        -Expected "the group master still checked with one of two readings off" -Actual "$($r.masterAfterTick)" `
+        -Expected "the drill-down master still checked with one of two readings off" -Actual "$($r.masterAfterTick)" `
         -Hint 'The master is DERIVED (state.js signalSourceOn): on when any reading is on.'
 }
 

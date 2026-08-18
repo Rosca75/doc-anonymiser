@@ -7,7 +7,7 @@ import {
   button, icon,
   card, countBadge, tabbar, chipRow, sectionLabel, statTile,
   collapsibleGroup, stepFooter, toastHTML, modalHTML,
-  helpTooltip, wireHelpTooltips, expandableChecklist,
+  helpTooltip, wireHelpTooltips, signalDrillDown,
   warningPopover, wireWarningPopovers, searchBox, wireSearchBox,
 } from "./ui.js";
 import { ICONS } from "./icons.js";
@@ -864,114 +864,130 @@ test("the help trigger has a resting shape, so it is discoverable", () => {
   assert.match(rule[0], /background:\s*var\(--bg\)/);
 });
 
-// --- expandableChecklist -------------------------------------------------
+// --- signalDrillDown ------------------------------------------------------
 //
-// The control answers a NESTED question: not "which signals may derive
-// Suggestions" but "what would this signal derive, and do I want each of those?".
-// So the shape is a list of groups, each a master over its rows, and these pin the
-// three things that shape has to get right: collapsed costs one row, the master and
-// the chevron are separate controls, and every string is escaped.
+// The control answers a NESTED question, ON the row that raises it: not "which
+// signals may derive Suggestions" but "what would THIS signal derive, and do I
+// want each of those?". So the shape is a category row plus a button that opens
+// that signal's readings, and these pin the things that shape has to get right:
+// collapsed the readings cost no row, the row's own checkbox and the drill-down
+// stay separate controls, the help icon sits after the button that opens what it
+// explains, and every string is escaped.
 
-/** oneGroup(over) is a single-group checklist, with the fields under test
+/** oneSignal(over) is a single signal's drill-down, with the fields under test
  *  overridable per case. */
-function oneGroup(over = {}) {
-  return expandableChecklist({
-    id: "sources",
+function oneSignal(over = {}) {
+  return signalDrillDown({
+    source: "email",
     label: "Signal-based suggestions",
-    groups: [{
-      id: "email",
-      label: "Email addresses",
-      summary: "Person and organisation names",
-      checked: true,
-      open: false,
-      rows: [
-        { id: "email.person", label: "Person names", detail: "from the part before the @", checked: true },
-        { id: "email.organisation", label: "Organisation names", detail: "from the domain", checked: false },
-      ],
-      ...over,
-    }],
+    headHTML: '<label class="cat-row"><input type="checkbox" class="cat-toggle" '
+      + 'data-category="email" checked/><span class="cat-label">Email addresses</span></label>',
+    tailHTML: '<span class="cat-example">For example jean.muller@example.com</span>',
+    title: "Suggestions derived from email addresses",
+    summary: "2 active",
+    checked: true,
+    open: false,
+    rows: [
+      { id: "email.person", label: "Person names", detail: "from the part before the @", checked: true },
+      { id: "email.organisation", label: "Organisation names", detail: "from the domain", checked: false },
+    ],
+    ...over,
   });
 }
 
-test("a collapsed group is one row, and its rows cost no vertical space", () => {
-  const closed = oneGroup({ open: false });
+test("a collapsed drill-down is no extra row, and its readings cost no space", () => {
+  const closed = oneSignal({ open: false });
   assert.match(closed, /aria-expanded="false"/);
-  assert.match(closed, /class="checklist-rows" id="sources-email-rows" hidden/,
-    "the readings are hidden while the group is collapsed");
-  assert.match(closed, /<span class="checklist-summary">Person and organisation names<\/span>/,
-    "and the collapsed row says what is on, so it is readable without expanding");
+  assert.match(closed, /class="signal-readings" id="signal-email-readings" hidden/,
+    "the readings are hidden while the drill-down is collapsed");
 
-  const open = oneGroup({ open: true });
+  const open = oneSignal({ open: true });
   assert.match(open, /data-open="true"/);
   assert.match(open, /aria-expanded="true"/);
-  assert.ok(!/checklist-rows" id="sources-email-rows" hidden/.test(open),
-    "expanding reveals them");
+  assert.ok(!/signal-readings" id="signal-email-readings" hidden/.test(open),
+    "opening it reveals them");
+  assert.match(open, /<span class="signal-count">2 active<\/span>/,
+    "and the opened panel says how many of them are on");
 });
 
-test("a group carries a master checkbox and one checkbox per row", () => {
-  const html = oneGroup({ open: true });
-  assert.match(html, /class="checklist-master" data-source="email"[^>]* checked/,
+test("the drill-down sits on the row, before the help icon and the example", () => {
+  // The order is the ask: the category and its own checkbox, then the button that
+  // opens what the category may additionally be READ AS, then the icon explaining
+  // that button, then the row's example.
+  const html = oneSignal({ open: false, helpHTML: '<span class="help" data-help>i</span>' });
+  const at = (needle) => html.indexOf(needle);
+  assert.ok(at('class="cat-label"') < at('class="signal-drill"'),
+    "the category label comes first");
+  assert.ok(at('class="signal-drill"') < at('class="help"'),
+    "the help icon follows the button it explains");
+  assert.ok(at('class="help"') < at('class="cat-example"'),
+    "and the example closes the row");
+});
+
+test("the row's own checkbox and the readings' master are different controls", () => {
+  // The row's checkbox decides whether the signal is matched and replaced; the
+  // master decides what the match may be read as. Conflating them is the mistake
+  // the separate setting exists to prevent.
+  const html = oneSignal({ open: true });
+  assert.match(html, /class="cat-toggle" data-category="email"/,
+    "the category checkbox is untouched, and still keyed by CATEGORY");
+  assert.match(html, /class="signal-master" data-source="email"[^>]* checked/,
     "the master is keyed by SOURCE and reflects the caller's derived value");
   assert.match(html, /data-derivation="email\.person"[^>]* checked/);
   assert.match(html, /data-derivation="email\.organisation"(?![^>]*checked)/,
     "a reading that is off renders unchecked, so the two are independently switchable");
 });
 
-test("the chevron is a separate control from the master", () => {
-  // One control per intent: ticking the master must not fold the group, and folding
-  // it must not tick the master. Two jobs on one element is how a master ends up
-  // being switched by accident.
-  const html = oneGroup({ open: true });
-  const toggle = html.match(/<button[^>]*class="checklist-group-toggle"[^>]*>/);
-  assert.ok(toggle, "the group head has its own toggle button");
-  assert.ok(!toggle[0].includes("checkbox"), "and it is not the checkbox");
-  assert.match(toggle[0], /aria-controls="sources-email-rows"/,
+test("the drill-down button ticks nothing", () => {
+  // One control per intent: opening the readings must not switch anything, and
+  // switching something must not fold them. Two jobs on one element is how a
+  // setting ends up flipped by accident.
+  const html = oneSignal({ open: true });
+  const toggle = html.match(/<button[^>]*class="signal-drill"[^>]*>/);
+  assert.ok(toggle, "the row has its own drill-down button");
+  assert.ok(!toggle[0].includes("checkbox"), "and it is not a checkbox");
+  assert.match(toggle[0], /aria-controls="signal-email-readings"/,
     "it names the region it expands, so a screen reader can follow it");
 });
 
-test("a collapsed group's rows are hidden by CSS, not only by the attribute", () => {
+test("collapsed readings are hidden by CSS, not only by the attribute", () => {
   // An author `display` beats the `hidden` attribute's own display:none, so
-  // .checklist-rows needs an explicit rule or a collapsed group still spends its
-  // rows' height: hidden in the markup and visible on screen. A string test sees
-  // the attribute and stops there, which is why the rule itself is asserted.
-  const rule = styleCSS.match(/\n\.checklist-rows\[hidden\] \{[^}]*\}/);
-  assert.ok(rule, "the .checklist-rows[hidden] rule must exist");
+  // .signal-readings needs an explicit rule or a collapsed drill-down still spends
+  // its readings' height: hidden in the markup and visible on screen. A string test
+  // sees the attribute and stops there, which is why the rule itself is asserted.
+  const rule = styleCSS.match(/\n\.signal-readings\[hidden\] \{[^}]*\}/);
+  assert.ok(rule, "the .signal-readings[hidden] rule must exist");
   assert.match(rule[0], /display:\s*none/);
 
-  const base = styleCSS.match(/\n\.checklist-rows \{[^}]*\}/);
+  const base = styleCSS.match(/\n\.signal-readings \{[^}]*\}/);
   assert.ok(base, "and the base rule that makes it necessary");
   assert.match(base[0], /display:\s*flex/);
 });
 
-test("a row's help tooltip travels with it", () => {
+test("a reading's help tooltip travels with it", () => {
   // Each reading explains itself, because "Person names" alone does not say that
   // clearing it leaves the address itself anonymised.
-  const html = expandableChecklist({
-    id: "sources", label: "L",
-    groups: [{
-      id: "email", label: "Email addresses", summary: "S", checked: true, open: true,
-      rows: [{
-        id: "email.person", label: "Person names", checked: true,
-        helpHTML: '<span class="help" data-help>marker</span>',
-      }],
+  const html = oneSignal({
+    open: true,
+    rows: [{
+      id: "email.person", label: "Person names", checked: true,
+      helpHTML: '<span class="help" data-reading-help>marker</span>',
     }],
   });
-  assert.match(html, /class="help" data-help/);
+  assert.match(html, /class="help" data-reading-help/);
 });
 
-test("a checklist with no groups renders the label and nothing else", () => {
-  const html = expandableChecklist({ id: "sources", label: "Signal-based suggestions" });
+test("a signal with no readings invents none", () => {
+  const html = signalDrillDown({ source: "email", label: "Signal-based suggestions", title: "T" });
   assert.match(html, /Signal-based suggestions/);
-  assert.ok(!html.includes("checklist-group\""), "no empty group is invented");
+  assert.ok(!html.includes("signal-reading\""), "no empty reading is invented");
 });
 
-test("expandableChecklist escapes every string it is given", () => {
-  const html = expandableChecklist({
-    id: "x", label: "<b>L</b>",
-    groups: [{
-      id: "a", label: "<b>A</b>", summary: "<b>S</b>", checked: false, open: true,
-      rows: [{ id: "r", label: "<b>R</b>", detail: "<b>D</b>", checked: false }],
-    }],
+test("signalDrillDown escapes every string it is given", () => {
+  const html = signalDrillDown({
+    source: "email", label: "<b>L</b>", title: "<b>T</b>", summary: "<b>S</b>",
+    checked: false, open: true,
+    rows: [{ id: "r", label: "<b>R</b>", detail: "<b>D</b>", checked: false }],
   });
   assert.ok(!html.includes("<b>"), "copy is escaped, never trusted as markup");
 });

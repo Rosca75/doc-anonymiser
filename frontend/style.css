@@ -1724,64 +1724,86 @@ mark[data-original]:focus-visible { outline: 2px solid var(--accent); outline-of
 .warnpop-bad .warnpop-line:first-child { color: var(--invalid-fg); }
 .warnpop-bubble .panel-actions { margin-top: 0.15rem; flex-wrap: wrap; }
 
-/* --- The expandable checklist -------------------------------------------
+/* --- A signal's drill-down (ui.js signalDrillDown) -----------------------
 
-   A list of GROUPS, each a master switch over the rows it holds. Collapsed, a
-   group is one row: its checkbox and a read-out of what is on. Expanded, it is
-   the individual switches. That trade is what keeps the panel short as sources
-   and readings are added. */
-.checklist { display: flex; flex-direction: column; gap: 0.4rem; }
-.checklist-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
-.checklist-title { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; }
-.checklist-groups { display: flex; flex-direction: column; gap: 0.3rem; }
-.checklist-group {
+   The category row of a built-in pattern that can ALSO be read as evidence: the
+   row itself, then a button opening what it may be read as, then the help icon
+   explaining that, then the row's example. Collapsed, the readings cost no row at
+   all, which is what keeps the panel short as signals and readings are added. */
+.signal-row {
+  display: flex; flex-direction: column;
+  border-top: 1px solid var(--gray-6);
+}
+.signal-row:first-child { border-top: none; }
+/* A tighter gap than the plain rows use: this line carries four things instead of
+   two, and every pixel spent between them is a pixel taken off the button's label. */
+.signal-row-head { display: flex; align-items: center; gap: 0.2rem; }
+/* Inside the head the category row gives up its claim on the whole line, so the
+   drill-down and the help icon can sit beside its label rather than after the
+   right-aligned example. The separator moved to .signal-row above. */
+.signal-row-head .cat-row { flex: none; border-top: none; padding-right: 0.15rem; }
+.signal-row-head .cat-label { flex: none; }
+/* Four things on the rail's narrow line, so what gives has to be decided rather
+   than left to the browser: the example takes the room LEFT OVER and nothing more
+   (basis 0, so it never forces the others to shrink), because it is a reminder of
+   the FORMAT and the whole string is its title attribute. The category's own name
+   and the button's label come first: they are what the row is and what the button
+   does. Only if those alone outgrow the rail does the button's label ellipsise, and
+   a row that overflowed instead would be a control the user cannot see (the page
+   body never scrolls sideways, the fixed-height layout contract). */
+.signal-row-head .cat-example { flex: 1 1 0; min-width: 0; }
+/* The drill-down reads as a control rather than as a link: it opens a panel of
+   switches, which is what a bordered, chevroned button promises. It is its own
+   button so opening the readings never ticks anything: one control per intent. */
+.signal-drill {
+  display: inline-flex; align-items: center; gap: 0.2rem;
+  flex: 0 1 auto; min-width: 0;
+  padding: 0.05rem 0.3rem;
   border: 1px solid var(--gray-3); border-radius: var(--card-radius);
+  background: var(--bg); color: var(--muted);
+  font-family: inherit; font-size: 0.76rem; cursor: pointer;
+}
+.signal-drill:hover, .signal-drill:focus-visible { color: var(--accent); border-color: var(--accent); }
+.signal-drill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.signal-drill svg { width: 0.9rem; height: 0.9rem; flex: none; transform: rotate(-90deg); }
+.signal-row[data-open] .signal-drill svg { transform: rotate(0deg); }
+/* The readings, indented under their signal so the tree reads as one. */
+.signal-readings {
+  display: flex; flex-direction: column; gap: 0.3rem;
+  padding: 0.25rem 0.5rem 0.45rem 2rem;
   background: var(--surface-subtle);
 }
-.checklist-group-head {
-  display: flex; align-items: center; gap: 0.4rem;
-  padding: 0.35rem 0.5rem;
-  font-size: 0.82rem;
-}
-/* The chevron is its own button so ticking the master does not fold the group and
-   folding it does not tick the master: one control per intent. */
-.checklist-group-toggle {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 1.25rem; height: 1.25rem; padding: 0; flex: none;
-  border: none; background: none; color: var(--muted); cursor: pointer;
-}
-.checklist-group-toggle:hover, .checklist-group-toggle:focus-visible { color: var(--accent); }
-.checklist-group-toggle svg { width: 0.95rem; height: 0.95rem; transform: rotate(-90deg); }
-.checklist-group[data-open] .checklist-group-toggle svg { transform: rotate(0deg); }
-.checklist-group-label {
-  display: inline-flex; align-items: center; gap: 0.4rem; flex: none; cursor: pointer;
-}
-.checklist-group-label input[type="checkbox"] { flex: none; accent-color: var(--text); }
-/* The read-out of what is on, right-aligned and truncated: it is a reminder, and
-   the full answer is the rows one click below it. */
-.checklist-summary {
-  flex: 1; min-width: 0; text-align: right;
-  font-size: 0.78rem; color: var(--muted);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-/* The readings, indented under their signal so the tree reads as one. */
-.checklist-rows {
-  display: flex; flex-direction: column; gap: 0.3rem;
-  padding: 0.1rem 0.5rem 0.45rem 2rem;
-}
 /* An author `display` beats the `hidden` attribute's own display:none, so a
-   collapsed group would still spend its rows' height: in the DOM AND on screen,
-   which is the opposite of what "collapsed" claims. The rendering harness measures
-   this, because a string test sees the attribute and stops there. */
-.checklist-rows[hidden] { display: none; }
-.checklist-row { display: flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; }
-.checklist-row-label {
+   collapsed drill-down would still spend its readings' height: in the DOM AND on
+   screen, which is the opposite of what "collapsed" claims. The rendering harness
+   measures this, because a string test sees the attribute and stops there. */
+.signal-readings[hidden] { display: none; }
+.signal-readings-head { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; }
+.signal-readings-title {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  flex: 0 1 auto; min-width: 0; cursor: pointer;
+}
+.signal-readings-title input[type="checkbox"] { flex: none; accent-color: var(--text); }
+/* The heading yields before the count does: the heading repeats what the row above
+   already says, and the count is the one thing in this line that is not written
+   anywhere else on screen. */
+.signal-readings-title .signal-label {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* How many readings are on, right-aligned: a reminder, with the answer in full on
+   the rows immediately below it. */
+.signal-count {
+  flex: none; margin-left: auto;
+  font-size: 0.78rem; color: var(--muted); white-space: nowrap;
+}
+.signal-reading { display: flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; }
+.signal-reading-label {
   flex: 1; min-width: 0;
   display: flex; align-items: center; gap: 0.45rem; cursor: pointer;
 }
-.checklist-row input[type="checkbox"] { flex: none; accent-color: var(--text); }
-.checklist-label { flex: none; }
-.checklist-detail {
+.signal-reading input[type="checkbox"] { flex: none; accent-color: var(--text); }
+.signal-label { flex: none; }
+.signal-detail {
   flex: 1; min-width: 0; text-align: right;
   font-size: 0.78rem; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -1795,7 +1817,8 @@ mark[data-original]:focus-visible { outline: 2px solid var(--accent); outline-of
 .rail-toggle .cat-row { flex: 1; min-width: 0; }
 /* The two plain Smart-detection methods are ONE row of two, not two rows of one.
    They carry the shortest labels in the rail and the panel's height is its
-   scarcest resource. The signal control stays on its own row because it expands. */
+   scarcest resource. The route's third method has no row here at all: each
+   signal's readings hang off that signal's own category row below. */
 .rail-toggle-pair {
   display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; align-items: center;
 }

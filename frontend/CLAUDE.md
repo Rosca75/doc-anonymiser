@@ -73,11 +73,15 @@ without the runtime. Preserve that behaviour.
 
   Smart detection is a route containing THREE methods, each with its own
   control: built-in pattern matching (direct matches), signal-based discovery
-  and heuristic discovery (both Suggestions). The section's own state is DERIVED
-  from them (`state.js smartDetectionOn`) and never stored: a fourth persisted
-  boolean can disagree with the three it summarises, and a section reading "On"
-  while every method is off lies about what a run does. Its header switch is a
-  master that changes all three in one action.
+  and heuristic discovery (both Suggestions). Two of them are switches at the top
+  of the section; the third has no control of its own there, because it is a set
+  of readings OF particular signals and a signal is one of the categories below:
+  its readings hang off that category's own row, as a drill-down button beside the
+  label with the help icon after it (`ui.js signalDrillDown`). The section's own
+  state is DERIVED from the three (`state.js smartDetectionOn`) and never stored: a
+  fourth persisted boolean can disagree with the three it summarises, and a section
+  reading "On" while every method is off lies about what a run does. Its header
+  switch is a master that changes all three in one action.
 - **`nav.js` is the only module that moves the wizard.** Every screen has its
   own footer now, so the step bar and four footers all navigate; the
   backward-reset rule lives in `nav.js` once rather than in five places. It
@@ -159,12 +163,12 @@ Windows it steals focus from the window it belongs to.
   `chipRow`, `sectionLabel`, `statTile`, `collapsibleGroup`, `stepFooter`,
   `toastHTML`, `modalHTML`), the explanation kit (`helpTooltip`,
   `wireHelpTooltips`, `warningPopover`, `wireWarningPopovers`,
-  `expandableChecklist`) plus `button` and `icon`. There is
+  `signalDrillDown`) plus `button` and `icon`. There is
   exactly ONE way to draw each thing: `card` is the fixed-height surface,
   `collapsibleGroup` the foldable block, `helpTooltip` the explanation,
-  `expandableChecklist` a set of switches that must not spend a permanent row
-  each, grouped where the question they answer is nested (a master over its rows,
-  the master derived for display and never stored). A second builder for the same
+  `signalDrillDown` a nested set of switches hung on the row that raises the
+  question, spending no permanent row of its own (a master over its readings, the
+  master derived for display and never stored). A second builder for the same
   control is the next inconsistency, so a replaced one is DELETED, not kept.
 
   `warningPopover` is the ONE admitted exception, and it is an exception because

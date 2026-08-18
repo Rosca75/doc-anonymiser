@@ -416,6 +416,32 @@
       };
       for (const id of catGroupIds) await clickGroup(id);
       const categoriesWithSizeAfterExpand = catWithSize();
+
+      // A signal's readings hang off that signal's own category row: the row, then
+      // the button opening the readings, then the icon explaining it, then the
+      // example. "On one line" is a claim about geometry, and it can only be
+      // measured while the group is open, so it is measured here rather than in the
+      // string tests, which see markup order and stop there.
+      const signalRowLine = (() => {
+        const head = railOf().querySelector(".signal-row .signal-row-head");
+        const label = head?.querySelector(".cat-label");
+        const drill = head?.querySelector(".signal-drill");
+        const help = head?.querySelector("span.help");
+        if (!head || !label || !drill || !help) return null;
+        const l = label.getBoundingClientRect();
+        const d = drill.getBoundingClientRect();
+        const h = help.getBoundingClientRect();
+        return {
+          sameRow: Math.abs(l.top - d.top) <= 2 && Math.abs(l.top - h.top) <= 2,
+          drillIsAfterLabel: d.left >= l.right - 1,
+          helpIsAfterDrill: h.left >= d.right - 1,
+          // The rail is narrow, and a row that overflows it is a control the user
+          // cannot see: the page body never scrolls sideways (the layout contract).
+          fitsTheRail: head.scrollWidth <= head.clientWidth + 1,
+          widths: `row ${Math.round(head.clientWidth)} of ${Math.round(head.scrollWidth)}px`,
+        };
+      })();
+
       for (const id of catGroupIds) await clickGroup(id);
 
       const rail = railOf();
@@ -431,15 +457,17 @@
         // Folded by default, so zero are laid out now; all of them once opened.
         categoriesWithSize,
         categoriesWithSizeAfterExpand,
-        // The signal control is a tree: one group per signal, its readings one
-        // click below. Collapsed the readings are in the DOM at zero height, which
-        // a string test reads as "present" and a user reads as absent, so both
-        // states are measured. The expanding half is done in its own probe below,
-        // because it has to click.
-        signalGroups: [...rail.querySelectorAll("#signal-sources .checklist-group")]
-          .map((g) => g.dataset.group),
-        signalMasters: [...rail.querySelectorAll("#signal-sources .checklist-master")]
+        // The signal control is a tree hanging off the category row of the signal
+        // it reads: one drill-down per signal, its readings one click below.
+        // Collapsed the readings are in the DOM at zero height, which a string test
+        // reads as "present" and a user reads as absent, so both states are
+        // measured. The expanding half is done in its own probe below, because it
+        // has to click.
+        signalRows: [...rail.querySelectorAll(".signal-row")]
+          .map((r) => r.dataset.signalSource),
+        signalMasters: [...rail.querySelectorAll(".signal-master")]
           .map((b) => b.dataset.source),
+        signalRowLine,
         // The two plain Smart-detection methods share ONE row. "Side by side" is a
         // claim about geometry, so it is answered with geometry: equal tops, and
         // one to the left of the other. Markup order proves neither, since a
@@ -825,62 +853,80 @@
     },
 
     /**
-     * signalDerivations() expands a signal row and measures what appears.
+     * signalDerivations() opens a signal's drill-down and measures what appears.
      *
      * Collapsed, a signal's readings are in the DOM with zero height: present to a
-     * string test and absent to the user. So "expanding shows them" is a claim
-     * about geometry, and this answers it with geometry, by clicking the chevron
-     * the user clicks and measuring the rows before and after.
+     * string test and absent to the user. So "opening it shows them" is a claim
+     * about geometry, and this answers it with geometry, by clicking the button the
+     * user clicks and measuring the readings before and after.
      *
-     * It also drives the two switches that must NOT be the same control: the
-     * chevron folds without ticking, and the master ticks without folding. Two jobs
-     * on one element is how a master gets switched by accident.
+     * The drill-down hangs off the signal's own CATEGORY row, and the category
+     * groups start folded, so the group is opened first: with it folded, "no reading
+     * is laid out" would be true for a reason that has nothing to do with the
+     * drill-down. rowLaidOut is what says the row itself IS on screen while its
+     * readings are not.
+     *
+     * It also drives the two controls that must NOT be one: the button opens
+     * without ticking, and a reading ticks without closing. Two jobs on one element
+     * is how a setting gets flipped by accident.
      */
     async signalDerivations() {
       const s = await store();
       await seed("identify");
-      const control = document.querySelector("#signal-sources");
-      if (!control) return { error: "no #signal-sources control in the Identify rail" };
+      const railOf = () => document.querySelector("#identify-rail");
+      const rowOf = () => railOf()?.querySelector(".signal-row");
+      if (!rowOf()) return { error: "no .signal-row in the Identify rail" };
+      const source = rowOf().dataset.signalSource;
 
-      const group = control.querySelector(".checklist-group");
-      if (!group) return { error: "no .checklist-group in the signal control" };
-      const source = group.dataset.group;
-
-      const rowBoxes = () => [...group.querySelectorAll("input.checklist-box")];
-      const visibleRows = () => rowBoxes()
+      const boxes = () => [...(rowOf()?.querySelectorAll("input.signal-box") ?? [])];
+      const visibleRows = () => boxes()
         .filter((b) => b.getBoundingClientRect().height > 0).length;
+      const collapsedRows = boxes().length;
 
-      const collapsedRows = rowBoxes().length;
-      const collapsedVisible = visibleRows();
-
-      const toggle = group.querySelector(".checklist-group-toggle");
-      if (!toggle) return { error: "the signal group has no chevron to expand it" };
-      toggle.click();
+      // Open the category group the row lives in. Every repaint below replaces the
+      // nodes, so each step re-queries from the rail rather than holding a handle.
+      const groupToggle = () => {
+        const group = rowOf()?.closest("section.cgroup");
+        return group?.querySelector("[data-group-toggle]");
+      };
+      const openedGroup = groupToggle();
+      if (!openedGroup) return { error: "the signal row is in no foldable category group" };
+      openedGroup.click();
       await settle();
 
-      // The repaint replaced the nodes, so everything below is re-queried.
-      const opened = document.querySelector("#signal-sources .checklist-group");
-      const openedBoxes = [...opened.querySelectorAll("input.checklist-box")];
-      const openedVisible = openedBoxes
-        .filter((b) => b.getBoundingClientRect().height > 0).length;
+      const rowLaidOut = (rowOf()?.getBoundingClientRect().height ?? 0) > 0;
+      const collapsedVisible = visibleRows();
 
-      // Ticking a reading must not fold the group: the checkbox stops the click
-      // reaching the head. Measured through the STORE, because a checkbox visually
-      // unticking itself proves nothing about what the next run reads.
-      const first = openedBoxes[0];
+      const drill = rowOf()?.querySelector(".signal-drill");
+      if (!drill) return { error: "the signal row has no drill-down button to open it" };
+      drill.click();
+      await settle();
+      const openedVisible = visibleRows();
+
+      // Ticking a reading must not close the drill-down: the checkbox stops the
+      // click reaching anything else. Measured through the STORE, because a checkbox
+      // visually unticking itself proves nothing about what the next run reads.
+      const first = boxes()[0];
       const derivation = first?.dataset.derivation;
       first?.click();
       await settle();
 
-      const afterTick = document.querySelector("#signal-sources .checklist-group");
-      const stillOpen = [...afterTick.querySelectorAll("input.checklist-box")]
-        .filter((b) => b.getBoundingClientRect().height > 0).length > 0;
+      const stillOpen = visibleRows() > 0;
       const stored = s.getState().settings?.signalSuggestionSources?.[source] ?? {};
-      const masterAfterTick = afterTick.querySelector(".checklist-master")?.checked ?? null;
+      const masterAfterTick = rowOf()?.querySelector(".signal-master")?.checked ?? null;
+
+      // Leave the rail as the next probe expects it: the drill-down closed and the
+      // category group folded again. Both are module-level view state, so they
+      // outlive the re-seed every probe starts with.
+      rowOf()?.querySelector(".signal-drill")?.click();
+      await settle();
+      groupToggle()?.click();
+      await settle();
 
       return {
         source,
         collapsedRows,
+        rowLaidOut,
         collapsedVisible,
         openedVisible,
         derivation,

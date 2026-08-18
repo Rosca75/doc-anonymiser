@@ -45,7 +45,7 @@ import {
 import { escapeHTML } from "../html.js";
 import {
   button, chipRow, sectionLabel, collapsibleGroup, wireGroups,
-  helpTooltip, wireHelpTooltips, expandableChecklist,
+  helpTooltip, wireHelpTooltips, signalDrillDown,
 } from "../ui.js";
 import { CARDS, CONFIGURE, RAIL, VALUES, categoryLabels } from "../copy.js";
 import { examplesFor, countryOptions } from "../countries.js";
@@ -319,14 +319,16 @@ function smartSection(s) {
 }
 
 /**
- * smartMethods(s) is Smart detection's three methods, at the top of the section
- * so they read as governing what follows.
+ * smartMethods(s) is Smart detection's two plain method switches, at the top of
+ * the section so they read as governing what follows. They share ONE row, side by
+ * side: they carry the shortest labels in the rail and the panel's height is its
+ * scarcest resource.
  *
- * Two are plain switches and they share ONE row, side by side: they carry the
- * shortest labels in the rail and the panel's height is its scarcest resource.
- * The third is a compact CHECKLIST rather than a switch, because it is a SET of
- * sources and one row per source would grow the panel every time a source is
- * added; it keeps its own row because it expands.
+ * The route's third method, signal-based discovery, is NOT here. It is a set of
+ * readings OF particular signals, and a signal is a category in the list below, so
+ * each signal's readings hang off that category's own row (signalCategoryRow):
+ * one control per signal, where the signal is, rather than a block up here that
+ * has to name the same categories again.
  */
 function smartMethods(s) {
   const row = (id, checked, label, help) =>
@@ -344,21 +346,27 @@ function smartMethods(s) {
     row("smart-heuristic", s.settings.useHeuristicDiscovery !== false,
       RAIL.heuristicDiscovery, RAIL.heuristicDiscoveryHelp) +
     `</div>` +
-    signalSourceControl(s) +
     `</div>`;
 }
 
 /**
- * signalSourceControl(s) is the "Signal-based suggestions" control: one
- * expandable row per signal, with that signal's individual READINGS under it.
+ * signalCategoryRow(s, source, headHTML, tailHTML) is the category row of a
+ * signal that can also DERIVE Suggestions, with its readings folded into it.
  *
- * The shape follows the question. In front of a signal a user does not ask
- * "may this derive Suggestions" but "what would this derive, and do I want each
- * of those?": an address's local part is evidence for a person and its domain is
+ * A signal source identifier IS a built-in pattern category key (engine
+ * SignalSourceEmail is the "email" category), which is what lets the readings hang
+ * off the row of the pattern that produces the evidence. The row keeps its own
+ * checkbox untouched: that one decides whether the signal is matched and replaced,
+ * the drill-down decides what the match may additionally be read as, and
+ * conflating the two is the mistake the separate setting exists to prevent.
+ *
+ * The shape follows the question. In front of a signal a user does not ask "may
+ * this derive Suggestions" but "what would this derive, and do I want each of
+ * those?": an address's local part is evidence for a person and its domain is
  * evidence for an organisation, through two separate mechanisms, and wanting one
  * without the other is a reasonable thing to want. So each reading is its own
- * switch and the signal's own checkbox is a MASTER over them, derived for display
- * (on when any reading is on) exactly as the Smart detection section's is.
+ * switch and the panel's checkbox is a MASTER over them, derived for display (on
+ * when any reading is on) exactly as the Smart detection section's is.
  *
  * Only sources and readings that ACTUALLY implement discovery appear
  * (SIGNAL_SOURCES and SIGNAL_DERIVATIONS mirror the engine's, guarded by
@@ -367,33 +375,33 @@ function smartMethods(s) {
  *
  * Clearing a reading stops the Suggestions THAT reading produces and leaves the
  * signal's own anonymisation alone. That distinction is the whole reason the
- * control exists, and it is in the help tooltip rather than in a paragraph.
+ * control exists, and it is in the help tooltip beside the button rather than in a
+ * paragraph.
+ *
+ * @param {object} s the store snapshot
+ * @param {string} source one of SIGNAL_SOURCES, and the category key of the row
+ * @param {string} headHTML the category row's own markup (checkbox and label)
+ * @param {string} tailHTML the row's trailing example
  */
-function signalSourceControl(s) {
-  return expandableChecklist({
-    id: "signal-sources",
+function signalCategoryRow(s, source, headHTML, tailHTML) {
+  return signalDrillDown({
+    source,
     label: RAIL.signalSuggestions,
+    headHTML,
+    tailHTML,
     helpHTML: helpTooltip(RAIL.signalSuggestionsHelp, { label: RAIL.signalSuggestions }),
-    groups: SIGNAL_SOURCES.map((source) => {
-      const label = RAIL.signalSourceLabel[source] ?? source;
-      const onNames = enabledSignalDerivations(s, source)
-        .map((d) => RAIL.signalDerivationLabel[d] ?? d);
+    title: RAIL.signalDerivedFrom(RAIL.signalSourceLabel[source] ?? source),
+    summary: RAIL.signalDerivationCount(enabledSignalDerivations(s, source).length),
+    checked: signalSourceOn(s, source),
+    open: openSignalSources.has(source),
+    rows: (SIGNAL_DERIVATIONS[source] ?? []).map((d) => {
+      const rowLabel = RAIL.signalDerivationLabel[d] ?? d;
       return {
-        id: source,
-        label,
-        summary: RAIL.signalDerivationSummary(onNames),
-        checked: signalSourceOn(s, source),
-        open: openSignalSources.has(source),
-        rows: (SIGNAL_DERIVATIONS[source] ?? []).map((d) => {
-          const rowLabel = RAIL.signalDerivationLabel[d] ?? d;
-          return {
-            id: d,
-            label: rowLabel,
-            detail: RAIL.signalDerivationFinds[d] ?? "",
-            helpHTML: helpTooltip(RAIL.signalDerivationHelp[d], { label: rowLabel }),
-            checked: signalDerivationOn(s, source, d),
-          };
-        }),
+        id: d,
+        label: rowLabel,
+        detail: RAIL.signalDerivationFinds[d] ?? "",
+        helpHTML: helpTooltip(RAIL.signalDerivationHelp[d], { label: rowLabel }),
+        checked: signalDerivationOn(s, source, d),
       };
     }),
   });
@@ -482,12 +490,27 @@ function categoryGroups(s, groups, type = "regex", blockDisabled = false) {
       const countries = CATEGORY_COUNTRIES[key] ?? [];
       const disabledHint = `Only applies to ${countries.join(", ")}`;
       const hint = applies ? example : `${example}. ${disabledHint}`;
-      return `<label class="cat-row"${applies ? "" : ` title="${escapeHTML(disabledHint)}"`}>` +
+      const box =
         `<input type="checkbox" class="cat-toggle" data-category="${escapeHTML(key)}"` +
         `${s.settings.categories?.[key] ? " checked" : ""}${disabled ? " disabled" : ""}/>` +
-        `<span class="cat-label">${escapeHTML(label)}</span>` +
-        `<span class="cat-example" title="${escapeHTML(hint)}">${escapeHTML(example)}</span>` +
-        `</label>`;
+        `<span class="cat-label">${escapeHTML(label)}</span>`;
+      const exampleHTML =
+        `<span class="cat-example" title="${escapeHTML(hint)}">${escapeHTML(example)}</span>`;
+      const title = applies ? "" : ` title="${escapeHTML(disabledHint)}"`;
+
+      // A signal that can also DERIVE Suggestions carries its readings on its own
+      // row: the drill-down button, then the help icon that explains it, then the
+      // example. The category checkbox in front of them is untouched, because it
+      // answers a different question (is this signal replaced at all).
+      //
+      // The drill-down is deliberately NOT gated on blockDisabled: which readings
+      // may derive Suggestions is its own setting, so switching Built-in patterns
+      // off must not silently take it away with them.
+      if (SIGNAL_SOURCES.includes(key)) {
+        return signalCategoryRow(s, key,
+          `<label class="cat-row"${title}>${box}</label>`, exampleHTML);
+      }
+      return `<label class="cat-row"${title}>${box}${exampleHTML}</label>`;
     }).join("");
 
     // Icon-only bulk switches: the group header is narrow, and "Select all"
@@ -670,40 +693,42 @@ function smartTuning(s) {
 }
 
 /**
- * wireSignalSources(container) wires the expandable checklist: per group, the
- * chevron, the master checkbox and each reading's own checkbox, plus Escape to
- * fold the open groups.
+ * wireSignalSources(container) wires each signal category row's drill-down: the
+ * button that opens the readings, the master checkbox in the opened panel, each
+ * reading's own checkbox, and Escape to fold whatever is open.
  *
  * Escape folds them for the same reason the help tooltip closes on Escape: a
  * control that can only be dismissed by clicking elsewhere is a keyboard trap.
  */
 function wireSignalSources(container) {
-  const control = container.querySelector("#signal-sources");
-  if (!control) return;
+  const signalRows = container.querySelectorAll(".signal-row");
+  if (signalRows.length === 0) return;
 
-  for (const group of control.querySelectorAll(".checklist-group")) {
-    const source = group.dataset.group;
+  for (const row of signalRows) {
+    const source = row.dataset.signalSource;
     if (!source) continue;
 
-    group.querySelector(".checklist-group-toggle")?.addEventListener("click", () => {
+    row.querySelector(".signal-drill")?.addEventListener("click", (ev) => {
+      // The button sits inside a category list row; stopPropagation keeps the
+      // click off the row and off the group header above it, so opening the
+      // readings neither ticks the category nor folds the group.
+      ev.stopPropagation();
       if (openSignalSources.has(source)) openSignalSources.delete(source);
       else openSignalSources.add(source);
       setState({}); // repaint; the expanded state is view state
     });
 
     // The master writes every reading of this signal in one action, which is what
-    // saves the user N clicks to switch a whole signal off. stopPropagation for
-    // the same reason wireSectionSwitches carries it: a checkbox inside a
-    // foldable head must not also fold the head.
-    group.querySelector(".checklist-master")?.addEventListener("click", (ev) => {
+    // saves the user N clicks to switch a whole signal off.
+    row.querySelector(".signal-master")?.addEventListener("click", (ev) => {
       ev.stopPropagation();
     });
-    group.querySelector(".checklist-master")?.addEventListener("change", (ev) => {
+    row.querySelector(".signal-master")?.addEventListener("change", (ev) => {
       setSignalSource(source, ev.target.checked);
       pushSettings(container);
     });
 
-    for (const box of group.querySelectorAll(".checklist-box")) {
+    for (const box of row.querySelectorAll(".signal-box")) {
       box.addEventListener("click", (ev) => { ev.stopPropagation(); });
       box.addEventListener("change", (ev) => {
         setSignalDerivation(source, box.dataset.derivation, ev.target.checked);
@@ -712,14 +737,14 @@ function wireSignalSources(container) {
         pushSettings(container);
       });
     }
-  }
 
-  control.addEventListener("keydown", (ev) => {
-    if (ev.key !== "Escape" || openSignalSources.size === 0) return;
-    ev.stopPropagation();
-    openSignalSources.clear();
-    setState({});
-  });
+    row.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Escape" || !openSignalSources.has(source)) return;
+      ev.stopPropagation();
+      openSignalSources.delete(source);
+      setState({});
+    });
+  }
 }
 
 /** strictnessOption renders one <option>, marked selected when it is current. */
