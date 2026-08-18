@@ -1,0 +1,80 @@
+# ui.yml — the layer-3 rendering harness, per push but only when the UI changes.
+#
+# The harness (docs/UITESTING.md) is a deep-class check: it drives a real
+# Chromium over the DevTools Protocol and asserts what a user would SEE (screen
+# fit, clipping, tooltip visibility). It BLOCKS, and it must: every one of the
+# seven reported UI issues passed the cheaper layers. But it does not need to
+# run on a change it cannot possibly observe.
+#
+# This workflow's PATHS filter is the "run strictly when it needs to": the
+# harness serves the static frontend with NO Go bridge (docs/UITESTING.md), so
+# backend-only code cannot change what it renders. It therefore runs only when
+# the change touches the frontend, the shared probes, or the stylesheets, and a
+# pure-backend push does not pay to boot a browser. workflow_dispatch is kept so
+# it can always be run by hand.
+#
+# The Windows WebView2 additional check (ui-windows) lives in ci.yml, whose push
+# trigger also fires on tags, so a release still exercises it.
+name: UI rendering
+
+on:
+  push:
+    paths:
+      - "frontend/**"
+      - "scripts/uitest/**"
+      - "**/*.css"
+      - "main.go"
+      - ".github/workflows/ui.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "scripts/uitest/**"
+      - "**/*.css"
+      - "main.go"
+      - ".github/workflows/ui.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.26.x
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+
+      # The GitHub ubuntu image already ships Google Chrome; the harness finds it
+      # on PATH. If a future image drops it, this step says so with a fix.
+      - name: Locate the browser for the rendering harness
+        run: |
+          BROWSER=$(command -v google-chrome || command -v chromium-browser || command -v chromium || true)
+          if [ -z "${BROWSER}" ]; then
+            echo "::error::No Chromium-family browser on PATH, so the rendering harness cannot run."
+            echo "::error::Fix: add an install step (apt-get install -y chromium), or set CHROME to a browser binary."
+            exit 1
+          fi
+          echo "Using ${BROWSER}"
+          "${BROWSER}" --version
+
+      - name: UI rendering harness (Linux, layer 3)
+        run: |
+          start=$(date +%s)
+          go run ./scripts/uitest/renderharness -keep-artifacts
+          end=$(date +%s)
+          echo "### Render harness" >> "$GITHUB_STEP_SUMMARY"
+          echo "Wall-clock: $((end - start))s. Runs only on UI-touching changes (paths filter)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload rendering-harness artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-rendering-linux
+          path: scripts/uitest/artifacts/
+          if-no-files-found: ignore
+
