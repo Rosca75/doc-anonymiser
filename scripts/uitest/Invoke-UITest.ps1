@@ -260,6 +260,8 @@ function Invoke-DevChecks {
                 Test-ImportPreview $cdp
                 Test-ConfigureRail $cdp
                 Test-ValueCardActions $cdp
+                Test-ValueCardGeometry $cdp
+                Test-SpellingsPopup $cdp
                 Test-SignalDerivations $cdp
                 Test-ConfigurePanelFit $cdp
                 Test-StrictnessFields $cdp
@@ -498,6 +500,114 @@ function Test-ValueCardActions([CdpSession]$cdp) {
     Assert-That -Name "the card's remove control deletes the Value" -Condition ($r.removedOne -eq $true) `
         -Expected 'one fewer value in the store' -Actual "$($r.removedOne), values now: $($r.valuesAfter -join ', ')" `
         -Hint 'The .value-remove handler calls deleteValue(category, mainText) from the card dataset.'
+}
+
+# A value card keeps its HEIGHT whatever its data, and the list keeps its place.
+# The reported symptom was the My values scrollbar jumping upward after editing a
+# spelling or deleting a card. The scroll preserver was not broken: it writes back
+# a raw pixel offset, which is right only while the content is the same height.
+# Editing a spelling sent the row back to pending, the chips were replaced by one
+# line of text, the card shrank, the browser CLAMPED the restored offset to the
+# shorter scrollHeight, and the next repaint snapshotted the clamped value.
+function Test-ValueCardGeometry([CdpSession]$cdp) {
+    Write-Step 'A value card keeps its height, and the list keeps its place'
+    $r = $cdp.Eval('__uiProbes.valueCardGeometry()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the card-geometry probe runs' -Condition $false `
+            -Expected 'a My values list long enough to scroll' -Actual $r.error `
+            -Hint 'The probe seeds fifteen Values inside #identify-workspace .card-body.'
+        return
+    }
+    Assert-That -Name 'the measured card has more spellings than fit on its line' `
+        -Condition ($r.overflowsChips -eq $true) `
+        -Expected 'a "+N more" control on the card' -Actual "$($r.overflowsChips)" `
+        -Hint 'The chip row spends a character budget (identifyworkspace.js SPELLING_PREVIEW_BUDGET). Without an overflow this check measures nothing.'
+    Assert-That -Name "the popup's own list scrolls rather than growing the popup" `
+        -Condition ($r.listScrolls -eq $true) `
+        -Expected 'a .spelling-list taller than its box' -Actual "$($r.listScrolls)" `
+        -Hint 'style.css .spelling-list caps its height and scrolls.'
+    Assert-That -Name 'a spelling was actually deleted, so the row went back to pending' `
+        -Condition ($r.deleted -eq $true) `
+        -Expected 'one spelling removed through the popup' -Actual "$($r.deleted)" `
+        -Hint "The popup's per-row Delete calls deleteVariant, which is the edit that used to collapse the chip row."
+    Assert-That -Name 'the card is the same height after a spelling edit' `
+        -Condition ($r.heightBefore -gt 0 -and $r.heightAfterEdit -eq $r.heightBefore) `
+        -Expected "still $($r.heightBefore)px" -Actual "$($r.heightAfterEdit)px" `
+        -Hint 'style.css .spelling-row is one line, overflow:hidden, with a min-height, so a pending expansion swaps the chips for a line of text INSIDE the row.'
+    Assert-That -Name 'the list keeps its scroll position across a spelling edit' `
+        -Condition ($r.scrollBefore -gt 0 -and $r.scrollAfterEdit -eq $r.scrollBefore) `
+        -Expected "scrollTop still $($r.scrollBefore)" -Actual "$($r.scrollAfterEdit)" `
+        -Hint 'scroll.js restores a raw pixel offset, which the browser clamps when the content got shorter.'
+    Assert-That -Name 'renaming the value sends its spellings back to pending' `
+        -Condition ($r.pending -eq $true) `
+        -Expected 'derivedSpellings null on the renamed Value' -Actual "$($r.pending)" `
+        -Hint 'This is the case with the most teeth: with nothing settled to draw, the chip row falls back to one line of text. Deleting a spelling CURATES and leaves the list settled, so it does not exercise the collapse.'
+    Assert-That -Name 'the card is the same height while its spellings are pending' `
+        -Condition ($r.heightRenamed -gt 0 -and $r.heightRenamed -eq $r.heightAfterEdit) `
+        -Expected "still $($r.heightAfterEdit)px" -Actual "$($r.heightRenamed)px" `
+        -Hint 'The pending line renders INSIDE the chip row, in place of the chips, never as a row under it.'
+    Assert-That -Name 'the list keeps its scroll position while the spellings are pending' `
+        -Condition ($r.scrollRenamed -eq $r.scrollAfterEdit) `
+        -Expected "scrollTop still $($r.scrollAfterEdit)" -Actual "$($r.scrollRenamed)" -Hint ''
+    Assert-That -Name 'a warning renders as an icon on the card' `
+        -Condition ($r.hasWarningIcon -eq $true) `
+        -Expected 'a .warnpop on the card' -Actual "$($r.hasWarningIcon)" `
+        -Hint 'ui.js warningPopover: the warning text and its actions live in a hover surface, not in a row.'
+    Assert-That -Name 'the card is the same height once a warning appears' `
+        -Condition ($r.heightWarned -gt 0 -and $r.heightWarned -eq $r.heightRenamed) `
+        -Expected "still $($r.heightRenamed)px" -Actual "$($r.heightWarned)px" `
+        -Hint 'A warning rendered as a row makes the card taller when it arrives and shorter when it clears.'
+    Assert-That -Name 'the list keeps its scroll position when a warning appears' `
+        -Condition ($r.scrollWarned -eq $r.scrollRenamed) `
+        -Expected "scrollTop still $($r.scrollRenamed)" -Actual "$($r.scrollWarned)" -Hint ''
+    $drift = [Math]::Abs($r.scrollBeforeDelete - $r.scrollAfterDelete)
+    Assert-That -Name 'deleting a card moves the list by at most one card' `
+        -Condition ($r.cardHeight -gt 0 -and $drift -le $r.cardHeight) `
+        -Expected "scrollTop within $($r.cardHeight)px of $($r.scrollBeforeDelete)" `
+        -Actual "$($r.scrollAfterDelete) (moved $($drift)px)" `
+        -Hint 'The list really is shorter by one card, so a small clamp is expected. Jumping to the top is not.'
+}
+
+# The spellings popup opens, is genuinely on screen, scrolls inside itself, and
+# updates the card behind it live. The card shows only the spellings that fit one
+# line, so the popup is the only way to reach the rest: a surface that is in the
+# DOM but clipped, or one that grows past the window, makes them unreachable while
+# every string test stays green.
+function Test-SpellingsPopup([CdpSession]$cdp) {
+    Write-Step 'The spellings popup opens, scrolls, and updates the card live'
+    $r = $cdp.Eval('__uiProbes.spellingsPopup()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the spellings-popup probe runs' -Condition $false `
+            -Expected 'a .spellings-popup opened from "+N more"' -Actual $r.error `
+            -Hint 'The "+N more" handler calls openSpellingsPopup, which sets the view state the workspace renders spellingsPopupHTML from.'
+        return
+    }
+    Assert-That -Name '"+N more" says how many are hidden' `
+        -Condition ("$($r.moreLabel)".StartsWith('+')) `
+        -Expected 'a label of the form "+N more"' -Actual "$($r.moreLabel)" `
+        -Hint 'copy.js WORKSPACE.moreSpellings(n). A control that does not say how much is behind it is a control nobody opens.'
+    Assert-That -Name 'the popup is painted, not clipped away' -Condition ($r.painted -eq $true) `
+        -Expected "elementFromPoint at the popup's centre returning the popup itself" `
+        -Actual "$($r.painted)" `
+        -Hint 'The rect of a clipped element is still a full-size rect. The popup is rendered OUTSIDE the scrolling card body for exactly this reason.'
+    Assert-That -Name 'the popup is on screen' -Condition ($r.onScreen -eq $true) `
+        -Expected "a box inside the $($r.viewportHeight)px viewport" -Actual "$($r.onScreen)" -Hint ''
+    Assert-That -Name 'the popup fits the window' `
+        -Condition ($r.popupHeight -gt 0 -and $r.popupHeight -le $r.viewportHeight) `
+        -Expected "a popup no taller than $($r.viewportHeight)px" -Actual "$($r.popupHeight)px" `
+        -Hint 'style.css .spellings-popup caps its height and the list inside it scrolls.'
+    Assert-That -Name 'the list scrolls INSIDE the popup' -Condition ($r.listScrolls -eq $true) `
+        -Expected 'a .spelling-list taller than its box' -Actual "$($r.listScrolls)" -Hint ''
+    Assert-That -Name 'and it really scrolls when scrolled' -Condition ($r.listScrolled -eq $true) `
+        -Expected 'a non-zero scrollTop on the .spelling-list' -Actual "$($r.listScrolled)" `
+        -Hint 'An overflowing element with overflow:hidden reports the same scrollHeight and moves nowhere, so the two checks are separate.'
+    Assert-That -Name 'adding in the popup reaches the Value' -Condition ($r.onValueAfter -eq $true) `
+        -Expected 'the new spelling in state.values' -Actual "$($r.onValueAfter)" `
+        -Hint "The popup's Add calls addSpelling(category, mainText, value) from the open popup's own identity."
+    Assert-That -Name 'and the compact card behind it updates on the same repaint' `
+        -Condition ($r.chipsAfter -contains 'Zzz Popup Spelling') `
+        -Expected "the new spelling among the card's chips" -Actual "$($r.chipsAfter -join ', ')" `
+        -Hint 'The popup and the card read the same store, which is what makes the edit live.'
 }
 
 # A scrolled panel keeps its position across a repaint. This is a visible-only

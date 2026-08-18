@@ -344,25 +344,30 @@ const HELP_GAP = 6;
 const HELP_MARGIN = 8;
 
 /**
- * placeHelpBubble(help) writes the open bubble's viewport coordinates to the
- * --help-x / --help-y custom properties the .help-bubble rule reads.
+ * placeBubble(wrapper, triggerSelector, bubbleSelector) writes the open bubble's
+ * viewport coordinates to the --bubble-x / --bubble-y custom properties the
+ * bubble's CSS rule reads.
  *
- * The bubble is `position: fixed` so that no clipping ancestor can cut it off:
- * the rail's body is `overflow-y: auto` and a `.cgroup` is `overflow: hidden`, so
- * an absolutely positioned bubble is trimmed at the group's edge and near the
- * foot of a group nothing readable survives. Fixed positioning is measured from
- * the VIEWPORT, which CSS alone cannot know from inside the trigger, so the
- * measuring happens here, when the bubble opens.
+ * ONE positioning model serves every hover surface in the toolkit, because the
+ * reason for it is the same for all of them. The bubble is `position: fixed` so
+ * that no clipping ancestor can cut it off: the rail's body is `overflow-y: auto`,
+ * a `.cgroup` is `overflow: hidden` and a card body scrolls, so an absolutely
+ * positioned bubble is trimmed at the container's edge and near the foot of one
+ * nothing readable survives. Fixed positioning is measured from the VIEWPORT,
+ * which CSS alone cannot know from inside the trigger, so the measuring happens
+ * here, when the bubble opens.
  *
  * Placement: below the trigger, right-aligned to it so the bubble grows back into
  * the panel rather than off its edge, clamped into the viewport, and flipped above
  * when there is not enough room below.
  *
- * @param {HTMLElement} help the [data-help] wrapper
+ * @param {HTMLElement} wrapper the trigger-plus-bubble wrapper
+ * @param {string} triggerSelector the element the bubble is anchored to
+ * @param {string} bubbleSelector the bubble itself
  */
-function placeHelpBubble(help) {
-  const trigger = help.querySelector(".help-icon");
-  const bubble = help.querySelector(".help-bubble");
+function placeBubble(wrapper, triggerSelector, bubbleSelector) {
+  const trigger = wrapper.querySelector(triggerSelector);
+  const bubble = wrapper.querySelector(bubbleSelector);
   if (!trigger || !bubble) return;
 
   const anchor = trigger.getBoundingClientRect();
@@ -386,8 +391,8 @@ function placeHelpBubble(help) {
     if (top < HELP_MARGIN) top = HELP_MARGIN;
   }
 
-  bubble.style.setProperty("--help-x", `${Math.round(left)}px`);
-  bubble.style.setProperty("--help-y", `${Math.round(top)}px`);
+  bubble.style.setProperty("--bubble-x", `${Math.round(left)}px`);
+  bubble.style.setProperty("--bubble-y", `${Math.round(top)}px`);
 }
 
 /**
@@ -411,7 +416,7 @@ export function wireHelpTooltips(container) {
         // Open FIRST, then measure: the bubble is display:none while closed and a
         // hidden element has no box to place.
         help.setAttribute("data-open", "true");
-        placeHelpBubble(help);
+        placeBubble(help, ".help-icon", ".help-bubble");
       } else {
         help.removeAttribute("data-open");
       }
@@ -431,6 +436,248 @@ export function wireHelpTooltips(container) {
       help.querySelector(".help-icon")?.blur();
     });
   }
+}
+
+/**
+ * searchBox(opts) is the one way to draw a search field: a bordered label
+ * wrapping the magnifier, the input, and a clear control inside the field.
+ *
+ * The clear control is part of the CONTROL rather than an option on it, because
+ * a field the user can fill and cannot empty in one gesture is the same
+ * oversight three times over. Every search field in the application is built
+ * here so none of them can be the one that forgot.
+ *
+ * The ✕ is always RENDERED and hidden by CSS while the field is empty
+ * (`:placeholder-shown`), never conditionally rendered. Two of the three search
+ * fields filter their rows IN PLACE without a repaint, precisely so the input
+ * node survives and keeps the caret; a ✕ that only exists after a re-render
+ * would never appear in those two. That is why `placeholder` is required: with
+ * no placeholder `:placeholder-shown` never matches and the ✕ would sit there on
+ * an empty field.
+ *
+ * It is not related to the "Clear all" button in the values toolbar, which
+ * deletes every Value. This one empties a text field and carries no label, so
+ * there is no collision to resolve.
+ *
+ * @param {object} opts
+ * @param {string} opts.id the input's element id; wireSearchBox addresses it
+ * @param {string} opts.value the current text
+ * @param {string} opts.placeholder shown while empty, and required
+ * @param {string} opts.label the input's accessible name
+ * @param {string} [opts.cls] an extra class on the wrapper
+ * @param {string} [opts.clearLabel] the ✕'s accessible name
+ * @returns {string} safe HTML
+ */
+export function searchBox(opts = {}) {
+  const id = opts.id ?? "";
+  const clearLabel = opts.clearLabel ?? "Clear the search";
+  return `<label class="search-box${opts.cls ? ` ${escapeHTML(opts.cls)}` : ""}">` +
+    icon("search") +
+    `<input id="${escapeHTML(id)}" value="${escapeHTML(opts.value ?? "")}"` +
+    ` placeholder="${escapeHTML(opts.placeholder ?? "")}"` +
+    ` aria-label="${escapeHTML(opts.label ?? opts.placeholder ?? "")}"/>` +
+    button("", {
+      kind: "ghost", cls: "search-clear", icon: "close",
+      ariaLabel: clearLabel, title: clearLabel,
+      data: { clears: id },
+    }) +
+    `</label>`;
+}
+
+/**
+ * wireSearchBox(container, id, onInput) binds BOTH ways a search field's text
+ * changes to the one handler.
+ *
+ * The ✕ calling the caller's own handler is what makes "the ✕ does exactly what
+ * typing does" structurally true rather than a claim two code paths have to keep
+ * agreeing on. A synthetic input event would be the other way to reach it, and
+ * this is fewer moving parts.
+ *
+ * @param {HTMLElement} container the view container after innerHTML
+ * @param {string} id the input's element id
+ * @param {function(string, HTMLElement): void} onInput called with the new text
+ *   and the input node, for both typing and clearing
+ * @returns {HTMLElement|null} the input, or null when it is not on screen
+ */
+export function wireSearchBox(container, id, onInput) {
+  const input = container.querySelector(`#${id}`);
+  if (!input) return null;
+  input.addEventListener("input", () => onInput(input.value, input));
+  container.querySelector(`[data-clears="${id}"]`)?.addEventListener("click", () => {
+    input.value = "";
+    // Focus goes back to the field, because clearing a search is almost always
+    // the start of typing a different one.
+    input.focus?.();
+    onInput("", input);
+  });
+  return input;
+}
+
+/**
+ * warningPopover(opts) is a status ICON that opens a small surface holding a
+ * warning and the actions that resolve it.
+ *
+ * It is a SECOND builder beside helpTooltip on purpose, and that is the one place
+ * the toolkit's "exactly one way to draw each thing" rule admits two: a surface
+ * holding BUTTONS is a different control from one holding a sentence, not a
+ * variant of it. A tooltip may vanish the instant the pointer leaves its trigger,
+ * because nothing in it is worth reaching; a surface with actions in it must
+ * survive the pointer travelling into it, must trap nothing, and must be
+ * dismissible. Those are different behaviours, so they are different controls
+ * rather than one control with a flag.
+ *
+ * It exists so a card can carry its warnings WITHOUT its height depending on how
+ * many it has. A warning rendered as a row makes the card taller when it appears
+ * and shorter when it clears, and a list that changes height under the pointer
+ * throws the scroll position of everything below it.
+ *
+ * The glyph is the same for both tones. Colour and the accessible name carry the
+ * difference, and the surface says which it is in words: two shapes for "you must
+ * fix this" and "you should know this" would be two things to learn where the
+ * copy already says it.
+ *
+ * @param {object} opts
+ * @param {string} opts.tone "bad" for a blocking conflict, "warn" for a warning
+ * @param {string} opts.label the trigger's accessible name, from copy.js
+ * @param {Array<string>} opts.lines the warning text, one paragraph each
+ * @param {string} [opts.actionsHTML] the resolution buttons, already built
+ * @param {string} [opts.id] the surface's id; derived from the lines when omitted
+ * @returns {string} safe HTML ("" when there is nothing to warn about)
+ */
+export function warningPopover(opts = {}) {
+  const lines = (opts.lines ?? []).filter(Boolean);
+  if (lines.length === 0) return "";
+  const tone = opts.tone === "bad" ? "bad" : "warn";
+  const label = opts.label ?? "Warning";
+  const id = opts.id ?? `warn-${hashText(lines.join("|"))}`;
+  const actions = opts.actionsHTML
+    ? `<div class="panel-actions">${opts.actionsHTML}</div>`
+    : "";
+  // aria-expanded on the trigger and role="group" on the surface, rather than
+  // role="tooltip": a tooltip is announced as a description of its trigger, and a
+  // screen reader user told "description: two buttons" cannot reach them. This is
+  // a disclosure, so it is announced as one.
+  return `<span class="warnpop warnpop-${tone}" data-warnpop>` +
+    `<button type="button" class="warnpop-icon" aria-label="${escapeHTML(label)}"` +
+    ` aria-controls="${escapeHTML(id)}" aria-expanded="false">${icon("warning")}</button>` +
+    `<span class="warnpop-bubble" id="${escapeHTML(id)}" role="group"` +
+    ` aria-label="${escapeHTML(label)}">` +
+    lines.map((line) => `<span class="warnpop-line">${escapeHTML(line)}</span>`).join("") +
+    actions +
+    `</span></span>`;
+}
+
+// How long the popover stays open after the pointer leaves it, in milliseconds.
+//
+// It exists because the surface sits a few pixels below its trigger, so travelling
+// from the icon into the surface crosses page background: the pointer is briefly
+// over neither, which fires a leave. Closing immediately would make the buttons
+// unreachable by pointer, which is the whole point of the control. It is also what
+// lets focus move between the surface's own buttons without the surface closing
+// under the keyboard.
+const WARNPOP_CLOSE_DELAY_MS = 220;
+
+// The document-level dismiss listener and the document it is attached to, kept
+// so a repaint can remove the previous one. Without this they accumulate one per
+// paint, each holding a detached wrapper, and after twenty repaints a click runs
+// twenty stale handlers.
+let warnpopOutside = null;
+
+/**
+ * wireWarningPopovers(container) attaches the open/close behaviour to every
+ * warningPopover in the container. Safe to call after every paint.
+ *
+ * Open on hover AND on keyboard focus, because a warning only a pointer can read
+ * is one half the users never get. Closed by leaving the surface, by Escape, and
+ * by a click outside it: three exits, because the surface holds buttons and a
+ * surface that can only be dismissed by hitting a small icon again is a trap.
+ *
+ * @param {HTMLElement} container the view container after innerHTML
+ */
+export function wireWarningPopovers(container) {
+  // The document is reached through the container rather than as a global,
+  // because the wiring tests render into a minimal DOM that models no document
+  // at all. There, "a click somewhere else" and "focus is inside the surface"
+  // are facts that cannot exist, so both degrade to nothing rather than to an
+  // exception in a handler the test was not asking about.
+  const doc = container.ownerDocument;
+  if (warnpopOutside) {
+    warnpopOutside.doc?.removeEventListener?.("pointerdown", warnpopOutside.fn);
+    warnpopOutside = null;
+  }
+
+  const wrappers = [...container.querySelectorAll("[data-warnpop]")];
+  if (wrappers.length === 0) return;
+
+  const closers = [];
+
+  for (const pop of wrappers) {
+    let hovered = false;
+    let timer = null;
+
+    const open = () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      pop.setAttribute("data-open", "true");
+      pop.querySelector(".warnpop-icon")?.setAttribute("aria-expanded", "true");
+      // Open FIRST, then measure: the surface is display:none while closed and a
+      // hidden element has no box to place.
+      placeBubble(pop, ".warnpop-icon", ".warnpop-bubble");
+    };
+    const close = () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      hovered = false;
+      pop.removeAttribute("data-open");
+      pop.querySelector(".warnpop-icon")?.setAttribute("aria-expanded", "false");
+    };
+    // The delayed close re-checks BOTH reasons to stay open, because the timer
+    // was started by one of them and the other may have taken over since: the
+    // pointer may have arrived in the surface, or focus may have moved to a
+    // button inside it.
+    const closeSoon = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        if (hovered || holdsFocus(pop, doc)) return;
+        close();
+      }, WARNPOP_CLOSE_DELAY_MS);
+    };
+    closers.push({ pop, close });
+
+    pop.addEventListener("pointerenter", () => { hovered = true; open(); });
+    pop.addEventListener("pointerleave", () => { hovered = false; closeSoon(); });
+    pop.addEventListener("focusin", open);
+    pop.addEventListener("focusout", closeSoon);
+    pop.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Escape") return;
+      // Stopped here so Escape dismissing a warning does not also answer the
+      // shell's modal, which listens on the document.
+      ev.stopPropagation();
+      close();
+      pop.querySelector(".warnpop-icon")?.blur();
+    });
+  }
+
+  // One document listener for every popover in the container: a click anywhere
+  // outside a surface dismisses it. pointerdown rather than click, so a surface
+  // cannot swallow the gesture that was meant to dismiss it.
+  const fn = (ev) => {
+    for (const { pop, close } of closers) {
+      if (!pop.hasAttribute("data-open")) continue;
+      if (pop.contains?.(ev.target)) continue;
+      close();
+    }
+  };
+  if (doc?.addEventListener) {
+    doc.addEventListener("pointerdown", fn);
+    warnpopOutside = { doc, fn };
+  }
+}
+
+/** holdsFocus(pop, doc) reports whether the keyboard is inside the surface, so a
+ *  delayed close does not fire while focus is moving between its own buttons. */
+function holdsFocus(pop, doc) {
+  const active = doc?.activeElement;
+  return !!active && !!pop.contains?.(active);
 }
 
 /**

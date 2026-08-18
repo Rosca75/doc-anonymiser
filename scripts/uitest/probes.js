@@ -47,6 +47,12 @@
   // seconds.
   const settle = (ms = 250) => new Promise((r) => setTimeout(r, ms));
 
+  // Long enough for views/identifyworkspace.js INTERSECTION_DEBOUNCE_MS to fire
+  // and for the bridgeless refusal behind it to settle. A probe that seeds an
+  // intersection inside that window measures a warning the screen is about to
+  // clear on its own.
+  const INTERSECTION_SETTLE_MS = 700;
+
   // The store is imported once and cached: a dynamic import per probe would hand
   // back the same module instance anyway, but the cache makes that explicit.
   // The path is absolute so it resolves identically under a server rooted at
@@ -180,6 +186,47 @@
       spellingsError: null, discoveryMethods: ["manual"], evidence: [],
       spellingPolicy: "automatic", status: "accepted",
     },
+  ];
+
+  // The value the geometry probe measures, and the list it sits in.
+  //
+  // MEASURED_VALUE carries enough spellings to overflow TWO different boxes, and
+  // both matter: the card's one-line chip budget, because a card whose chips all
+  // fit has no overflow control to check and no chip row to collapse; and the
+  // popup's capped list, because a popup that never scrolls proves nothing about
+  // whether a Value with fifty spellings is reachable. The other Values exist so
+  // the card LIST genuinely scrolls: a scroll position can only be lost by a list
+  // that has one.
+  const MEASURED_VALUE = "Meridian";
+  // What the rename case renames it to. A distinct name so the probe can tell a
+  // renamed card from one the rename silently failed on.
+  const RENAMED_VALUE = "Meridian Renamed";
+  const MEASURED_SPELLINGS = [
+    "Meridian Consulting Group Societe Anonyme", "Meridian Consulting Group",
+    "Meridian Consulting", "Meridian Partners", "Meridian", "MCG",
+    ...Array.from({ length: 12 }, (_, i) => `Meridian Branch ${i + 1}`),
+  ];
+  const filler = (i) => ({
+    category: "person_names", mainText: `${PEOPLE[i % PEOPLE.length]} ${i + 1}`,
+    spellings: [], derivedSpellings: [`${PEOPLE[i % PEOPLE.length]} ${i + 1}`],
+    spellingsError: null, discoveryMethods: ["manual"], evidence: [],
+    spellingPolicy: "automatic", status: "accepted",
+  });
+  // The measured card sits in the MIDDLE of the list, not at its head, because
+  // the probe scrolls to the middle before it acts. A card that is scrolled out
+  // of sight is not the situation being tested: focusing a control inside a
+  // scroll container scrolls it into view, so acting on an off-screen card
+  // measures the browser doing its job, not the list losing its place.
+  const GEOMETRY_VALUES = [
+    ...Array.from({ length: 7 }, (_, i) => filler(i)),
+    {
+      category: "entity_names", mainText: MEASURED_VALUE,
+      spellings: [],
+      derivedSpellings: MEASURED_SPELLINGS,
+      spellingsError: null, discoveryMethods: ["manual"], evidence: [],
+      spellingPolicy: "automatic", status: "accepted",
+    },
+    ...Array.from({ length: 7 }, (_, i) => filler(i + 7)),
   ];
 
   /** rect(el) is getBoundingClientRect as plain, transferable numbers. */
@@ -461,6 +508,233 @@
         renamed,
         removedOne: s.getState().values.length === countBeforeRemove - 1,
         valuesAfter: s.getState().values.map((v) => v.mainText),
+      };
+    },
+
+    /**
+     * valueCardGeometry() measures whether a value card's HEIGHT is independent
+     * of its data, and whether the list keeps its scroll position across the
+     * actions that used to move it.
+     *
+     * This is the probe for the complaint the compact card exists to fix. The
+     * scroll preserver in scroll.js writes back a RAW pixel offset, which is
+     * sound only while the content is the same height. Editing a spelling resets
+     * the row to pending, the chips are momentarily replaced by one line of text,
+     * the card shrinks, the browser CLAMPS the restored offset to the now-shorter
+     * scrollHeight, and the NEXT repaint snapshots the clamped value. The
+     * position is then lost upward, permanently. Warnings appearing and clearing
+     * did the same thing from the other direction.
+     *
+     * No string test can see any of that: the markup was correct throughout. It
+     * needs a renderer, a scroll container with real overflow, and a measurement
+     * before and after.
+     *
+     * Four cases, because the height came from four places:
+     *   1. deleting a spelling through the popup, which shortens the chip row;
+     *   2. renaming the value, which sends the row back to PENDING: the chips
+     *      are replaced by one line of text, which is the collapse the owner
+     *      actually reported. It is a separate case from 1 because deleting
+     *      CURATES (the list is settled, derivedSpellings []) while renaming
+     *      leaves derivedSpellings null for Go to answer;
+     *   3. a warning appearing, which used to add a row to the card;
+     *   4. deleting a whole card, which legitimately shortens the list. Here the
+     *      offset may move, but by at most one card: clamping to the top is the
+     *      failure.
+     */
+    async valueCardGeometry() {
+      const s = await store();
+      await seed("identify");
+      // Enough cards that the list genuinely scrolls, and enough spellings on the
+      // measured one that its chip row has something to overflow.
+      s.setState({ values: GEOMETRY_VALUES.map((v) => ({ ...v })) });
+      await settle();
+
+      const tab = document.querySelector('[data-wstab="values"]');
+      if (!tab) return { error: "no [data-wstab] tabs rendered in the Identify workspace" };
+      tab.click();
+      await settle();
+
+      const scroller = document.querySelector("#identify-workspace .card-body");
+      if (!scroller) return { error: "no scrolling .card-body in the Identify workspace" };
+      const cardFor = (mainText) => [...document.querySelectorAll(".value-card")]
+        .find((c) => c.dataset.mainText === mainText) ?? null;
+
+      const measured = cardFor(MEASURED_VALUE);
+      if (!measured) return { error: `no .value-card for ${MEASURED_VALUE}` };
+      if (scroller.scrollHeight <= scroller.clientHeight) {
+        return { error: "the value list does not overflow, so it cannot lose a scroll position" };
+      }
+
+      // Scroll to the middle: at the top there is nothing to lose, which is how a
+      // broken preserver passes.
+      scroller.scrollTop = Math.round((scroller.scrollHeight - scroller.clientHeight) / 2);
+      await settle();
+      const scrollBefore = scroller.scrollTop;
+      const heightBefore = Math.round(measured.getBoundingClientRect().height);
+      const overflowsChips = !!measured.querySelector(".spelling-more");
+
+      // 1. A spelling edit. It is driven through the popup, which is where that
+      // gesture lives, and it sends the row back to pending on the way out.
+      measured.querySelector(".spelling-add")?.click();
+      await settle();
+      const popup = document.querySelector(".spellings-layer");
+      const listScrolls = !!popup &&
+        popup.querySelector(".spelling-list")?.scrollHeight >
+          popup.querySelector(".spelling-list")?.clientHeight;
+      let deleted = null;
+      if (popup) {
+        const row = [...popup.querySelectorAll(".spelling-list-row")]
+          .find((r) => r.dataset.spellingRow);
+        row?.querySelector(".spelling-delete")?.click();
+        await settle();
+        deleted = !!row;
+        document.querySelector(".spellings-close")?.click();
+        await settle();
+      }
+      const afterEdit = cardFor(MEASURED_VALUE);
+      const heightAfterEdit = afterEdit
+        ? Math.round(afterEdit.getBoundingClientRect().height) : 0;
+      const scrollAfterEdit = document
+        .querySelector("#identify-workspace .card-body").scrollTop;
+
+      // 2. Renaming the value, which is the case with the most teeth: it sends
+      // derivedSpellings back to null, so the card has nothing settled to draw
+      // and the chip row falls back to one line of "working out the other
+      // spellings...". That swap is what used to shrink the card and lose the
+      // position; it must now happen INSIDE the row.
+      let pending = null;
+      if (afterEdit) {
+        afterEdit.querySelector(".value-name")?.click();
+        await settle(80);
+        const nameInput = afterEdit.querySelector(".value-name-input");
+        if (nameInput) {
+          nameInput.value = RENAMED_VALUE;
+          nameInput.dispatchEvent(new Event("blur"));
+          await settle();
+          pending = s.getState().values.some((v) =>
+            v.mainText === RENAMED_VALUE && v.derivedSpellings === null);
+        }
+      }
+      const renamed = cardFor(RENAMED_VALUE);
+      const heightRenamed = renamed
+        ? Math.round(renamed.getBoundingClientRect().height) : 0;
+      const scrollRenamed = document
+        .querySelector("#identify-workspace .card-body").scrollTop;
+
+      // 3. A warning appearing. It must be an icon on a row that already exists,
+      // never a row of its own.
+      //
+      // Seeded only once the workspace's own debounced recheck has fired and
+      // come back empty. That recheck asks Go, there is no bridge here, and a
+      // refusal clears the list: seeding before it fires would have the probe
+      // measuring a warning the screen was about to discard. Setting
+      // `intersections` does not itself schedule another recheck, because the
+      // signature it watches is the value list.
+      await settle(INTERSECTION_SETTLE_MS);
+      s.setState({
+        intersections: [{
+          value: RENAMED_VALUE, category: "entity_names", matchClass: "user_defined",
+          winnerValue: `hello@${RENAMED_VALUE.toLowerCase()}.example`,
+          winnerCategory: "email", winnerMatchClass: "built_in_pattern",
+          occurrences: 3, totalOccurrences: 3, documents: [DOC_NAME],
+        }],
+      });
+      await settle();
+      const warned = cardFor(RENAMED_VALUE);
+      const heightWarned = warned ? Math.round(warned.getBoundingClientRect().height) : 0;
+      const hasWarningIcon = !!warned?.querySelector(".warnpop");
+      const scrollWarned = document
+        .querySelector("#identify-workspace .card-body").scrollTop;
+
+      // 4. Deleting a whole card. The list really is shorter, so the offset may
+      // move; clamping it to the top is the failure.
+      const doomed = [...document.querySelectorAll(".value-card")]
+        .find((c) => c.dataset.mainText !== RENAMED_VALUE);
+      const cardHeight = doomed ? Math.round(doomed.getBoundingClientRect().height) : 0;
+      const scrollBeforeDelete = document
+        .querySelector("#identify-workspace .card-body").scrollTop;
+      doomed?.querySelector(".value-remove")?.click();
+      await settle();
+      const scrollAfterDelete = document
+        .querySelector("#identify-workspace .card-body").scrollTop;
+
+      return {
+        overflowsChips, listScrolls, deleted, pending, hasWarningIcon,
+        heightBefore, heightAfterEdit, heightRenamed, heightWarned,
+        scrollBefore, scrollAfterEdit, scrollRenamed, scrollWarned,
+        cardHeight, scrollBeforeDelete, scrollAfterDelete,
+      };
+    },
+
+    /**
+     * spellingsPopup() opens the popup and drives it, which is the half of the
+     * compact card that a string test cannot reach: whether the surface is on
+     * screen at all, whether its list scrolls inside itself rather than growing
+     * the popup past the window, and whether an add there reaches the card behind
+     * it on the same repaint.
+     */
+    async spellingsPopup() {
+      const s = await store();
+      await seed("identify");
+      s.setState({ values: GEOMETRY_VALUES.map((v) => ({ ...v })) });
+      await settle();
+
+      const tab = document.querySelector('[data-wstab="values"]');
+      if (!tab) return { error: "no [data-wstab] tabs rendered in the Identify workspace" };
+      tab.click();
+      await settle();
+
+      const cardFor = (mainText) => [...document.querySelectorAll(".value-card")]
+        .find((c) => c.dataset.mainText === mainText) ?? null;
+      const card = cardFor(MEASURED_VALUE);
+      if (!card) return { error: `no .value-card for ${MEASURED_VALUE}` };
+
+      const moreLabel = card.querySelector(".spelling-more")?.textContent?.trim() ?? "";
+      card.querySelector(".spelling-more")?.click();
+      await settle();
+
+      const popup = document.querySelector(".spellings-popup");
+      if (!popup) return { error: '"+N more" opened no .spellings-popup' };
+      const box = rect(popup);
+      const list = popup.querySelector(".spelling-list");
+      if (!list) return { error: "the popup rendered no .spelling-list" };
+
+      // Painted, not merely present: the rect of a clipped element is still a
+      // full-size rect, so the hit test at its own centre is the check with teeth.
+      const centre = document.elementFromPoint(
+        Math.round((box.left + box.right) / 2), Math.round((box.top + box.bottom) / 2));
+      const painted = !!centre && popup.contains(centre);
+      const onScreen = box.top >= 0 && box.left >= 0 &&
+        box.bottom <= window.innerHeight && box.right <= window.innerWidth;
+
+      // The list scrolls INSIDE the popup rather than growing it past the window.
+      const listScrolls = list.scrollHeight > list.clientHeight;
+      list.scrollTop = list.scrollHeight;
+      await settle(80);
+      const listScrolled = list.scrollTop > 0;
+
+      // An add here reaches the card behind it, live, with no OK to press.
+      const draft = popup.querySelector("#spelling-draft");
+      const added = "Zzz Popup Spelling";
+      let chipsAfter = [];
+      let onValueAfter = false;
+      if (draft) {
+        draft.value = added;
+        draft.dispatchEvent(new Event("input", { bubbles: true }));
+        popup.querySelector("#btn-add-spelling")?.click();
+        await settle();
+        onValueAfter = s.getState().values.some((v) =>
+          v.mainText === MEASURED_VALUE && (v.spellings ?? []).includes(added));
+        const back = cardFor(MEASURED_VALUE);
+        chipsAfter = [...(back?.querySelectorAll(".spelling-chip") ?? [])]
+          .map((c) => c.dataset.spelling);
+      }
+
+      return {
+        moreLabel, box, painted, onScreen, listScrolls, listScrolled,
+        onValueAfter, chipsAfter,
+        popupHeight: box.height,
+        viewportHeight: window.innerHeight,
       };
     },
 

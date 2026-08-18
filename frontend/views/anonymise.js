@@ -40,11 +40,14 @@ import {
 import { escapeHTML } from "../html.js";
 import { renderHighlighted } from "../highlight.js";
 import { findHits, renderPlainWithHits, MAX_HITS } from "../panesearch.js";
-import { button, card, statTile, collapsibleGroup, wireGroups, icon, sectionLabel } from "../ui.js";
+import {
+  button, card, statTile, collapsibleGroup, wireGroups, icon, sectionLabel,
+  searchBox, wireSearchBox,
+} from "../ui.js";
 import { CATEGORIES } from "./identifyworkspace.js";
 import { stepFooterHTML, wireStepFooter } from "../nav.js";
 import { notify, wireNotice } from "../toast.js";
-import { CARDS, ANONYMISE, CATEGORY_LABELS, IMPORT, WORKSPACE } from "../copy.js";
+import { CARDS, ANONYMISE, CATEGORY_LABELS, IMPORT, WORKSPACE, VALUES } from "../copy.js";
 import { toastHTML } from "../ui.js";
 
 // --- View-local state -----------------------------------------------------
@@ -726,10 +729,11 @@ export function searchControls(walk, state = search) {
     : ANONYMISE.searchCount(walk.index + 1, walk.total, paneLabel(walk.pane));
 
   return `<div class="compare-search">` +
-    `<label class="search-box">${icon("search")}` +
-    `<input id="compare-search" value="${escapeHTML(state.needle)}"` +
-    ` placeholder="${escapeHTML(ANONYMISE.searchPlaceholder)}"` +
-    ` aria-label="${escapeHTML(ANONYMISE.searchLabel)}"/></label>` +
+    searchBox({
+      id: "compare-search", value: state.needle,
+      placeholder: ANONYMISE.searchPlaceholder, label: ANONYMISE.searchLabel,
+      clearLabel: VALUES.clearSearch,
+    }) +
     button("", {
       kind: "ghost", cls: "search-prev icon-action", icon: "chevron_left",
       ariaLabel: ANONYMISE.searchPrev, title: none ? ANONYMISE.searchNone : ANONYMISE.searchPrev,
@@ -1122,12 +1126,12 @@ function wireMissed(container) {
  * mid-word cannot be typed into.
  */
 function wireCompareSearch(container) {
-  const input = container.querySelector("#compare-search");
-  input?.addEventListener("input", () => {
-    const caret = input.selectionStart;
+  // Typing and the field's own ✕ both arrive here, so the two cannot drift.
+  const input = wireSearchBox(container, "compare-search", (needle, field) => {
+    const caret = field.selectionStart;
     // A new needle starts at its first hit: keeping the old position would land
     // the user somewhere unrelated to what they just typed.
-    search = { needle: input.value, index: 0 };
+    search = { needle, index: 0 };
     lastScrolledTo = null;
     if (compareSearchTimer) clearTimeout(compareSearchTimer);
     compareSearchTimer = setTimeout(() => {
@@ -1136,7 +1140,7 @@ function wireCompareSearch(container) {
       const again = container.querySelector("#compare-search");
       if (again) {
         again.focus();
-        again.setSelectionRange(caret, caret);
+        again.setSelectionRange?.(caret, caret);
       }
     }, 150);
   });

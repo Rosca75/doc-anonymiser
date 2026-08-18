@@ -396,6 +396,12 @@ export const VALUES = {
   // HEADINGS moved to WORKSPACE, where they are upper-case
   // because they sit in a header strip rather than above a form.
   searchPlaceholder: "search values",
+  // The ✕ inside every search field. One string for all three, because it is one
+  // control: a field the user can fill and cannot empty in one gesture is the
+  // same oversight repeated. It is deliberately NOT the values toolbar's
+  // "Clear all", which deletes every Value; this empties a text field and
+  // carries no label, so the two cannot be confused on screen.
+  clearSearch: "Clear the search",
   sortValueHint: "Sort by value, A to Z or Z to A.",
   sortCountHint: "Sort by how often the value occurs.",
   noMatchingSuggestions: "No suggestion matches the current search and type filter.",
@@ -607,16 +613,32 @@ export const WORKSPACE = {
   // decides, so these are WARNINGS that explain the decision, never refusals.
   // The route names come from originLabel above, so a message names a route in
   // the same words the chip on the card uses.
-  intersectionTitle: "Overlaps another detection",
-  /** intersectionAll(value, winner, route) is the case worth shouting about:
-   *  the value is never replaced under its own type. */
-  intersectionAll(value, winner, route) {
-    return `Every occurrence of "${value}" is also matched by ${route} as "${winner}", which takes priority. This value is not replaced under its own type.`;
+  /**
+   * intersectedText(value, matchedTexts) names what actually sat inside the
+   * winner. Usually that IS the value's own text and the sentence says so once;
+   * when the covered occurrences are spellings with different casing or shape (a
+   * lowercase spelling inside an email, or the "pierre"/"dupont" fragments of a
+   * person name), naming them instead avoids implying the exact quoted string was
+   * found verbatim where it was not.
+   */
+  intersectedText(value, matchedTexts) {
+    const list = (matchedTexts ?? []).filter((t) => t && t !== value);
+    if (list.length === 0) return `"${value}"`;
+    const quoted = list.map((t) => `"${t}"`).join(", ");
+    return `${quoted} (${list.length === 1 ? "a spelling" : "spellings"} of "${value}")`;
   },
-  /** intersectionSome(covered, total, value, winner, route) is the milder
-   *  case: the value still applies where nothing covers it. */
-  intersectionSome(covered, total, value, winner, route) {
-    return `${covered} of ${total} occurrences of "${value}" are also matched by ${route} as "${winner}", which takes priority there.`;
+  /**
+   * intersectionAll(value, winner, route, matchedTexts) is the only intersection
+   * sentence there is: the value is never replaced under its own type, because a
+   * higher-priority match covers every occurrence.
+   *
+   * There is no milder count sentence beside it, on purpose. A value covered in
+   * some places and free in others keeps its own placeholder everywhere else, and
+   * the covered occurrences are redacted by the winner, so the sentence would name
+   * no leak and offer no action. The engine reports only full coverage.
+   */
+  intersectionAll(value, winner, route, matchedTexts) {
+    return `Every occurrence of ${this.intersectedText(value, matchedTexts)} is also matched by ${route} as "${winner}", which takes priority. This value is not replaced under its own type.`;
   },
   intersectionOrder: "Priority order: built-in patterns, then your own Values and patterns, then Smart detection, then Local AI.",
   intersectionFix: "If this value should win instead, switch off the type that covers it, narrow the pattern, or add the covering term to Never anonymise.",
@@ -646,8 +668,24 @@ export const WORKSPACE = {
   removeValue: "Remove this value",
   derivedSpellings: "Spellings",
   addSpelling: "add",
-  addSpellingPlaceholder: "another spelling, then Enter",
-  removeSpelling: "Stop replacing this spelling",
+  // The card's status icon. One glyph, two tones, and the accessible name is
+  // where the difference is stated: a conflict must be fixed before the run,
+  // a warning is something to know about a run that will go ahead.
+  cardConflictLabel: "This value would refuse the run. Open for the reason and the fixes.",
+  cardWarningLabel: "This value overlaps another detection. Open for the reason and the options.",
+  cardInfoLabel: "Why this value is here",
+  /**
+   * moreSpellings(n) is the overflow control on the compact card.
+   *
+   * The card shows the spellings that fit on one line and nothing more, because a
+   * chip row that grows with the data makes the card's height depend on it, and a
+   * list of cards that resize under the pointer loses the reader's place. The rest
+   * are not hidden, they are one click away in the popup that owns the full list.
+   */
+  moreSpellings(n) {
+    return `+${n} more`;
+  },
+  moreSpellingsTitle: "Show every spelling, and add, edit, delete or regroup them",
   spellingDragHint: "Drag this spelling onto another Value to regroup it",
   /** spellingMoved(v, target) confirms a regrouping drag. */
   spellingMoved(v, target) {
@@ -689,10 +727,6 @@ export const WORKSPACE = {
   valuesSearchLabel: "Filter values by name or spelling",
   valuesAllTypes: "All types",
   valuesFilterTypeTitle: "Show only one type",
-  showSpellings: "Show spellings",
-  hideSpellings: "Hide spellings",
-  showVariantsTitle: "Show the spellings under each value",
-  hideVariantsTitle: "Hide the spellings to see more values at once",
   noValuesMatch: "No value matches the current search and type filter.",
   clearAll: "Clear all",
   clearAllTitle: "Remove every value from this list",
@@ -704,9 +738,48 @@ export const WORKSPACE = {
   clearedN(n) {
     return n === 0 ? "The list was already empty." : `${n} value${n === 1 ? "" : "s"} removed.`;
   },
+  // The spellings popup: the one surface that owns a Value's whole spelling list.
+  // The compact card shows a preview and this shows everything, so every gesture
+  // that used to be a per-chip control on the card lives here.
+  /** spellingsPopupTitle(mainText) heads the popup with the value it belongs to. */
+  spellingsPopupTitle(mainText) {
+    return `Spellings for ${mainText}`;
+  },
+  /** spellingsPopupCount(n) counts the WHOLE list, never the filtered view: the
+   *  search narrows what is shown, it does not remove anything. */
+  spellingsPopupCount(n) {
+    return `${n} spelling${n === 1 ? "" : "s"}`;
+  },
+  spellingsPopupAddPlaceholder: "a new spelling",
+  spellingsPopupAddLabel: "Add a spelling to this value",
+  spellingsPopupAdd: "Add",
+  spellingsPopupSearchPlaceholder: "search spellings",
+  spellingsPopupSearchLabel: "Filter the spellings shown",
+  spellingsPopupNoMatch: "No spelling matches this search.",
+  spellingsPopupEmpty: "This value has no other spellings yet. Add one above.",
+  spellingsPopupClose: "Close",
+  // Said in the popup because the popup has no OK button and its absence is the
+  // thing to explain: every action here has already happened.
+  spellingsPopupLive: "Changes are reflected immediately in the compact card.",
+  spellingsPopupMainRow: "Main text",
+  // The main text is shown so the list is the whole family rather than the
+  // family minus its head, but it is not a spelling and the two actions that
+  // apply to spellings do not apply to it.
+  spellingsPopupMainNotDeletable: "This is the value's main text, not a spelling. Rename it on the card, or remove the whole value.",
+  spellingsPopupDelete: "Delete",
+  spellingsPopupDeleteTitle: "Stop replacing this spelling",
+  spellingsPopupMove: "Move to",
+  spellingsPopupMoveTitle: "Make this a spelling of another value instead",
+  spellingsPopupMoveHeading: "Move this spelling",
+  /** spellingsPopupMoveBody(spelling) says what the pick will do. */
+  spellingsPopupMoveBody(spelling) {
+    return `"${spelling}" stops being a spelling of this value and becomes a spelling of the one you pick, so it takes that value's placeholder.`;
+  },
+  spellingsPopupMoveNone: "There is no other value to move it to.",
+  spellingsPopupEditTitle: "Edit this spelling",
+
   editValueTitle: "Rename this value",
   editValuePlaceholder: "the value, then Enter",
-  editSpellingTitle: "Edit this spelling (double-click)",
   editVariantPlaceholder: "the spelling, then Enter",
   changeTypeLabel: "Change the type of this value",
   /** valueRenamedDuplicate(v) explains a rename refused because the type
