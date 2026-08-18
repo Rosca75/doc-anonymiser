@@ -113,15 +113,23 @@ function harness(cardSearchTexts) {
   };
   const cards = cardSearchTexts.map((t) => ({ dataset: { search: t }, style: {} }));
   const empty = { style: { display: "none" } };
+  // The field's own ✕. It is part of the control, so the harness has to answer
+  // for it or the wiring silently binds half of what it renders.
+  const clearListeners = {};
+  const clear = {
+    addEventListener(type, fn) { (clearListeners[type] ??= []).push(fn); },
+    fire(type) { for (const fn of (clearListeners[type] ?? [])) fn(); },
+  };
   const container = {
     querySelector(sel) {
       if (sel === "#values-search") return input;
+      if (sel === '[data-clears="values-search"]') return clear;
       if (sel === ".values-search-empty") return empty;
       return null;
     },
     querySelectorAll(sel) { return sel === ".value-card" ? cards : []; },
   };
-  return { container, input, cards, empty, getActive: () => active };
+  return { container, input, cards, empty, clear, getActive: () => active };
 }
 
 test("applyValuesSearchFilter shows matching cards and reveals the empty line when none match", () => {
@@ -160,4 +168,31 @@ test("typing in the My values search filters in place, keeps focus, and never re
   assert.equal(repaints, 0, "no setState/repaint on any keystroke");
   assert.equal(h.cards[0].style.display, "", "the matching card stays visible");
   assert.equal(h.cards[1].style.display, "none", "the non-matching card is hidden");
+});
+
+test("the My values ✕ empties the search and brings every card back", () => {
+  // The same handler typing runs, so the filtered rows and the hidden no-match
+  // line cannot be left behind by the clear.
+  resetState();
+  let repaints = 0;
+  const unsub = subscribe(() => { repaints++; });
+
+  const h = harness(["meridian consulting merid", "marie duval"]);
+  wireValuesToolbar(h.container);
+
+  h.input.value = "zzz";
+  h.input.fire("input");
+  assert.equal(h.cards[0].style.display, "none", "nothing matches, so every card is hidden");
+  assert.equal(h.empty.style.display, "", "and the no-match line is showing");
+
+  h.clear.fire("click");
+  unsub();
+
+  assert.equal(h.input.value, "", "the field is empty");
+  assert.equal(h.getActive(), h.input, "focus goes back to it: clearing precedes typing again");
+  assert.equal(h.cards[0].style.display, "", "every card is back");
+  assert.equal(h.cards[1].style.display, "");
+  assert.equal(h.empty.style.display, "none", "and the no-match line is hidden again");
+  assert.equal(repaints, 0,
+    "clearing filters in place too, or it would destroy the very input it just focused");
 });

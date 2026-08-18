@@ -439,6 +439,81 @@ export function wireHelpTooltips(container) {
 }
 
 /**
+ * searchBox(opts) is the one way to draw a search field: a bordered label
+ * wrapping the magnifier, the input, and a clear control inside the field.
+ *
+ * The clear control is part of the CONTROL rather than an option on it, because
+ * a field the user can fill and cannot empty in one gesture is the same
+ * oversight three times over. Every search field in the application is built
+ * here so none of them can be the one that forgot.
+ *
+ * The ✕ is always RENDERED and hidden by CSS while the field is empty
+ * (`:placeholder-shown`), never conditionally rendered. Two of the three search
+ * fields filter their rows IN PLACE without a repaint, precisely so the input
+ * node survives and keeps the caret; a ✕ that only exists after a re-render
+ * would never appear in those two. That is why `placeholder` is required: with
+ * no placeholder `:placeholder-shown` never matches and the ✕ would sit there on
+ * an empty field.
+ *
+ * It is not related to the "Clear all" button in the values toolbar, which
+ * deletes every Value. This one empties a text field and carries no label, so
+ * there is no collision to resolve.
+ *
+ * @param {object} opts
+ * @param {string} opts.id the input's element id; wireSearchBox addresses it
+ * @param {string} opts.value the current text
+ * @param {string} opts.placeholder shown while empty, and required
+ * @param {string} opts.label the input's accessible name
+ * @param {string} [opts.cls] an extra class on the wrapper
+ * @param {string} [opts.clearLabel] the ✕'s accessible name
+ * @returns {string} safe HTML
+ */
+export function searchBox(opts = {}) {
+  const id = opts.id ?? "";
+  const clearLabel = opts.clearLabel ?? "Clear the search";
+  return `<label class="search-box${opts.cls ? ` ${escapeHTML(opts.cls)}` : ""}">` +
+    icon("search") +
+    `<input id="${escapeHTML(id)}" value="${escapeHTML(opts.value ?? "")}"` +
+    ` placeholder="${escapeHTML(opts.placeholder ?? "")}"` +
+    ` aria-label="${escapeHTML(opts.label ?? opts.placeholder ?? "")}"/>` +
+    button("", {
+      kind: "ghost", cls: "search-clear", icon: "close",
+      ariaLabel: clearLabel, title: clearLabel,
+      data: { clears: id },
+    }) +
+    `</label>`;
+}
+
+/**
+ * wireSearchBox(container, id, onInput) binds BOTH ways a search field's text
+ * changes to the one handler.
+ *
+ * The ✕ calling the caller's own handler is what makes "the ✕ does exactly what
+ * typing does" structurally true rather than a claim two code paths have to keep
+ * agreeing on. A synthetic input event would be the other way to reach it, and
+ * this is fewer moving parts.
+ *
+ * @param {HTMLElement} container the view container after innerHTML
+ * @param {string} id the input's element id
+ * @param {function(string, HTMLElement): void} onInput called with the new text
+ *   and the input node, for both typing and clearing
+ * @returns {HTMLElement|null} the input, or null when it is not on screen
+ */
+export function wireSearchBox(container, id, onInput) {
+  const input = container.querySelector(`#${id}`);
+  if (!input) return null;
+  input.addEventListener("input", () => onInput(input.value, input));
+  container.querySelector(`[data-clears="${id}"]`)?.addEventListener("click", () => {
+    input.value = "";
+    // Focus goes back to the field, because clearing a search is almost always
+    // the start of typing a different one.
+    input.focus?.();
+    onInput("", input);
+  });
+  return input;
+}
+
+/**
  * warningPopover(opts) is a status ICON that opens a small surface holding a
  * warning and the actions that resolve it.
  *

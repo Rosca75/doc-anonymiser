@@ -8,7 +8,7 @@ import {
   card, countBadge, tabbar, chipRow, sectionLabel, statTile,
   collapsibleGroup, stepFooter, toastHTML, modalHTML,
   helpTooltip, wireHelpTooltips, expandableChecklist,
-  warningPopover, wireWarningPopovers,
+  warningPopover, wireWarningPopovers, searchBox, wireSearchBox,
 } from "./ui.js";
 import { ICONS } from "./icons.js";
 
@@ -1111,4 +1111,98 @@ test("the popover's trigger announces whether it is open", () => {
   assert.equal(iconBtn.attrs.get("aria-expanded"), "true");
   pop.fire("keydown", { key: "Escape", stopPropagation() {} });
   assert.equal(iconBtn.attrs.get("aria-expanded"), "false");
+});
+
+// --- searchBox ------------------------------------------------------------
+//
+// The one way to draw a search field. The clear control is part of the CONTROL
+// rather than an option on it, because a field the user can fill and cannot
+// empty in one gesture is the same oversight once per field.
+
+test("searchBox renders the magnifier, the input and a clear control", () => {
+  const html = searchBox({
+    id: "values-search", value: "meri", placeholder: "search values and spellings",
+    label: "Filter values by name or spelling", clearLabel: "Clear the search",
+  });
+  assert.match(html, /<label class="search-box">/);
+  assert.match(html, /<input id="values-search" value="meri"/);
+  assert.match(html, /aria-label="Filter values by name or spelling"/);
+  assert.match(html, /class="btn btn-ghost search-clear"/);
+  assert.match(html, /data-clears="values-search"/,
+    "the ✕ names the field it empties, so wireSearchBox can pair them");
+});
+
+test("the clear control carries an accessible name and a visible glyph", () => {
+  // It is icon-only: with no name it is announced as "button", and with no glyph
+  // it is an invisible hit area inside the field.
+  const html = searchBox({ id: "x", value: "a", placeholder: "p", clearLabel: "Clear the search" });
+  assert.match(html, /aria-label="Clear the search"/);
+  assert.match(html, /class="btn btn-ghost search-clear"[^>]*><span class="icon"/);
+  assert.match(html, /<svg/);
+});
+
+test("the clear control is always rendered and hidden by CSS while empty", () => {
+  // Not conditionally rendered: two of the search fields filter their rows IN
+  // PLACE without a repaint, precisely so the input node survives and keeps the
+  // caret, so a ✕ that only existed after a re-render would never appear there.
+  const empty = searchBox({ id: "x", value: "", placeholder: "p" });
+  assert.match(empty, /search-clear/, "it is in the DOM even with no text");
+
+  const rule = styleCSS.match(/\n\.search-box input:placeholder-shown ~ \.search-clear \{[^}]*\}/);
+  assert.ok(rule, "the CSS must hide it while the field is empty");
+  assert.match(rule[0], /visibility:\s*hidden/);
+});
+
+test("searchBox always emits a placeholder, which is what the hide rule reads", () => {
+  // With no placeholder :placeholder-shown never matches and the ✕ sits on an
+  // empty field, so the two are one contract rather than two.
+  assert.match(searchBox({ id: "x", value: "", placeholder: "search values" }),
+    /placeholder="search values"/);
+});
+
+test("searchBox escapes its value, placeholder and labels", () => {
+  const html = searchBox({
+    id: "x", value: '<script>x</script>', placeholder: `a"b`, label: "<b>l</b>",
+    clearLabel: "<i>c</i>",
+  });
+  assert.ok(!html.includes("<script>"));
+  assert.ok(!html.includes("<b>"));
+  assert.ok(!html.includes("<i>"));
+});
+
+test("wireSearchBox sends typing and clearing to the ONE handler", () => {
+  // Structurally the same handler, not two paths that have to keep agreeing.
+  const seen = [];
+  const input = {
+    value: "meri", focused: false,
+    listeners: new Map(),
+    addEventListener(t, fn) { this.listeners.set(t, fn); },
+    focus() { this.focused = true; },
+  };
+  const clear = {
+    listeners: new Map(),
+    addEventListener(t, fn) { this.listeners.set(t, fn); },
+  };
+  const container = {
+    querySelector: (sel) => (sel === "#values-search" ? input
+      : (sel === '[data-clears="values-search"]' ? clear : null)),
+  };
+
+  const returned = wireSearchBox(container, "values-search", (v) => seen.push(v));
+  assert.equal(returned, input, "the caller gets the field back");
+
+  input.listeners.get("input")();
+  assert.deepEqual(seen, ["meri"], "typing reaches the handler");
+
+  clear.listeners.get("click")();
+  assert.equal(input.value, "", "the ✕ empties the field");
+  assert.deepEqual(seen, ["meri", ""], "and calls the same handler with the empty text");
+  assert.ok(input.focused, "focus goes back to the field: clearing precedes typing again");
+});
+
+test("wireSearchBox is quiet when its field is not on screen", () => {
+  // Three views call it and each renders its field only on its own tab.
+  assert.equal(wireSearchBox({ querySelector: () => null }, "absent", () => {
+    throw new Error("must not be called");
+  }), null);
 });

@@ -396,6 +396,12 @@ export const VALUES = {
   // HEADINGS moved to WORKSPACE, where they are upper-case
   // because they sit in a header strip rather than above a form.
   searchPlaceholder: "search values",
+  // The ✕ inside every search field. One string for all three, because it is one
+  // control: a field the user can fill and cannot empty in one gesture is the
+  // same oversight repeated. It is deliberately NOT the values toolbar's
+  // "Clear all", which deletes every Value; this empties a text field and
+  // carries no label, so the two cannot be confused on screen.
+  clearSearch: "Clear the search",
   sortValueHint: "Sort by value, A to Z or Z to A.",
   sortCountHint: "Sort by how often the value occurs.",
   noMatchingSuggestions: "No suggestion matches the current search and type filter.",

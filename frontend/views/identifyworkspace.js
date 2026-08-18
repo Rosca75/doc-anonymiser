@@ -60,7 +60,7 @@ import {
 } from "../suggestionmodel.js";
 import { escapeHTML } from "../html.js";
 import {
-  button, tabbar, icon, toastHTML,
+  button, tabbar, icon, toastHTML, searchBox, wireSearchBox,
   helpTooltip, wireHelpTooltips, warningPopover, wireWarningPopovers,
 } from "../ui.js";
 import { askConfirm, askChoice } from "../modal.js";
@@ -235,11 +235,11 @@ function intersectionSignature(s) {
 /** head(s, busy) is the card header: the title, the live counts, the search box
  *  and the one Run detection button. */
 function head(s, busy) {
-  const search =
-    `<label class="search-box">${icon("search")}` +
-    `<input id="workspace-search" value="${escapeHTML(suggestionFilter.search)}"` +
-    ` placeholder="${escapeHTML(VALUES.searchPlaceholder)}"` +
-    ` aria-label="${escapeHTML(VALUES.searchPlaceholder)}"/></label>`;
+  const search = searchBox({
+    id: "workspace-search", value: suggestionFilter.search,
+    placeholder: VALUES.searchPlaceholder, label: VALUES.searchPlaceholder,
+    clearLabel: VALUES.clearSearch,
+  });
 
   // The run button says what it will DO, which depends on which detection
   // ROUTES are switched on in the rail. With every route off there
@@ -561,11 +561,11 @@ function conflictMessage(c) {
 /** valuesFilterBar(s) is the toolbar above the value cards: search, a type
  *  filter and Clear all. */
 function valuesFilterBar(s) {
-  const search =
-    `<label class="search-box values-search">${icon("search")}` +
-    `<input id="values-search" value="${escapeHTML(valuesFilter.search)}"` +
-    ` placeholder="${escapeHTML(WORKSPACE.valuesSearchPlaceholder)}"` +
-    ` aria-label="${escapeHTML(WORKSPACE.valuesSearchLabel)}"/></label>`;
+  const search = searchBox({
+    id: "values-search", value: valuesFilter.search, cls: "values-search",
+    placeholder: WORKSPACE.valuesSearchPlaceholder, label: WORKSPACE.valuesSearchLabel,
+    clearLabel: VALUES.clearSearch,
+  });
 
   // The type filter lists only the types actually present, so it never offers a
   // category the current list cannot show.
@@ -1032,10 +1032,12 @@ export function spellingsPopupHTML(s) {
     ` aria-label="${escapeHTML(WORKSPACE.spellingsPopupAddLabel)}"/>` +
     button(WORKSPACE.spellingsPopupAdd, { kind: "secondary", id: "btn-add-spelling" }) +
     `</div>` +
-    `<label class="search-box">${icon("search")}` +
-    `<input id="spellings-search" value="${escapeHTML(spellingsPopupSearch)}"` +
-    ` placeholder="${escapeHTML(WORKSPACE.spellingsPopupSearchPlaceholder)}"` +
-    ` aria-label="${escapeHTML(WORKSPACE.spellingsPopupSearchLabel)}"/></label>` +
+    searchBox({
+      id: "spellings-search", value: spellingsPopupSearch,
+      placeholder: WORKSPACE.spellingsPopupSearchPlaceholder,
+      label: WORKSPACE.spellingsPopupSearchLabel,
+      clearLabel: VALUES.clearSearch,
+    }) +
     `<div class="spelling-list" id="spellings-popup-list">${mainRow}${rows}</div>` +
     empty + noMatch +
     `<p class="hint">${escapeHTML(WORKSPACE.spellingsPopupLive)}</p>` +
@@ -1138,11 +1140,10 @@ function wireSpellingsPopup(container) {
     else if (ev.key === "Escape") { ev.stopPropagation(); closeSpellingsPopup(); }
   });
 
-  const search = layer.querySelector("#spellings-search");
-  search?.addEventListener("input", () => {
+  const search = wireSearchBox(layer, "spellings-search", (value) => {
     // No setState: re-rendering would destroy this very input and lose the caret.
-    spellingsPopupSearch = search.value;
-    applySpellingsSearchFilter(layer, search.value);
+    spellingsPopupSearch = value;
+    applySpellingsSearchFilter(layer, value);
   });
 
   for (const row of layer.querySelectorAll(".spelling-list-row")) {
@@ -1314,14 +1315,15 @@ function wire(container, s, shown) {
     });
   }
 
-  const search = container.querySelector("#workspace-search");
-  search?.addEventListener("input", () => {
+  // Typing and clearing both arrive here, so the ✕ cannot drift from the field
+  // it empties.
+  wireSearchBox(container, "workspace-search", (value, search) => {
     // Debounced repaint. Unlike the My values search (which filters cards in
     // place), this one feeds the bulk-action scope and the rows' shown set, so
     // it has to re-render. Debouncing keeps the input alive through a burst of
     // keystrokes so focus is not lost mid-type; the caret is restored on the
     // repaint that lands.
-    suggestionFilter = { ...suggestionFilter, search: search.value };
+    suggestionFilter = { ...suggestionFilter, search: value };
     const caret = search.selectionStart;
     if (workspaceSearchTimer) clearTimeout(workspaceSearchTimer);
     workspaceSearchTimer = setTimeout(() => {
@@ -1330,7 +1332,7 @@ function wire(container, s, shown) {
       const again = container.querySelector("#workspace-search");
       if (again) {
         again.focus();
-        again.setSelectionRange(caret, caret);
+        again.setSelectionRange?.(caret, caret);
       }
     }, 150);
   });
@@ -1653,13 +1655,14 @@ export function applyValuesSearchFilter(container, query = valuesFilter.search) 
 /** wireValuesToolbar(container) wires the search, type filter, show/hide
  *  spellings toggle and Clear all. Exported for the focus-preservation test. */
 export function wireValuesToolbar(container) {
-  const search = container.querySelector("#values-search");
-  search?.addEventListener("input", () => {
+  wireSearchBox(container, "values-search", (value) => {
     // No setState here: re-rendering would destroy this very input and lose the
     // caret. Update the module-level filter and toggle the rendered rows in
-    // place, so the input node survives and keeps focus.
-    valuesFilter = { ...valuesFilter, search: search.value };
-    applyValuesSearchFilter(container, search.value);
+    // place, so the input node survives and keeps focus. That is also why the ✕
+    // is hidden by CSS rather than rendered conditionally: there is no repaint
+    // here for a conditional render to happen on.
+    valuesFilter = { ...valuesFilter, search: value };
+    applyValuesSearchFilter(container, value);
   });
 
   container.querySelector("#values-type")?.addEventListener("change", (ev) => {

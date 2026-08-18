@@ -341,3 +341,31 @@ test("the popup closes when its Value stops existing", async () => {
       "nothing is rendered for a Value that is gone");
   } finally { stop(); }
 });
+
+test("the popup search's ✕ clears the filter and shows every row again", async () => {
+  resetState();
+  seed("entity_names", "Meridian", ["Meridian Consulting", "Meridian Group", "Helios"]);
+  const { root, stop } = workspace();
+  try {
+    await openValuesTab(root);
+    const layer = await openPopup(root, "Meridian");
+
+    const search = layer.querySelector("#spellings-search");
+    search.value = "helios";
+    await fire(search, "input");
+    assert.equal(
+      layer.querySelectorAll(".spelling-list-row").filter((r) => r.style.display !== "none").length,
+      1, "the filter narrowed the list");
+
+    const clear = layer.querySelector('[data-clears="spellings-search"]');
+    assert.ok(clear, "the popup's search carries a ✕ like every other search field");
+    await fire(clear, "click");
+
+    assert.equal(search.value, "", "the field is empty");
+    assert.equal(layer.querySelector("#spellings-search"), search,
+      "the very same input node: clearing filters in place, exactly as typing does");
+    const visible = layer.querySelectorAll(".spelling-list-row")
+      .filter((r) => r.style.display !== "none");
+    assert.equal(visible.length, 4, "every row is back, the three spellings plus the main text");
+  } finally { stop(); }
+});

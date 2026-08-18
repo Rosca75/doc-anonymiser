@@ -1041,6 +1041,19 @@ input, select {
   width: 9.5rem; border: none; outline: none; background: none;
   font-size: 0.85rem; color: var(--text); padding: 0;
 }
+/* The ✕ inside the field. It is always in the DOM and hidden while the field is
+   empty, rather than rendered conditionally: two of the three search fields
+   filter their rows IN PLACE without a repaint, exactly so the input node
+   survives and keeps the caret, so a ✕ that only appeared on a re-render would
+   never appear in them at all. `:placeholder-shown` is the state "this field is
+   empty", which is why searchBox requires a placeholder. */
+.search-box .search-clear {
+  width: 1.15rem; height: 1.15rem; padding: 0; flex: none;
+  border: none; border-radius: 50%; background: none; color: var(--muted);
+}
+.search-box .search-clear:hover { background: var(--gray-5); color: var(--text); }
+.search-box .search-clear svg { width: 0.85rem; height: 0.85rem; }
+.search-box input:placeholder-shown ~ .search-clear { visibility: hidden; }
 
 /* The detection progress strip, between the head and the tabs so it appears
    without pushing the tabs around. */
