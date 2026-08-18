@@ -202,17 +202,18 @@ func checkImportPreview(c *cdpClient, r *reporter, fx fixture) {
 // --- The Configure rail -----------------------------------------------------
 
 type railResult struct {
-	Error              string   `json:"error"`
-	Sections           int      `json:"sections"`
-	RailTabs           int      `json:"railTabs"`
-	Routes             []string `json:"routes"`
-	SmartOn            *bool    `json:"smartOn"`
-	LocalOn            *bool    `json:"localOn"`
-	Categories         int      `json:"categories"`
-	CategoriesWithSize int      `json:"categoriesWithSize"`
-	SignalGroups       []string `json:"signalGroups"`
-	SignalMasters      []string `json:"signalMasters"`
-	MethodPairRow      *struct {
+	Error                         string   `json:"error"`
+	Sections                      int      `json:"sections"`
+	RailTabs                      int      `json:"railTabs"`
+	Routes                        []string `json:"routes"`
+	SmartOn                       *bool    `json:"smartOn"`
+	LocalOn                       *bool    `json:"localOn"`
+	Categories                    int      `json:"categories"`
+	CategoriesWithSize            int      `json:"categoriesWithSize"`
+	CategoriesWithSizeAfterExpand int      `json:"categoriesWithSizeAfterExpand"`
+	SignalGroups                  []string `json:"signalGroups"`
+	SignalMasters                 []string `json:"signalMasters"`
+	MethodPairRow                 *struct {
 		BuiltInTop            int      `json:"builtInTop"`
 		HeuristicTop          int      `json:"heuristicTop"`
 		SameRow               *bool    `json:"sameRow"`
@@ -270,12 +271,19 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 			"fixture behind keeps the harness green, which is a test reporting safety it no "+
 			"longer provides.")
 
-	r.assert("every category checkbox is reachable without clicking",
-		got.Categories > 0 && got.CategoriesWithSize == got.Categories,
-		"all of them laid out with a non-zero height",
-		fmt.Sprintf("%d of %d have a height", got.CategoriesWithSize, got.Categories),
-		"A checkbox inside a folded group is in the DOM but not something the user can tick: the "+
-			"category groups open by default.")
+	r.assert("the category groups are folded by default",
+		got.Categories > 0 && got.CategoriesWithSize == 0,
+		"no category checkbox laid out until its group is opened",
+		fmt.Sprintf("%d of %d have a height while nothing was clicked", got.CategoriesWithSize, got.Categories),
+		"views/identifyrail.js seeds collapsedGroups with every cat-group id so the rail opens on the "+
+			"route switches and the scope summary, not a wall of category lists.")
+
+	r.assert("opening a category group lays out its checkboxes",
+		got.Categories > 0 && got.CategoriesWithSizeAfterExpand == got.Categories,
+		"every category checkbox laid out once its group is opened",
+		fmt.Sprintf("%d of %d have a height after opening every group", got.CategoriesWithSizeAfterExpand, got.Categories),
+		"A folded group is only useful if it opens: collapsibleGroup + wireGroups reveal the "+
+			"checkboxes, and a folded-forever group would be a category the user cannot reach.")
 
 	// The signal control is a tree, and it is built from the frontend's lists, which
 	// the Go parity guard holds to the engine's. One group per signal, one master per

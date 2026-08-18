@@ -386,13 +386,39 @@
      * configureRail() reports the shape of the Identify screen's left rail.
      *
      * The Configure choices are switchable DETECTION ROUTE sections rather than
-     * peer tabs: Smart detection on, Local AI off, and every category checkbox
-     * reachable without clicking anything.
+     * peer tabs: Smart detection on, Local AI off. The category groups start
+     * FOLDED, so the rail opens on the route switches and the scope summary
+     * rather than a wall of category lists; this probe measures both that they
+     * are folded by default and that opening a group lays its checkboxes out.
      */
     async configureRail() {
       await seed("identify");
-      const rail = document.querySelector("#identify-rail");
-      if (!rail) return { error: "no #identify-rail rendered on the Identify screen" };
+      const railOf = () => document.querySelector("#identify-rail");
+      if (!railOf()) return { error: "no #identify-rail rendered on the Identify screen" };
+
+      // Count the category checkboxes that are actually laid out. A folded
+      // group's body is display:none, so its checkboxes have no box at all. Read
+      // fresh each time, because a fold toggles through setState and rebuilds the
+      // rail, detaching the nodes measured before it.
+      const catWithSize = () => [...railOf().querySelectorAll(".cat-toggle")]
+        .filter((c) => c.getBoundingClientRect().height > 0).length;
+
+      // Folded by default: expect zero laid out. Then open every category group
+      // and measure again, which proves they are reachable once opened; then fold
+      // them all back so the probes that run after this one see the default rail.
+      const categoriesWithSize = catWithSize();
+      const catGroupIds = [...railOf().querySelectorAll("[data-group-toggle]")]
+        .map((h) => h.dataset.groupToggle)
+        .filter((id) => id && id.startsWith("cat-group-"));
+      const clickGroup = async (id) => {
+        const head = railOf().querySelector(`[data-group-toggle="${id}"]`);
+        if (head) { head.click(); await settle(60); }
+      };
+      for (const id of catGroupIds) await clickGroup(id);
+      const categoriesWithSizeAfterExpand = catWithSize();
+      for (const id of catGroupIds) await clickGroup(id);
+
+      const rail = railOf();
       const toggles = [...rail.querySelectorAll(".route-toggle")];
       const byRoute = (route) => toggles.find((t) => t.dataset.route === route);
       return {
@@ -402,11 +428,9 @@
         smartOn: byRoute("rail-smart")?.checked ?? null,
         localOn: byRoute("rail-local")?.checked ?? null,
         categories: rail.querySelectorAll(".cat-toggle").length,
-        // Present in the DOM is not the same as reachable: a checkbox inside a
-        // zero-height folded group is not something the user can tick. Measured,
-        // not assumed.
-        categoriesWithSize: [...rail.querySelectorAll(".cat-toggle")]
-          .filter((c) => c.getBoundingClientRect().height > 0).length,
+        // Folded by default, so zero are laid out now; all of them once opened.
+        categoriesWithSize,
+        categoriesWithSizeAfterExpand,
         // The signal control is a tree: one group per signal, its readings one
         // click below. Collapsed the readings are in the DOM at zero height, which
         // a string test reads as "present" and a user reads as absent, so both
