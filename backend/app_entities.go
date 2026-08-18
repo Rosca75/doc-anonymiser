@@ -22,8 +22,8 @@ var runtimeEventsEmit = func(a *App, name string, payload interface{}) {
 
 // ExpandEntityVariants returns the automatic + manual variants of one
 // entity for the expandable variant list in the review table.
-func (a *App) ExpandEntityVariants(e engine.Entity) []string {
-	return engine.ExpandVariants(e)
+func (a *App) ExpandEntityVariants(e engine.Value) []string {
+	return engine.ExpandSpellings(e)
 }
 
 // --- The step 3 value surface -----------------------------------------------
@@ -83,15 +83,16 @@ func (a *App) ValuePlaceholders() []engine.MappingEntry {
 // RemovedValueInfo is the frontend-facing summary of a removed value: what the
 // collapsed "removed" list shows, and what RestoreValue is addressed by.
 type RemovedValueInfo struct {
-	Original string `json:"original"`
+	// MainText is the removed Value's main text, as the user saw it.
+	MainText string `json:"mainText"`
 	Category string `json:"category"`
-	// Placeholder is what the value USED to become. It is the address for
+	// Placeholder is what the Value USED to become. It is the address for
 	// RestoreValue, and the reason the removed list is readable at all: the user
 	// removed a row from a table of placeholders, so that is what they recognise.
 	Placeholder string `json:"placeholder"`
-	// Variants are the spellings the exclusion also covers, so the UI can say
-	// that removing "Marie Duval" also stopped "M. Duval" being replaced.
-	Variants []string `json:"variants,omitempty"`
+	// Spellings are the forms the exclusion also covers, so the UI can say that
+	// removing "Marie Duval" also stopped "M. Duval" being replaced.
+	Spellings []string `json:"spellings,omitempty"`
 }
 
 // ValidationError is a single validation issue.
@@ -145,17 +146,17 @@ func (a *App) RemoveValue(placeholder string) (*RemovedValueInfo, error) {
 				"Pick a row from the replaced-values list", placeholder)
 	}
 
-	// The exclusion covers the variants too, or removing "Marie Duval" would
+	// The exclusion covers the spellings too, or removing "Marie Duval" would
 	// leave "M. Duval" being replaced under a placeholder whose entry is gone.
-	variants := engine.ExpandVariants(engine.Entity{
-		Category:  entry.Category,
-		Canonical: entry.Original,
+	spellings := engine.ExpandSpellings(engine.Value{
+		Category: entry.Category,
+		MainText: entry.Original,
 	})
 
 	removed := engine.RemovedValue{
 		Category:    entry.Category,
-		Canonical:   strings.ToLower(entry.Original),
-		Variants:    variants,
+		MainText:    strings.ToLower(entry.Original),
+		Spellings:   spellings,
 		Placeholder: entry.Placeholder,
 	}
 
@@ -166,10 +167,10 @@ func (a *App) RemoveValue(placeholder string) (*RemovedValueInfo, error) {
 	a.mu.Unlock()
 
 	return &RemovedValueInfo{
-		Original:    entry.Original,
+		MainText:    entry.Original,
 		Category:    entry.Category,
 		Placeholder: entry.Placeholder,
-		Variants:    variants,
+		Spellings:   spellings,
 	}, nil
 }
 
@@ -218,10 +219,10 @@ func (a *App) ListRemovedValues() []RemovedValueInfo {
 	out := make([]RemovedValueInfo, 0, len(a.removed))
 	for _, r := range a.removed {
 		out = append(out, RemovedValueInfo{
-			Original:    r.Canonical,
+			MainText:    r.MainText,
 			Category:    r.Category,
 			Placeholder: r.Placeholder,
-			Variants:    r.Variants,
+			Spellings:   r.Spellings,
 		})
 	}
 	return out
@@ -229,7 +230,7 @@ func (a *App) ListRemovedValues() []RemovedValueInfo {
 
 // ValidateValuesRequest is the input for ValidateValues.
 type ValidateValuesRequest struct {
-	Entities   []engine.Entity        `json:"entities"`
+	Values     []engine.Value         `json:"values"`
 	Patterns   []engine.CustomPattern `json:"patterns"`
 	AllowTerms []string               `json:"allowTerms"`
 }
@@ -257,7 +258,7 @@ func (a *App) ValidateValues(req ValidateValuesRequest) (*ValidateValuesResult, 
 
 	// Run the engine's validation
 	result := engine.ValidateValues(engine.ValidationInput{
-		Entities:       req.Entities,
+		Values:         req.Values,
 		Patterns:       req.Patterns,
 		Allowlist:      allowlist,
 		Categories:     nil,
@@ -294,7 +295,7 @@ func (a *App) ValidateValues(req ValidateValuesRequest) (*ValidateValuesResult, 
 // detection needs, because an intersection depends on what would actually be
 // detected: a category switched off cannot cover anything.
 type CheckIntersectionsRequest struct {
-	Entities   []engine.Entity          `json:"entities"`
+	Values     []engine.Value           `json:"values"`
 	Patterns   []engine.CustomPattern   `json:"patterns"`
 	AllowTerms []string                 `json:"allowTerms"`
 	Categories engine.CategorySelection `json:"categories"`
@@ -338,7 +339,7 @@ func (a *App) CheckIntersections(req CheckIntersectionsRequest) (*CheckIntersect
 	// would report an overlap on a value the run has already been told to leave
 	// alone.
 	allow := a.allowlistFor(req.AllowTerms)
-	entities := engine.FilterRemoved(req.Entities, a.removedValues())
+	entities := engine.FilterRemoved(req.Values, a.removedValues())
 
 	scope := engine.NewDetectionScope(entities, req.Patterns, categories,
 		minConfidence, country, allow, req.SuppressRegexPII)

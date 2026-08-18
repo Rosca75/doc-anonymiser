@@ -27,7 +27,7 @@ func runExportFixture(t *testing.T) (*Results, *Registry) {
 			{Name: "notes.txt", Format: FormatTXT, Markdown: "Alpine Trust wrote to marie.duval@example.com."},
 			csvDoc,
 		},
-		Entities:  []Entity{{Category: "entity_names", Canonical: "Alpine Trust"}},
+		Values:    []Value{{Category: "entity_names", MainText: "Alpine Trust"}},
 		Level:     LevelMedium,
 		Allowlist: NewEmptyAllowlist(),
 		Registry:  reg,
@@ -107,7 +107,7 @@ func TestCSVExportEqualsAnonymisedGrid(t *testing.T) {
 func TestSessionSaveLoadEquality(t *testing.T) {
 	_, reg := runExportFixture(t)
 	original := Session{
-		Entities:   []Entity{{Category: "entity_names", Canonical: "Alpine Trust", ManualVariants: []string{"Alpine"}}},
+		Values:     []Value{{Category: "entity_names", MainText: "Alpine Trust", Spellings: []string{"Alpine"}}},
 		AllowTerms: []string{"CSSF", "Luxembourg"},
 		Patterns:   []CustomPattern{{Expr: "PRJ-[0-9]+"}},
 		Settings:   SessionSettings{Level: "advanced", OllamaPort: 12345, Model: "qwen2.5:3b-instruct"},
@@ -158,11 +158,12 @@ func TestSessionSaveLoadEquality(t *testing.T) {
 		wantWrote string
 	}{
 		{version: 1, wantFix: "start a new session", wantWrote: "an older version"},
-		// The immediately previous version is refused too, not migrated: a v5
-		// file's per-value exclusions have no meaning under the curated model,
-		// so reading one would silently start replacing spellings the user had
-		// removed.
-		{version: 5, wantFix: "start a new session", wantWrote: "an older version"},
+		// The immediately previous version is refused too, not migrated. A v6
+		// file names entities, not Values, keys them on canonical rather than
+		// mainText, and states no discovery methods and no signal-source
+		// selection at all. Reading it field by field would mean guessing at
+		// every one of those, and each guess changes what the next run replaces.
+		{version: 6, wantFix: "start a new session", wantWrote: "an older version"},
 		{version: 99, wantFix: "update the application", wantWrote: "a newer version"},
 	} {
 		badStr := strings.Replace(string(bad),
@@ -180,36 +181,46 @@ func TestSessionSaveLoadEquality(t *testing.T) {
 	}
 }
 
-// TestSessionRoundTripsCuratedEntity: a value whose spellings the user set by
-// hand must come back curated. If autoExpand were dropped on the way through
-// the file, reloading a session would silently re-derive the list and start
+// TestSessionRoundTripsACuratedValue: a Value whose spellings the user set by
+// hand must come back curated. If the policy were dropped on the way through the
+// file, reloading a session would silently re-derive the list and start
 // replacing spellings the user had deleted.
-func TestSessionRoundTripsCuratedEntity(t *testing.T) {
-	curated := false
+func TestSessionRoundTripsACuratedValue(t *testing.T) {
 	raw, err := SaveSession(Session{
-		Entities: []Entity{{
-			Category:       CatPersonNames,
-			Canonical:      "Marie Duval",
-			ManualVariants: []string{"Duval"},
-			AutoExpand:     &curated,
+		Values: []Value{{
+			Category:         CatPersonNames,
+			MainText:         "Marie Duval",
+			Spellings:        []string{"Duval"},
+			SpellingPolicy:   SpellingPolicyCurated,
+			DiscoveryMethods: []string{MethodHeuristic, MethodLocalAI},
+			Evidence: []Evidence{{
+				Kind: EvidenceEmailLocalPart, SignalCategory: CatEmail,
+				SignalText: "marie.duval@example.com", Documents: []string{"engagement.md"},
+			}},
 		}},
 	})
 	if err != nil {
 		t.Fatalf("SaveSession: %v", err)
 	}
-	if strings.Contains(string(raw), "excludedVariants") {
-		t.Errorf("a session file must carry no per-value exclusion list, got: %s", raw)
-	}
 	loaded, err := LoadSession(raw)
 	if err != nil {
 		t.Fatalf("LoadSession: %v", err)
 	}
-	if len(loaded.Entities) != 1 {
-		t.Fatalf("expected one entity back, got %d", len(loaded.Entities))
+	if len(loaded.Values) != 1 {
+		t.Fatalf("expected one Value back, got %d", len(loaded.Values))
 	}
-	if loaded.Entities[0].AutoExpands() {
-		t.Errorf("a curated value must reload curated, got AutoExpand %v",
-			loaded.Entities[0].AutoExpand)
+	got := loaded.Values[0]
+	if got.DerivesSpellings() {
+		t.Errorf("a curated Value must reload curated, got policy %q", got.SpellingPolicy)
+	}
+	// Provenance and evidence survive the file too. Losing them would leave the
+	// workspace unable to say why a Value is there after a reload, and would
+	// silently promote an AI finding to a user declaration in precedence.
+	if len(got.DiscoveryMethods) != 2 {
+		t.Errorf("every discovery method must survive the file, got %v", got.DiscoveryMethods)
+	}
+	if len(got.Evidence) != 1 || got.Evidence[0].Kind != EvidenceEmailLocalPart {
+		t.Errorf("the evidence must survive the file, got %+v", got.Evidence)
 	}
 }
 
@@ -224,7 +235,7 @@ func TestMappingExportGolden(t *testing.T) {
 		t.Fatalf("MappingToCSV: %v", err)
 	}
 	// Rows come out longest-original-first (Registry.Export), which is why the
-	// email precedes the shorter entity name here.
+	// email precedes the shorter value name here.
 	want := "original,placeholder,category,count\n" +
 		"marie.duval@example.com,[EMAIL_1],email,2\n" +
 		"Alpine Trust,[ENTITY_1],entity_names,1\n"
@@ -263,17 +274,16 @@ func TestLoadSessionWithoutOptionalFields(t *testing.T) {
 	// was correct and irrelevant.
 	legacy := fmt.Appendf(nil, `{
 	  "version": %d,
-	  "entities": [{"category": "entity_names", "canonical": "Alpine Trust"}],
+	  "values": [{"category": "entity_names", "mainText": "Alpine Trust"}],
 	  "allowTerms": ["CSSF"],
 	  "patterns": [],
-	  "simpleRules": [],
 	  "settings": {
 	    "level": "medium",
 	    "categories": {"email": true, "person_names": true},
 	    "ollamaPort": 11434,
 	    "model": "qwen2.5:3b-instruct",
 	    "contextSize": 8192,
-	    "useAI": true
+	    "useLocalAI": true
 	  },
 	  "registry": []
 	}`, SessionVersion)
@@ -287,16 +297,16 @@ func TestLoadSessionWithoutOptionalFields(t *testing.T) {
 			s.Settings.MinConfidence)
 	}
 	// The fields that WERE present must survive untouched.
-	if s.Settings.Level != "medium" || !s.Settings.UseAI || s.Settings.ContextSize != 8192 {
+	if s.Settings.Level != "medium" || !s.Settings.UseLocalAI || s.Settings.ContextSize != 8192 {
 		t.Errorf("existing settings were not preserved: %+v", s.Settings)
 	}
-	if len(s.Entities) != 1 || s.Entities[0].Canonical != "Alpine Trust" {
-		t.Errorf("entities were not preserved: %+v", s.Entities)
+	if len(s.Values) != 1 || s.Values[0].MainText != "Alpine Trust" {
+		t.Errorf("Values were not preserved: %+v", s.Values)
 	}
-	// An entity with no stated confidence is a value the USER listed, and
-	// must stay filterable only as one (see engine/confidence_test.go).
-	if s.Entities[0].Confidence != 0 {
-		t.Errorf("an entity with no stated confidence must carry none, got %v", s.Entities[0].Confidence)
+	// A Value with no stated confidence is one the USER declared, and must stay
+	// filterable only as one (see engine/confidence_test.go).
+	if s.Values[0].Confidence != 0 {
+		t.Errorf("a Value with no stated confidence must carry none, got %v", s.Values[0].Confidence)
 	}
 }
 
@@ -317,22 +327,22 @@ func TestSessionRoundTripsMinConfidence(t *testing.T) {
 	}
 }
 
-// TestSessionSmartDetectAbsentVersusExplicitZero: the pointer field must
-// tell "an older file said nothing" apart from "the user deliberately
-// turned every filter off". Collapsing the two would
-// silently re-enable filtering for someone who switched it off.
-func TestSessionSmartDetectAbsentVersusExplicitZero(t *testing.T) {
+// TestHeuristicDiscoveryAbsentVersusExplicitZero: the pointer field must tell
+// "the file said nothing" apart from "the user deliberately turned every filter
+// off". Collapsing the two would silently re-enable filtering for someone who
+// switched it off.
+func TestHeuristicDiscoveryAbsentVersusExplicitZero(t *testing.T) {
 	absent, err := LoadSession(fmt.Appendf(nil,
 		`{"version":%d,"settings":{"level":"medium"}}`, SessionVersion))
 	if err != nil {
-		t.Fatalf("a session with no smartDetect block: %v", err)
+		t.Fatalf("a session with no heuristicDiscovery block: %v", err)
 	}
-	if absent.Settings.SmartDetect != nil {
-		t.Errorf("an absent smartDetect block must load as nil, got %+v", absent.Settings.SmartDetect)
+	if absent.Settings.HeuristicDiscovery != nil {
+		t.Errorf("an absent block must load as nil, got %+v", absent.Settings.HeuristicDiscovery)
 	}
 
-	off := SmartDetectOptions{}
-	raw, err := SaveSession(Session{Settings: SessionSettings{Level: "medium", SmartDetect: &off}})
+	off := HeuristicDiscoveryOptions{}
+	raw, err := SaveSession(Session{Settings: SessionSettings{Level: "medium", HeuristicDiscovery: &off}})
 	if err != nil {
 		t.Fatalf("SaveSession: %v", err)
 	}
@@ -340,20 +350,20 @@ func TestSessionSmartDetectAbsentVersusExplicitZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSession: %v", err)
 	}
-	if back.Settings.SmartDetect == nil {
-		t.Fatal("an explicitly all-zero smartDetect block must survive as a present value")
+	if back.Settings.HeuristicDiscovery == nil {
+		t.Fatal("an explicitly all-zero block must survive as a present value")
 	}
-	if *back.Settings.SmartDetect != off {
-		t.Errorf("SmartDetect = %+v, want %+v", *back.Settings.SmartDetect, off)
+	if *back.Settings.HeuristicDiscovery != off {
+		t.Errorf("HeuristicDiscovery = %+v, want %+v", *back.Settings.HeuristicDiscovery, off)
 	}
 }
 
-// TestSessionRoundTripsSmartDetect: the tuning survives save and load.
-func TestSessionRoundTripsSmartDetect(t *testing.T) {
-	want := SmartDetectOptions{
+// TestSessionRoundTripsHeuristicDiscovery: the tuning survives save and load.
+func TestSessionRoundTripsHeuristicDiscovery(t *testing.T) {
+	want := HeuristicDiscoveryOptions{
 		MinLength: 6, MinOccurrences: 2, ExcludeCommonWords: true, MinConfidence: 0.8,
 	}
-	raw, err := SaveSession(Session{Settings: SessionSettings{Level: "medium", SmartDetect: &want}})
+	raw, err := SaveSession(Session{Settings: SessionSettings{Level: "medium", HeuristicDiscovery: &want}})
 	if err != nil {
 		t.Fatalf("SaveSession: %v", err)
 	}
@@ -361,7 +371,28 @@ func TestSessionRoundTripsSmartDetect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSession: %v", err)
 	}
-	if back.Settings.SmartDetect == nil || *back.Settings.SmartDetect != want {
-		t.Errorf("SmartDetect = %+v, want %+v", back.Settings.SmartDetect, want)
+	if back.Settings.HeuristicDiscovery == nil || *back.Settings.HeuristicDiscovery != want {
+		t.Errorf("HeuristicDiscovery = %+v, want %+v", back.Settings.HeuristicDiscovery, want)
+	}
+}
+
+// TestSessionRoundTripsSignalSources: which built-in signals may derive
+// Suggestions is a user decision, and a file that cannot state it would silently
+// re-enable a source the user switched off.
+func TestSessionRoundTripsSignalSources(t *testing.T) {
+	raw, err := SaveSession(Session{Settings: SessionSettings{
+		Level:                   "medium",
+		SignalSuggestionSources: SignalSourceSelection{SignalSourceEmail: false},
+	}})
+	if err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	back, err := LoadSession(raw)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if SignalSourceEnabled(back.Settings.SignalSuggestionSources, SignalSourceEmail) {
+		t.Errorf("a source switched off must reload off, got %+v",
+			back.Settings.SignalSuggestionSources)
 	}
 }

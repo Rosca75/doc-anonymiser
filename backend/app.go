@@ -44,40 +44,43 @@ type Settings struct {
 	// Default 8192; 0 keeps the model default. Higher values let the AI
 	// read longer documents at once but use more memory.
 	ContextSize int `json:"contextSize"`
-	// Country scopes the country-specific regex categories in the deterministic
-	// pass. It is an engine-owned concept from, mirrored in the rail.
+	// Country scopes the country-specific built-in pattern categories. It is an
+	// engine-owned concept (engine/country.go), mirrored in the rail.
 	Country string `json:"country"`
-	// UseAI and UseSmartDetect are the DETECTION ROUTE switches.
-	// They are settings rather than per-call arguments so they survive in the
-	// session file and so Go, not the frontend, is the one that decides
-	// whether a route runs.
+	// UseLocalAI is the Local AI DETECTION ROUTE switch: OFF by default, and
+	// gated on the live Ollama availability as well, so a stale true can never
+	// start a model that is not there.
 	//
-	// UseAI is "Use local AI (Ollama)": OFF by default, and gated on the live
-	// Ollama availability as well, so a stale true can never start a model
-	// that is not there. UseSmartDetect is the offline heuristic pass: ON by
-	// default, because it needs nothing installed.
+	// It is a setting rather than a per-call argument so it survives in the
+	// session file and so Go, not the frontend, decides whether a route runs.
+	UseLocalAI bool `json:"useLocalAI"`
+	// UseBuiltInPatterns and UseHeuristicDiscovery are two of Smart detection's
+	// three methods, controlled independently.
 	//
-	UseAI          bool `json:"useAI"`
-	UseSmartDetect bool `json:"useSmartDetect"`
-	// UseNativeDetect and UseAutoDetect are the two halves the "Smart detection"
-	// route split into, so the user controls them independently:
-	//
-	// UseNativeDetect is the MASTER SWITCH over the regex signal categories
+	// UseBuiltInPatterns is the MASTER over the structured signal categories
 	// (email, VAT, IBAN, amount, date, ...). OFF means pass 1 is skipped and no
-	// signal category is replaced at anonymisation time, whatever the per-category
-	// checkboxes say; the checkboxes keep their selection so turning it back on
-	// restores exactly what was chosen. ON by default: the deterministic PII pass
-	// is what most documents need.
+	// signal category is replaced at anonymisation time, whatever the
+	// per-category checkboxes say; the checkboxes keep their selection so turning
+	// it back on restores exactly what was chosen. ON by default: the
+	// deterministic pass is what most documents need.
 	//
-	// UseAutoDetect is the offline word-frequency pass (engine SmartDetect). ON by
-	// default; it needs nothing installed.
+	// UseHeuristicDiscovery is heuristic discovery: spelling, context, frequency
+	// and deterministic gazetteers. ON by default; it needs nothing installed.
 	//
-	// UseSmartDetect stays for backward field compatibility and is DERIVED:
-	// written = (UseNativeDetect || UseAutoDetect) on every settings push, so the
-	// section header and any older reader still see the route as "on" when either
-	// half is.
-	UseNativeDetect bool `json:"useNativeDetect"`
-	UseAutoDetect   bool `json:"useAutoDetect"`
+	// There is deliberately no fourth boolean for the Smart detection SECTION.
+	// The section is on when any of its methods is on, so the section switch is a
+	// UI master that changes these settings in one action rather than a state of
+	// its own that could disagree with them.
+	UseBuiltInPatterns    bool `json:"useBuiltInPatterns"`
+	UseHeuristicDiscovery bool `json:"useHeuristicDiscovery"`
+	// SignalSuggestionSources is Smart detection's third method: which built-in
+	// signals may DERIVE Suggestions (engine/signals.go).
+	//
+	// It does NOT govern whether those signals are matched and replaced. Clearing
+	// "Email addresses" here stops email-derived Suggestions and leaves email
+	// anonymisation exactly as it was, which is the whole reason the setting is
+	// separate from the category switch.
+	SignalSuggestionSources engine.SignalSourceSelection `json:"signalSuggestionSources"`
 	// MinConfidence is the detection-confidence floor, on
 	// the scale of 0.0 to 1.0. Spans scoring below it are
 	// not replaced. 0 (the default, and what an older session file without
@@ -85,11 +88,9 @@ type Settings struct {
 	// silently remove replacements a user did not ask it to remove. See
 	// engine.FilterByMinConfidence for what each level currently excludes.
 	MinConfidence float32 `json:"minConfidence"`
-	// SmartDetect is the smart-detection tuning. It is a
-	// SETTING rather than a per-run argument so it survives in the session
-	// file; RunSmartDetection still receives it explicitly, so a call
-	// always says what it is filtering by.
-	SmartDetect engine.SmartDetectOptions `json:"smartDetect"`
+	// HeuristicDiscovery is the heuristic tuning. A SETTING rather than a
+	// per-run argument so it survives in the session file.
+	HeuristicDiscovery engine.HeuristicDiscoveryOptions `json:"heuristicDiscovery"`
 }
 
 // DocumentInfo is the frontend-facing summary of one loaded Document.
@@ -176,7 +177,7 @@ type App struct {
 	// that must not be able to happen separately, and the same-format export
 	// builds its own allowlist from a.lastReq, so a removal carried only in the
 	// request would be honoured by the pipeline and forgotten by the export.
-	// Settings.UseAI is the precedent:  moved that decision into Go for
+	// Settings.UseLocalAI is the precedent:  moved that decision into Go for
 	// exactly this reason.
 	//
 	// It is deliberately NOT the allowlist, in state or in the session file: a
@@ -234,15 +235,15 @@ func defaultSettings() Settings {
 		Model:       ollama.DefaultModel,
 		ContextSize: ollama.DefaultContextSize,
 		Country:     engine.CountryLU,
-		// The stricter defaults, matching the frontend store: Smart
-		// detection over-detecting was the reported problem.
-		SmartDetect: engine.DefaultSmartDetectOptions(),
-		// Smart detection is on by default (it needs nothing installed);
-		// the AI route is not. Both halves of Smart detection default on, and
-		// UseSmartDetect stays true as their derived value.
-		UseSmartDetect:  true,
-		UseNativeDetect: true,
-		UseAutoDetect:   true,
+		// The stricter defaults, matching the frontend store: heuristic discovery
+		// over-detecting is the failure mode that matters.
+		HeuristicDiscovery: engine.DefaultHeuristicDiscoveryOptions(),
+		// Smart detection's methods are all on by default: none of them needs
+		// anything installed. The Local AI route is off, because handing the
+		// document to a model is the user's decision to make.
+		UseBuiltInPatterns:      true,
+		UseHeuristicDiscovery:   true,
+		SignalSuggestionSources: engine.DefaultSignalSources(),
 	}
 }
 
@@ -566,14 +567,14 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 		return ollama.OllamaStatus{}, fmt.Errorf(
 			"invalid minimum confidence %v, expected a number between 0 (replace every detection) and 1 (replace only the most certain ones)", s.MinConfidence)
 	}
-	if s.SmartDetect.MinConfidence < 0 || s.SmartDetect.MinConfidence > 1 {
+	if s.HeuristicDiscovery.MinConfidence < 0 || s.HeuristicDiscovery.MinConfidence > 1 {
 		return ollama.OllamaStatus{}, fmt.Errorf(
-			"invalid smart detection confidence %v, expected a number between 0 (show every suggestion) and 1 (show only the strongest)", s.SmartDetect.MinConfidence)
+			"invalid smart detection confidence %v, expected a number between 0 (show every suggestion) and 1 (show only the strongest)", s.HeuristicDiscovery.MinConfidence)
 	}
-	if s.SmartDetect.MinLength < 0 || s.SmartDetect.MinOccurrences < 0 {
+	if s.HeuristicDiscovery.MinLength < 0 || s.HeuristicDiscovery.MinOccurrences < 0 {
 		return ollama.OllamaStatus{}, fmt.Errorf(
 			"invalid smart detection limits (minimum length %d, minimum occurrences %d), both must be zero or a positive number",
-			s.SmartDetect.MinLength, s.SmartDetect.MinOccurrences)
+			s.HeuristicDiscovery.MinLength, s.HeuristicDiscovery.MinOccurrences)
 	}
 
 	a.mu.Lock()

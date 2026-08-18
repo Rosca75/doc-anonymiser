@@ -234,7 +234,7 @@ func (a *App) sameFormatConfig(name string) (exportfmt.Config, *engine.Document,
 		categories = settings.Categories
 	}
 	return exportfmt.Config{
-		Entities:   req.Entities,
+		Values:     req.Values,
 		Patterns:   req.Patterns,
 		Categories: categories,
 		Level:      engine.Level(settings.Level),
@@ -487,7 +487,7 @@ func (a *App) ExportReport(format string) error {
 func (a *App) SaveSessionToFile(req RunRequest) error {
 	a.mu.Lock()
 	settings := a.settings
-	smartDetect := settings.SmartDetect
+	heuristicDiscovery := settings.HeuristicDiscovery
 	removed := make([]engine.RemovedValue, len(a.removed))
 	copy(removed, a.removed)
 	var registry []engine.MappingEntry
@@ -508,22 +508,22 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 	a.mu.Unlock()
 
 	data, err := engine.SaveSession(engine.Session{
-		Entities:   req.Entities,
+		Values:     req.Values,
 		AllowTerms: req.AllowTerms,
 		Patterns:   req.Patterns,
 		Settings: engine.SessionSettings{
-			Level:           settings.Level,
-			Categories:      settings.Categories,
-			OllamaPort:      settings.OllamaPort,
-			Model:           settings.Model,
-			ContextSize:     settings.ContextSize,
-			Country:         settings.Country,
-			UseAI:           settings.UseAI,
-			UseSmartDetect:  &settings.UseSmartDetect,
-			UseNativeDetect: &settings.UseNativeDetect,
-			UseAutoDetect:   &settings.UseAutoDetect,
-			MinConfidence:   settings.MinConfidence,
-			SmartDetect:     &smartDetect,
+			Level:                   settings.Level,
+			Categories:              settings.Categories,
+			OllamaPort:              settings.OllamaPort,
+			Model:                   settings.Model,
+			ContextSize:             settings.ContextSize,
+			Country:                 settings.Country,
+			UseLocalAI:              settings.UseLocalAI,
+			UseBuiltInPatterns:      &settings.UseBuiltInPatterns,
+			UseHeuristicDiscovery:   &settings.UseHeuristicDiscovery,
+			SignalSuggestionSources: engine.NormaliseSignalSources(settings.SignalSuggestionSources),
+			MinConfidence:           settings.MinConfidence,
+			HeuristicDiscovery:      &heuristicDiscovery,
 		},
 		Registry:             registry,
 		PlaceholderOverrides: overrides,
@@ -630,30 +630,29 @@ func (a *App) restoredSettings(session engine.Session) Settings {
 	defer a.mu.Unlock()
 
 	restored := Settings{
-		Level:           session.Settings.Level,
-		Categories:      session.Settings.Categories,
-		OllamaPort:      session.Settings.OllamaPort,
-		Model:           session.Settings.Model,
-		ContextSize:     session.Settings.ContextSize,
-		Country:         session.Settings.Country,
-		UseAI:           session.Settings.UseAI,
-		UseSmartDetect:  true, // the default; an absent field means "on"
-		UseNativeDetect: true, // absent means "on", like UseSmartDetect
-		UseAutoDetect:   true, // absent means "on", like UseSmartDetect
-		MinConfidence:   session.Settings.MinConfidence,
-		SmartDetect:     a.settings.SmartDetect,
+		Level:                 session.Settings.Level,
+		Categories:            session.Settings.Categories,
+		OllamaPort:            session.Settings.OllamaPort,
+		Model:                 session.Settings.Model,
+		ContextSize:           session.Settings.ContextSize,
+		Country:               session.Settings.Country,
+		UseLocalAI:            session.Settings.UseLocalAI,
+		UseBuiltInPatterns:    true, // absent means "on": that is the default
+		UseHeuristicDiscovery: true, // absent means "on": that is the default
+		// A missing key falls back to the default rather than to "off", so a file
+		// that says nothing about a source cannot silently disable it.
+		SignalSuggestionSources: engine.NormaliseSignalSources(session.Settings.SignalSuggestionSources),
+		MinConfidence:           session.Settings.MinConfidence,
+		HeuristicDiscovery:      a.settings.HeuristicDiscovery,
 	}
-	if session.Settings.UseSmartDetect != nil {
-		restored.UseSmartDetect = *session.Settings.UseSmartDetect
+	if session.Settings.UseBuiltInPatterns != nil {
+		restored.UseBuiltInPatterns = *session.Settings.UseBuiltInPatterns
 	}
-	if session.Settings.UseNativeDetect != nil {
-		restored.UseNativeDetect = *session.Settings.UseNativeDetect
+	if session.Settings.UseHeuristicDiscovery != nil {
+		restored.UseHeuristicDiscovery = *session.Settings.UseHeuristicDiscovery
 	}
-	if session.Settings.UseAutoDetect != nil {
-		restored.UseAutoDetect = *session.Settings.UseAutoDetect
-	}
-	if session.Settings.SmartDetect != nil {
-		restored.SmartDetect = *session.Settings.SmartDetect
+	if session.Settings.HeuristicDiscovery != nil {
+		restored.HeuristicDiscovery = *session.Settings.HeuristicDiscovery
 	}
 	// An omitted optional block means "keep the current setting" rather than
 	// silently resetting it. This is NOT version compatibility (a file from

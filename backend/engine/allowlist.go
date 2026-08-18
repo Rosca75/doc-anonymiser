@@ -3,7 +3,7 @@
 //
 // The default seed covers the public, non-identifying vocabulary of the
 // owner's domain: financial regulators, common methodologies/standards and
-// country names — words that look like organisation or location entities
+// country names — words that look like organisation or location values
 // to the passes but identify nobody. Users add and remove terms in the UI;
 // the seed itself can be removed for a session too (per-term delete).
 package engine
@@ -249,7 +249,7 @@ func (a *Allowlist) Terms() []string {
 }
 
 // FilterAllowed drops every span whose matched text is allowlisted. It is
-// the shared guard applied to PII, entity, custom-pattern and LLM spans
+// the shared guard applied to built-in pattern, Value and custom-pattern spans
 // alike — the single place enforcing "allowlist wins" for span producers
 // that do not check the allowlist themselves.
 func FilterAllowed(spans []Span, allow *Allowlist) []Span {

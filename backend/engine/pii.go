@@ -9,7 +9,7 @@
 //   - Every regex is compiled once at package init (performance budget:
 //     per-call compilation is the classic budget killer) and documented
 //     with examples of what it matches and deliberately does NOT match.
-//   - IBAN candidates additionally pass a mod-97 checksum in Go, killing
+//   - IBAN suggestions additionally pass a mod-97 checksum in Go, killing
 //     the false positives a regex alone would produce.
 package engine
 
@@ -20,7 +20,7 @@ import (
 )
 
 // Level is the anonymisation level (CLAUDE.md §5). It decides which PII
-// categories fire in pass 1 and which entity categories later passes use.
+// categories fire in pass 1 and which value categories later passes use.
 type Level string
 
 const (
@@ -37,30 +37,30 @@ type Span struct {
 	End      int    `json:"end"`
 	Category string `json:"category"`
 	Original string `json:"original"`
-	// Canonical is the entity's canonical name when the span came from a
-	// variant match ("M. Duval" → canonical "Marie Duval"), so every
+	// MainText is the value's mainText name when the span came from a
+	// variant match ("M. Duval" → mainText "Marie Duval"), so every
 	// variant shares one placeholder. Empty for PII spans (the matched
-	// text IS the canonical value).
-	Canonical string `json:"canonical,omitempty"`
+	// text IS the mainText value).
+	MainText string `json:"mainText,omitempty"`
 	// Confidence in [0.0, 1.0]. Deterministic regex hits
-	// default to 1.0; LLM proposals default to ConfidenceLLMDefault; manual
-	// entities to ConfidenceManualDefault. Context-word boosting may nudge a
+	// default to 1.0; a Local AI finding to ConfidenceLLMDefault; a declared
+	// Value to ConfidenceManualDefault. Context-word boosting may nudge a
 	// value up (capped at 1.0). Zero means "not scored" and is treated as
 	// 1.0 by the threshold filter for back-compat.
 	Confidence float32 `json:"confidence,omitempty"`
-	// Origin is the ROUTE that produced this span (origin.go). It decides
+	// MatchClass is the ROUTE that produced this span (matchClass.go). It decides
 	// precedence when two routes claim the same characters, which Confidence
 	// cannot do: confidence is also the input to the MinConfidence floor, so
 	// using it for precedence means raising the floor silently reorders which
-	// route wins. Empty ranks with OriginDeclared.
-	Origin string `json:"origin,omitempty"`
+	// route wins. Empty ranks with MatchClassUserDefined.
+	MatchClass string `json:"matchClass,omitempty"`
 }
 
-// CanonicalOrOriginal returns the registry key for this span: the
-// canonical entity name when set, the matched text otherwise.
-func (s Span) CanonicalOrOriginal() string {
-	if s.Canonical != "" {
-		return s.Canonical
+// MainTextOrOriginal returns the registry key for this span: the
+// mainText value name when set, the matched text otherwise.
+func (s Span) MainTextOrOriginal() string {
+	if s.MainText != "" {
+		return s.MainText
 	}
 	return s.Original
 }
@@ -127,7 +127,7 @@ var piiPatterns = []piiPattern{
 		re:       regexp.MustCompile(`https?://[^\s<>"')\]]+`),
 	},
 	{
-		// IBAN candidates; the mod-97 checksum below is the real filter.
+		// IBAN suggestions; the mod-97 checksum below is the real filter.
 		// Matches:      LU28 0019 4006 4475 0000, DE89370400440532013000
 		// Does not match: LU28 0019 4006 4475 0001 (checksum fails, vetoed
 		// by validate), "LUXEMBOURG" (needs 2 check digits after country).
@@ -389,7 +389,7 @@ func DetectPIISelected(text string, sel CategorySelection, country string) []Spa
 				Category:   p.category,
 				Original:   original,
 				Confidence: ConfidenceDeterministic,
-				Origin:     OriginNative,
+				MatchClass: MatchClassBuiltInPattern,
 			})
 		}
 	}
@@ -473,11 +473,17 @@ const (
 	// survived any checksum/validate step. Callers may boost above via
 	// context words; ApplySpans clamps to 1.0.
 	ConfidenceDeterministic float32 = 1.0
-	// ConfidenceManualDefault is the score for user-entered entities
+	// ConfidenceManualDefault is the score for a Value the user declared
 	// (high trust, but not "checksum-verified").
 	ConfidenceManualDefault float32 = 0.95
-	// ConfidenceLLMDefault is the fallback score for LLM proposals that
-	// did not carry an explicit confidence field.
+	// ConfidenceSignalDerived is the score for a Suggestion signal-based
+	// discovery produced. It sits BELOW a user declaration and ABOVE a model
+	// finding: the evidence is a deterministic pattern match and the finding is a
+	// literal occurrence of text derived from it, but the INFERENCE from evidence
+	// to Value is still a guess the user has to confirm.
+	ConfidenceSignalDerived float32 = 0.9
+	// ConfidenceLLMDefault is the fallback score for a Local AI finding that
+	// carried no explicit confidence.
 	ConfidenceLLMDefault float32 = 0.8
 )
 
@@ -489,10 +495,9 @@ const (
 // with Confidence == 0 counts as 1.0, so a producer that states no confidence
 // is trusted rather than filtered away.
 //
-// Examples with the current scale: min 0.9 drops values the local AI
-// proposed on its own (ConfidenceLLMDefault, 0.8) and keeps both the
-// values the user listed (0.95) and the pattern matches (1.0); min 0.99
-// keeps only the pattern matches.
+// Examples with the current scale: min 0.85 drops what only the local AI found
+// (0.8) and keeps signal-derived findings (0.9), declared Values (0.95) and
+// pattern matches (1.0); min 0.99 keeps only the pattern matches.
 func FilterByMinConfidence(spans []Span, min float32) []Span {
 	if min <= 0 {
 		return spans
@@ -520,8 +525,8 @@ func effectiveConfidence(s Span) float32 {
 // ResolveOverlaps keeps a non-overlapping subset of spans, in the fixed
 // priority order below. The result is sorted by Start.
 //
-//  1. Lower OriginRank wins: native, then declared, then auto, then AI
-//     (origin.go). Origin comes FIRST because it is the only comparator that
+//  1. Lower MatchClassRank wins: native, then declared, then auto, then AI
+//     (matchClass.go). MatchClass comes FIRST because it is the only comparator that
 //     answers "which route should own this string", and it is the answer the
 //     user is shown. The two comparators below cannot answer it: a regex
 //     signal and a custom pattern both score 1.0, so confidence leaves them
@@ -572,7 +577,7 @@ func resolveOverlaps(spans []Span, collect bool) (kept, dropped []Span) {
 	ordered := make([]Span, len(spans))
 	copy(ordered, spans)
 	sort.Slice(ordered, func(i, j int) bool {
-		ri, rj := OriginRank(ordered[i].Origin), OriginRank(ordered[j].Origin)
+		ri, rj := MatchClassRank(ordered[i].MatchClass), MatchClassRank(ordered[j].MatchClass)
 		if ri != rj {
 			return ri < rj // the superseding route first
 		}

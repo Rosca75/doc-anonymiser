@@ -132,10 +132,10 @@ func TestDiscoverHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	want := []engine.ProposedEntity{
-		{Category: "entity_names", Text: "Alpine Trust"},
-		{Category: "project_names", Text: "Project Borealis"},
-		{Category: "person_names", Text: "Marie Duval"},
+	want := []engine.Suggestion{
+		{Category: "entity_names", MainText: "Alpine Trust"},
+		{Category: "project_names", MainText: "Project Borealis"},
+		{Category: "person_names", MainText: "Marie Duval"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %+v, want %+v", got, want)
@@ -144,11 +144,11 @@ func TestDiscoverHappyPath(t *testing.T) {
 		// Compared field by field: ProposedEntity carries a Variants slice, so
 		// the struct is not comparable with ==. Discover proposes bare strings
 		// and never folds, so an empty Variants list is part of the contract.
-		if got[i].Category != want[i].Category || got[i].Text != want[i].Text {
+		if got[i].Category != want[i].Category || got[i].MainText != want[i].MainText {
 			t.Errorf("proposal %d = %+v, want %+v", i, got[i], want[i])
 		}
-		if len(got[i].Variants) != 0 {
-			t.Errorf("proposal %d must carry no variants, got %v", i, got[i].Variants)
+		if len(got[i].Spellings) != 0 {
+			t.Errorf("proposal %d must carry no variants, got %v", i, got[i].Spellings)
 		}
 	}
 }
@@ -157,7 +157,7 @@ func TestDiscoverStripsCodeFences(t *testing.T) {
 	text := "Alpine Trust appears here."
 	c := chatReplyServer(t, "```json\n{\"entity_names\":[\"Alpine Trust\"],\"project_names\":[],\"person_names\":[]}\n```")
 	got, err := c.Discover(context.Background(), text)
-	if err != nil || len(got) != 1 || got[0].Text != "Alpine Trust" {
+	if err != nil || len(got) != 1 || got[0].MainText != "Alpine Trust" {
 		t.Errorf("fenced JSON not tolerated: %+v %v", got, err)
 	}
 }
@@ -184,7 +184,7 @@ func TestDiscoverHallucinationFilterAndAllowlist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	if len(got) != 1 || got[0].Text != "Borealis Fund" {
+	if len(got) != 1 || got[0].MainText != "Borealis Fund" {
 		t.Errorf("filter failed: want only Borealis Fund, got %+v", got)
 	}
 }
@@ -204,21 +204,21 @@ func TestDiscoverContextCancellation(t *testing.T) {
 }
 
 func TestMergeProposals(t *testing.T) {
-	a := []engine.ProposedEntity{
-		{Category: "entity_names", Text: "Alpine Trust"},
-		{Category: "person_names", Text: "Marie Duval"},
+	a := []engine.Suggestion{
+		{Category: "entity_names", MainText: "Alpine Trust"},
+		{Category: "person_names", MainText: "Marie Duval"},
 	}
-	b := []engine.ProposedEntity{
-		{Category: "entity_names", Text: "ALPINE TRUST"}, // dup, other case
-		{Category: "entity_names", Text: "Borealis Fund"},
-		{Category: "person_names", Text: "  "}, // blank: dropped
+	b := []engine.Suggestion{
+		{Category: "entity_names", MainText: "ALPINE TRUST"}, // dup, other case
+		{Category: "entity_names", MainText: "Borealis Fund"},
+		{Category: "person_names", MainText: "  "}, // blank: dropped
 	}
-	got := MergeProposals(a, b)
+	got := MergeSuggestions(a, b)
 	if len(got) != 3 {
 		t.Fatalf("want 3 merged proposals, got %+v", got)
 	}
 	// First-seen spelling wins.
-	if got[0].Text != "Alpine Trust" || got[2].Text != "Borealis Fund" {
+	if got[0].MainText != "Alpine Trust" || got[2].MainText != "Borealis Fund" {
 		t.Errorf("merge order/spelling wrong: %+v", got)
 	}
 }
@@ -238,7 +238,7 @@ func TestAnonymiseNeverCallsOllama(t *testing.T) {
 	res, err := engine.Run(context.Background(), engine.PipelineInput{
 		Documents: []engine.Document{{Name: "z.txt", Format: engine.FormatTXT,
 			Markdown: "Final note about Zephyr Capital."}},
-		Entities:  []engine.Entity{{Category: engine.CatEntityNames, Canonical: "Zephyr Capital"}},
+		Values:    []engine.Value{{Category: engine.CatEntityNames, MainText: "Zephyr Capital"}},
 		Level:     engine.LevelMedium,
 		Allowlist: engine.NewEmptyAllowlist(),
 	})
@@ -442,9 +442,9 @@ func TestDiscoverAcrossChunks(t *testing.T) {
 	}
 	var names []string
 	for _, p := range got {
-		names = append(names, p.Text)
+		names = append(names, p.MainText)
 	}
-	if len(got) != 2 || got[0].Text != "Alpine Trust" || got[1].Text != "Zephyr Capital" {
+	if len(got) != 2 || got[0].MainText != "Alpine Trust" || got[1].MainText != "Zephyr Capital" {
 		t.Errorf("merged proposals wrong: %v", names)
 	}
 }
@@ -480,7 +480,7 @@ func TestDiscoverCancelBetweenChunks(t *testing.T) {
 	if n := calls.Load(); n != 2 {
 		t.Errorf("loop must stop after the cancelled chunk, made %d calls", n)
 	}
-	if len(got) != 1 || got[0].Text != "Alpine Trust" {
+	if len(got) != 1 || got[0].MainText != "Alpine Trust" {
 		t.Errorf("partial proposals must survive cancellation: %+v", got)
 	}
 }
@@ -495,20 +495,20 @@ func TestClassifyCandidates(t *testing.T) {
 	allow := engine.NewAllowlist() // seeds CSSF
 	c.Allow = allow.Contains
 
-	got, err := c.ClassifyCandidates(context.Background(), []engine.Candidate{
-		{Text: "Alpine Trust", Category: "person_names", Contexts: []string{"audit of Alpine Trust started"}},
-		{Text: "Marie Duval", Category: "entity_names"},
-		{Text: "CSSF", Category: "entity_names"},
+	got, err := c.ClassifySuggestions(context.Background(), []engine.Suggestion{
+		{MainText: "Alpine Trust", Category: "person_names", Contexts: []string{"audit of Alpine Trust started"}},
+		{MainText: "Marie Duval", Category: "entity_names"},
+		{MainText: "CSSF", Category: "entity_names"},
 	})
 	if err != nil {
-		t.Fatalf("ClassifyCandidates: %v", err)
+		t.Fatalf("ClassifySuggestions: %v", err)
 	}
 	if len(got) != 2 {
 		t.Fatalf("want 2 classified survivors, got %+v", got)
 	}
 	byText := map[string]string{}
 	for _, p := range got {
-		byText[p.Text] = p.Category
+		byText[p.MainText] = p.Category
 	}
 	if byText["Alpine Trust"] != "entity_names" || byText["Marie Duval"] != "person_names" {
 		t.Errorf("classification wrong: %v", byText)
@@ -551,15 +551,15 @@ func TestClassifyCandidatesBatching(t *testing.T) {
 	})
 
 	c.ContextSize = 1024 // budget 2304 bytes per prompt
-	var candidates []engine.Candidate
+	var candidates []engine.Suggestion
 	for i := 0; i < 200; i++ {
-		candidates = append(candidates, engine.Candidate{
-			Text:     strings.Repeat("N", 20) + string(rune('A'+i%26)),
+		candidates = append(candidates, engine.Suggestion{
+			MainText: strings.Repeat("N", 20) + string(rune('A'+i%26)),
 			Contexts: []string{strings.Repeat("context words here ", 5)},
 		})
 	}
-	if _, err := c.ClassifyCandidates(context.Background(), candidates); err != nil {
-		t.Fatalf("ClassifyCandidates: %v", err)
+	if _, err := c.ClassifySuggestions(context.Background(), candidates); err != nil {
+		t.Fatalf("ClassifySuggestions: %v", err)
 	}
 	budget := c.ContextSize * 3 * 3 / 4
 	if maxBody.Load() > int64(budget)+256 {
@@ -573,8 +573,8 @@ func TestClassifyCandidatesBatching(t *testing.T) {
 // TestPromptsAndParserAgreeOnTheCategoryKeys is the parity guard for this file.
 //
 // Three lists have to name the same categories: the keys each prompt demands,
-// the keys parseEntityJSON reads back, and the engine's own category set. A key
-// in a prompt that parseEntityJSON does not know is dropped on parse; a key here
+// the keys parseSuggestionJSON reads back, and the engine's own category set. A key
+// in a prompt that parseSuggestionJSON does not know is dropped on parse; a key here
 // that no prompt requests is a category the model is never asked to fill.
 // Either way the category is dead and every test still passes, which is exactly
 // how organisation_names survived for three phases.
@@ -584,14 +584,14 @@ func TestPromptsAndParserAgreeOnTheCategoryKeys(t *testing.T) {
 		"classify": classifySystemPrompt,
 	}
 
-	for _, category := range engine.AllEntityCategories {
+	for _, category := range engine.AllValueCategories {
 		// custom_patterns is the user's own regex; a model has nothing to say
 		// about it, so it is deliberately outside this contract.
 		if category == engine.CatCustomPatterns {
 			continue
 		}
-		if !slices.Contains(entityCategories, category) {
-			t.Errorf("the engine category %q is not in entityCategories, so the parser drops it", category)
+		if !slices.Contains(promptCategories, category) {
+			t.Errorf("the engine category %q is not in promptCategories, so the parser drops it", category)
 		}
 		for name, prompt := range prompts {
 			if !strings.Contains(prompt, `"`+category+`"`) {
@@ -600,9 +600,9 @@ func TestPromptsAndParserAgreeOnTheCategoryKeys(t *testing.T) {
 		}
 	}
 
-	for _, category := range entityCategories {
-		if !slices.Contains(engine.AllEntityCategories, category) {
-			t.Errorf("entityCategories names %q, which the engine does not have", category)
+	for _, category := range promptCategories {
+		if !slices.Contains(engine.AllValueCategories, category) {
+			t.Errorf("promptCategories names %q, which the engine does not have", category)
 		}
 	}
 }
@@ -613,15 +613,15 @@ func TestParseEntityJSONAcceptsEveryKeyAndIgnoresUnknownOnes(t *testing.T) {
 	  "person_names":["Marie Duval"],"identifier_names":["INV-88213"],
 	  "other_names":["Borealis"],"planet_names":["Mars"]}`
 
-	got, err := parseEntityJSON(reply)
+	got, err := parseSuggestionJSON(reply)
 	if err != nil {
-		t.Fatalf("parseEntityJSON: %v", err)
+		t.Fatalf("parseSuggestionJSON: %v", err)
 	}
 	if len(got) != 7 {
 		t.Fatalf("want one proposal per known key, got %d: %+v", len(got), got)
 	}
 	for _, p := range got {
-		if p.Text == "Mars" {
+		if p.MainText == "Mars" {
 			t.Error("an unknown key must be ignored, not passed through")
 		}
 	}

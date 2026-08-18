@@ -40,7 +40,7 @@ func valuesApp(t *testing.T) (*App, RunRequest) {
 		Markdown: "Marie Duval chaired the meeting. Marie Duval signed it.",
 	}}
 	req := RunRequest{
-		Entities: []engine.Entity{{Category: engine.CatPersonNames, Canonical: "Marie Duval"}},
+		Values: []engine.Value{{Category: engine.CatPersonNames, MainText: "Marie Duval"}},
 	}
 	return app, req
 }
@@ -59,7 +59,7 @@ func TestRemoveValuePrunesTheKeyAndKeepsTheNumber(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveValue: %v", err)
 	}
-	if info.Original != "Marie Duval" || info.Placeholder != placeholder {
+	if info.MainText != "Marie Duval" || info.Placeholder != placeholder {
 		t.Errorf("RemoveValue reported %+v, want the row that was removed", info)
 	}
 
@@ -77,8 +77,8 @@ func TestRemoveValuePrunesTheKeyAndKeepsTheNumber(t *testing.T) {
 	// placeholder means this person, and handing it to somebody else would make
 	// two artefacts of one session disagree with nothing able to detect it.
 	app.docs[0].Markdown = "Alpine Trust and Marie Duval."
-	next := RunRequest{Entities: []engine.Entity{
-		{Category: engine.CatPersonNames, Canonical: "Alpine Trust"},
+	next := RunRequest{Values: []engine.Value{
+		{Category: engine.CatPersonNames, MainText: "Alpine Trust"},
 	}}
 	runOnce(t, app, next)
 	for _, row := range app.ValuePlaceholders() {
@@ -188,8 +188,8 @@ func TestSetValuePlaceholderRenamesAndTakesEffectOnTheNextRun(t *testing.T) {
 	// A collision is refused, because two originals behind one placeholder makes
 	// the key ambiguous.
 	app.docs[0].Markdown += " Jean Weber attended."
-	req.Entities = append(req.Entities,
-		engine.Entity{Category: engine.CatPersonNames, Canonical: "Jean Weber"})
+	req.Values = append(req.Values,
+		engine.Value{Category: engine.CatPersonNames, MainText: "Jean Weber"})
 	runOnce(t, app, req)
 	var other string
 	for _, row := range app.ValuePlaceholders() {
@@ -217,7 +217,7 @@ func TestRemovalsAndSpentNumbersSurviveTheSessionFile(t *testing.T) {
 	// Save exactly what SaveSessionToFile writes, without the dialog.
 	app.mu.Lock()
 	session := engine.Session{
-		Entities:             req.Entities,
+		Values:               req.Values,
 		Settings:             engine.SessionSettings{Level: "medium", OllamaPort: 11434, Country: engine.CountryLU},
 		Registry:             app.registry.Export(),
 		PlaceholderOverrides: app.registry.Overrides(),

@@ -50,7 +50,7 @@ func TestExportPDFFallbackRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := testConfig(engine.Entity{Category: "entity_names", Canonical: "Alpine Trust"})
+	cfg := testConfig(engine.Value{Category: "entity_names", MainText: "Alpine Trust"})
 	anonymised, n := cfg.AnonymiseText(md)
 	if n == 0 || strings.Contains(anonymised, "Alpine Trust") {
 		t.Fatalf("working text not anonymised: %q", anonymised)

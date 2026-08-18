@@ -1,40 +1,37 @@
-// app_detect.go — ONE bound method for the whole detection run.
+// app_detect.go — ONE bound method for the whole detection run, returning ONE
+// list of Suggestions.
 //
-// The reported problem was "detection sometimes does not complete, and the
-// progress is difficult to follow". It was not one bug, it was the shape of
-// the old design: the frontend made TWO bridge calls in sequence
-// (RunSmartDetection, then RunDiscovery), which meant
+// Two things are unified here, and both were sources of real failures.
 //
-//   - two cancellation slots, with a window between them where Cancel was a
-//     silent no-op while the button still said "Cancel";
-//   - two progress streams, so the bar rewound to file 1 of a SMALLER total
-//     when the second pass started;
-//   - no terminal event of any kind, so the only thing that could clear the
-//     progress bar was a `finally` in the caller: any escape in between (a
-//     render error, a lost promise) left it spinning forever;
-//   - a status and a cancelled flag that both passes returned and the caller
-//     read neither, so a cancelled run reported "detection done".
+// The RUN is one call. One context in one cancellation slot, one monotonic
+// progress stream, and exactly one terminal event ("detection:done" or
+// "detection:error") whatever happens, including a panic. Two sequential bridge
+// calls meant two cancellation slots with a window where Cancel was a silent
+// no-op, a progress bar that rewound when the second pass started over with a
+// different denominator, and no terminal event at all, so only a `finally` in
+// the caller could ever clear the bar.
 //
-// RunDetection replaces both calls with one: one context in one cancellation
-// slot, one monotonic progress stream, and exactly one terminal event
-// ("detection:done" or "detection:error") whatever happens, including a
-// panic. The old methods stay for the tests that drive one pass at a time.
+// The RESULT is one list. Every discovery method reports Suggestions into the
+// same merged list, whichever route it belongs to, because the user is reviewing
+// potential Values rather than a detector's output. Two lists, one per route,
+// forced the frontend to map each into its own state, and the mapping for the
+// Local AI route silently discarded the folded spellings, so a family the engine
+// had already collapsed arrived as a bare string.
 package backend
 
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"doc-anonymiser/backend/engine"
 	"doc-anonymiser/backend/ollama"
 )
 
-// DetectionPhase names one route in the run. These are engine tokens, not
+// Detection phases name one route in the run. These are engine tokens, not
 // labels: the frontend maps them to the words the user reads.
 const (
-	PhaseSmart = "smart"
-	PhaseAI    = "ai"
+	PhaseSmart   = "smart"
+	PhaseLocalAI = "local_ai"
 )
 
 // DetectionProgress is the payload of the "detection:progress" event.
@@ -69,12 +66,15 @@ type DetectionSkip struct {
 // DetectionResult is the outcome of one detection run, and the payload of
 // the "detection:done" event.
 //
-// Errors is a LIST rather than a returned error: one file that the model
-// choked on must not throw away the candidates found in the other nine. The
-// caller shows them as warnings.
+// Errors is a LIST rather than a returned error: one file that the model choked
+// on must not throw away the Suggestions found in the other nine. The caller
+// shows them as warnings.
 type DetectionResult struct {
-	Candidates []engine.Candidate      `json:"candidates"`
-	Proposals  []engine.ProposedEntity `json:"proposals"`
+	// Suggestions is every unreviewed potential Value the run found, from every
+	// method, merged through engine.MergeSuggestions. A Suggestion says which
+	// methods found it on itself (DiscoveryMethods), so route membership is a
+	// property of the row rather than of which list it landed in.
+	Suggestions []engine.Suggestion `json:"suggestions"`
 	// Phases lists the routes that actually ran, so the UI can say "smart
 	// detection only" without re-deriving it from the settings.
 	Phases    []string        `json:"phases"`
@@ -113,10 +113,11 @@ func (s *AIScope) active() bool {
 // RunDetection runs every enabled detection route over the named files, in
 // order, under ONE cancellation context.
 //
-// Which routes run is decided HERE, from the stored settings, not by the
-// caller: UseSmartDetect and UseAI are the switches on the Configure rail, and
-// the AI route additionally requires Ollama to actually answer. A frontend that
-// asks for a route the user switched off does not get it.
+// Which routes run is decided HERE, from the stored settings, not by the caller.
+// The Local AI route additionally requires Ollama to actually answer: probing
+// rather than trusting the stored flag is what stops a stale "on" from starting
+// a model that is not running. A frontend that asks for a route the user
+// switched off does not get it.
 //
 // aiScope narrows the LOCAL-AI route only (Smart detection always reads every
 // file); nil leaves the AI route reading every document whole.
@@ -157,20 +158,20 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 	// The AI route needs the switch, a reachable Ollama, and something to
 	// read. Probing here rather than trusting the stored flag is what stops a
 	// stale "on" from starting a model that is not running.
-	useAI := settings.UseAI && llm.Probe().Available
+	useLocalAI := settings.UseLocalAI && llm.Probe().Available
 	phases := []string{}
-	// The Smart PHASE is the offline word-frequency ("auto") pass, gated on
-	// UseAutoDetect. Native detection (the regex signals) is NOT a detection
-	// phase: it runs at anonymisation time, so its master switch does not appear
-	// here.
-	if settings.UseAutoDetect {
+	// The Smart PHASE is Smart detection's two DISCOVERY methods: heuristic
+	// discovery and signal-based discovery. Built-in pattern matching is not a
+	// discovery method and therefore not a phase: it produces direct matches at
+	// anonymisation time, so its switch does not appear here.
+	if settings.UseHeuristicDiscovery || a.signalDiscoveryOn(settings) {
 		phases = append(phases, PhaseSmart)
 	}
-	if useAI {
-		phases = append(phases, PhaseAI)
+	if useLocalAI {
+		phases = append(phases, PhaseLocalAI)
 	}
 
-	res := &DetectionResult{Phases: phases, Candidates: []engine.Candidate{}, Proposals: []engine.ProposedEntity{}}
+	res := &DetectionResult{Phases: phases, Suggestions: []engine.Suggestion{}}
 	if len(phases) == 0 {
 		res.Status = "no detection route is switched on, turn on Smart detection or Local AI in Configure"
 		a.emit("detection:done", res)
@@ -197,35 +198,32 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 			a.emit("detection:progress", p)
 		}
 		if phase == PhaseSmart {
-			a.runSmartPhase(ctx, docs, allow, settings.SmartDetect, settings.Country, res, report)
+			a.runSmartPhase(ctx, docs, allow, settings, res, report)
 		} else {
-			a.runAIPhase(ctx, docs, llm, aiScope, res, report)
+			a.runLocalAIPhase(ctx, docs, llm, aiScope, res, report)
 		}
 		if ctx.Err() != nil {
 			break
 		}
 	}
 
-	// With the AI route on, the model also REFINES the offline route's
-	// categories (span classification: only candidate texts and short context
-	// snippets travel, never documents). This path existed and was reachable
-	// from the bridge, but nothing in the UI ever asked for it, so the local
-	// AI never improved the guesses the heuristic makes from word shape alone.
-	// A classification failure degrades to the heuristic categories with a
-	// note: the offline route's findings are the point, the labels are polish.
-	if useAI && ctx.Err() == nil && len(res.Candidates) > 0 {
+	// With the Local AI route on, the model also RE-FILES what Smart detection
+	// found (only main texts and short context snippets travel, never documents).
+	// A classification failure degrades to the heuristic categories with a note:
+	// the findings are the point, the labels are polish.
+	if useLocalAI && ctx.Err() == nil && len(res.Suggestions) > 0 {
 		if err := a.refineCategories(ctx, llm, res); err != nil && ctx.Err() == nil {
 			res.Errors = append(res.Errors,
 				fmt.Sprintf("the local AI could not refine the categories, the offline guesses were kept: %v", err))
 		}
 	}
 
-	// Fold value families ONCE, over the merged output of every route. Per
-	// route would leave a Smart "Coca-Cola" and an AI "Coca-Cola company"
-	// unmerged, which is exactly the pair that has to become one value: left
-	// apart, the shorter one fires inside the longer one, the text reads
-	// "[BRAND_1] company", and two numbers are spent on one company.
-	foldDetectionFamilies(res, allow)
+	// Fold Value families ONCE, over the unified list. Per method would leave a
+	// heuristic "Coca-Cola" and a model "Coca-Cola company" unfolded, which is
+	// exactly the pair that has to become one Value: left apart, the shorter one
+	// fires inside the longer one, the text reads "[BRAND_1] company", and two
+	// numbers are spent on one company.
+	res.Suggestions = engine.FoldValueFamilies(res.Suggestions, allow)
 
 	res.Cancelled = ctx.Err() != nil
 	res.Status = detectionStatus(res, len(docs))
@@ -248,75 +246,124 @@ func (a *App) CancelDetection() {
 	}
 }
 
-// refineCategories asks the local model to categorise the offline route's
-// candidates, and applies whatever it recognised.
+// refineCategories asks the local model to categorise what Smart detection
+// found, and applies whatever it recognised.
+//
+// Only Smart detection's own Suggestions are sent. Re-filing the model's own
+// findings would be asking it to grade its own work, and it would let one pass
+// overwrite a category the same model had just chosen.
 func (a *App) refineCategories(ctx context.Context, llm *ollama.Client, res *DetectionResult) error {
-	proposals, err := llm.ClassifyCandidates(ctx, res.Candidates)
+	var smart []engine.Suggestion
+	for _, s := range res.Suggestions {
+		if smartDiscovered(s) {
+			smart = append(smart, s)
+		}
+	}
+	if len(smart) == 0 {
+		return nil
+	}
+	refiled, err := llm.ClassifySuggestions(ctx, smart)
 	if err != nil {
 		return err
 	}
 	refined := map[string]string{}
-	for _, p := range proposals {
-		refined[p.Text] = p.Category
+	for _, s := range refiled {
+		refined[s.MainText] = s.Category
 	}
-	for i := range res.Candidates {
-		if category, ok := refined[res.Candidates[i].Text]; ok {
-			res.Candidates[i].Category = category
+	for i := range res.Suggestions {
+		if !smartDiscovered(res.Suggestions[i]) {
+			continue
+		}
+		if category, ok := refined[res.Suggestions[i].MainText]; ok {
+			res.Suggestions[i].Category = category
 		}
 	}
 	return nil
 }
 
-// runSmartPhase is the offline route. Every document is scanned; a document
-// that is cancelled mid-scan contributes what it found before stopping.
-// country scopes the organisation-keyword signal to the document country.
-func (a *App) runSmartPhase(ctx context.Context, docs []engine.Document, allow *engine.Allowlist,
-	opts engine.SmartDetectOptions, country string, res *DetectionResult, report func(DetectionProgress),
-) {
-	merged := map[string]*engine.Candidate{}
-	var order []string
-	for i, doc := range docs {
-		if ctx.Err() != nil {
-			return
-		}
-		report(DetectionProgress{DocIndex: i, DocCount: len(docs), DocName: doc.Name})
-
-		found, err := engine.SmartDetectContext(ctx, doc.Markdown, allow, opts, country)
-		if err != nil && ctx.Err() == nil {
-			// Not a cancellation: record it and carry on with the next file.
-			res.Errors = append(res.Errors, fmt.Sprintf("smart detection failed on %q: %v", doc.Name, err))
-			continue
-		}
-		for _, cand := range found {
-			m, ok := merged[cand.Text]
-			if !ok {
-				copyCand := cand
-				merged[cand.Text] = &copyCand
-				order = append(order, cand.Text)
-				continue
-			}
-			m.Count += cand.Count
-			// The strongest sighting across documents wins: a name seen once
-			// in one file and next to a legal form in another is as good as
-			// the legal-form sighting.
-			if cand.Confidence > m.Confidence {
-				m.Confidence = cand.Confidence
-			}
-			for _, snippet := range cand.Contexts {
-				if len(m.Contexts) >= 3 {
-					break
-				}
-				m.Contexts = append(m.Contexts, snippet)
-			}
+// smartDiscovered reports whether a Suggestion came from one of Smart
+// detection's discovery methods.
+func smartDiscovered(s engine.Suggestion) bool {
+	for _, m := range s.DiscoveryMethods {
+		if m == engine.MethodHeuristic || m == engine.MethodSignal {
+			return true
 		}
 	}
-
-	for _, key := range order {
-		res.Candidates = append(res.Candidates, *merged[key])
-	}
+	return false
 }
 
-// runAIPhase is the local-model route. Oversized documents are SKIPPED and
+// signalDiscoveryOn reports whether any built-in signal may derive Suggestions,
+// which is what makes signal-based discovery worth running as a phase.
+func (a *App) signalDiscoveryOn(s Settings) bool {
+	for _, source := range engine.AllSignalSources {
+		if engine.SignalSourceEnabled(s.SignalSuggestionSources, source) {
+			return true
+		}
+	}
+	return false
+}
+
+// runSmartPhase is Smart detection's discovery half: heuristic discovery over
+// every document, plus signal-based discovery over the whole batch.
+//
+// Every document is scanned; one cancelled mid-scan contributes what it found
+// before stopping. Both methods report into the SAME merged list, so a name both
+// of them find is one row carrying both methods rather than two rows the user has
+// to notice are the same.
+func (a *App) runSmartPhase(ctx context.Context, docs []engine.Document, allow *engine.Allowlist,
+	settings Settings, res *DetectionResult, report func(DetectionProgress),
+) {
+	var batches [][]engine.Suggestion
+	// Partial work is kept whatever ends the loop: a cancellation returning
+	// straight out used to throw away everything the earlier files produced.
+	defer func() { res.Suggestions = mergeInto(res.Suggestions, batches) }()
+
+	if settings.UseHeuristicDiscovery {
+		for i, doc := range docs {
+			if ctx.Err() != nil {
+				return
+			}
+			report(DetectionProgress{DocIndex: i, DocCount: len(docs), DocName: doc.Name})
+
+			found, err := engine.HeuristicDiscoverContext(
+				ctx, doc.Markdown, allow, settings.HeuristicDiscovery, settings.Country)
+			if err != nil && ctx.Err() == nil {
+				// Not a cancellation: record it and carry on with the next file.
+				res.Errors = append(res.Errors,
+					fmt.Sprintf("heuristic discovery failed on %q: %v", doc.Name, err))
+				continue
+			}
+			stamped := make([]engine.Suggestion, 0, len(found))
+			for _, one := range found {
+				stamped = append(stamped, one.WithMethod(engine.MethodHeuristic))
+			}
+			batches = append(batches, stamped)
+		}
+	}
+
+	if ctx.Err() != nil {
+		return
+	}
+	// Signal-based discovery reads the WHOLE BATCH at once rather than one
+	// document at a time: the evidence is an email in one file and the text it
+	// points at is usually in another, so per document it would find almost
+	// nothing.
+	batches = append(batches, engine.DiscoverFromSignals(engine.SignalDiscoveryInput{
+		Documents: docs,
+		Sources:   settings.SignalSuggestionSources,
+		Country:   settings.Country,
+		Allow:     allow,
+	}))
+}
+
+// mergeInto folds fresh batches into the run's Suggestion list through the
+// engine's single merge rule. Both phases call it, so neither can invent its own
+// idea of what a duplicate is.
+func mergeInto(existing []engine.Suggestion, batches [][]engine.Suggestion) []engine.Suggestion {
+	return engine.MergeSuggestions(append([][]engine.Suggestion{existing}, batches...)...)
+}
+
+// runLocalAIPhase is the Local AI route. Oversized documents are SKIPPED and
 // said so, rather than failing the run: the context window is a fact about
 // the model, not a mistake the user made.
 //
@@ -325,7 +372,7 @@ func (a *App) runSmartPhase(ctx context.Context, docs []engine.Document, allow *
 // selected document. Either way the point is the same: keep the text handed to
 // a small local model small. The Smart route is unaffected — it already read
 // everything.
-func (a *App) runAIPhase(ctx context.Context, docs []engine.Document, llm *ollama.Client,
+func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *ollama.Client,
 	scope *AIScope, res *DetectionResult, report func(DetectionProgress)) {
 
 	// scanUnit pairs a document with the exact text the AI should read for it:
@@ -381,10 +428,10 @@ func (a *App) runAIPhase(ctx context.Context, docs []engine.Document, llm *ollam
 	}
 
 	// Partial work is kept whatever ends the loop, which is why the merge is
-	// deferred: a cancellation used to return straight out of the loop and throw
-	// away every proposal the files before it had produced.
-	var batches [][]engine.ProposedEntity
-	defer func() { res.Proposals = ollama.MergeProposals(batches...) }()
+	// deferred: a cancellation used to return straight out and throw away
+	// everything the files before it had produced.
+	var batches [][]engine.Suggestion
+	defer func() { res.Suggestions = mergeInto(res.Suggestions, batches) }()
 
 	for i, u := range readable {
 		if ctx.Err() != nil {
@@ -445,72 +492,12 @@ func detectionStatus(res *DetectionResult, docCount int) string {
 	switch {
 	case res.Cancelled:
 		return fmt.Sprintf("cancelled: %d suggestion(s) found before it stopped",
-			len(res.Candidates)+len(res.Proposals))
+			len(res.Suggestions))
 	case len(res.Errors) > 0:
 		return fmt.Sprintf("finished with %d problem(s): %d suggestion(s) from %d file(s)",
-			len(res.Errors), len(res.Candidates)+len(res.Proposals), docCount)
+			len(res.Errors), len(res.Suggestions), docCount)
 	default:
 		return fmt.Sprintf("scanned %d file(s), %d suggestion(s)",
-			docCount, len(res.Candidates)+len(res.Proposals))
+			docCount, len(res.Suggestions))
 	}
-}
-
-// foldDetectionFamilies collapses the spellings of one real-world thing into
-// one suggestion, across BOTH detection routes.
-//
-// The two routes report into different lists, because the review row shows
-// which one found a value. So the fold runs over a merged view and the result
-// is split back by route: a family's main value keeps the badge of the route
-// that found THAT spelling, and the members folded into it disappear from
-// whichever list they were in, because they are now spellings of a value that
-// is already on screen.
-func foldDetectionFamilies(res *DetectionResult, allow *engine.Allowlist) {
-	if len(res.Candidates)+len(res.Proposals) < 2 {
-		return
-	}
-
-	// Which route each text came from, so the split back is by fact rather than
-	// by guess. A text both routes found is already deduplicated by the merge
-	// that produced these lists, and Smart is checked first, matching the order
-	// the phases ran in.
-	fromAI := map[string]bool{}
-	merged := append([]engine.Candidate(nil), res.Candidates...)
-	for _, p := range res.Proposals {
-		key := strings.ToLower(strings.TrimSpace(p.Text))
-		if candidateAlreadyPresent(merged, key) {
-			continue
-		}
-		fromAI[key] = true
-		merged = append(merged, engine.Candidate{
-			Category: p.Category, Text: p.Text, Variants: p.Variants,
-		})
-	}
-
-	folded := engine.FoldValueFamilies(merged, allow)
-
-	candidates := make([]engine.Candidate, 0, len(folded))
-	proposals := make([]engine.ProposedEntity, 0, len(folded))
-	for _, c := range folded {
-		if fromAI[strings.ToLower(strings.TrimSpace(c.Text))] {
-			proposals = append(proposals, engine.ProposedEntity{
-				Category: c.Category, Text: c.Text, Variants: c.Variants,
-			})
-			continue
-		}
-		candidates = append(candidates, c)
-	}
-	res.Candidates = candidates
-	res.Proposals = proposals
-}
-
-// candidateAlreadyPresent reports whether a lower-cased text is already in the
-// list. The offline route's row wins, so a value both routes found keeps its
-// count and its context snippets.
-func candidateAlreadyPresent(cands []engine.Candidate, lowerText string) bool {
-	for _, c := range cands {
-		if strings.ToLower(strings.TrimSpace(c.Text)) == lowerText {
-			return true
-		}
-	}
-	return false
 }

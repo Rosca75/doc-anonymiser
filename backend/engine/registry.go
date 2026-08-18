@@ -24,7 +24,7 @@ import (
 // silently falling back to the upper-cased identifier would mint a placeholder
 // shape the tests and the UI were never taught about.
 var placeholderLabels = map[string]string{
-	// Entity categories (CLAUDE.md §5).
+	// Value categories (CLAUDE.md §5).
 	CatEntityNames:     "ENTITY",
 	CatProjectNames:    "PROJECT",
 	CatProductNames:    "PRODUCT",
@@ -126,11 +126,11 @@ func NewRegistry() *Registry {
 //
 // The invariant: if byOriginal already owns the string under another
 // category, return the existing placeholder and bump its count rather than
-// minting a second. A string that is both an email and a declared entity gets
+// minting a second. A string that is both an email and a declared value gets
 // ONE placeholder.
 //
 // WHICH category owns it is decided UPSTREAM, by ownership unification
-// (pipeline.go unifyOwnership), which picks the winning route by OriginRank
+// (pipeline.go unifyOwnership), which picks the winning route by MatchClassRank
 // before a single placeholder is minted. This function is deliberately not
 // precedence-aware: changing an entry's category after the fact would change
 // its placeholder text, and a placeholder that has already left the machine,

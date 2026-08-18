@@ -76,9 +76,9 @@ var identifierCues = map[string]bool{
 
 // DetectCodes proposes the code-shaped values in text.
 //
-// It returns Candidates, not Spans: like the rest of smart detection this is a
+// It returns Suggestions, not Spans: like the rest of smart detection this is a
 // SUGGESTION for the user to accept or reject on step 2, not a replacement.
-// Accepting one turns it into an Entity, and the entity pass replaces it.
+// Accepting one turns it into a Value, and the Value pass replaces it.
 //
 // Allowlisted codes are dropped here, before the user ever sees them, because
 // the allowlist wins in every pass and offering a value that would then never
@@ -86,16 +86,16 @@ var identifierCues = map[string]bool{
 //
 // @param text the document's working markdown
 // @param allow the never-anonymise list, plus the session's removed values
-// @return one candidate per distinct code, most frequent first
-func DetectCodes(text string, allow *Allowlist) []Candidate {
-	candidates, _ := detectCodes(text, allow)
-	return candidates
+// @return one suggestion per distinct code, most frequent first
+func DetectCodes(text string, allow *Allowlist) []Suggestion {
+	suggestions, _ := detectCodes(text, allow)
+	return suggestions
 }
 
 // detectCodes is DetectCodes plus the byte offset of each code's first
 // occurrence, which the offline route needs to order codes and capitalised runs
 // in one list without comparing an offset against a slice index.
-func detectCodes(text string, allow *Allowlist) ([]Candidate, map[string]int) {
+func detectCodes(text string, allow *Allowlist) ([]Suggestion, map[string]int) {
 	type group struct {
 		count      int
 		firstStart int
@@ -131,16 +131,16 @@ func detectCodes(text string, allow *Allowlist) ([]Candidate, map[string]int) {
 		if category == CatProjectNames {
 			g.category = CatProjectNames
 		}
-		if len(g.contexts) < maxContexts {
+		if len(g.contexts) < maxSuggestionContexts {
 			g.contexts = append(g.contexts, contextSnippet(text, m[0], m[1]))
 		}
 	}
 
-	out := make([]Candidate, 0, len(order))
+	out := make([]Suggestion, 0, len(order))
 	for _, code := range order {
 		g := groups[code]
-		out = append(out, Candidate{
-			Text:       code,
+		out = append(out, Suggestion{
+			MainText:   code,
 			Category:   g.category,
 			Count:      g.count,
 			Contexts:   g.contexts,
@@ -151,7 +151,7 @@ func detectCodes(text string, allow *Allowlist) ([]Candidate, map[string]int) {
 	for code, g := range groups {
 		firstStarts[code] = g.firstStart
 	}
-	sortCandidates(out, func(text string) int { return firstStarts[text] })
+	sortSuggestions(out, func(text string) int { return firstStarts[text] })
 	return out, firstStarts
 }
 
@@ -182,7 +182,7 @@ func classifyCode(text string, start, end int) (category string, confidence floa
 	}
 }
 
-// cueWord is one candidate cue with how far it sits from the code, in words.
+// cueWord is one suggestion cue with how far it sits from the code, in words.
 type cueWord struct {
 	word     string
 	distance int

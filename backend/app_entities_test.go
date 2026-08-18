@@ -55,7 +55,7 @@ func newTestApp(t *testing.T, replyFor func(userPrompt string) string) *App {
 
 func TestExpandEntityVariantsAdapter(t *testing.T) {
 	app := NewApp()
-	got := app.ExpandEntityVariants(engine.Entity{Category: "person_names", Canonical: "Marie Duval"})
+	got := app.ExpandEntityVariants(engine.Value{Category: "person_names", MainText: "Marie Duval"})
 	joined := strings.Join(got, "|")
 	for _, want := range []string{"Marie Duval", "M. Duval", "Duval", "Marie"} {
 		if !strings.Contains(joined, want) {
@@ -69,8 +69,8 @@ func TestExpandEntityVariantsAdapter(t *testing.T) {
 func aiOnlyApp(t *testing.T, replyFor func(userPrompt string) string) *App {
 	t.Helper()
 	app := newTestApp(t, replyFor)
-	app.settings.UseAI = true
-	app.settings.UseAutoDetect = false
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = false
 	return app
 }
 
@@ -93,11 +93,11 @@ func TestDetectionMergesAndDedupesAcrossFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
-	if len(res.Proposals) != 3 {
-		t.Fatalf("want 3 merged proposals with the entity deduped, got %+v", res.Proposals)
+	if len(res.Suggestions) != 3 {
+		t.Fatalf("want 3 merged proposals with the entity deduped, got %+v", res.Suggestions)
 	}
-	if res.Proposals[0].Text != "Alpine Trust" {
-		t.Errorf("the first-seen spelling must win, got %q", res.Proposals[0].Text)
+	if res.Suggestions[0].MainText != "Alpine Trust" {
+		t.Errorf("the first-seen spelling must win, got %q", res.Suggestions[0].MainText)
 	}
 	if res.Cancelled {
 		t.Errorf("a completed run must not report itself cancelled: %+v", res)
@@ -116,8 +116,8 @@ func TestDetectionRespectsTheAllowlist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
-	if len(res.Proposals) != 1 || res.Proposals[0].Text != "Alpine Trust" {
-		t.Errorf("an allowlisted proposal must be vetoed, got %+v", res.Proposals)
+	if len(res.Suggestions) != 1 || res.Suggestions[0].MainText != "Alpine Trust" {
+		t.Errorf("an allowlisted proposal must be vetoed, got %+v", res.Suggestions)
 	}
 }
 
@@ -210,7 +210,7 @@ func TestDetectionCancellationKeepsWhatItFound(t *testing.T) {
 	if !res.Cancelled {
 		t.Errorf("the run must report itself cancelled: %+v", res)
 	}
-	if len(res.Proposals) == 0 {
+	if len(res.Suggestions) == 0 {
 		t.Error("partial proposals must survive cancellation")
 	}
 	if calls.Load() > 2 {
@@ -274,26 +274,25 @@ func TestCountTermMatches(t *testing.T) {
 	}
 }
 
-// TestCuratedVariants: once the user has curated a value's spellings, the
-// automatic expansion no longer applies, so the chips on the card are exactly
-// what the run replaces. This is what makes a deleted spelling stay deleted:
-// there is no expansion left to derive it again.
-func TestCuratedVariants(t *testing.T) {
-	curated := false
-	got := engine.ExpandVariants(engine.Entity{
+// TestCuratedSpellings: once the user has curated a Value's spellings, the engine
+// derives nothing further, so the chips on the card are exactly what the run
+// replaces. This is what makes a deleted spelling stay deleted: there is no
+// derivation left to produce it again.
+func TestCuratedSpellings(t *testing.T) {
+	got := engine.ExpandSpellings(engine.Value{
 		Category:       "person_names",
-		Canonical:      "Jean Muller",
-		ManualVariants: []string{"Jean"},
-		AutoExpand:     &curated,
+		MainText:       "Jean Muller",
+		Spellings:      []string{"Jean"},
+		SpellingPolicy: engine.SpellingPolicyCurated,
 	})
 	for _, v := range got {
 		if strings.EqualFold(v, "J. Muller") || strings.EqualFold(v, "Muller") {
-			t.Errorf("curated value still derived %q: %v", v, got)
+			t.Errorf("a curated Value still derived %q: %v", v, got)
 		}
 	}
 	want := map[string]bool{"Jean Muller": true, "Jean": true}
 	if len(got) != len(want) {
-		t.Fatalf("a curated value expands to its name plus its own spellings, got %v", got)
+		t.Fatalf("a curated Value expands to its main text plus its own spellings, got %v", got)
 	}
 	for _, v := range got {
 		if !want[v] {
@@ -307,7 +306,7 @@ func TestCuratedVariants(t *testing.T) {
 // until the user accepts a suggestion.
 func TestOfflineRouteReturnsCandidatesNotEntities(t *testing.T) {
 	app := NewApp()
-	app.settings.SmartDetect = engine.SmartDetectOptions{} // no filtering
+	app.settings.HeuristicDiscovery = engine.HeuristicDiscoveryOptions{} // no filtering
 	app.docs = []engine.Document{
 		{Name: "a.txt", Format: engine.FormatTXT,
 			Markdown: "Meeting with Marie Duval about Alpine Trust S.A. Later Marie Duval called again."},
@@ -320,15 +319,15 @@ func TestOfflineRouteReturnsCandidatesNotEntities(t *testing.T) {
 	if res.Cancelled {
 		t.Errorf("a completed run must not report itself cancelled: %+v", res)
 	}
-	byText := map[string]engine.Candidate{}
-	for _, c := range res.Candidates {
-		byText[c.Text] = c
+	byText := map[string]engine.Suggestion{}
+	for _, c := range res.Suggestions {
+		byText[c.MainText] = c
 	}
 	if c, ok := byText["Marie Duval"]; !ok || c.Category != engine.CatPersonNames || c.Count < 2 {
-		t.Errorf("the person candidate is wrong: %+v", res.Candidates)
+		t.Errorf("the person candidate is wrong: %+v", res.Suggestions)
 	}
 	if c, ok := byText["Alpine Trust S.A."]; !ok || c.Category != engine.CatEntityNames {
-		t.Errorf("the legal-suffix candidate is wrong: %+v", res.Candidates)
+		t.Errorf("the legal-suffix candidate is wrong: %+v", res.Suggestions)
 	}
 }
 
@@ -344,9 +343,9 @@ func TestCheckIntersectionsAgreesWithARealRun(t *testing.T) {
 		Name: "a.txt", Format: engine.FormatTXT,
 		Markdown: "Write to " + value + " today.\n",
 	}}
-	entities := []engine.Entity{{Category: engine.CatPersonNames, Canonical: value}}
+	entities := []engine.Value{{Category: engine.CatPersonNames, MainText: value}}
 
-	res, err := app.CheckIntersections(CheckIntersectionsRequest{Entities: entities})
+	res, err := app.CheckIntersections(CheckIntersectionsRequest{Values: entities})
 	if err != nil {
 		t.Fatalf("CheckIntersections: %v", err)
 	}
@@ -367,7 +366,7 @@ func TestCheckIntersectionsAgreesWithARealRun(t *testing.T) {
 
 	// Now run for real and compare verdicts.
 	if _, err := app.runPipelineBlocking(context.Background(), RunRequest{
-		Entities: entities,
+		Values: entities,
 	}); err != nil {
 		t.Fatalf("runPipelineBlocking: %v", err)
 	}
@@ -393,9 +392,9 @@ func TestCheckIntersectionsIsQuietWhenNothingOverlaps(t *testing.T) {
 		Markdown: "Alpine Trust met Borealis Capital on the Tuesday.\n",
 	}}
 	res, err := app.CheckIntersections(CheckIntersectionsRequest{
-		Entities: []engine.Entity{
-			{Category: engine.CatEntityNames, Canonical: "Alpine Trust"},
-			{Category: engine.CatBrandNames, Canonical: "Borealis Capital"},
+		Values: []engine.Value{
+			{Category: engine.CatEntityNames, MainText: "Alpine Trust"},
+			{Category: engine.CatBrandNames, MainText: "Borealis Capital"},
 		},
 	})
 	if err != nil {

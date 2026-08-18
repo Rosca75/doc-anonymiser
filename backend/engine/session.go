@@ -1,12 +1,11 @@
 // engine/session.go — save/load of session state (CLAUDE.md §3/§5).
 //
-// A session file contains entities + allowlist + custom patterns +
-// settings + the placeholder REGISTRY. The registry
-// is the re-identification key: whoever holds the file can map
-// placeholders back to real names. That is why saving is an explicit user
-// action behind a warning (CLAUDE.md §5, "sensitive state stays in
-// memory") — this module only does the (de)serialisation; the warning
-// lives in the UI.
+// A session file contains the accepted Values + the never-anonymise list +
+// custom patterns + settings + the placeholder REGISTRY. The registry is the
+// re-identification key: whoever holds the file can map placeholders back to
+// real values. That is why saving is an explicit user action behind a warning
+// (CLAUDE.md §5, "sensitive state stays in memory"). This module only does the
+// (de)serialisation; the warning lives in the UI.
 package engine
 
 import (
@@ -22,34 +21,39 @@ import (
 // That is the whole policy, and it is the strict one on purpose: a session file
 // holds the re-identification key, and a half-migrated one silently reassigns
 // placeholders. The user finds out when two batches of the same engagement no
-// longer agree with each other, which is far past the point of noticing.
+// longer agree with each other, which is far past the point of noticing. There
+// is therefore no migration table and no compatibility alias anywhere in this
+// file: the only accepted version is the one this build writes.
 //
 // Bump it whenever a change makes a file this build writes unreadable by the
 // previous one, or the other way round: an added field the loader can ignore is
-// not a bump, but a renamed category, a retired category and a new field the
-// pipeline depends on all are.
+// not a bump, but a renamed field, a retired field and a new field the pipeline
+// depends on all are.
 //
 // Version history (reason for each bump, newest last):
 //
-//	v5: added the useNativeDetect/useAutoDetect settings (the "Smart detection"
-//	    route split into a Native-detection master over the regex signals and an
-//	    Auto-detection word-frequency pass). A v4 file has neither flag, and a v4
-//	    reader would not know Native detection can be off, so the versions are not
-//	    interchangeable.
-//	v6: the entity shape changed twice. It lost excludedVariants, the per-value
-//	    list of spellings the expansion had to suppress, and gained autoExpand,
-//	    which freezes a value's spellings to exactly the ones shown instead. A v5
-//	    file's exclusions have no meaning under the curated model: a v6 reader
-//	    would drop them and silently start replacing spellings the user had
-//	    removed. It also gained origin, the route that produced the value, which
-//	    decides precedence when two routes claim the same text; a v5 file states
-//	    none, and reading it as "declared" would promote every AI proposal in it.
-const SessionVersion = 6
+//	v5: added the two Smart detection sub-switches. A v4 file has neither, and a
+//	    v4 reader would not know the built-in patterns can be off, so the
+//	    versions are not interchangeable.
+//	v6: the Value shape lost the per-value list of spellings the expansion had to
+//	    suppress and gained a curated-spellings flag instead. A v5 file's
+//	    exclusions have no meaning under the curated model: a v6 reader would
+//	    drop them and silently start replacing spellings the user had removed.
+//	v7: the whole domain vocabulary is the contract now, so nearly every field a
+//	    v6 file carries is either renamed or gone. Values replace entities and
+//	    are keyed on mainText and spellings; spellingPolicy replaces the
+//	    autoExpand flag; discoveryMethods and evidence replace the single origin
+//	    field, which had been answering both "how was this found" and "which
+//	    claim wins" with one string; simpleRules and reservedPlaceholders are
+//	    gone with the find-and-replace facility; and signalSuggestionSources is
+//	    new and load-bearing, because a v6 file cannot say whether the user had
+//	    switched signal-derived Suggestions off. Reading a v6 file field by field
+//	    would mean guessing at every one of those, and each guess changes what
+//	    the next run replaces.
+const SessionVersion = 7
 
-// SessionSettings mirrors the app settings worth persisting. The engine
-// does not interpret them — they round-trip for app.go. The
-// fields (categories, contextSize, useAI) are absent in v1 files; app.go
-// treats zero values as "keep the current defaults".
+// SessionSettings mirrors the app settings worth persisting. The engine does not
+// interpret them: they round-trip for app.go.
 type SessionSettings struct {
 	Level       string            `json:"level"`
 	Categories  CategorySelection `json:"categories,omitempty"`
@@ -57,51 +61,53 @@ type SessionSettings struct {
 	Model       string            `json:"model"`
 	ContextSize int               `json:"contextSize,omitempty"`
 	Country     string            `json:"country,omitempty"`
-	UseAI       bool              `json:"useAI,omitempty"`
-	// UseSmartDetect is the offline detection route switch. It is
-	// a POINTER because its default is TRUE: with a plain bool, "absent" and
-	// "the user switched it off" are the same value, and the wrong reading of
-	// the two silently changes what a restored session detects.
-	UseSmartDetect *bool `json:"useSmartDetect,omitempty"`
-	// UseNativeDetect and UseAutoDetect are the two halves the "Smart detection"
-	// route split into. UseNativeDetect is the master over the regex signal
-	// categories (pass 1); UseAutoDetect is the offline word-frequency pass.
-	// Both are POINTERS for the same reason as UseSmartDetect: their default is
-	// TRUE, so "absent" must be distinguishable from "the user switched it off".
-	UseNativeDetect *bool `json:"useNativeDetect,omitempty"`
-	UseAutoDetect   *bool `json:"useAutoDetect,omitempty"`
-	// MinConfidence is the detection-confidence floor. Absent
-	// in every session file written before, where it loads as 0,
-	// which is exactly the "keep every detection" default: an older
-	// session therefore reproduces its original behaviour.
+	// UseLocalAI is the Local AI detection route switch.
+	UseLocalAI bool `json:"useLocalAI,omitempty"`
+	// UseBuiltInPatterns and UseHeuristicDiscovery are two of Smart detection's
+	// three methods. Both are POINTERS because their default is TRUE: with a
+	// plain bool, "absent" and "the user switched it off" are the same value,
+	// and the wrong reading of the two silently changes what a restored session
+	// detects.
+	//
+	// There is deliberately no persisted switch for the Smart detection SECTION.
+	// The section is on when any of its methods is on, so a fourth boolean would
+	// be a second way of saying something the three already say, and the two
+	// could disagree.
+	UseBuiltInPatterns    *bool `json:"useBuiltInPatterns,omitempty"`
+	UseHeuristicDiscovery *bool `json:"useHeuristicDiscovery,omitempty"`
+	// SignalSuggestionSources is Smart detection's third method: which built-in
+	// signals may DERIVE Suggestions (signals.go). It does not govern whether
+	// those signals are matched and replaced, which is what Built-in patterns
+	// and the category's own switch do.
+	SignalSuggestionSources SignalSourceSelection `json:"signalSuggestionSources,omitempty"`
+	// MinConfidence is the detection-confidence floor. Absent loads as 0, which
+	// is exactly the "keep every detection" default.
 	MinConfidence float32 `json:"minConfidence,omitempty"`
-	// SmartDetect is the smart-detection tuning. A pointer
-	// so "absent" (an older file) is distinguishable from "present and
-	// all zeroes" (a user who deliberately turned every filter off): the
-	// first fills the defaults, the second must be obeyed.
-	SmartDetect *SmartDetectOptions `json:"smartDetect,omitempty"`
+	// HeuristicDiscovery is the heuristic tuning. A pointer so "absent" is
+	// distinguishable from "present and all zeroes" (a user who deliberately
+	// turned every filter off): the first fills the defaults, the second must be
+	// obeyed.
+	HeuristicDiscovery *HeuristicDiscoveryOptions `json:"heuristicDiscovery,omitempty"`
 }
 
 // Session is the complete persistable session state.
 type Session struct {
-	Version     int             `json:"version"`
-	Entities    []Entity        `json:"entities"`
-	AllowTerms  []string        `json:"allowTerms"`
-	Patterns    []CustomPattern `json:"patterns"`
-	Settings    SessionSettings `json:"settings"`
+	Version    int             `json:"version"`
+	Values     []Value         `json:"values"`
+	AllowTerms []string        `json:"allowTerms"`
+	Patterns   []CustomPattern `json:"patterns"`
+	Settings   SessionSettings `json:"settings"`
 	// Registry is the exported mapping — the re-identification key.
 	Registry []MappingEntry `json:"registry"`
 	// PlaceholderOverrides holds the placeholders the USER renamed
 	// keyed "category|lower-cased original" exactly as
 	// Registry.Overrides produces them.
 	//
-	// It is additive and has NO migration path: a file without it
-	// would be a version 1 file, and the loader refuses those. The renamed
-	// placeholders themselves are already in Registry above; this field is what
-	// tells a reloaded session which of them were deliberate, so saving again
-	// does not quietly demote them to automatic assignments.
+	// The renamed placeholders themselves are already in Registry above; this
+	// field is what tells a reloaded session which of them were deliberate, so
+	// saving again does not quietly demote them to automatic assignments.
 	PlaceholderOverrides map[string]string `json:"placeholderOverrides,omitempty"`
-	// RemovedValues tracks values the user deleted from the session.
+	// RemovedValues is the session exclusion list: the Values the user removed.
 	// They must not appear in any run without explicit restoration.
 	RemovedValues []RemovedValue `json:"removedValues,omitempty"`
 	// RetiredPlaceholders tracks placeholders whose entries were

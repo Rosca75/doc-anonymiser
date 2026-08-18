@@ -205,11 +205,11 @@ func TestConfidenceDefaults(t *testing.T) {
 		}
 	}
 	// Entities and custom patterns also carry confidence.
-	spans := DetectEntities("Alpine Trust S.A. filed a report", []Entity{
-		{Category: CatEntityNames, Canonical: "Alpine Trust S.A."},
+	spans := DetectValues("Alpine Trust S.A. filed a report", []Value{
+		{Category: CatEntityNames, MainText: "Alpine Trust S.A."},
 	}, nil)
 	if len(spans) == 0 || spans[0].Confidence != ConfidenceManualDefault {
-		t.Errorf("entity span confidence = %v, want %v", spans, ConfidenceManualDefault)
+		t.Errorf("value span confidence = %v, want %v", spans, ConfidenceManualDefault)
 	}
 }
 

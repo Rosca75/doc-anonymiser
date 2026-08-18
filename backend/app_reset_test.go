@@ -23,7 +23,7 @@ func filledSession() *App {
 	app.registry = reg
 	app.results = &engine.Results{}
 	app.lastReq = &RunRequest{}
-	app.removed = []engine.RemovedValue{{Canonical: "Marie Duval", Category: "person_names"}}
+	app.removed = []engine.RemovedValue{{MainText: "Marie Duval", Category: "person_names"}}
 	// A non-default setting so a reset-to-defaults is observable.
 	app.settings.OllamaPort = 12345
 	app.settings.Level = string(engine.LevelAdvanced)

@@ -117,16 +117,16 @@ func TestDetectionAlwaysEndsWithATerminalEvent(t *testing.T) {
 	}
 }
 
-// TestDetectionAutoDetectOffRunsNoSmartPhase: the Smart PHASE is now gated on
-// UseAutoDetect, the offline word-frequency pass, NOT on the derived
-// UseSmartDetect. Native detection being on (its default) is the master over the
-// regex signals at anonymisation time and must not, by itself, make the detect
-// button find word-frequency candidates.
-func TestDetectionAutoDetectOffRunsNoSmartPhase(t *testing.T) {
+// TestBuiltInPatternsAloneRunsNoSmartPhase: the Smart PHASE is Smart detection's
+// two DISCOVERY methods. Built-in pattern matching is not one of them: it
+// produces direct matches at anonymisation time, so having it on must not, by
+// itself, make the detect button produce Suggestions.
+func TestBuiltInPatternsAloneRunsNoSmartPhase(t *testing.T) {
 	app := detectionApp()
-	app.settings.UseAutoDetect = false
-	app.settings.UseNativeDetect = true // the master is on; it is not a detection route
-	app.settings.UseAI = false
+	app.settings.UseHeuristicDiscovery = false
+	app.settings.SignalSuggestionSources = engine.SignalSourceSelection{engine.SignalSourceEmail: false}
+	app.settings.UseBuiltInPatterns = true // on, and still not a discovery method
+	app.settings.UseLocalAI = false
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"a.txt"}, nil, nil)
@@ -135,11 +135,12 @@ func TestDetectionAutoDetectOffRunsNoSmartPhase(t *testing.T) {
 	}
 	for _, p := range res.Phases {
 		if p == PhaseSmart {
-			t.Errorf("Auto detection is off, so the smart phase must not run; phases %v", res.Phases)
+			t.Errorf("every discovery method is off, so the smart phase must not run; phases %v",
+				res.Phases)
 		}
 	}
-	if len(res.Candidates) != 0 {
-		t.Errorf("no smart phase means no word-frequency candidates, got %+v", res.Candidates)
+	if len(res.Suggestions) != 0 {
+		t.Errorf("no smart phase means no Suggestions, got %+v", res.Suggestions)
 	}
 }
 
@@ -147,15 +148,16 @@ func TestDetectionAutoDetectOffRunsNoSmartPhase(t *testing.T) {
 // to run, and that has to be said, not left as a spinning bar.
 func TestDetectionWithNoRouteOnStillEnds(t *testing.T) {
 	app := detectionApp()
-	app.settings.UseAutoDetect = false
-	app.settings.UseAI = false
+	app.settings.UseHeuristicDiscovery = false
+	app.settings.SignalSuggestionSources = engine.SignalSourceSelection{engine.SignalSourceEmail: false}
+	app.settings.UseLocalAI = false
 	rec := withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"a.txt"}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
-	if len(res.Phases) != 0 || len(res.Candidates) != 0 {
+	if len(res.Phases) != 0 || len(res.Suggestions) != 0 {
 		t.Errorf("no route is on, so nothing should have run: %+v", res)
 	}
 	if !strings.Contains(res.Status, "no detection route") {
@@ -189,7 +191,7 @@ func TestDetectionProgressNeverGoesBackwards(t *testing.T) {
 
 	app := detectionApp()
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseAI = true
+	app.settings.UseLocalAI = true
 	rec := withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"a.txt", "b.txt", "c.txt"}, nil, nil)
@@ -216,7 +218,7 @@ func TestDetectionProgressNeverGoesBackwards(t *testing.T) {
 		previous = p.Fraction
 	}
 	// And the two routes are distinguishable, so the caption can name them.
-	if events[0].Phase != PhaseSmart || events[len(events)-1].Phase != PhaseAI {
+	if events[0].Phase != PhaseSmart || events[len(events)-1].Phase != PhaseLocalAI {
 		t.Errorf("the routes must run in order, got %q then %q",
 			events[0].Phase, events[len(events)-1].Phase)
 	}
@@ -277,7 +279,7 @@ func TestDetectionKeepsGoingWhenOneFileFails(t *testing.T) {
 
 	app := detectionApp()
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseAI = true
+	app.settings.UseLocalAI = true
 	rec := withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"a.txt", "b.txt", "c.txt"}, nil, nil)
@@ -290,7 +292,7 @@ func TestDetectionKeepsGoingWhenOneFileFails(t *testing.T) {
 	if !strings.Contains(strings.Join(res.Errors, " "), "b.txt") {
 		t.Errorf("the report must name the file that failed: %v", res.Errors)
 	}
-	if len(res.Candidates) == 0 {
+	if len(res.Suggestions) == 0 {
 		t.Error("the offline route's candidates must survive an AI failure")
 	}
 	if rec.count("detection:done") != 1 {
@@ -400,8 +402,8 @@ func TestDetectionAIScopeLimitsToPageRange(t *testing.T) {
 			Markdown: "alpha line one\nbravo line two\ncharlie line three\ndelta line four\n"},
 	}
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseAI = true
-	app.settings.UseAutoDetect = false // isolate the AI route
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = false // isolate the AI route
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"big.txt"}, nil,
@@ -442,8 +444,8 @@ func TestDetectionAIScopeOutOfRangeReportsButFinishes(t *testing.T) {
 		{Name: "small.txt", Format: engine.FormatTXT, Unit: engine.UnitLine, Markdown: "one\ntwo\n"},
 	}
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseAI = true
-	app.settings.UseAutoDetect = false
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = false
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"small.txt"}, nil,
@@ -473,8 +475,8 @@ func TestDetectionAIScopeDiscontiguousPages(t *testing.T) {
 			Markdown: "alpha line one\nbravo line two\ncharlie line three\ndelta line four\n"},
 	}
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseAI = true
-	app.settings.UseAutoDetect = false // isolate the AI route
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = false // isolate the AI route
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"big.txt"}, nil,
@@ -502,10 +504,10 @@ func TestDetectionAIScopeDiscontiguousPages(t *testing.T) {
 // TestDetectionRespectsTheRouteSwitches: Go decides, not the caller.
 func TestDetectionRespectsTheRouteSwitches(t *testing.T) {
 	app := detectionApp()
-	// UseAI is on but there is no Ollama at this port, so the route cannot run
+	// UseLocalAI is on but there is no Ollama at this port, so the route cannot run
 	// and must not be reported as having run.
 	app.llm = ollama.New("http://127.0.0.1:1")
-	app.settings.UseAI = true
+	app.settings.UseLocalAI = true
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"a.txt"}, nil, nil)
@@ -539,44 +541,36 @@ func TestDetectionFoldsFamiliesAcrossRoutes(t *testing.T) {
 		Name: "a.txt", Format: engine.FormatTXT,
 		Markdown: "Alpine Trust is here. Alpine Trust again. Alpine Trust S.A. signed the deed.\n",
 	}}
-	app.settings.UseAI = true
-	app.settings.UseAutoDetect = true
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = true
 
 	res, err := app.RunDetection([]string{"a.txt"}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
 
-	// Whichever list it lands in, exactly one row must mention Coca-Cola, and
-	// it must be the shorter spelling with the longer one folded in.
-	var rows []struct {
-		text     string
-		variants []string
-	}
-	for _, c := range res.Candidates {
-		if strings.Contains(strings.ToLower(c.Text), "alpine trust") {
-			rows = append(rows, struct {
-				text     string
-				variants []string
-			}{c.Text, c.Variants})
-		}
-	}
-	for _, p := range res.Proposals {
-		if strings.Contains(strings.ToLower(p.Text), "alpine trust") {
-			rows = append(rows, struct {
-				text     string
-				variants []string
-			}{p.Text, p.Variants})
+	// Exactly one row must mention Alpine Trust, and it must be the shorter
+	// spelling with the longer one folded in as a spelling.
+	var rows []engine.Suggestion
+	for _, s := range res.Suggestions {
+		if strings.Contains(strings.ToLower(s.MainText), "alpine trust") {
+			rows = append(rows, s)
 		}
 	}
 
 	if len(rows) != 1 {
-		t.Fatalf("the two spellings must come back as one value, got %+v", rows)
+		t.Fatalf("the two spellings must come back as one Value family, got %+v", rows)
 	}
-	if rows[0].text != "Alpine Trust" {
-		t.Errorf("the shorter form is the main value, got %q", rows[0].text)
+	if rows[0].MainText != "Alpine Trust" {
+		t.Errorf("the shorter form is the main text, got %q", rows[0].MainText)
 	}
-	if len(rows[0].variants) != 1 || rows[0].variants[0] != "Alpine Trust S.A." {
-		t.Errorf("the longer form must fold in as a spelling, got %v", rows[0].variants)
+	if len(rows[0].Spellings) != 1 || rows[0].Spellings[0] != "Alpine Trust S.A." {
+		t.Errorf("the longer form must fold in as a spelling, got %v", rows[0].Spellings)
+	}
+	// The methods of BOTH routes survive the fold, which is the guarantee the
+	// split response shape used to break: the frontend mapped one route's rows
+	// into a shape with no spellings field at all.
+	if len(rows[0].DiscoveryMethods) == 0 {
+		t.Error("a folded family must still say which methods found it")
 	}
 }

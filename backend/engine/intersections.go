@@ -1,13 +1,13 @@
 // engine/intersections.go — which values are claimed by more than one route,
 // answered BEFORE the pipeline runs.
 //
-// A value the user declared can be covered by a regex signal, a custom pattern
-// can cover a declared value, an auto-detected value can cover one the local AI
-// proposed. The precedence rule always decides (origin.go), but until the run
-// happens the user has no way of knowing that their value will never be
-// replaced under its own type. The warning belongs on the card that owns the
-// value, on the Identify screen, which means the answer has to exist without
-// running the pipeline.
+// A Value the user declared can be covered by a built-in pattern match, a custom
+// pattern can cover a declared Value, a heuristic finding can cover one the local
+// AI found. The precedence rule always decides (matchclass.go), but until the run
+// happens the user has no way of knowing that their Value will never be replaced
+// under its own type. The warning belongs on the card that owns the Value, on the
+// Identify step, which means the answer has to exist without running the
+// pipeline.
 //
 // It is computed with the SAME producers and the SAME comparator the pipeline
 // uses, and never with a parallel implementation, because a parallel check can
@@ -20,21 +20,24 @@ import (
 	"strings"
 )
 
-// Intersection is one value whose text is claimed by more than one route.
+// Intersection is one Value whose text is claimed by more than one method.
 //
 // It is a WARNING, never blocking: the precedence rule always has an answer, so
 // refusing the run would punish the user for a configuration the engine can
 // resolve.
 type Intersection struct {
-	// Value, Category and Origin describe the claim that LOST: the value as
-	// the user sees it, the category it is filed under, and its route.
-	Value    string `json:"value"`
-	Category string `json:"category"`
-	Origin   string `json:"origin"`
+	// Value, Category and MatchClass describe the claim that LOST: the text as
+	// the user sees it, the category it is filed under, and the class that
+	// decided the contest. MatchClass is what the frontend turns into the NAME of
+	// the winning method or route: the copy says "a built-in pattern" or "the
+	// local AI", never an internal rank.
+	Value      string `json:"value"`
+	Category   string `json:"category"`
+	MatchClass string `json:"matchClass"`
 	// The claim that won, in the same three terms.
-	WinnerValue    string `json:"winnerValue"`
-	WinnerCategory string `json:"winnerCategory"`
-	WinnerOrigin   string `json:"winnerOrigin"`
+	WinnerValue      string `json:"winnerValue"`
+	WinnerCategory   string `json:"winnerCategory"`
+	WinnerMatchClass string `json:"winnerMatchClass"`
 	// Occurrences is how many of this value's hits the winner covers;
 	// TotalOccurrences is how many it has in all. Equal counts mean the value
 	// is NEVER replaced under its own type, which is the case worth shouting
@@ -120,13 +123,13 @@ func DetectIntersections(docs []Document, scope detectionScope) []Intersection {
 // its own variants at the same offsets), and that is not an intersection.
 func sameClaim(a, b Span) bool {
 	return a.Category == b.Category &&
-		strings.EqualFold(a.CanonicalOrOriginal(), b.CanonicalOrOriginal())
+		strings.EqualFold(a.MainTextOrOriginal(), b.MainTextOrOriginal())
 }
 
 // intersectionKey identifies one losing claim: a value under a category. The
 // same loss in fifty documents is one row with a count, not fifty rows.
 func intersectionKey(s Span) string {
-	return s.Category + "|" + strings.ToLower(s.CanonicalOrOriginal())
+	return s.Category + "|" + strings.ToLower(s.MainTextOrOriginal())
 }
 
 // addIntersection records one covered occurrence.
@@ -136,12 +139,12 @@ func addIntersection(tallies map[string]*intersectionTally, docName string, lose
 	if !ok {
 		t = &intersectionTally{
 			row: Intersection{
-				Value:          loser.CanonicalOrOriginal(),
-				Category:       loser.Category,
-				Origin:         loser.Origin,
-				WinnerValue:    winner.CanonicalOrOriginal(),
-				WinnerCategory: winner.Category,
-				WinnerOrigin:   winner.Origin,
+				Value:            loser.MainTextOrOriginal(),
+				Category:         loser.Category,
+				MatchClass:       loser.MatchClass,
+				WinnerValue:      winner.MainTextOrOriginal(),
+				WinnerCategory:   winner.Category,
+				WinnerMatchClass: winner.MatchClass,
 			},
 			docs: map[string]bool{},
 		}
@@ -202,7 +205,7 @@ func sortedIntersections(tallies map[string]*intersectionTally) []Intersection {
 // and nothing outside the engine should be assembling passes; this constructor
 // exists so the bound App can ask the same question the run asks, with the same
 // inputs, rather than growing a second notion of what a detection is.
-func NewDetectionScope(entities []Entity, patterns []CustomPattern,
+func NewDetectionScope(values []Value, patterns []CustomPattern,
 	categories CategorySelection, minConfidence float32, country string,
 	allow *Allowlist, suppressRegexPII bool) detectionScope {
 
@@ -213,7 +216,7 @@ func NewDetectionScope(entities []Entity, patterns []CustomPattern,
 		categories = PresetSelection(LevelMedium)
 	}
 	return detectionScope{
-		entities:         filterEntities(entities, categories),
+		values:           filterValues(values, categories),
 		patterns:         patterns,
 		categories:       categories,
 		minConfidence:    minConfidence,

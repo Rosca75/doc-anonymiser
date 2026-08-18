@@ -4,8 +4,8 @@
 //
 // Fixed pass order (CLAUDE.md §5):
 //  1. Deterministic PII regex pass (pii.go).
-//  2. Known-entity pass: entities expanded into variants, plus user
-//     custom patterns, longest-match-first (entities.go).
+//  2. Known-value pass: values expanded into variants, plus user
+//     custom patterns, longest-match-first (values.go).
 //  3. Post-pass: the FULL registry is re-applied to every document, so a
 //     value declared late (e.g. matched first in doc 40) is also replaced in
 //     the documents processed earlier — same real-world subject, same
@@ -61,7 +61,7 @@ type ProgressEvent struct {
 // PipelineInput bundles everything Run needs.
 type PipelineInput struct {
 	Documents []Document
-	Entities  []Entity
+	Values    []Value
 	Patterns  []CustomPattern
 	// Level is the preset shorthand; kept for reports and as the fallback
 	// when Categories is nil.
@@ -78,13 +78,13 @@ type PipelineInput struct {
 	// Country scopes the country-specific regex categories. Empty falls back to
 	// Luxembourg, the documented application default.
 	Country string
-	// SuppressRegexPII is the "Native detection" master switch, inverted: when
+	// SuppressRegexPII is the Built-in patterns switch, inverted: when
 	// true, pass 1 (the deterministic regex PII pass in pii.go) is skipped
 	// entirely, so NO signal category (email, VAT, IBAN, amount, date, ...) is
 	// replaced regardless of what Categories selects. The Categories map is
 	// left untouched on purpose: the user's per-category selection is
 	// remembered so turning Native detection back on restores it exactly. Only
-	// the regex signal categories are affected; the entity pass, custom
+	// the regex signal categories are affected; the Value pass, custom
 	// patterns, the code detector and everything else run unchanged.
 	SuppressRegexPII bool
 	Allowlist        *Allowlist
@@ -130,7 +130,7 @@ type ResultDocument struct {
 	Format Format `json:"format"`
 	// Anonymised is the rewritten markdown working form.
 	Anonymised string `json:"anonymised"`
-	// Grid is the anonymised cell grid for CSV-origin documents (nil
+	// Grid is the anonymised cell grid for CSV-matchClass documents (nil
 	// otherwise) — the source for CSV round-trip export.
 	Grid [][]string `json:"grid,omitempty"`
 	// JSON is the anonymised structured JSON for complex xlsx sheets.
@@ -140,20 +140,20 @@ type ResultDocument struct {
 	// Warnings carries the document's ingestion warnings through to the
 	// results screen and report.
 	Warnings []string `json:"warnings,omitempty"`
-	// OccurrenceVariants records, per placeholder, the ordered spellings that
+	// OccurrenceSpellings records, per placeholder, the ordered spellings that
 	// produced each occurrence of that placeholder in Anonymised. Slot i holds
 	// the text the i-th occurrence of that placeholder replaced ("Borch"), or
-	// "" when that occurrence matched the canonical value itself. It lets the
-	// results view show the exact variant a mark replaced next to the canonical
+	// "" when that occurrence matched the mainText value itself. It lets the
+	// results view show the exact variant a mark replaced next to the mainText
 	// value ("Borch (Johannes Borch)"). A placeholder absent from this map, or a
-	// "" slot, means "the canonical value" and needs no bracketed original.
+	// "" slot, means "the mainText value" and needs no bracketed original.
 	//
 	// It is deliberately PER DOCUMENT: the Compare view zips this positionally
 	// with the placeholder occurrences it renders for the one document on
-	// screen. Only occurrences that carry a non-canonical spelling are worth the
-	// bytes, so a document whose every hit was the canonical value serialises
+	// screen. Only occurrences that carry a non-mainText spelling are worth the
+	// bytes, so a document whose every hit was the mainText value serialises
 	// nothing here.
-	OccurrenceVariants map[string][]string `json:"occurrenceVariants,omitempty"`
+	OccurrenceSpellings map[string][]string `json:"occurrenceSpellings,omitempty"`
 }
 
 // Results is the full outcome of one pipeline run.
@@ -177,7 +177,7 @@ func detectedCategoriesFromCounts(counts map[string]int) []string {
 	return out
 }
 
-// Entity category identifiers. They are engine CONTRACTS: they appear in
+// Value category identifiers. They are engine CONTRACTS: they appear in
 // session files and in the exported re-identification key, so they are never
 // renamed to follow a display label. The labels live on the frontend
 // (copy.js CATEGORY_LABELS), cross-checked by ../category_parity_test.go.
@@ -199,7 +199,7 @@ const (
 
 // CategorySelection is the granular per-category switch set the pipeline
 // obeys: every PII category (email, url, iban, vat,
-// matricule, phone, amount, date) and every entity category maps to on/off.
+// matricule, phone, amount, date) and every value category maps to on/off.
 // Levels are PRESETS that fill this map (PresetSelection); the UI may then
 // flip individual switches ("custom" mode).
 type CategorySelection map[string]bool
@@ -216,16 +216,16 @@ var AllPIICategories = []string{
 	CatDatabaseURI, CatDESteuerID, CatESNIF,
 }
 
-// AllEntityCategories lists the entity categories in a stable order, mirrored
+// AllValueCategories lists the value categories in a stable order, mirrored
 // by frontend/state.js and checked by ../category_parity_test.go.
-var AllEntityCategories = []string{
+var AllValueCategories = []string{
 	CatEntityNames, CatProjectNames, CatProductNames, CatBrandNames,
 	CatPersonNames, CatIdentifierNames, CatOtherNames, CatCustomPatterns,
 }
 
 // PresetSelection fills a CategorySelection from a level (CLAUDE.md §5):
 //
-//	soft     = hard PII + entity, project and identifier names + custom patterns
+//	soft     = hard PII + value, project and identifier names + custom patterns
 //	medium   = soft + person, product and brand names (the default)
 //	advanced = medium + amounts, dates and other names
 //
@@ -297,10 +297,10 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	//      half-run that assigned placeholders for a configuration the user was
 	//      just told is invalid is unrecoverable without a new session.
 	ApplyRemovals(in.Allowlist, in.Removed)
-	entities := FilterRemoved(filterEntities(in.Entities, sel), in.Removed)
+	values := FilterRemoved(filterValues(in.Values, sel), in.Removed)
 
 	res.Validation = ValidateValues(ValidationInput{
-		Entities:       entities,
+		Values:         values,
 		Patterns:       in.Patterns,
 		Allowlist:      in.Allowlist,
 		Categories:     sel,
@@ -331,7 +331,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		emit(in.Progress, ProgressEvent{Stage: "deterministic", DocIndex: i, DocCount: len(in.Documents), DocName: doc.Name})
 
 		scope := detectionScope{
-			entities:         entities,
+			values:           values,
 			patterns:         in.Patterns,
 			categories:       sel,
 			minConfidence:    in.MinConfidence,
@@ -378,11 +378,11 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		applyRegistryPostPass(&res.Documents[i], entries)
 	}
 
-	// Placeholders whose every occurrence matched the canonical value carry no
+	// Placeholders whose every occurrence matched the mainText value carry no
 	// bracketed original, so their all-"" variant slices are dropped to keep the
 	// per-document payload small.
 	for i := range res.Documents {
-		pruneCanonicalOnlyVariants(&res.Documents[i])
+		pruneMainTextOnlySpellings(&res.Documents[i])
 	}
 
 	// --- Report assembly. -------------------------------------------------
@@ -462,17 +462,17 @@ func sortValueReports(out []ValueReport) {
 	})
 }
 
-// pruneCanonicalOnlyVariants drops every placeholder whose recorded
-// occurrences were all the canonical value. Those need no bracketed original
+// pruneMainTextOnlySpellings drops every placeholder whose recorded
+// occurrences were all the mainText value. Those need no bracketed original
 // (the tooltip falls back to the mapping), so keeping their all-"" slices only
-// grows the payload. A placeholder with even one non-canonical spelling is kept
+// grows the payload. A placeholder with even one non-mainText spelling is kept
 // whole, "" slots included, so the frontend can line each occurrence up with
 // the placeholder it renders.
-func pruneCanonicalOnlyVariants(rd *ResultDocument) {
-	if rd.OccurrenceVariants == nil {
+func pruneMainTextOnlySpellings(rd *ResultDocument) {
+	if rd.OccurrenceSpellings == nil {
 		return
 	}
-	for ph, variants := range rd.OccurrenceVariants {
+	for ph, variants := range rd.OccurrenceSpellings {
 		keep := false
 		for _, v := range variants {
 			if v != "" {
@@ -481,11 +481,11 @@ func pruneCanonicalOnlyVariants(rd *ResultDocument) {
 			}
 		}
 		if !keep {
-			delete(rd.OccurrenceVariants, ph)
+			delete(rd.OccurrenceSpellings, ph)
 		}
 	}
-	if len(rd.OccurrenceVariants) == 0 {
-		rd.OccurrenceVariants = nil
+	if len(rd.OccurrenceSpellings) == 0 {
+		rd.OccurrenceSpellings = nil
 	}
 }
 
@@ -506,13 +506,13 @@ func finishReport(res *Results, start time.Time, overlaps *overlapWarnings) {
 	}
 }
 
-// filterEntities keeps the entities whose category is active at the
-// current level.
-func filterEntities(entities []Entity, active map[string]bool) []Entity {
-	var out []Entity
-	for _, e := range entities {
-		if active[e.Category] {
-			out = append(out, e)
+// filterValues keeps the Values whose category is active in the current
+// selection.
+func filterValues(values []Value, active map[string]bool) []Value {
+	var out []Value
+	for _, v := range values {
+		if active[v.Category] {
+			out = append(out, v)
 		}
 	}
 	return out
@@ -524,14 +524,14 @@ func filterEntities(entities []Entity, active map[string]bool) []Entity {
 // sites is a shape where a swapped pair compiles and silently changes what gets
 // replaced.
 type detectionScope struct {
-	entities      []Entity
+	values        []Value
 	patterns      []CustomPattern
 	categories    CategorySelection
 	minConfidence float32
 	country       string
 	allow         *Allowlist
-	// suppressRegexPII, when true, skips pass 1 (the regex PII detectors) for
-	// this run: the "Native detection" master switch is off. The entity and
+	// suppressRegexPII, when true, skips pass 1 (the built-in pattern detectors)
+	// for this run, because Built-in patterns is switched off. The Value and
 	// custom-pattern passes are unaffected.
 	suppressRegexPII bool
 }
@@ -556,7 +556,7 @@ type ownershipLoss struct {
 // entry's category after the fact would change its placeholder text, and a
 // placeholder that has left the machine can never be re-numbered.
 //
-// The winner is picked by OriginRank first, then by the same tie-breaks
+// The winner is picked by MatchClassRank first, then by the same tie-breaks
 // resolution uses. Start offset is deliberately NOT among them: comparing
 // offsets across documents would reintroduce exactly the file-order dependence
 // this function exists to remove, so the last tie-break is the category name.
@@ -564,13 +564,13 @@ type ownershipLoss struct {
 // @param plans every document's detections; regions are rewritten in place
 // @return the overruled claims, so the run can warn about them
 func unifyOwnership(plans []documentPlan) []ownershipLoss {
-	// Which (category, canonical, origin) owns each string, keyed by the
+	// Which (category, mainText, matchClass) owns each string, keyed by the
 	// lower-cased registry key the span would use.
 	winners := map[string]Span{}
 	for _, plan := range plans {
 		for _, region := range plan.regions {
 			for _, s := range region.spans {
-				key := strings.ToLower(s.CanonicalOrOriginal())
+				key := strings.ToLower(s.MainTextOrOriginal())
 				cur, seen := winners[key]
 				if !seen || supersedesForOwnership(s, cur) {
 					winners[key] = s
@@ -603,10 +603,10 @@ func unifyOwnership(plans []documentPlan) []ownershipLoss {
 			seen := make(map[claim]bool, len(spans))
 			kept := spans[:0]
 			for _, s := range spans {
-				key := strings.ToLower(s.CanonicalOrOriginal())
+				key := strings.ToLower(s.MainTextOrOriginal())
 				win := winners[key]
-				if s.Category != win.Category || s.Origin != win.Origin {
-					lossKey := s.Origin + "|" + s.Category + "|" + key
+				if s.Category != win.Category || s.MatchClass != win.MatchClass {
+					lossKey := s.MatchClass + "|" + s.Category + "|" + key
 					if !reported[lossKey] {
 						reported[lossKey] = true
 						losses = append(losses, ownershipLoss{loser: s, winner: win})
@@ -616,10 +616,10 @@ func unifyOwnership(plans []documentPlan) []ownershipLoss {
 					// Original stay as they are: they describe THIS occurrence,
 					// and the text being replaced has not changed.
 					s.Category = win.Category
-					s.Origin = win.Origin
-					s.Canonical = win.CanonicalOrOriginal()
+					s.MatchClass = win.MatchClass
+					s.MainText = win.MainTextOrOriginal()
 				}
-				id := claim{s.Start, s.End, s.Category, strings.ToLower(s.CanonicalOrOriginal())}
+				id := claim{s.Start, s.End, s.Category, strings.ToLower(s.MainTextOrOriginal())}
 				if seen[id] {
 					continue
 				}
@@ -637,7 +637,7 @@ func unifyOwnership(plans []documentPlan) []ownershipLoss {
 // span in a group covers the same value, so length cannot separate them, and
 // start would make the answer depend on file order.
 func supersedesForOwnership(a, b Span) bool {
-	ra, rb := OriginRank(a.Origin), OriginRank(b.Origin)
+	ra, rb := MatchClassRank(a.MatchClass), MatchClassRank(b.MatchClass)
 	if ra != rb {
 		return ra < rb
 	}
@@ -676,7 +676,7 @@ type documentPlan struct {
 	regions []planRegion
 }
 
-// detectDocument runs passes 1 and 2 (with the already-merged pass-3 entities)
+// detectDocument runs passes 1 and 2 (with the already-merged pass-3 values)
 // over one document and returns what it found, replacing nothing. Grid
 // documents are detected cell by cell, exactly as they are replaced, so the
 // preview and the CSV round-trip cannot disagree.
@@ -725,28 +725,28 @@ func applyPlan(plan documentPlan, reg *Registry,
 
 	doc := plan.doc
 	rd := ResultDocument{
-		Name:               doc.Name,
-		Format:             doc.Format,
-		ByCategory:         map[string]int{},
-		Warnings:           doc.Warnings,
-		OccurrenceVariants: map[string][]string{},
+		Name:                doc.Name,
+		Format:              doc.Format,
+		ByCategory:          map[string]int{},
+		Warnings:            doc.Warnings,
+		OccurrenceSpellings: map[string][]string{},
 	}
 
 	assign := func(s Span) string {
 		rd.ByCategory[s.Category]++
-		canonical := s.CanonicalOrOriginal()
-		ph := reg.Assign(s.Category, canonical)
+		mainText := s.MainTextOrOriginal()
+		ph := reg.Assign(s.Category, mainText)
 		// Record the spelling this occurrence actually matched. "" when it was
-		// the canonical value, so the tooltip needs no bracketed original; the
-		// matched text otherwise ("Borch" for canonical "Johannes Borch"). The
+		// the mainText value, so the tooltip needs no bracketed original; the
+		// matched text otherwise ("Borch" for mainText "Johannes Borch"). The
 		// closure is ApplySpans' single choke point and it is called in
 		// left-to-right offset order, which is exactly the order the frontend
 		// walks placeholders in, so slot i lines up with occurrence i.
 		variant := ""
-		if !strings.EqualFold(s.Original, canonical) {
+		if !strings.EqualFold(s.Original, mainText) {
 			variant = s.Original
 		}
-		rd.OccurrenceVariants[ph] = append(rd.OccurrenceVariants[ph], variant)
+		rd.OccurrenceSpellings[ph] = append(rd.OccurrenceSpellings[ph], variant)
 		return ph
 	}
 
@@ -809,16 +809,16 @@ func applyPlan(plan documentPlan, reg *Registry,
 // than per region.
 //
 // The category selection gates BOTH the PII categories (pass 1) and the
-// custom-pattern pass; entity categories were already filtered by the caller
-// (filterEntities). When scope.suppressRegexPII is set (the "Native detection"
+// custom-pattern pass; value categories were already filtered by the caller
+// (filterValues). When scope.suppressRegexPII is set (the "Native detection"
 // master switch is off) pass 1 is skipped entirely, so no signal category is
-// replaced; the entity and custom-pattern passes still run.
+// replaced; the value and custom-pattern passes still run.
 func detectText(text string, scope detectionScope) []Span {
 	var spans []Span
 	if !scope.suppressRegexPII {
 		spans = FilterAllowed(DetectPIISelected(text, scope.categories, scope.country), scope.allow)
 	}
-	spans = append(spans, DetectEntities(text, scope.entities, scope.allow)...)
+	spans = append(spans, DetectValues(text, scope.values, scope.allow)...)
 	if scope.categories[CatCustomPatterns] {
 		spans = append(spans, DetectCustomPatterns(text, scope.patterns, scope.allow)...)
 	}
@@ -882,7 +882,7 @@ func applyRegistryPostPass(rd *ResultDocument, entries []MappingEntry) {
 }
 
 // replaceKnownOriginal substitutes one registry entry in text with
-// word-boundary anchoring (same unicode-aware rule as the entity pass) and
+// word-boundary anchoring (same unicode-aware rule as the Value pass) and
 // without touching existing placeholders. onHit is called per replacement
 // for statistics.
 func replaceKnownOriginal(text string, e MappingEntry, onHit func()) string {
@@ -924,7 +924,7 @@ func replaceKnownOriginal(text string, e MappingEntry, onHit func()) string {
 
 // DetectKnownOriginals returns spans for every remaining occurrence of a
 // known registry original in text, word-boundary anchored and never
-// inside an existing placeholder. The span's Canonical is the registry
+// inside an existing placeholder. The span's MainText is the registry
 // original, so Registry.Assign maps it back to the SAME placeholder.
 // Callers (the same-format export) combine these with
 // the pass-1/2 spans and run ResolveOverlaps; pass entries longest-first
@@ -954,17 +954,17 @@ func DetectKnownOriginals(text string, entries []MappingEntry) []Span {
 				continue
 			}
 			spans = append(spans, Span{
-				Start:     m[0],
-				End:       m[1],
-				Category:  e.Category,
-				Original:  text[m[0]:m[1]],
-				Canonical: e.Original,
+				Start:    m[0],
+				End:      m[1],
+				Category: e.Category,
+				Original: text[m[0]:m[1]],
+				MainText: e.Original,
 				// A registry entry is ownership that is already DECIDED: the
 				// string earned this placeholder in an earlier pass or an
 				// earlier document, and a placeholder that has left the machine
 				// can never be re-numbered. So it outranks a fresh detection
 				// rather than being re-litigated by one.
-				Origin: OriginNative,
+				MatchClass: MatchClassBuiltInPattern,
 			})
 		}
 	}

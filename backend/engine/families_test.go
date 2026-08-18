@@ -5,16 +5,16 @@ import (
 	"testing"
 )
 
-// cand is a candidate as a detection route emits one.
-func cand(category, text string, count int) Candidate {
-	return Candidate{Category: category, Text: text, Count: count}
+// sugg is a suggestion as a detection route emits one.
+func sugg(category, text string, count int) Suggestion {
+	return Suggestion{Category: category, MainText: text, Count: count}
 }
 
 // mainsOf lists the folded output's main values, in order.
-func mainsOf(rows []Candidate) []string {
+func mainsOf(rows []Suggestion) []string {
 	out := make([]string, len(rows))
 	for i, r := range rows {
-		out[i] = r.Text
+		out[i] = r.MainText
 	}
 	return out
 }
@@ -24,7 +24,7 @@ func mainsOf(rows []Candidate) []string {
 func TestFoldValueFamilies(t *testing.T) {
 	cases := []struct {
 		name string
-		in   []Candidate
+		in   []Suggestion
 		// wantMains is the expected output in order; wantVariants maps a main
 		// value to the spellings folded into it.
 		wantMains    []string
@@ -32,9 +32,9 @@ func TestFoldValueFamilies(t *testing.T) {
 	}{
 		{
 			name: "the shorter form becomes the main value",
-			in: []Candidate{
-				cand(CatBrandNames, "Coca-Cola company", 2),
-				cand(CatBrandNames, "Coca-Cola", 5),
+			in: []Suggestion{
+				sugg(CatBrandNames, "Coca-Cola company", 2),
+				sugg(CatBrandNames, "Coca-Cola", 5),
 			},
 			// The longer form was found FIRST, and the shorter one still wins:
 			// left as two values the shorter fires inside the longer and the
@@ -44,10 +44,10 @@ func TestFoldValueFamilies(t *testing.T) {
 		},
 		{
 			name: "a chain folds transitively into one family",
-			in: []Candidate{
-				cand(CatBrandNames, "Coca-Cola Ltd.", 1),
-				cand(CatBrandNames, "Coca", 3),
-				cand(CatBrandNames, "Coca-Cola", 4),
+			in: []Suggestion{
+				sugg(CatBrandNames, "Coca-Cola Ltd.", 1),
+				sugg(CatBrandNames, "Coca", 3),
+				sugg(CatBrandNames, "Coca-Cola", 4),
 			},
 			wantMains: []string{"Coca"},
 			wantVariants: map[string][]string{
@@ -59,28 +59,28 @@ func TestFoldValueFamilies(t *testing.T) {
 			// A person "Delta" and an organisation "Delta Industries" are an
 			// intersection, not a family: folding them would file a human being
 			// under an organisation.
-			in: []Candidate{
-				cand(CatPersonNames, "Delta", 2),
-				cand(CatEntityNames, "Delta Industries", 3),
+			in: []Suggestion{
+				sugg(CatPersonNames, "Delta", 2),
+				sugg(CatEntityNames, "Delta Industries", 3),
 			},
 			wantMains: []string{"Delta", "Delta Industries"},
 		},
 		{
 			name: "a substring that is not at a word boundary is left alone",
 			// "Alten" occurs inside "Altenberg" and they are two different
-			// names. Same boundary rule the entity pass matches with.
-			in: []Candidate{
-				cand(CatEntityNames, "Alten", 2),
-				cand(CatEntityNames, "Altenberg", 3),
+			// names. Same boundary rule the Value pass matches with.
+			in: []Suggestion{
+				sugg(CatEntityNames, "Alten", 2),
+				sugg(CatEntityNames, "Altenberg", 3),
 			},
 			wantMains: []string{"Alten", "Altenberg"},
 		},
 		{
 			name: "a two-character stem does not become a main value",
 			// Promoting it would shred ordinary text everywhere it appeared.
-			in: []Candidate{
-				cand(CatEntityNames, "BV", 2),
-				cand(CatEntityNames, "BV Holdings", 3),
+			in: []Suggestion{
+				sugg(CatEntityNames, "BV", 2),
+				sugg(CatEntityNames, "BV Holdings", 3),
 			},
 			wantMains: []string{"BV", "BV Holdings"},
 		},
@@ -90,10 +90,10 @@ func TestFoldValueFamilies(t *testing.T) {
 			// use more often is the better main value, and picking by count
 			// rather than by input order is what makes the answer the same on
 			// every run.
-			in: []Candidate{
-				cand(CatEntityNames, "Delta Group", 2),
-				cand(CatEntityNames, "Delta", 3),
-				cand(CatEntityNames, "Delta", 9),
+			in: []Suggestion{
+				sugg(CatEntityNames, "Delta Group", 2),
+				sugg(CatEntityNames, "Delta", 3),
+				sugg(CatEntityNames, "Delta", 9),
 			},
 			wantMains: []string{"Delta"},
 			wantVariants: map[string][]string{
@@ -103,9 +103,9 @@ func TestFoldValueFamilies(t *testing.T) {
 		},
 		{
 			name: "values that are not spellings of each other stay separate",
-			in: []Candidate{
-				cand(CatEntityNames, "Alpine Trust", 2),
-				cand(CatEntityNames, "Borealis Capital", 3),
+			in: []Suggestion{
+				sugg(CatEntityNames, "Alpine Trust", 2),
+				sugg(CatEntityNames, "Borealis Capital", 3),
 			},
 			wantMains: []string{"Alpine Trust", "Borealis Capital"},
 		},
@@ -118,15 +118,15 @@ func TestFoldValueFamilies(t *testing.T) {
 			continue
 		}
 		for _, row := range got {
-			want, ok := tc.wantVariants[row.Text]
+			want, ok := tc.wantVariants[row.MainText]
 			if !ok {
-				if len(row.Variants) != 0 {
-					t.Errorf("%s: %q must fold nothing, got %v", tc.name, row.Text, row.Variants)
+				if len(row.Spellings) != 0 {
+					t.Errorf("%s: %q must fold nothing, got %v", tc.name, row.MainText, row.Spellings)
 				}
 				continue
 			}
-			if strings.Join(row.Variants, "|") != strings.Join(want, "|") {
-				t.Errorf("%s: %q variants = %v, want %v", tc.name, row.Text, row.Variants, want)
+			if strings.Join(row.Spellings, "|") != strings.Join(want, "|") {
+				t.Errorf("%s: %q spellings = %v, want %v", tc.name, row.MainText, row.Spellings, want)
 			}
 		}
 	}
@@ -139,17 +139,17 @@ func TestFoldSkipsAnAllowlistedMember(t *testing.T) {
 	allow := NewEmptyAllowlist()
 	allow.Add("Coca-Cola")
 
-	got := FoldValueFamilies([]Candidate{
-		cand(CatBrandNames, "Coca-Cola", 5),
-		cand(CatBrandNames, "Coca-Cola company", 2),
+	got := FoldValueFamilies([]Suggestion{
+		sugg(CatBrandNames, "Coca-Cola", 5),
+		sugg(CatBrandNames, "Coca-Cola company", 2),
 	}, allow)
 
 	if len(got) != 2 {
 		t.Fatalf("an allowlisted member must not be folded, got %v", mainsOf(got))
 	}
 	for _, row := range got {
-		if len(row.Variants) != 0 {
-			t.Errorf("%q folded something despite the allowlist: %v", row.Text, row.Variants)
+		if len(row.Spellings) != 0 {
+			t.Errorf("%q folded something despite the allowlist: %v", row.MainText, row.Spellings)
 		}
 	}
 }
@@ -158,9 +158,9 @@ func TestFoldSkipsAnAllowlistedMember(t *testing.T) {
 // occurs in ANY of its spellings. Reporting only the shortest form's count
 // would rank a folded family below values it actually outnumbers.
 func TestFoldSumsTheFamilyWeight(t *testing.T) {
-	got := FoldValueFamilies([]Candidate{
-		cand(CatBrandNames, "Coca-Cola", 5),
-		cand(CatBrandNames, "Coca-Cola company", 2),
+	got := FoldValueFamilies([]Suggestion{
+		sugg(CatBrandNames, "Coca-Cola", 5),
+		sugg(CatBrandNames, "Coca-Cola company", 2),
 	}, NewEmptyAllowlist())
 
 	if len(got) != 1 {
@@ -173,20 +173,20 @@ func TestFoldSumsTheFamilyWeight(t *testing.T) {
 
 // TestFoldIsIdempotent: folding an already-folded list changes nothing. The
 // merged output of two routes can contain rows that were folded per route, and
-// a second pass must not shuffle a main value or lose a variant.
+// a second pass must not shuffle a main value or lose a spelling.
 func TestFoldIsIdempotent(t *testing.T) {
-	once := FoldValueFamilies([]Candidate{
-		cand(CatBrandNames, "Coca-Cola Ltd.", 1),
-		cand(CatBrandNames, "Coca", 3),
-		cand(CatBrandNames, "Coca-Cola", 4),
+	once := FoldValueFamilies([]Suggestion{
+		sugg(CatBrandNames, "Coca-Cola Ltd.", 1),
+		sugg(CatBrandNames, "Coca", 3),
+		sugg(CatBrandNames, "Coca-Cola", 4),
 	}, NewEmptyAllowlist())
 	twice := FoldValueFamilies(once, NewEmptyAllowlist())
 
 	if strings.Join(mainsOf(once), "|") != strings.Join(mainsOf(twice), "|") {
 		t.Errorf("folding twice changed the mains: %v then %v", mainsOf(once), mainsOf(twice))
 	}
-	if strings.Join(once[0].Variants, "|") != strings.Join(twice[0].Variants, "|") {
-		t.Errorf("folding twice changed the variants: %v then %v",
-			once[0].Variants, twice[0].Variants)
+	if strings.Join(once[0].Spellings, "|") != strings.Join(twice[0].Spellings, "|") {
+		t.Errorf("folding twice changed the spellings: %v then %v",
+			once[0].Spellings, twice[0].Spellings)
 	}
 }

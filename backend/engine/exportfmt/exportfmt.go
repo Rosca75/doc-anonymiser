@@ -30,7 +30,7 @@ import (
 // Config bundles everything the rewriters need to reproduce the body
 // pipeline's replacements. Populate it from the last run's inputs.
 type Config struct {
-	Entities   []engine.Entity
+	Values     []engine.Value
 	Patterns   []engine.CustomPattern
 	Categories engine.CategorySelection
 	Level      engine.Level
@@ -71,8 +71,8 @@ func (c Config) Replacements(text string) []Replacement {
 	}
 	sel := c.selection()
 
-	var entities []engine.Entity
-	for _, e := range c.Entities {
+	var entities []engine.Value
+	for _, e := range c.Values {
 		if sel[e.Category] {
 			entities = append(entities, e)
 		}
@@ -83,7 +83,7 @@ func (c Config) Replacements(text string) []Replacement {
 		country = engine.CountryLU
 	}
 	spans := engine.FilterAllowed(engine.DetectPIISelected(text, sel, country), c.Allowlist)
-	spans = append(spans, engine.DetectEntities(text, entities, c.Allowlist)...)
+	spans = append(spans, engine.DetectValues(text, entities, c.Allowlist)...)
 	if sel["custom_patterns"] {
 		spans = append(spans, engine.DetectCustomPatterns(text, c.Patterns, c.Allowlist)...)
 	}
@@ -99,7 +99,7 @@ func (c Config) Replacements(text string) []Replacement {
 		out = append(out, Replacement{
 			Start: s.Start,
 			End:   s.End,
-			Text:  c.Registry.Assign(s.Category, s.CanonicalOrOriginal()),
+			Text:  c.Registry.Assign(s.Category, s.MainTextOrOriginal()),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Start < out[j].Start })
@@ -132,7 +132,7 @@ func filterAllowedKnown(spans []engine.Span, allow *engine.Allowlist) []engine.S
 	}
 	out := spans[:0]
 	for _, s := range spans {
-		if !allow.Contains(s.Original) && !allow.Contains(s.Canonical) {
+		if !allow.Contains(s.Original) && !allow.Contains(s.MainText) {
 			out = append(out, s)
 		}
 	}

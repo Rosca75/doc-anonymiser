@@ -85,15 +85,15 @@ func TestDetectCodesShapesAndCategories(t *testing.T) {
 			got := DetectCodes(tc.text, NewEmptyAllowlist())
 			if tc.wantNoHits {
 				if len(got) != 0 {
-					t.Fatalf("want no candidates, got %+v", got)
+					t.Fatalf("want no suggestions, got %+v", got)
 				}
 				return
 			}
 			if len(got) != 1 {
-				t.Fatalf("want exactly one candidate, got %+v", got)
+				t.Fatalf("want exactly one suggestion, got %+v", got)
 			}
-			if got[0].Text != tc.wantText {
-				t.Errorf("text = %q, want %q", got[0].Text, tc.wantText)
+			if got[0].MainText != tc.wantText {
+				t.Errorf("text = %q, want %q", got[0].MainText, tc.wantText)
 			}
 			if got[0].Category != tc.wantCat {
 				t.Errorf("category = %q, want %q", got[0].Category, tc.wantCat)
@@ -119,7 +119,7 @@ func TestDetectCodesFindsBothOfTwoAdjacentCodes(t *testing.T) {
 func TestDetectCodesCountsAndAllowlist(t *testing.T) {
 	text := "PRJ-4471 opened. PRJ-4471 closed. INV-88213 paid."
 	got := DetectCodes(text, NewEmptyAllowlist())
-	if len(got) != 2 || got[0].Text != "PRJ-4471" || got[0].Count != 2 {
+	if len(got) != 2 || got[0].MainText != "PRJ-4471" || got[0].Count != 2 {
 		t.Fatalf("the repeated code must lead with count 2, got %+v", got)
 	}
 
@@ -127,7 +127,7 @@ func TestDetectCodesCountsAndAllowlist(t *testing.T) {
 	allow.Add("PRJ-4471")
 	got = DetectCodes(text, allow)
 	for _, c := range got {
-		if c.Text == "PRJ-4471" {
+		if c.MainText == "PRJ-4471" {
 			t.Errorf("an allowlisted code must never be proposed, got %+v", got)
 		}
 	}
@@ -151,13 +151,13 @@ Ref. INV-88213 covers the project ATLAS-2024.`
 	pii := DetectPIISelected(fixture, sel, CountryLU)
 
 	for _, code := range DetectCodes(fixture, NewEmptyAllowlist()) {
-		start := strings.Index(fixture, code.Text)
-		end := start + len(code.Text)
+		start := strings.Index(fixture, code.MainText)
+		end := start + len(code.MainText)
 		for _, span := range pii {
 			if start < span.End && span.Start < end {
 				t.Errorf("the code %q (%d:%d) overlaps the %s span %q (%d:%d); "+
 					"one of the two detectors is claiming the other's territory",
-					code.Text, start, end, span.Category, fixture[span.Start:span.End], span.Start, span.End)
+					code.MainText, start, end, span.Category, fixture[span.Start:span.End], span.Start, span.End)
 			}
 		}
 	}

@@ -66,9 +66,9 @@ func TestSourceTextSurvivesTheWholeFlow(t *testing.T) {
 	// Entities chosen to actually hit the fixtures, so the run is not a no-op:
 	// a run that replaces nothing cannot prove that replacing does no damage.
 	req := RunRequest{
-		Entities: []engine.Entity{
-			{Category: "person_names", Canonical: "Marie Duval"},
-			{Category: "entity_names", Canonical: "Alpine Trust"},
+		Values: []engine.Value{
+			{Category: "person_names", MainText: "Marie Duval"},
+			{Category: "entity_names", MainText: "Alpine Trust"},
 		},
 		Categories: engine.PresetSelection(engine.LevelAdvanced),
 	}
@@ -139,7 +139,7 @@ func TestGetDocumentSourceUnknownName(t *testing.T) {
 func TestResultsCarryNoSourceCopy(t *testing.T) {
 	app, atImport := importFixtures(t, "sample.txt")
 	res, err := app.FastRerun(RunRequest{
-		Entities:   []engine.Entity{{Category: "person_names", Canonical: "Marie Duval"}},
+		Values:     []engine.Value{{Category: "person_names", MainText: "Marie Duval"}},
 		Categories: engine.PresetSelection(engine.LevelMedium),
 	})
 	if err != nil {
@@ -176,7 +176,7 @@ func TestRetiredCategoriesAreFullyGone(t *testing.T) {
 		"client_names", "internal_names", "organisation_names", "location_names",
 	}
 	for _, retired := range retiredCategories {
-		for _, cat := range engine.AllEntityCategories {
+		for _, cat := range engine.AllValueCategories {
 			if cat == retired {
 				t.Errorf("%s is still an engine category", retired)
 			}
@@ -198,9 +198,9 @@ func TestRetiredCategoriesAreFullyGone(t *testing.T) {
 		Markdown: "Alpine Trust and Marie Duval both appear here.",
 	})
 	res, err := app.FastRerun(RunRequest{
-		Entities: []engine.Entity{
-			{Category: "entity_names", Canonical: "Alpine Trust"},
-			{Category: "person_names", Canonical: "Marie Duval"},
+		Values: []engine.Value{
+			{Category: "entity_names", MainText: "Alpine Trust"},
+			{Category: "person_names", MainText: "Marie Duval"},
 		},
 		Categories: engine.PresetSelection(engine.LevelMedium),
 	})
@@ -245,22 +245,23 @@ func TestDiscoveryPromptsNameNoRetiredCategory(t *testing.T) {
 	}
 }
 
-// --- Reported issue 3: the detection route switches ----------------------
+// --- The detection route switches ----------------------------------------
 
-// TestDetectionRouteDefaults: Smart detection needs nothing installed, so it
-// is on; Local AI hands the document to a model, so the user turns it on.
+// TestDetectionRouteDefaults: every Smart detection method needs nothing
+// installed, so all three are on; Local AI hands the document to a model, so the
+// user turns that one on themselves.
 func TestDetectionRouteDefaults(t *testing.T) {
 	s := NewApp().GetSettings()
-	if !s.UseSmartDetect {
-		t.Error("Smart detection must be on by default")
+	if !s.UseBuiltInPatterns {
+		t.Error("built-in pattern matching must be on by default")
 	}
-	if !s.UseNativeDetect {
-		t.Error("Native detection must be on by default")
+	if !s.UseHeuristicDiscovery {
+		t.Error("heuristic discovery must be on by default")
 	}
-	if !s.UseAutoDetect {
-		t.Error("Auto detection must be on by default")
+	if !engine.SignalSourceEnabled(s.SignalSuggestionSources, engine.SignalSourceEmail) {
+		t.Error("email-derived Suggestions must be on by default")
 	}
-	if s.UseAI {
+	if s.UseLocalAI {
 		t.Error("the local AI route must be off by default")
 	}
 }
@@ -275,7 +276,7 @@ func TestSessionSettingsRoundTrip(t *testing.T) {
 		Settings: engine.SessionSettings{
 			Level: "advanced", OllamaPort: 11500, Model: "m:1b", ContextSize: 4096,
 			MinConfidence: 0.85,
-			SmartDetect: &engine.SmartDetectOptions{
+			HeuristicDiscovery: &engine.HeuristicDiscoveryOptions{
 				MinLength: 7, MinOccurrences: 3, ExcludeCommonWords: false, MinConfidence: 0.4,
 			},
 		},
@@ -291,8 +292,8 @@ func TestSessionSettingsRoundTrip(t *testing.T) {
 	if loaded.Settings.MinConfidence != 0.85 {
 		t.Errorf("the confidence floor did not survive the file: %v", loaded.Settings.MinConfidence)
 	}
-	if loaded.Settings.SmartDetect == nil || loaded.Settings.SmartDetect.MinLength != 7 {
-		t.Errorf("the smart tuning did not survive the file: %+v", loaded.Settings.SmartDetect)
+	if loaded.Settings.HeuristicDiscovery == nil || loaded.Settings.HeuristicDiscovery.MinLength != 7 {
+		t.Errorf("the smart tuning did not survive the file: %+v", loaded.Settings.HeuristicDiscovery)
 	}
 
 	// And the same fields must survive the App-side restore, which is where
@@ -305,10 +306,16 @@ func TestSessionSettingsRoundTrip(t *testing.T) {
 	if got.MinConfidence != 0.85 {
 		t.Errorf("the restored confidence floor is %v, want 0.85", got.MinConfidence)
 	}
-	if got.SmartDetect.MinLength != 7 || got.SmartDetect.ExcludeCommonWords {
-		t.Errorf("the restored smart tuning is %+v, want the saved one", got.SmartDetect)
+	if got.HeuristicDiscovery.MinLength != 7 || got.HeuristicDiscovery.ExcludeCommonWords {
+		t.Errorf("the restored heuristic tuning is %+v, want the saved one", got.HeuristicDiscovery)
 	}
-	if !got.UseSmartDetect {
-		t.Error("a file that says nothing about the smart route must restore it ON")
+	// A file that says nothing about a method must restore it ON, never off: the
+	// safe reading of silence is the shipped default, and reading it as "off"
+	// would silently stop detecting after a reload.
+	if !got.UseBuiltInPatterns || !got.UseHeuristicDiscovery {
+		t.Error("a file that says nothing about Smart detection's methods must restore them ON")
+	}
+	if !engine.SignalSourceEnabled(got.SignalSuggestionSources, engine.SignalSourceEmail) {
+		t.Error("a file that says nothing about a signal source must restore its default")
 	}
 }

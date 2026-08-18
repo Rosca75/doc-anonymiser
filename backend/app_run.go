@@ -15,7 +15,7 @@ import (
 // entities, allowlist, patterns and rules. Level/model/port come from the
 // stored settings.
 type RunRequest struct {
-	Entities   []engine.Entity        `json:"entities"`
+	Values     []engine.Value         `json:"values"`
 	AllowTerms []string               `json:"allowTerms"`
 	Patterns   []engine.CustomPattern `json:"patterns"`
 	// Categories is the granular per-category switch set from the
@@ -140,7 +140,7 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 
 	input := engine.PipelineInput{
 		Documents:        docs,
-		Entities:         req.Entities,
+		Values:           req.Values,
 		Patterns:         req.Patterns,
 		Level:            level,
 		Categories:       categories,

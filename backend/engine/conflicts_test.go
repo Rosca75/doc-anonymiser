@@ -24,7 +24,7 @@ func TestValidationMarshalsWithLowercaseKeys(t *testing.T) {
 			Value:    "Mendonça",
 			Message:  "two values claim the same spelling",
 			Fix:      "remove one of them",
-			Refs:     []ValueRef{{Kind: "entity", Category: "person_names", Canonical: "mendonça"}},
+			Refs:     []ValueRef{{Kind: "value", Category: "person_names", MainText: "mendonça"}},
 		}},
 	}
 	raw, err := json.Marshal(res)
@@ -34,7 +34,7 @@ func TestValidationMarshalsWithLowercaseKeys(t *testing.T) {
 	got := string(raw)
 	for _, key := range []string{
 		`"blocking"`, `"kind"`, `"severity"`, `"value"`, `"message"`, `"fix"`,
-		`"refs"`, `"category"`, `"canonical"`,
+		`"refs"`, `"category"`, `"mainText"`,
 	} {
 		if !strings.Contains(got, key) {
 			t.Errorf("expected key %s in %s", key, got)
@@ -67,9 +67,9 @@ func TestBlockingConflicts(t *testing.T) {
 		{
 			name: "the same string declared in two active categories",
 			in: ValidationInput{
-				Entities: []Entity{
-					{Category: CatEntityNames, Canonical: "Atlas"},
-					{Category: CatProjectNames, Canonical: "atlas"},
+				Values: []Value{
+					{Category: CatEntityNames, MainText: "Atlas"},
+					{Category: CatProjectNames, MainText: "atlas"},
 				},
 				Categories: PresetSelection(LevelMedium),
 			},
@@ -79,9 +79,9 @@ func TestBlockingConflicts(t *testing.T) {
 		{
 			name: "a spelling two different values would both claim",
 			in: ValidationInput{
-				Entities: []Entity{
-					{Category: CatPersonNames, Canonical: "Marie Duval"},
-					{Category: CatPersonNames, Canonical: "Marie Dupont"},
+				Values: []Value{
+					{Category: CatPersonNames, MainText: "Marie Duval"},
+					{Category: CatPersonNames, MainText: "Marie Dupont"},
 				},
 				Categories: PresetSelection(LevelMedium),
 			},
@@ -91,7 +91,7 @@ func TestBlockingConflicts(t *testing.T) {
 		{
 			name: "a declared value that is also allowlisted",
 			in: ValidationInput{
-				Entities:   []Entity{{Category: CatEntityNames, Canonical: "CSSF"}},
+				Values:     []Value{{Category: CatEntityNames, MainText: "CSSF"}},
 				Categories: PresetSelection(LevelMedium),
 				Allowlist:  allowlistWith("CSSF"),
 			},
@@ -132,9 +132,9 @@ func TestAnInactiveCategoryIsNotAConflict(t *testing.T) {
 	sel[CatProjectNames] = false
 
 	got := blocking(t, ValidationInput{
-		Entities: []Entity{
-			{Category: CatEntityNames, Canonical: "Atlas"},
-			{Category: CatProjectNames, Canonical: "Atlas"},
+		Values: []Value{
+			{Category: CatEntityNames, MainText: "Atlas"},
+			{Category: CatProjectNames, MainText: "Atlas"},
 		},
 		Categories: sel,
 	})
@@ -149,9 +149,9 @@ func TestABlockingConflictAbortsBeforeTheRegistryIsTouched(t *testing.T) {
 	registry := NewRegistry()
 	res, err := Run(context.Background(), PipelineInput{
 		Documents: []Document{{Name: "a.txt", Format: FormatTXT, Markdown: "Atlas met Atlas."}},
-		Entities: []Entity{
-			{Category: CatEntityNames, Canonical: "Atlas"},
-			{Category: CatProjectNames, Canonical: "Atlas"},
+		Values: []Value{
+			{Category: CatEntityNames, MainText: "Atlas"},
+			{Category: CatProjectNames, MainText: "Atlas"},
 		},
 		Level:     LevelMedium,
 		Allowlist: NewEmptyAllowlist(),
@@ -191,8 +191,8 @@ func TestOverlapWarningsComeFromTheResolverItself(t *testing.T) {
 
 	res, err := Run(context.Background(), PipelineInput{
 		Documents: []Document{{Name: "a.txt", Format: FormatTXT, Markdown: text}},
-		Entities: []Entity{
-			{Category: CatPersonNames, Canonical: "marie.duval@example.com"},
+		Values: []Value{
+			{Category: CatPersonNames, MainText: "marie.duval@example.com"},
 		},
 		Level:     LevelMedium,
 		Allowlist: NewEmptyAllowlist(),
@@ -228,8 +228,8 @@ func TestOverlapWarningsAreDeduplicatedAndCapped(t *testing.T) {
 
 	res, err := Run(context.Background(), PipelineInput{
 		Documents: []Document{{Name: "a.txt", Format: FormatTXT, Markdown: text}},
-		Entities: []Entity{
-			{Category: CatPersonNames, Canonical: "marie.duval@example.com"},
+		Values: []Value{
+			{Category: CatPersonNames, MainText: "marie.duval@example.com"},
 		},
 		Level:     LevelMedium,
 		Allowlist: NewEmptyAllowlist(),

@@ -5,7 +5,7 @@ package engine
 import "testing"
 
 func TestEveryCategoryHasPlaceholderLabel(t *testing.T) {
-	for _, category := range append(append([]string{}, AllPIICategories...), AllEntityCategories...) {
+	for _, category := range append(append([]string{}, AllPIICategories...), AllValueCategories...) {
 		if _, ok := placeholderLabels[category]; !ok {
 			t.Fatalf("placeholder label missing for category %q", category)
 		}

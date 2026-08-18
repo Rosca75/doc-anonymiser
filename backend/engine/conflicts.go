@@ -21,10 +21,10 @@ import (
 // run. Without them the frontend would receive Go's capitalised field names and
 // the report would silently disagree with what the engine produced.
 type ValueRef struct {
-	Kind      string `json:"kind"`             // "regex" | "entity" | "custom_pattern"
-	Category  string `json:"category"`         // category the value belongs to
-	Canonical string `json:"canonical"`        // lower-cased value
-	Detail    string `json:"detail,omitempty"` // extra context (e.g., the regex pattern)
+	Kind     string `json:"kind"`             // "regex" | "value" | "custom_pattern"
+	Category string `json:"category"`         // category the value belongs to
+	MainText string `json:"mainText"`         // lower-cased value
+	Detail   string `json:"detail,omitempty"` // extra context (e.g., the regex pattern)
 }
 
 // Conflict is a value that violates an invariant and must be resolved.
@@ -45,7 +45,7 @@ type ValidationResult struct {
 
 // ValidationInput is what ValidateValues needs to check.
 type ValidationInput struct {
-	Entities       []Entity          // declared entities
+	Values         []Value           // the accepted Values
 	Patterns       []CustomPattern   // user-written regex patterns
 	Allowlist      *Allowlist        // terms never to replace
 	Categories     CategorySelection // which categories are active
@@ -76,7 +76,7 @@ func ValidateValues(in ValidationInput) ValidationResult {
 		return ValidationResult{}
 	}
 
-	active := activeEntities(in.Entities, in.Categories)
+	active := activeValues(in.Values, in.Categories)
 
 	var result ValidationResult
 	result.Blocking = append(result.Blocking, checkDuplicateValues(active)...)
@@ -85,16 +85,16 @@ func ValidateValues(in ValidationInput) ValidationResult {
 	return result
 }
 
-// activeEntities keeps the entities whose category is switched on. A nil
+// activeValues keeps the values whose category is switched on. A nil
 // selection means "no selection was supplied", which every caller inside Run
 // resolves before calling, so it is read as "everything is active" rather than
 // "nothing is".
-func activeEntities(entities []Entity, categories CategorySelection) []Entity {
+func activeValues(values []Value, categories CategorySelection) []Value {
 	if categories == nil {
-		return entities
+		return values
 	}
-	out := make([]Entity, 0, len(entities))
-	for _, e := range entities {
+	out := make([]Value, 0, len(values))
+	for _, e := range values {
 		if categories[e.Category] {
 			out = append(out, e)
 		}
@@ -108,29 +108,29 @@ func activeEntities(entities []Entity, categories CategorySelection) []Entity {
 // replacement string. The registry enforces it at assignment time too, by
 // keeping the FIRST category that claimed a string; blocking here is what tells
 // the user, because the registry's silent resolution is correct and invisible.
-func checkDuplicateValues(entities []Entity) []Conflict {
+func checkDuplicateValues(values []Value) []Conflict {
 	var conflicts []Conflict
-	owner := map[string]string{} // lower(canonical) -> category
+	owner := map[string]string{} // lower(mainText) -> category
 
-	for _, e := range entities {
-		canonical := strings.ToLower(e.Canonical)
-		previous, seen := owner[canonical]
+	for _, e := range values {
+		mainText := strings.ToLower(e.MainText)
+		previous, seen := owner[mainText]
 		if seen && previous != e.Category {
 			conflicts = append(conflicts, Conflict{
 				Kind:     "ambiguity",
 				Severity: "block",
-				Value:    e.Canonical,
+				Value:    e.MainText,
 				Refs: []ValueRef{
-					{Kind: "entity", Category: previous, Canonical: canonical},
-					{Kind: "entity", Category: e.Category, Canonical: canonical},
+					{Kind: "value", Category: previous, MainText: mainText},
+					{Kind: "value", Category: e.Category, MainText: mainText},
 				},
 				Message: fmt.Sprintf(
 					"the value %q is declared under both %q and %q, and one value can only have one replacement",
-					e.Canonical, previous, e.Category),
+					e.MainText, previous, e.Category),
 				Fix: "Delete the value from one of the two categories, or switch one category off.",
 			})
 		}
-		owner[canonical] = e.Category
+		owner[mainText] = e.Category
 	}
 	return conflicts
 }
@@ -142,30 +142,30 @@ func checkDuplicateValues(entities []Entity) []Conflict {
 // resolver picks per occurrence, the other value silently loses occurrences it
 // was supposed to own. It is also the case the drag-and-drop regrouping exists
 // for, caught for the user who never did the drag.
-func checkVariantCollisions(entities []Entity) []Conflict {
+func checkVariantCollisions(values []Value) []Conflict {
 	var conflicts []Conflict
-	owner := map[string]string{} // lower(variant) -> the canonical that claimed it
+	owner := map[string]string{} // lower(variant) -> the mainText that claimed it
 
-	for _, e := range entities {
-		for _, variant := range ExpandVariants(e) {
+	for _, e := range values {
+		for _, variant := range ExpandSpellings(e) {
 			key := strings.ToLower(variant)
 			previous, seen := owner[key]
-			if seen && !strings.EqualFold(previous, e.Canonical) {
+			if seen && !strings.EqualFold(previous, e.MainText) {
 				conflicts = append(conflicts, Conflict{
 					Kind:     "collision",
 					Severity: "block",
 					Value:    variant,
 					Refs: []ValueRef{
-						{Kind: "entity", Category: e.Category, Canonical: strings.ToLower(previous), Detail: previous},
-						{Kind: "entity", Category: e.Category, Canonical: strings.ToLower(e.Canonical), Detail: e.Canonical},
+						{Kind: "value", Category: e.Category, MainText: strings.ToLower(previous), Detail: previous},
+						{Kind: "value", Category: e.Category, MainText: strings.ToLower(e.MainText), Detail: e.MainText},
 					},
 					Message: fmt.Sprintf(
 						"%q is a spelling of both %q and %q, so an occurrence of it belongs to neither",
-						variant, previous, e.Canonical),
+						variant, previous, e.MainText),
 					Fix: "Drag the spelling onto the value it belongs to in the variant list, or remove one of the two values.",
 				})
 			}
-			owner[key] = e.Canonical
+			owner[key] = e.MainText
 		}
 	}
 	return conflicts
@@ -177,26 +177,26 @@ func checkVariantCollisions(entities []Entity) []Conflict {
 // The allowlist wins, by every pass, so the value is simply never replaced.
 // That is a defensible rule and a terrible silence: the user listed the value
 // on purpose and nothing anywhere says why it survived the run.
-func checkAllowlistCollisions(entities []Entity, allowlist *Allowlist) []Conflict {
+func checkAllowlistCollisions(values []Value, allowlist *Allowlist) []Conflict {
 	if allowlist == nil {
 		return nil
 	}
 	var conflicts []Conflict
-	for _, e := range entities {
-		if !allowlist.Contains(e.Canonical) {
+	for _, e := range values {
+		if !allowlist.Contains(e.MainText) {
 			continue
 		}
 		conflicts = append(conflicts, Conflict{
 			Kind:     "collision",
 			Severity: "block",
-			Value:    e.Canonical,
+			Value:    e.MainText,
 			Refs: []ValueRef{
-				{Kind: "entity", Category: e.Category, Canonical: strings.ToLower(e.Canonical)},
-				{Kind: "allowlist", Canonical: strings.ToLower(e.Canonical)},
+				{Kind: "value", Category: e.Category, MainText: strings.ToLower(e.MainText)},
+				{Kind: "allowlist", MainText: strings.ToLower(e.MainText)},
 			},
 			Message: fmt.Sprintf(
 				"%q is listed both as a value to replace and as a term never to anonymise, and the never-anonymise list always wins",
-				e.Canonical),
+				e.MainText),
 			Fix: "Remove it from one of the two lists, so the run does what you expect.",
 		})
 	}
@@ -262,7 +262,7 @@ func (w *overlapWarnings) add(dropped []Span) {
 			return
 		}
 		w.examined++
-		value := span.CanonicalOrOriginal()
+		value := span.MainTextOrOriginal()
 		key := span.Category + "|" + strings.ToLower(value)
 		if w.seen[key] {
 			continue
@@ -272,7 +272,7 @@ func (w *overlapWarnings) add(dropped []Span) {
 			Kind:     "overlap",
 			Severity: "warn",
 			Value:    value,
-			Refs:     []ValueRef{{Kind: "detection", Category: span.Category, Canonical: strings.ToLower(value)}},
+			Refs:     []ValueRef{{Kind: "detection", Category: span.Category, MainText: strings.ToLower(value)}},
 			Message: fmt.Sprintf(
 				"%q was detected as %s but a stronger detection covered the same text, so the stronger one was used",
 				value, span.Category),
@@ -297,7 +297,7 @@ func (w *overlapWarnings) addOwnershipLosses(losses []ownershipLoss) {
 			return
 		}
 		w.examined++
-		value := loss.loser.CanonicalOrOriginal()
+		value := loss.loser.MainTextOrOriginal()
 		key := loss.loser.Category + "|" + strings.ToLower(value)
 		if w.seen[key] {
 			continue
@@ -307,28 +307,28 @@ func (w *overlapWarnings) addOwnershipLosses(losses []ownershipLoss) {
 			Kind:     "overlap",
 			Severity: "warn",
 			Value:    value,
-			Refs:     []ValueRef{{Kind: "detection", Category: loss.loser.Category, Canonical: strings.ToLower(value)}},
+			Refs:     []ValueRef{{Kind: "detection", Category: loss.loser.Category, MainText: strings.ToLower(value)}},
 			Message: fmt.Sprintf(
 				"%q was found by %s as %s and by %s as %s. %s takes priority, so it is replaced as %s everywhere.",
 				value,
-				originWord(loss.loser.Origin), loss.loser.Category,
-				originWord(loss.winner.Origin), loss.winner.Category,
-				originWord(loss.winner.Origin), loss.winner.Category),
+				matchClassWord(loss.loser.MatchClass), loss.loser.Category,
+				matchClassWord(loss.winner.MatchClass), loss.winner.Category,
+				matchClassWord(loss.winner.MatchClass), loss.winner.Category),
 			Fix: "If the other one should win, switch off the type that covered it, narrow the pattern, or add the covering term to the never anonymise list.",
 		})
 	}
 }
 
-// originWord is the route named in a warning sentence. The engine's identifiers
+// matchClassWord is the route named in a warning sentence. The engine's identifiers
 // are contracts, not prose, so a message that printed "ai" would read as jargon;
-// these are the same words the value card's origin chip uses.
-func originWord(origin string) string {
-	switch origin {
-	case OriginNative:
+// these are the same words the value card's matchClass chip uses.
+func matchClassWord(matchClass string) string {
+	switch matchClass {
+	case MatchClassBuiltInPattern:
 		return "native detection"
-	case OriginAuto:
+	case MatchClassSmartDiscovered:
 		return "Smart detection"
-	case OriginAI:
+	case MatchClassLocalAIDiscovered:
 		return "the local AI"
 	default:
 		return "your own values and patterns"

@@ -46,7 +46,7 @@ func TestFastRerunAppliesEntity(t *testing.T) {
 
 	// First run knows the organisation and the email; the person is still missed.
 	res1, err := app.runPipelineBlocking(context.Background(), RunRequest{
-		Entities: []engine.Entity{{Category: "entity_names", Canonical: "Alpine Trust"}},
+		Values: []engine.Value{{Category: "entity_names", MainText: "Alpine Trust"}},
 	})
 	if err != nil {
 		t.Fatalf("first run: %v", err)
@@ -61,9 +61,9 @@ func TestFastRerunAppliesEntity(t *testing.T) {
 
 	// The user notices the missed person and adds them, then fast-reruns.
 	res2, err := app.FastRerun(RunRequest{
-		Entities: []engine.Entity{
-			{Category: "entity_names", Canonical: "Alpine Trust"},
-			{Category: "person_names", Canonical: "Marie Duval"},
+		Values: []engine.Value{
+			{Category: "entity_names", MainText: "Alpine Trust"},
+			{Category: "person_names", MainText: "Marie Duval"},
 		},
 	})
 	if err != nil {
@@ -98,7 +98,7 @@ func TestRunPipelineRejectsEmptyAndConcurrent(t *testing.T) {
 	}
 }
 
-// TestApplySettingsRoundTrip: ContextSize, UseAI and
+// TestApplySettingsRoundTrip: ContextSize, UseLocalAI and
 // Categories survive ApplySettings and reach the Ollama client / pipeline
 // configuration.
 func TestApplySettingsRoundTrip(t *testing.T) {
@@ -115,13 +115,13 @@ func TestApplySettingsRoundTrip(t *testing.T) {
 		Model:       "custom:3b",
 		ContextSize: 16384,
 		Country:     engine.CountryLU,
-		UseAI:       true,
+		UseLocalAI:  true,
 	})
 	if err != nil {
 		t.Fatalf("ApplySettings: %v", err)
 	}
 	got := app.GetSettings()
-	if got.ContextSize != 16384 || !got.UseAI || got.Model != "custom:3b" {
+	if got.ContextSize != 16384 || !got.UseLocalAI || got.Model != "custom:3b" {
 		t.Errorf("settings not stored: %+v", got)
 	}
 	if got.Categories["email"] || !got.Categories["entity_names"] {
@@ -146,7 +146,7 @@ func TestPipelineDonePayloadIncludesMapping(t *testing.T) {
 		Markdown: "mail one@example.com from Alpine"}}
 
 	res, err := app.runPipelineBlocking(context.Background(), RunRequest{
-		Entities: []engine.Entity{{Category: "entity_names", Canonical: "Alpine"}},
+		Values: []engine.Value{{Category: "entity_names", MainText: "Alpine"}},
 	})
 	if err != nil {
 		t.Fatal(err)
