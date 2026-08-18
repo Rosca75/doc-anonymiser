@@ -244,18 +244,51 @@ test("a fully covered value says it is never replaced under its own type", () =>
   assert.ok(note.inner.includes("Priority order"), "the rule that decided is stated");
 });
 
-test("a partly covered value gets the milder count sentence", () => {
+test("a fully covered value with no separate literal names itself once", () => {
+  // The winner sat on the value's own text, so Go sends no matchedTexts and the
+  // sentence must not read as though the value were a spelling of itself.
   resetState();
-  seed("entity_names", "Meridian");
+  seed("person_names", "marie.duval@example.com");
+  setIntersections([overlap()]);
+  // The visible TEXT, not the HTML: the quotation marks the sentence puts round
+  // the value are escaped entities in the markup and only decode on the way to
+  // the user, which is who the sentence is for.
+  const sentence = textOf(valuesTab(getState()), "span.warn-hint");
+  assert.ok(sentence.includes('"marie.duval@example.com"'), "the value is quoted");
+  assert.ok(!sentence.includes("a spelling of"),
+    "there is no other literal to name, so no spelling clause");
+});
+
+test("a covered value whose literal differs names the literal as a spelling", () => {
+  // "Coca" occurs only inside lowercase email domains, so quoting the declared
+  // form would claim the document holds "Coca" where it holds "coca".
+  resetState();
+  seed("entity_names", "Coca");
   setIntersections([overlap({
-    value: "Meridian", category: "entity_names",
-    winnerValue: "Meridian-4471", winnerCategory: "custom_patterns",
-    winnerMatchClass: "user_defined",
-    occurrences: 1, totalOccurrences: 3,
+    value: "Coca", category: "entity_names",
+    winnerValue: "sales@coca.us", winnerCategory: "email",
+    winnerMatchClass: "built_in_pattern",
+    matchedTexts: ["coca"],
   })]);
-  const note = one(valuesTab(getState()), "div.intersection-note");
-  assert.ok(note.inner.includes("1 of 3"), "the counts are the difference between a note and an alarm");
-  assert.ok(!note.inner.includes("Every occurrence"));
+  const sentence = textOf(valuesTab(getState()), "span.warn-hint");
+  assert.ok(sentence.includes('"coca" (a spelling of "Coca")'),
+    `the literal covered text is named, got ${sentence}`);
+});
+
+test("two covered fragments are both named, in the plural", () => {
+  // A person's derived spellings match separately inside an address; the full
+  // name occurs nowhere in it, so the sentence has to name both fragments.
+  resetState();
+  seed("person_names", "Pierre Dupont");
+  setIntersections([overlap({
+    value: "Pierre Dupont", category: "person_names",
+    winnerValue: "pierre.dupont@coca.us", winnerCategory: "email",
+    winnerMatchClass: "built_in_pattern",
+    matchedTexts: ["pierre", "dupont"],
+  })]);
+  const sentence = textOf(valuesTab(getState()), "span.warn-hint");
+  assert.ok(sentence.includes('"pierre", "dupont" (spellings of "Pierre Dupont")'),
+    `both fragments are named, got ${sentence}`);
 });
 
 test("an intersection warns, it does not look like a blocking conflict", () => {

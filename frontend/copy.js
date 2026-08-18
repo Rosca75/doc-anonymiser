@@ -608,15 +608,32 @@ export const WORKSPACE = {
   // The route names come from originLabel above, so a message names a route in
   // the same words the chip on the card uses.
   intersectionTitle: "Overlaps another detection",
-  /** intersectionAll(value, winner, route) is the case worth shouting about:
-   *  the value is never replaced under its own type. */
-  intersectionAll(value, winner, route) {
-    return `Every occurrence of "${value}" is also matched by ${route} as "${winner}", which takes priority. This value is not replaced under its own type.`;
+  /**
+   * intersectedText(value, matchedTexts) names what actually sat inside the
+   * winner. Usually that IS the value's own text and the sentence says so once;
+   * when the covered occurrences are spellings with different casing or shape (a
+   * lowercase spelling inside an email, or the "pierre"/"dupont" fragments of a
+   * person name), naming them instead avoids implying the exact quoted string was
+   * found verbatim where it was not.
+   */
+  intersectedText(value, matchedTexts) {
+    const list = (matchedTexts ?? []).filter((t) => t && t !== value);
+    if (list.length === 0) return `"${value}"`;
+    const quoted = list.map((t) => `"${t}"`).join(", ");
+    return `${quoted} (${list.length === 1 ? "a spelling" : "spellings"} of "${value}")`;
   },
-  /** intersectionSome(covered, total, value, winner, route) is the milder
-   *  case: the value still applies where nothing covers it. */
-  intersectionSome(covered, total, value, winner, route) {
-    return `${covered} of ${total} occurrences of "${value}" are also matched by ${route} as "${winner}", which takes priority there.`;
+  /**
+   * intersectionAll(value, winner, route, matchedTexts) is the only intersection
+   * sentence there is: the value is never replaced under its own type, because a
+   * higher-priority match covers every occurrence.
+   *
+   * There is no milder count sentence beside it, on purpose. A value covered in
+   * some places and free in others keeps its own placeholder everywhere else, and
+   * the covered occurrences are redacted by the winner, so the sentence would name
+   * no leak and offer no action. The engine reports only full coverage.
+   */
+  intersectionAll(value, winner, route, matchedTexts) {
+    return `Every occurrence of ${this.intersectedText(value, matchedTexts)} is also matched by ${route} as "${winner}", which takes priority. This value is not replaced under its own type.`;
   },
   intersectionOrder: "Priority order: built-in patterns, then your own Values and patterns, then Smart detection, then Local AI.",
   intersectionFix: "If this value should win instead, switch off the type that covers it, narrow the pattern, or add the covering term to Never anonymise.",

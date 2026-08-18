@@ -768,13 +768,12 @@ function intersectionNoteHTML(overlap) {
   // The warning names the winning METHOD, never the internal rank: the rank is
   // an engine input, and a user reading "rank 1" learns nothing.
   const route = WORKSPACE.matchClassLabel[overlap.winnerMatchClass] ?? overlap.winnerMatchClass;
-  const covered = overlap.occurrences ?? 0;
-  const total = overlap.totalOccurrences ?? covered;
-  // Fully covered means the value is NEVER replaced under its own type, which
-  // is a different statement from "sometimes something else wins here".
-  const message = covered >= total
-    ? WORKSPACE.intersectionAll(overlap.value, overlap.winnerValue, route)
-    : WORKSPACE.intersectionSome(covered, total, overlap.value, overlap.winnerValue, route);
+  // Every row Go sends is full coverage, so there is one sentence and no branch:
+  // the value is never replaced under its own type. matchedTexts names the
+  // literal the winner covered, which for a derived spelling is not the value's
+  // own text.
+  const message = WORKSPACE.intersectionAll(
+    overlap.value, overlap.winnerValue, route, overlap.matchedTexts);
 
   return `<div class="value-note intersection-note">` +
     `<span class="hint warn-hint">${icon("info")}${escapeHTML(message)}</span>` +

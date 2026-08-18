@@ -55,13 +55,23 @@ func TestIntersectionEmailCoversADeclaredValue(t *testing.T) {
 	if len(row.Documents) != 1 || row.Documents[0] != "a.txt" {
 		t.Errorf("the message needs somewhere to point, got %v", row.Documents)
 	}
+	// The winner sat on the value's own text, so there is no other literal to
+	// name and the message says the value once instead of repeating it as its
+	// own spelling.
+	if len(row.MatchedTexts) != 0 {
+		t.Errorf("the covered text IS the value, so nothing extra is reported, got %v",
+			row.MatchedTexts)
+	}
 }
 
-// TestIntersectionPartialCoverage: a value covered in some places and free in
-// others is a milder note, so the counts must differ. Reporting "3 of 3" for a
-// value that also appears on its own is the difference between a note and an
-// alarm.
-func TestIntersectionPartialCoverage(t *testing.T) {
+// TestIntersectionPartialCoverageIsNotReported: a value covered in some places
+// and free in others is NOT a warning.
+//
+// It still gets its own placeholder everywhere nothing covers it, and the covered
+// occurrences are redacted by the winner, so the message would name no leak and
+// no action. Only total coverage is worth saying, because then the value gets no
+// placeholder of its own at all.
+func TestIntersectionPartialCoverageIsNotReported(t *testing.T) {
 	// "Meridian" is a declared value. A custom pattern claims it only where it
 	// is followed by a code, so one of the three occurrences is covered.
 	docs := []Document{{
@@ -73,18 +83,74 @@ func TestIntersectionPartialCoverage(t *testing.T) {
 		[]Value{{Category: CatEntityNames, MainText: "Meridian"}},
 		[]CustomPattern{{Expr: `Meridian-[0-9]+`}}))
 
-	row, ok := findIntersection(rows, "Meridian", CatEntityNames)
+	if row, ok := findIntersection(rows, "Meridian", CatEntityNames); ok {
+		t.Errorf("a value covered %d of %d times is not reported, got %+v",
+			row.Occurrences, row.TotalOccurrences, row)
+	}
+}
+
+// TestIntersectionMatchedTextDiffersFromValue: the casing case. The entity
+// "Coca" occurs only inside email domains, where the document spells it "coca",
+// so a message quoting the declared form would claim a string the document does
+// not hold at that position.
+func TestIntersectionMatchedTextDiffersFromValue(t *testing.T) {
+	docs := []Document{{
+		Name: "a.txt", Format: FormatTXT,
+		Markdown: "Write to sales@coca.us, or to legal@coca.us instead.\n",
+	}}
+
+	rows := DetectIntersections(docs,
+		scopeFor([]Value{{Category: CatEntityNames, MainText: "Coca"}}, nil))
+
+	row, ok := findIntersection(rows, "Coca", CatEntityNames)
 	if !ok {
-		t.Fatalf("the partially covered value must be reported, got %+v", rows)
+		t.Fatalf("the declared entity is covered in every occurrence, got %+v", rows)
 	}
-	if row.Occurrences != 1 {
-		t.Errorf("exactly one occurrence is covered, got %d", row.Occurrences)
+	if row.Occurrences != row.TotalOccurrences {
+		t.Errorf("every occurrence sits inside an address, got %d of %d",
+			row.Occurrences, row.TotalOccurrences)
 	}
-	if row.TotalOccurrences != 3 {
-		t.Errorf("the value occurs three times in all, got %d", row.TotalOccurrences)
+	if len(row.MatchedTexts) != 1 || row.MatchedTexts[0] != "coca" {
+		t.Errorf("the literal covered text is what the document holds (\"coca\"), got %v",
+			row.MatchedTexts)
 	}
-	if row.WinnerCategory != CatCustomPatterns {
-		t.Errorf("the pattern must be named as the winner, got %s", row.WinnerCategory)
+}
+
+// TestIntersectionReportsFragmentSpellings: the fragment case, and the reason
+// MatchedTexts is a SET.
+//
+// A person's derived spellings match separately inside an address ("pierre" and
+// "dupont" in pierre.dupont@coca.us, because the value pass treats "." and "@"
+// as word boundaries). The full name never appears there at all, so the message
+// has to name the fragments, both of them, in the order the document holds them.
+func TestIntersectionReportsFragmentSpellings(t *testing.T) {
+	docs := []Document{{
+		Name: "a.txt", Format: FormatTXT,
+		Markdown: "Send it to pierre.dupont@coca.us before Friday.\n",
+	}}
+
+	rows := DetectIntersections(docs,
+		scopeFor([]Value{{Category: CatPersonNames, MainText: "Pierre Dupont"}}, nil))
+
+	row, ok := findIntersection(rows, "Pierre Dupont", CatPersonNames)
+	if !ok {
+		t.Fatalf("the person occurs only inside the address, got %+v", rows)
+	}
+	if row.Occurrences != row.TotalOccurrences {
+		t.Errorf("the address covers every occurrence, got %d of %d",
+			row.Occurrences, row.TotalOccurrences)
+	}
+	want := []string{"pierre", "dupont"}
+	if len(row.MatchedTexts) != len(want) {
+		t.Fatalf("both fragments are covered, so both are named: want %v, got %v",
+			want, row.MatchedTexts)
+	}
+	for i, w := range want {
+		if row.MatchedTexts[i] != w {
+			t.Errorf("the fragments are listed in document order: want %v, got %v",
+				want, row.MatchedTexts)
+			break
+		}
 	}
 }
 
