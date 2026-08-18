@@ -1619,6 +1619,43 @@ export function acceptedValues(s = state) {
     }));
 }
 
+/**
+ * relatedTo(row, rows) lists the OTHER rows that share a piece of evidence with
+ * this one.
+ *
+ * Shared evidence makes two rows RELATED, never one Value. "Tpps France" and
+ * "Tpps S.A." both come from the same email domain, and they may genuinely be two
+ * legal entities or two country branches; folding them automatically would give
+ * one placeholder to two companies, and the mapping CSV would then say two
+ * different organisations were the same one. So this returns a NOTE for the user
+ * to act on, and the grouping stays their decision.
+ *
+ * Relatedness is computed rather than stored, so it cannot go stale against a row
+ * the user has since accepted, rejected or retyped.
+ *
+ * @param {object} row the row to explain
+ * @param {object[]} rows every row of the same kind (Suggestions, or Values)
+ * @returns {string[]} the other rows' main texts, in their own order
+ */
+export function relatedTo(row, rows) {
+  const keys = new Set((row?.evidence ?? []).map(evidenceKey));
+  if (keys.size === 0) return [];
+  const self = suggestionKey(row.mainText);
+  return (rows ?? [])
+    .filter((other) => suggestionKey(other.mainText) !== self
+      && (other.evidence ?? []).some((e) => keys.has(evidenceKey(e))))
+    .map((other) => other.mainText);
+}
+
+/**
+ * evidenceKey(e) identifies one piece of evidence by the RELATIONSHIP it records,
+ * ignoring which documents it was found in. Mirrors the engine's own key, so the
+ * two sides agree on what "the same evidence" means.
+ */
+function evidenceKey(e) {
+  return `${e?.kind ?? ""}|${e?.signalCategory ?? ""}|${e?.signalText ?? ""}`;
+}
+
 // --- Suggestion review reducers ----------------------------
 //
 // The review gate: discovery methods ADD suggestions; only an explicit

@@ -19,7 +19,9 @@ import {
   runCard, missedCard, renderAnonymise, searchWalk, searchControls,
   selectionPanel, applySelection,
 } from "./views/anonymise.js";
-import { resetState, setState, getState, addValues } from "./state.js";
+import {
+  resetState, setState, getState, addValues, foldIntoFamily, buildRunRequest,
+} from "./state.js";
 import { readFileSync } from "node:fs";
 import { ANONYMISE } from "./copy.js";
 import { textOf, all, attr, exists } from "./testhtml.js";
@@ -684,4 +686,70 @@ test("the Compare panel exposes only the two Value actions", () => {
     "no free-text replacement field: a literal rewrite leaves no re-identification entry");
   assert.ok(!/addSimpleRule|nextRulePlaceholder/.test(source),
     "no find-and-replace path remains in the view");
+});
+
+// --- Add missed Value ------------------------------------------------------
+//
+// The card is a MANUAL VALUE DECLARATION followed by a fast deterministic rerun.
+// It creates a normal Value: a category, a placeholder, an entry in the
+// re-identification key, spellings and grouping like any other. It is not a
+// literal rewrite with a different name, which is what the facility it replaced
+// was, and the difference is the whole point.
+
+test("Add missed Value declares a real Value, with its category switched on", () => {
+  resetState();
+  const before = getState().values.length;
+  assert.equal(addValues([{ category: "person_names", mainText: "P. Stone" }]), 1);
+
+  const value = getState().values.find((v) => v.mainText === "P. Stone");
+  assert.ok(value, "the declaration became a Value");
+  assert.equal(value.category, "person_names", "it carries the category the user chose");
+  assert.deepEqual(value.discoveryMethods, ["manual"], "declared by the user");
+  assert.equal(value.spellingPolicy, "automatic",
+    "a fresh Value is uncurated, so Go still derives its spellings");
+  assert.equal(getState().values.length, before + 1);
+  // The category is switched on, or the pipeline would drop the Value the user
+  // just declared and the fast rerun would appear to do nothing.
+  assert.equal(getState().settings.categories.person_names, true);
+});
+
+test("Add missed Value reaches Go as a Value, so it earns a placeholder", () => {
+  // A Value in the run request is what gets a placeholder and a mapping row. A
+  // path that rewrote text without going through the request would leave the
+  // re-identification key unable to say what happened.
+  resetState();
+  addValues([{ category: "person_names", mainText: "P. Stone" }]);
+  const sent = buildRunRequest().values.find((v) => v.mainText === "P. Stone");
+  assert.ok(sent, "the declared Value travels in the run request");
+  assert.deepEqual(sent.discoveryMethods, ["manual"]);
+  assert.equal(sent.spellingPolicy, "automatic");
+});
+
+test("a missed Value that belongs to an existing family folds into it", () => {
+  // One Value, one placeholder: adding "Coca-Cola company" beside "Coca-Cola"
+  // must not create a rival the shorter form fires inside.
+  resetState();
+  addValues([{ category: "brand_names", mainText: "Coca-Cola" }]);
+  const family = foldIntoFamily("brand_names", "Coca-Cola company");
+  assert.ok(family, "the longer form joins the existing family");
+  assert.equal(family.main, "Coca-Cola", "the shorter form stays the main text");
+  assert.equal(getState().values.length, 1, "one Value, not two");
+  assert.ok(getState().values[0].spellings.includes("Coca-Cola company"));
+});
+
+// --- Nothing that bypasses the Value model remains -------------------------
+
+test("no Find and replace surface remains anywhere on Anonymise", () => {
+  // Every retired affordance in one assertion, because the point is not that the
+  // card is gone but that no path rewrites text without the re-identification key
+  // recording it.
+  const source = readFileSync(new URL("./views/anonymise.js", import.meta.url), "utf8");
+  for (const retired of [
+    "addSimpleRule", "removeSimpleRule", "moveSimpleRule", "simpleRules",
+    "nextRulePlaceholder", "rulesCard", "rule-find", "rule-replace",
+  ]) {
+    assert.ok(!source.includes(retired), `views/anonymise.js still mentions ${retired}`);
+  }
+  const copySource = readFileSync(new URL("./copy.js", import.meta.url), "utf8");
+  assert.ok(!/Find and replace/.test(copySource), "no copy names the retired facility");
 });

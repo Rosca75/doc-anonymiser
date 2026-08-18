@@ -52,7 +52,7 @@ import {
   renameValue, renameSpelling, changeValueCategory, changeSuggestionCategory,
   groupValues, clearAllValues, valueConflicts, spellingsOf, removeAllowTerm, addAllowTerm,
   aiScopeArg, curate, setIntersections, intersectionsFor, buildIntersectionRequest,
-  foldIntoFamily, DISCOVERY_METHODS,
+  foldIntoFamily, DISCOVERY_METHODS, relatedTo,
 } from "../state.js";
 import { pendingExpansions } from "../valuemodel.js";
 import {
@@ -338,7 +338,9 @@ export function suggestionsTab(s, shown) {
     }) +
     `</div>`;
 
-  const rows = shown.map((c) => suggestionRow(c)).join("");
+  // Relatedness is computed against every SHOWN row, not the whole store: the
+  // note points at rows the user can see and act on, not at ones a filter hides.
+  const rows = shown.map((row) => suggestionRow(row, shown)).join("");
   const body = rows ||
     `<div class="grid-empty">${escapeHTML(VALUES.noMatchingSuggestions)}</div>`;
 
@@ -433,6 +435,20 @@ function methodChips(methods) {
 }
 
 /**
+ * relatedNote(row, rows) names the other rows that share evidence with this one.
+ *
+ * It is a NOTE, never a fold: two organisations reached through one email domain
+ * may genuinely be two legal entities, and giving them one placeholder would make
+ * the mapping CSV say they were the same company. The user confirms grouping, with
+ * the action the card already carries.
+ */
+function relatedNote(row, rows) {
+  const others = relatedTo(row, rows);
+  if (others.length === 0) return "";
+  return `<span class="related-note hint">${escapeHTML(WORKSPACE.relatedValues(others))}</span>`;
+}
+
+/**
  * evidenceNote(evidence) explains WHY a discovery method produced a row.
  *
  * The engine returns evidence STRUCTURED, and the sentence is built here from
@@ -448,7 +464,7 @@ function evidenceNote(evidence) {
     `${escapeHTML(lines.join(" "))}</span>`;
 }
 
-function suggestionRow(row) {
+function suggestionRow(row, rows) {
   // The type is a dropdown, not a label: discovery guesses which KIND of name a
   // value is from its shape, and is often wrong about it. Retyping here means the
   // Value lands in the right type the moment it is accepted, rather than being
@@ -460,7 +476,8 @@ function suggestionRow(row) {
   return `<div class="grid-row" style="grid-template-columns:${SUGGESTION_COLUMNS}"` +
     ` data-text="${escapeHTML(row.mainText)}">` +
     `<span class="cell-value" title="${escapeHTML(row.mainText)}">` +
-    `${escapeHTML(row.mainText)}${spellingsOfSuggestion(row)}${evidenceNote(row.evidence)}</span>` +
+    `${escapeHTML(row.mainText)}${spellingsOfSuggestion(row)}` +
+    `${evidenceNote(row.evidence)}${relatedNote(row, rows)}</span>` +
     type +
     `<span class="cell-count mono">${escapeHTML(String(row.count ?? 0))}</span>` +
     `<span class="cell-methods">${methodChips(row.discoveryMethods)}</span>` +
@@ -630,7 +647,7 @@ function valueCard(e, conflict, s, overlap) {
   // The evidence is the other half of that: a Suggestion the user accepted
   // because an email address pointed at it should still say so afterwards.
   const methods = methodChips(e.discoveryMethods?.length ? e.discoveryMethods : ["manual"]);
-  const evidence = evidenceNote(e.evidence);
+  const evidence = evidenceNote(e.evidence) + relatedNote(e, s.values);
 
   const actions =
     button(WORKSPACE.groupWith, {

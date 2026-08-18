@@ -13,9 +13,10 @@ import {
   resetState, getState, setState, toggleCategory,
   addValues, setValueSpellings, addAllowTerm, addSuggestions, valueKey,
   groupValues, curate, acceptSuggestion, setIntersections, canGoTo,
+  relatedTo,
 } from "./state.js";
 import { valuesTab, suggestionsTab, visibleValues } from "./views/identifyworkspace.js";
-import { all, one, exists, textOf } from "./testhtml.js";
+import { all, one, exists, textOf, stripTags } from "./testhtml.js";
 import { WORKSPACE } from "./copy.js";
 
 /** seed(category, mainText, derivedSpellings) adds one accepted value with a settled
@@ -311,4 +312,104 @@ test("a suggestion with no folded spellings says nothing extra", () => {
   addSuggestions([{ discoveryMethods: ["heuristic"], mainText: "Meridian", category: "entity_names", count: 2 }]);
   const html = suggestionsTab(getState(), getState().suggestions);
   assert.ok(!exists(html, "span.sugg-spellings"));
+});
+
+// --- Relatedness: shared evidence, never automatic grouping ---------------
+//
+// Two organisations reached through one email domain may genuinely be two legal
+// entities or two country branches. Folding them automatically would give one
+// placeholder to two companies, and the mapping CSV would then state that two
+// different organisations were the same one. So shared evidence produces a NOTE
+// and the grouping stays the user's decision.
+
+/** domainEvidence(text) is one piece of domain evidence, as Go sends it. */
+function domainEvidence() {
+  return [{
+    kind: "email_domain", signalCategory: "email",
+    signalText: "pierre.dupont@tpps.com", documents: ["mail.md"],
+  }];
+}
+
+test("two Suggestions sharing evidence are named as related, not merged", () => {
+  resetState();
+  addSuggestions([
+    { mainText: "Tpps France", category: "entity_names", count: 2, discoveryMethods: ["signal"], evidence: domainEvidence() },
+    { mainText: "Tpps Holdings", category: "entity_names", count: 1, discoveryMethods: ["signal"], evidence: domainEvidence() },
+  ]);
+  const shown = getState().suggestions;
+  assert.equal(shown.length, 2, "shared evidence must NOT collapse two rows into one");
+
+  const html = suggestionsTab(getState(), shown);
+  const notes = all(html, "span.related-note").map((n) => stripTags(n.inner));
+  assert.equal(notes.length, 2, "each row names the other");
+  assert.match(notes[0], /Tpps Holdings/);
+  assert.match(notes[1], /Tpps France/);
+  // Neither has quietly taken the other on as a spelling, which is what an
+  // automatic fold would look like from the outside.
+  for (const row of shown) {
+    assert.deepEqual(row.spellings, [], `${row.mainText} must carry no folded rival`);
+  }
+});
+
+test("relatedness is by the RELATIONSHIP, not by the document it was found in", () => {
+  // The same email domain seen in two files is one relationship. Keying on the
+  // document list would make two rows from two files look unrelated.
+  resetState();
+  addSuggestions([
+    {
+      mainText: "Tpps France", category: "entity_names", discoveryMethods: ["signal"],
+      evidence: [{ kind: "email_domain", signalCategory: "email", signalText: "a@tpps.com", documents: ["one.md"] }],
+    },
+    {
+      mainText: "Tpps Holdings", category: "entity_names", discoveryMethods: ["signal"],
+      evidence: [{ kind: "email_domain", signalCategory: "email", signalText: "a@tpps.com", documents: ["two.md"] }],
+    },
+  ]);
+  assert.deepEqual(relatedTo(getState().suggestions[0], getState().suggestions), ["Tpps Holdings"]);
+});
+
+test("rows with different evidence are not related", () => {
+  resetState();
+  addSuggestions([
+    {
+      mainText: "Tpps France", category: "entity_names", discoveryMethods: ["signal"],
+      evidence: [{ kind: "email_domain", signalCategory: "email", signalText: "a@tpps.com" }],
+    },
+    {
+      mainText: "Meridian", category: "entity_names", discoveryMethods: ["signal"],
+      evidence: [{ kind: "email_domain", signalCategory: "email", signalText: "b@meridian.com" }],
+    },
+  ]);
+  assert.deepEqual(relatedTo(getState().suggestions[0], getState().suggestions), []);
+  assert.equal(all(suggestionsTab(getState(), getState().suggestions), "span.related-note").length, 0);
+});
+
+test("a row with no evidence is related to nothing", () => {
+  // A heuristic finding carries no evidence, so it must not be swept into every
+  // other evidence-free row's related list.
+  resetState();
+  addSuggestions([
+    { mainText: "Alpha", category: "entity_names", discoveryMethods: ["heuristic"] },
+    { mainText: "Beta", category: "entity_names", discoveryMethods: ["heuristic"] },
+  ]);
+  assert.deepEqual(relatedTo(getState().suggestions[0], getState().suggestions), []);
+});
+
+test("an accepted Value keeps naming the Values that share its evidence", () => {
+  // The note survives the accept, because the question it answers ("are these the
+  // same company?") is still open afterwards.
+  resetState();
+  addSuggestions([
+    { mainText: "Tpps France", category: "entity_names", discoveryMethods: ["signal"], evidence: domainEvidence() },
+    { mainText: "Tpps Holdings", category: "entity_names", discoveryMethods: ["signal"], evidence: domainEvidence() },
+  ]);
+  acceptSuggestion("Tpps France");
+  acceptSuggestion("Tpps Holdings");
+  for (const v of getState().values) {
+    setValueSpellings("entity_names", v.mainText, [v.mainText]);
+  }
+
+  const notes = all(valuesTab(getState()), "span.related-note").map((n) => stripTags(n.inner));
+  assert.equal(notes.length, 2);
+  assert.match(notes[0], /Tpps Holdings/);
 });

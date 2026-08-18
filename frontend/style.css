@@ -1617,4 +1617,7 @@ mark[data-original]:focus-visible { outline: 2px solid var(--accent); outline-of
 .method-manual { border-color: var(--accent-light); color: var(--text); }
 .cell-methods { display: flex; flex-wrap: wrap; gap: 0.2rem; align-items: center; min-width: 0; }
 .evidence-note { display: block; margin-top: 0.15rem; font-size: 0.75rem; }
+/* Shared evidence makes two rows RELATED, never one Value, so the note reads as
+   information rather than as a warning about a mistake. */
+.related-note { display: block; margin-top: 0.15rem; font-size: 0.75rem; }
 .sugg-spellings { font-size: 0.75rem; }
