@@ -164,7 +164,15 @@ export const IMPORT = {
 // Configure step copy. Plain language: no "PII", no
 // abbreviations without an example, full sentences.
 export const CONFIGURE = {
-  presetHint: "Start from a preset, then adjust the checkboxes if you need to. Changing any checkbox switches the preset to Custom.",
+  // The Configure panel keeps VISIBLE LABELS short and moves every explanation
+  // into a help tooltip. A paragraph under each control is useful the first time
+  // and, on every visit after that, is what pushes the panel taller than the
+  // window and buries the controls actually in use. Only DYNAMIC information
+  // stays inline: a validation error, the live confidence value, an active count,
+  // Ollama's availability, the run status.
+  //
+  // Every `...Help` key below is tooltip text. Nothing renders it as a paragraph.
+  presetHelp: "Start from a preset, then adjust the checkboxes if you need to. Changing any checkbox switches the preset to Custom.",
   groupContact: "Contact and account details",
   // The rail groups by TRIGGER, the user's own model of how a value is found
   // so these are the names of the three ways it happens.
@@ -173,8 +181,8 @@ export const CONFIGURE = {
   groupDetected: "Auto detected values",
   groupDeclared: "Your own patterns",
   groupThorough: "Only for thorough anonymisation",
-  useAIHint: "When enabled, a language model running on this machine can suggest names to replace and double-check the result. Nothing leaves your computer.",
-  contextSizeHint: "Higher values let the AI read longer documents at once but use more memory.",
+  useAIHelp: "A language model running on this machine reads the documents and suggests Values. Nothing leaves your computer, and nothing it finds is replaced until you accept it.",
+  contextSizeHelp: "Higher values let the model read longer documents at once but use more memory.",
   aiOffTooltip: "Local AI is turned off. Turn it on with the switch on the Local AI section of Configure.",
   allowHint: "Terms in this list survive every pass, even when they also appear as names to replace.",
   // the group that surfaces the recognizers.
@@ -186,7 +194,7 @@ export const CONFIGURE = {
   // the two thresholds that actually change something spelled out.
   confidenceTitle: "Detection confidence",
   confidenceLabel: "Minimum confidence",
-  confidenceHint: "Every detection carries a score for how certain it is. Anything below the minimum you set here is left alone. Keep it at 0 to replace everything that is found, which is how the application behaves by default.",
+  confidenceHelp: "Every detection carries a score for how certain it is. Anything below the minimum you set here is left alone. Keep it at 0 to replace everything that is found, which is how the application behaves by default.",
   // What the floor does at each position is views/identifyrail.js
   // confidenceEffect(), and it is described there rather than here: the setting
   // is a floor on a SCORE, and copy calling it a rule about who proposed a
@@ -220,14 +228,40 @@ export const RAIL = {
 
   // the three routes are switchable sections, not tabs. Scope stopped
   // being a section of its own because it is the scope OF smart detection.
-  smartIntro: "Finds names by how they are written, on this machine and without any AI. It runs on the categories you choose below.",
-  smartTuning: "Strictness",
-  // The two independent halves the Smart detection route splits into, rendered
-  // as toggles at the top of the section.
-  nativeDetect: "Native detection (signals)",
-  nativeDetectHint: "Regex signals such as emails, VAT numbers and IBANs.",
-  autoDetect: "Auto detection (word frequency)",
-  autoDetectHint: "Finds recurring names by word frequency.",
+  smartHelp: "Finds Values on this machine, without any AI: application-provided patterns for structured signals, evidence taken from those signals, and rules about how names are written. It uses the categories chosen below.",
+  smartTuning: "Discovery strictness",
+  smartTuningHelp: "Heuristic discovery guesses which words are names from how they are written, so it always suggests some things that are not names. These settings decide how strict it is. Set them all to zero, and untick the box, to see everything it can find.",
+
+  // Smart detection's three methods, as controls at the top of the section.
+  builtInPatterns: "Built-in patterns",
+  builtInPatternsHelp: "Application-provided patterns for structured signals: emails, phone numbers, VAT numbers, IBANs and the rest. They MATCH AND REPLACE the signal itself, and they are the only thing here that acts without review.",
+  heuristicDiscovery: "Heuristic discovery",
+  heuristicDiscoveryHelp: "Finds recurring names from spelling, context and frequency, and suggests them for review.",
+
+  // The compact signal-source control. It switches whether a built-in pattern
+  // match may be used as EVIDENCE to find related text, and nothing else.
+  signalSuggestions: "Signal-based suggestions",
+  signalSuggestionsHelp: "A matched signal can also be evidence about text written elsewhere: an email address names a person and an organisation, and both may appear in prose in another file. Those become Suggestions you accept or reject. Clearing a source here stops the suggestions and does NOT stop the signal itself being anonymised, which is governed by Built-in patterns and the signal's own category.",
+  signalSuggestionSources: "Suggestion sources",
+  // One label and one "what it finds" per engine signal source. The checklist is
+  // built from the identifier list, so an unlabelled source would render as a
+  // checkbox named after a JSON key. Guarded by ../detection_parity_test.go
+  // through the WORKSPACE tables these mirror, so the two must agree.
+  signalSourceLabel: {
+    email: "Email addresses",
+  },
+  signalSourceFinds: {
+    email: "Names and organisations",
+  },
+  signalSourcesOff: "Off",
+  /** signalSourcesSummary(names) is the closed control's read-out: "Off", the one
+   *  enabled source's name, or a count once there are several. A list of names
+   *  would grow the control back into the row it exists to avoid. */
+  signalSourcesSummary(names) {
+    if (names.length === 0) return "Off";
+    if (names.length === 1) return names[0];
+    return `${names.length} sources`;
+  },
   routeOn: "On",
   routeOff: "Off",
   /** routeSwitchLabel(title) is the accessible name of a section's switch. */
@@ -236,9 +270,10 @@ export const RAIL = {
   },
 
   country: "Document country",
-  countryHint: "The phone, VAT and national identification examples follow this country's formats, and the matching national identifiers are switched on. It changes nothing else about how detection works.",
+  countryHelp: "The phone, VAT and national identification examples follow this country's formats, and the matching national identifiers are switched on. It changes nothing else about how detection works.",
   preset: "Preset",
-  whatToAnonymise: "What to anonymise",
+  categories: "Categories",
+  categoriesHelp: "The structured signals built-in pattern matching looks for. They are matched and replaced directly, without review. Switching Built-in patterns off leaves the selection intact and skips the pass.",
 
   //  split the category list in two blocks: the regex-triggered
   // patterns (found by shape) and the entity categories (found by name). Both
@@ -246,10 +281,10 @@ export const RAIL = {
   // the ONE scope the whole pipeline reads (CLAUDE.md §5): rendering a second
   // copy of the same checkboxes inside Local AI would give one setting two
   // controls, and the second copy would be folded shut and unreachable anyway.
-  valuesAuto: "Values to detect automatically",
-  valuesAutoHint: "These categories are used by every detection route you switch on.",
+  valuesAuto: "Auto detected values",
+  valuesAutoHelp: "These categories are used by every detection route you switch on.",
   // What the Local AI section says INSTEAD of a second copy of the checkboxes.
-  localValuesHint: "Local AI looks for the same value categories chosen under Smart detection above. Switching this route on adds a model pass over them, it does not change what is selected.",
+  localValuesHelp: "Local AI looks for the same categories chosen under Smart detection above. Switching this route on adds a model pass over them; it does not change what is selected.",
 
   /** activeCount(n, total) is the rail heading's read-out. */
   activeCount(n, total) {
@@ -269,8 +304,8 @@ export const RAIL = {
   // much, so the user can aim the scan at one document and a range of its own
   // units (pages, slides, rows or lines). This scope applies to the Local AI
   // route only; Smart detection always reads everything because it is cheap.
-  scopeHeading: "What to scan",
-  scopeIntro: "The local AI reads only what you point it at. Scanning one document, or a few pages of one, keeps a small model focused and the pass quick.",
+  scopeHeading: "Scan scope",
+  scopeHelp: "The local AI reads only what you point it at. Scanning one document, or a few pages of one, keeps a small model focused and the pass quick.",
   scopeAllDocs: "All documents (whole)",
   scopeDoc: "Document",
   scopeEntireDoc: "Entire document",
@@ -313,7 +348,7 @@ export const RAIL = {
   // rail. Load restores a saved profile; Save writes one, but only once a run
   // has produced a registry worth preserving.
   profileTitle: "Load profile",
-  profileHint: "Reuse a saved setup: values, allowlist, patterns and the placeholder registry, so a follow-up batch reuses the same placeholders.",
+  profileHelp: "Reuse a saved setup: Values, the never anonymise list, patterns and the placeholder registry, so a follow-up batch reuses the same placeholders.",
   profileLoad: "Load",
   profileSave: "Save",
   profileSaveDisabled: "Run detection once before saving a profile.",
@@ -327,17 +362,16 @@ export const VALUES = {
   // Smart detection tuning. It moved to the Identify RAIL's own tab
   // which RAIL.tabSmart titles, so the block no longer
   // needs a heading of its own.
-  smartSettingsHint: "Smart detection guesses which words are names from how they are written, so it always proposes some things that are not names. These settings decide how strict it is. Set them all to zero, and untick the box, to see everything it can find.",
   smartMinLength: "Shortest value",
-  smartMinLengthHint: "Suggestions shorter than this many letters are skipped.",
+  smartMinLengthHelp: "Suggestions shorter than this many letters are skipped.",
   smartMinOccurrences: "Fewest occurrences",
-  smartMinOccurrencesHint: "How often a value must appear before it is suggested. 1 means once is enough.",
+  smartMinOccurrencesHelp: "How often a value must appear before it is suggested. 1 means once is enough.",
   smartCommonWords: "Skip ordinary words",
-  smartCommonWordsHint: "Ignores month names, weekdays and common sentence openers, which are capitalised without being names.",
+  smartCommonWordsHelp: "Ignores month names, weekdays and common sentence openers, which are capitalised without being names.",
   smartMinConfidence: "Minimum certainty",
-  smartMinConfidenceHint: "Higher values keep only the strongest suggestions, such as a name followed by a company form or introduced by a title.",
+  smartMinConfidenceHelp: "Higher values keep only the strongest suggestions, such as a name followed by a company form or introduced by a title.",
   smartStrictness: "How much to trust",
-  smartStrictnessHint: "Strict keeps only suggestions with strong evidence, such as a company form, a title or a matching email address. Lenient also shows the weakest guesses, which pairs well with a low minimum certainty. Balanced is the default.",
+  smartStrictnessHelp: "Strict keeps only suggestions with strong evidence, such as a company form, a title or a matching email address. Lenient also shows the weakest guesses, which pairs well with a low minimum certainty. Balanced is the default.",
   smartStrictnessLenient: "Lenient: show weak guesses too",
   smartStrictnessBalanced: "Balanced (recommended)",
   smartStrictnessStrict: "Strict: strong evidence only",

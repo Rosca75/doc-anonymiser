@@ -19,6 +19,7 @@ import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
 import {
   ALL_CATEGORIES, NAME_CATEGORIES, resetState, getState, setState, setUseLocalAI,
   setAIScope, setCategoryGroup, setUseBuiltInPatterns, setUseHeuristicDiscovery,
+  setSmartDetection, setSignalSource, SIGNAL_SOURCES,
 } from "./state.js";
 import { textOf, stripTags, all, one, exists } from "./testhtml.js";
 
@@ -212,50 +213,102 @@ test("the scope controls live inside the Smart detection section", () => {
   assert.ok(exists(smart, "#smart-min-length"), "and the strictness fields");
 });
 
-test("Native and Auto detection are two toggles at the top of Smart detection", () => {
+test("Smart detection's three methods lead the section", () => {
   const smart = all(railHTML(), "section.rail-section")[0].outer;
-  const native = one(smart, "#smart-native");
-  const auto = one(smart, "#smart-auto");
-  assert.ok(native, "the Native detection toggle renders");
-  assert.ok(auto, "the Auto detection toggle renders");
-  assert.ok("checked" in native.attrs, "Native detection defaults on");
-  assert.ok("checked" in auto.attrs, "Auto detection defaults on");
-  // They lead the section: both appear before the first category checkbox.
-  const nativeAt = smart.indexOf('id="smart-native"');
-  const autoAt = smart.indexOf('id="smart-auto"');
+  const builtIn = one(smart, "#smart-built-in");
+  const heuristic = one(smart, "#smart-heuristic");
+  assert.ok(builtIn, "the built-in pattern switch renders");
+  assert.ok(heuristic, "the heuristic discovery switch renders");
+  assert.ok(exists(smart, "#signal-sources"), "the signal-source checklist renders");
+  assert.ok("checked" in builtIn.attrs, "built-in patterns default on");
+  assert.ok("checked" in heuristic.attrs, "heuristic discovery defaults on");
+  // All three lead the section: each appears before the first category checkbox.
   const firstCat = smart.indexOf('class="cat-toggle"');
-  assert.ok(nativeAt >= 0 && autoAt >= 0 && firstCat >= 0);
-  assert.ok(nativeAt < firstCat && autoAt < firstCat,
-    "both toggles come before the category block they govern");
-  assert.ok(smart.includes(RAIL.nativeDetect), "the Native detection label renders");
-  assert.ok(smart.includes(RAIL.autoDetect), "the Auto detection label renders");
+  for (const marker of ['id="smart-built-in"', 'id="smart-heuristic"', 'id="signal-sources"']) {
+    const at = smart.indexOf(marker);
+    assert.ok(at >= 0, `${marker} renders`);
+    assert.ok(at < firstCat, `${marker} comes before the category block it governs`);
+  }
+  assert.ok(smart.includes(RAIL.builtInPatterns), "the Built-in patterns label renders");
+  assert.ok(smart.includes(RAIL.heuristicDiscovery), "the Heuristic discovery label renders");
+  assert.ok(smart.includes(RAIL.signalSuggestions), "the Signal-based suggestions label renders");
 });
 
-test("turning Native detection off disables the regex category block only", () => {
+test("the signal-source checklist is closed by default and summarises what is on", () => {
+  // Closed it is ONE row: that is what keeps the panel short as sources are
+  // added. The summary is the read-out, not a list of names.
+  resetState();
+  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
+  const control = one(smart, "#signal-sources");
+  assert.ok(!("data-open" in control.attrs), "it starts closed");
+  assert.equal(one(smart, ".checklist-toggle").attrs["aria-expanded"], "false");
+  assert.equal(textOf(smart, "span.checklist-summary"), RAIL.signalSourceLabel.email,
+    "one enabled source reads as its own name");
+  assert.ok("hidden" in one(smart, ".checklist-list").attrs, "the list is hidden while closed");
+});
+
+test("the checklist lists only the sources that implement discovery", () => {
+  // A row with nothing behind it is a control that appears to do something and
+  // does not, so the rows come from SIGNAL_SOURCES, which the Go parity guard
+  // holds to the engine's own list.
+  resetState();
+  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
+  const boxes = all(smart, "input.checklist-box");
+  assert.deepEqual(boxes.map((b) => b.attrs["data-checklist"]), SIGNAL_SOURCES);
+  assert.ok("checked" in boxes[0].attrs, "email-derived Suggestions default on");
+});
+
+test("the closed summary reads Off once every source is cleared", () => {
+  resetState();
+  for (const source of SIGNAL_SOURCES) setSignalSource(source, false);
+  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
+  assert.equal(textOf(smart, "span.checklist-summary"), RAIL.signalSourcesOff);
+});
+
+test("clearing a signal source does not disable the signal's own category", () => {
+  // Acceptance criterion 4, at the view level: the two are different mechanisms,
+  // and the control must not quietly do both.
+  resetState();
+  setSignalSource("email", false);
+  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
+  const email = all(smart, "input.cat-toggle").find((b) => b.attrs["data-category"] === "email");
+  assert.ok("checked" in email.attrs, "the email category stays on");
+  assert.ok(!("disabled" in email.attrs), "and stays editable");
+  assert.ok("checked" in one(smart, "#smart-built-in").attrs, "built-in patterns stay on");
+});
+
+test("turning built-in patterns off disables the pattern category block only", () => {
   resetState();
   setUseBuiltInPatterns(false);
   const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  // The regex signal categories (email, vat, ...) go disabled; the name
-  // categories (person_names, ...) stay editable, because Auto detection is
+  // The structured signal categories (email, vat, ...) go disabled; the name
+  // categories (person_names, ...) stay editable, because heuristic discovery is
   // still on.
   const email = all(smart, "input.cat-toggle").find((b) => b.attrs["data-category"] === "email");
   const person = all(smart, "input.cat-toggle").find((b) => b.attrs["data-category"] === "person_names");
-  assert.ok("disabled" in email.attrs, "regex category is disabled while Native detection is off");
+  assert.ok("disabled" in email.attrs,
+    "the pattern category is disabled while Built-in patterns is off");
   assert.ok(!("disabled" in person.attrs), "name categories stay editable");
   // The selection is not cleared: the checkbox keeps its checked state.
   assert.ok("checked" in email.attrs, "the stored selection is preserved, not cleared");
 });
 
-test("the Smart detection header switch is a master over both sub-toggles", () => {
-  // Off when BOTH halves are off; on when either is.
+test("the Smart detection header switch is a master over its three methods", () => {
+  // Off only when EVERY method is off; on when any one is. The section state is
+  // derived, so it cannot disagree with the methods it summarises.
   resetState();
-  setUseBuiltInPatterns(false);
-  setUseHeuristicDiscovery(false);
+  setSmartDetection(false);
   let smart = all(railBody(getState()), "input.route-toggle")[0];
-  assert.ok(!("checked" in smart.attrs), "both halves off means the section reads off");
+  assert.ok(!("checked" in smart.attrs), "every method off means the section reads off");
+
   setUseBuiltInPatterns(true);
   smart = all(railBody(getState()), "input.route-toggle")[0];
-  assert.ok("checked" in smart.attrs, "either half on means the section reads on");
+  assert.ok("checked" in smart.attrs, "one method on means the section reads on");
+
+  setUseBuiltInPatterns(false);
+  setSignalSource("email", true);
+  smart = all(railBody(getState()), "input.route-toggle")[0];
+  assert.ok("checked" in smart.attrs, "a signal source alone also reads on");
 });
 
 // --- The Load profile section (CR7) --------------------------------------
@@ -519,4 +572,59 @@ test("the entity select-all carries the hyphenated data key so dataset reads it 
     "the bulk button must emit data-group-type, not a camelCase data-groupType");
   assert.equal(datasetOf(btn.attrs).groupType, "entity",
     "the entity group's button must resolve to the entity route");
+});
+
+// --- Help tooltips instead of paragraphs ---------------------------------
+//
+// The Configure panel spends no permanent vertical space on prose. Every
+// explanation is a help tooltip beside the label it explains, reachable by hover
+// AND by keyboard. What stays inline is only what CHANGES: a validation error,
+// the live confidence value, Ollama's availability, an active count, run status.
+
+test("the Configure panel carries no explanatory paragraphs", () => {
+  // The guard is structural, not a list of retired sentences: deleting the eight
+  // named paragraphs and adding a ninth would satisfy a literal check and undo
+  // the decision. So it counts <p class="hint"> in the rail and demands none.
+  resetState();
+  const html = railBody(getState());
+  const paragraphs = all(html, "p.hint");
+  assert.deepEqual(paragraphs.map((p) => stripTags(p.inner).trim()), [],
+    "an explanation belongs in a help tooltip, not in a paragraph that is read " +
+    "once and then occupies the panel forever");
+});
+
+test("every explained control carries a help tooltip beside its label", () => {
+  resetState();
+  const html = railBody(getState());
+  const tooltips = all(html, "span.help");
+  assert.ok(tooltips.length >= 8,
+    `only ${tooltips.length} help tooltips: the explanations the paragraphs used ` +
+    "to carry must still be reachable, not deleted");
+  for (const tip of tooltips) {
+    const iconBtn = one(tip.outer, "button.help-icon");
+    const bubble = one(tip.outer, "span.help-bubble");
+    // The icon is FOCUSABLE (a real button, not a span), so the explanation is
+    // reachable by Tab and not only by pointer.
+    assert.equal(iconBtn.attrs["aria-describedby"], bubble.attrs.id,
+      "the bubble must be the icon's accessible description");
+    assert.equal(bubble.attrs.role, "tooltip");
+    assert.ok((iconBtn.attrs["aria-label"] ?? "").length > 0,
+      "an icon-only button needs an accessible name");
+    assert.ok(stripTags(bubble.inner).trim().length > 0, "an empty bubble explains nothing");
+  }
+});
+
+test("each help bubble has a unique id, or aria-describedby points at the wrong one", () => {
+  resetState();
+  const ids = all(railBody(getState()), "span.help-bubble").map((b) => b.attrs.id);
+  assert.equal(new Set(ids).size, ids.length, `duplicate bubble ids: ${ids.join(", ")}`);
+});
+
+test("the dynamic read-outs stay inline, where the user is watching them", () => {
+  // A value that changes as a control moves cannot live behind a hover.
+  resetState();
+  const html = railBody(getState());
+  assert.ok(exists(html, "output#min-confidence-value"), "the live confidence value");
+  assert.ok(exists(html, "#min-confidence-effect"), "and what it currently excludes");
+  assert.ok(/\d+\/\d+/.test(html), "the per-group active counts");
 });

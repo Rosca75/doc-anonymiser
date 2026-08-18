@@ -268,6 +268,139 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 			"category groups open by default.")
 }
 
+// --- The Configure panel's height and its help tooltips ---------------------
+
+type panelFitResult struct {
+	Error           string `json:"error"`
+	ScrollHeight    int    `json:"scrollHeight"`
+	ClientHeight    int    `json:"clientHeight"`
+	PageOverflows   *bool  `json:"pageOverflows"`
+	FootReachable   *bool  `json:"footReachable"`
+	ProseParagraphs int    `json:"proseParagraphs"`
+	ProseHeight     int    `json:"proseHeight"`
+	HelpTooltips    int    `json:"helpTooltips"`
+}
+
+// checkConfigurePanelFit asserts the Configure panel FITS, and that its
+// explanations are tooltips rather than prose.
+//
+// The panel used to carry a paragraph under every control. Read once they are
+// useful; read on every visit they are what pushes the panel past the window and
+// buries the controls that are actually in use. The explanations moved into help
+// tooltips, and this is the measurement that keeps them there: a string test can
+// count paragraphs but cannot see whether the result fits.
+func checkConfigurePanelFit(c *cdpClient, r *reporter) {
+	r.step("The Configure panel fits, and explains itself on demand")
+
+	var got panelFitResult
+	if err := c.eval("__uiProbes.configurePanelFit()", &got); err != nil {
+		r.assert("the panel-fit probe runs", false, "a rendered Identify rail", err.Error(),
+			"views/identifyrail.js must render the rail from a seeded Identify state.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the panel-fit probe runs", false, "#identify-rail on the Identify screen",
+			got.Error, "views/identify.js renders the rail and hands it to renderIdentifyRail.")
+		return
+	}
+
+	// Measured in PIXELS, not counted by class: a paragraph given a different
+	// class would pass a class count and still occupy the panel.
+	r.assert("the panel spends no vertical space on prose",
+		got.ProseParagraphs == 0 && got.ProseHeight == 0,
+		"0 static paragraphs, 0px of them",
+		fmt.Sprintf("%d paragraph(s), %dpx", got.ProseParagraphs, got.ProseHeight),
+		"An explanation belongs in a help tooltip. Live read-outs carry .rail-readout and are "+
+			"excluded, so this measures prose only.")
+
+	r.assert("the explanations are still reachable", got.HelpTooltips >= 8,
+		"at least 8 help tooltips in the rail", fmt.Sprintf("%d", got.HelpTooltips),
+		"Removing the paragraphs must MOVE the explanations, not delete them: ui.js helpTooltip "+
+			"is where each one now lives.")
+
+	// The panel is allowed to scroll: it holds twenty-four category checkboxes and
+	// the window is what it is. Two things are not allowed, and both are
+	// visible-only properties a string test cannot reach.
+	r.assert("the panel scrolls inside its own body, not the page",
+		boolIs(got.PageOverflows, false),
+		"a document no taller than the window", describeBool(got.PageOverflows),
+		"The fixed-height layout contract: scrolling happens inside a card body and nowhere "+
+			"else, so every link from #view down needs min-height: 0.")
+
+	r.assert("the foot of the panel is reachable", boolIs(got.FootReachable, true),
+		"the last block painted after scrolling the panel to its end",
+		describeBool(got.FootReachable),
+		"Prose under every control is what put the controls at the foot out of reach. Scrolling "+
+			"to the end must land on them.")
+}
+
+type helpTooltipResult struct {
+	Error             string `json:"error"`
+	ClosedVisible     *bool  `json:"closedVisible"`
+	OpenedOnHover     *bool  `json:"openedOnHover"`
+	OnScreen          *bool  `json:"onScreen"`
+	NotClipped        *bool  `json:"notClipped"`
+	OverflowsScroller *bool  `json:"overflowsScroller"`
+	ClosedOnLeave     *bool  `json:"closedOnLeave"`
+	OpenedOnFocus     *bool  `json:"openedOnFocus"`
+	ClosedOnEscape    *bool  `json:"closedOnEscape"`
+}
+
+// checkHelpTooltip asserts a help tooltip opens, is PAINTED rather than clipped,
+// and closes again, through both the pointer and the keyboard.
+//
+// A bubble positioned inside the rail's `overflow: auto` body is cut off at the
+// container's edge, and no assertion over an HTML string can see that. It is the
+// same class of failure as the Compare-pane tooltip this layer already covers, so
+// it gets the same treatment: a real pointer event, then a hit test at the
+// bubble's own coordinates.
+func checkHelpTooltip(c *cdpClient, r *reporter) {
+	r.step("A Configure help tooltip opens, is painted, and closes")
+
+	var got helpTooltipResult
+	if err := c.eval("__uiProbes.helpTooltipVisibility()", &got); err != nil {
+		r.assert("the help-tooltip probe runs", false, "a rendered help tooltip", err.Error(),
+			"views/identifyrail.js renders ui.js helpTooltip beside each explained label.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the help-tooltip probe runs", false, "a help tooltip in the Identify rail",
+			got.Error, "Every explained label in the rail carries one.")
+		return
+	}
+
+	r.assert("the bubble is hidden until asked for", boolIs(got.ClosedVisible, false),
+		"a zero-height bubble before any interaction", describeBool(got.ClosedVisible),
+		"An always-visible bubble is the paragraph the tooltip replaced, with extra steps.")
+
+	r.assert("hover opens it", boolIs(got.OpenedOnHover, true),
+		"a painted bubble after pointerenter", describeBool(got.OpenedOnHover),
+		"ui.js wireHelpTooltips sets data-open on pointerenter; style.css reveals it.")
+
+	r.assert("the bubble is on screen", boolIs(got.OnScreen, true),
+		"the whole bubble inside the viewport", describeBool(got.OnScreen),
+		"A bubble that opens off the edge of the window is a bubble nobody reads.")
+
+	r.assert("the bubble is painted, not clipped by the scrolling panel",
+		boolIs(got.NotClipped, true),
+		"the bubble itself under a hit test at its own coordinates",
+		describeBool(got.NotClipped),
+		"This is the reason the bubble is positioned outside the rail's clipping context. An "+
+			"absolutely positioned bubble inside an overflow:auto ancestor is cut at the "+
+			"container's edge, and only a hit test can see it.")
+
+	r.assert("leaving closes it", boolIs(got.ClosedOnLeave, true),
+		"a zero-height bubble after pointerleave", describeBool(got.ClosedOnLeave), "")
+
+	r.assert("keyboard focus opens it too", boolIs(got.OpenedOnFocus, true),
+		"a painted bubble after focusin", describeBool(got.OpenedOnFocus),
+		"An explanation only a pointer can reach is one half the users never get.")
+
+	r.assert("Escape closes it", boolIs(got.ClosedOnEscape, true),
+		"a zero-height bubble after Escape", describeBool(got.ClosedOnEscape),
+		"A tooltip the keyboard can open and not dismiss is a keyboard trap.")
+}
+
 // --- The scroll-position contract -------------------------------------------
 
 type scrollResult struct {

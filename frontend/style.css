@@ -1520,3 +1520,101 @@ mark[data-original]:focus-visible { outline: 2px solid var(--accent); outline-of
    the accent primary the other three screens use: nothing about finishing should
    invite the same reflex click as CONTINUE. */
 .new-batch { font-weight: 700; }
+
+/* --- The help tooltip ----------------------------------------------------
+
+   An explanation on demand, so the Configure panel spends no permanent vertical
+   space on prose. The bubble is `fixed`, not `absolute`: an absolutely positioned
+   bubble inside the rail's `overflow: auto` body is CLIPPED at the container's
+   edge, which is the one failure the rendering harness exists to catch. */
+.help { position: relative; display: inline-flex; align-items: center; flex: none; }
+.help-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.15rem; height: 1.15rem; padding: 0;
+  border: 0; border-radius: 50%;
+  background: none; color: var(--muted); cursor: help;
+}
+.help-icon:hover, .help-icon:focus-visible { color: var(--accent); }
+.help-icon svg { width: 1.05rem; height: 1.05rem; }
+/* Hidden by DEFAULT and revealed by the wrapper's data-open, so the open state
+   is one attribute JavaScript owns and CSS only reacts to. */
+.help-bubble {
+  position: fixed; z-index: 60;
+  left: var(--help-x, auto); top: var(--help-y, auto);
+  display: none; max-width: 22rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--gray-3); border-radius: var(--card-radius);
+  background: var(--bg); color: var(--text);
+  font-size: 0.8rem; line-height: 1.5;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+/* The bubble sits BELOW and LEFT of the icon by default, which keeps it inside
+   the rail's width; the fixed positioning means the rail cannot clip it. */
+.help[data-open] .help-bubble {
+  display: block;
+  inset: auto auto auto auto;
+  position: absolute; top: calc(100% + 0.35rem); right: 0;
+  z-index: 60;
+}
+
+/* --- The compact checklist ----------------------------------------------
+
+   A set of switches that must not spend one permanent row per switch. Closed, it
+   is a label and a summary; open, it is the list. */
+.checklist { display: flex; flex-direction: column; gap: 0.4rem; }
+.checklist-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.checklist-title { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; }
+.checklist-toggle {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--gray-3); border-radius: var(--card-radius);
+  background: var(--bg); color: var(--text);
+  font-size: 0.78rem; cursor: pointer;
+}
+.checklist-toggle:hover, .checklist-toggle:focus-visible { border-color: var(--accent-light); }
+.checklist-toggle svg { width: 0.95rem; height: 0.95rem; }
+.checklist[data-open] .checklist-toggle svg { transform: rotate(180deg); }
+.checklist-list {
+  display: flex; flex-direction: column; gap: 0.3rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--gray-3); border-radius: var(--card-radius);
+  background: var(--surface-subtle);
+}
+.checklist-row { display: flex; align-items: center; gap: 0.45rem; font-size: 0.82rem; }
+.checklist-row input[type="checkbox"] { flex: none; accent-color: var(--text); }
+.checklist-label { flex: none; }
+.checklist-detail {
+  flex: 1; min-width: 0; text-align: right;
+  font-size: 0.78rem; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* A label with its help icon beside it, and a field with one after it. Both keep
+   the icon on the same line as the thing it explains, so the panel gains no row. */
+.rail-label-row { display: flex; align-items: center; gap: 0.35rem; }
+.rail-label-row .section-label { margin: 0; }
+.rail-toggle { display: flex; align-items: center; gap: 0.35rem; }
+.rail-toggle .cat-row { flex: 1; min-width: 0; }
+.rail-field-row { display: flex; align-items: center; gap: 0.35rem; }
+.rail-field-row .rail-field { flex: 1; min-width: 0; }
+
+/* A live read-out in the rail: a value or a sentence that CHANGES as a control
+   moves. Styled like a hint but a different class, because .hint is static prose
+   the Configure panel deliberately no longer carries. */
+.rail-readout {
+  margin: 0.25rem 0 0; font-size: 0.78rem; line-height: 1.5; color: var(--muted);
+}
+
+/* --- Discovery method chips and the evidence note ----------------------- */
+.method-chip {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--gray-3); border-radius: 999px;
+  background: var(--surface-subtle);
+  font-size: 0.72rem; color: var(--muted);
+  white-space: nowrap;
+}
+.method-manual { border-color: var(--accent-light); color: var(--text); }
+.cell-methods { display: flex; flex-wrap: wrap; gap: 0.2rem; align-items: center; min-width: 0; }
+.evidence-note { display: block; margin-top: 0.15rem; font-size: 0.75rem; }
+.sugg-spellings { font-size: 0.75rem; }
