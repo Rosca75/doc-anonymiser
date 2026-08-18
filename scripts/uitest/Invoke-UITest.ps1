@@ -538,17 +538,28 @@ function Test-ValueCardGeometry([CdpSession]$cdp) {
         -Condition ($r.scrollBefore -gt 0 -and $r.scrollAfterEdit -eq $r.scrollBefore) `
         -Expected "scrollTop still $($r.scrollBefore)" -Actual "$($r.scrollAfterEdit)" `
         -Hint 'scroll.js restores a raw pixel offset, which the browser clamps when the content got shorter.'
+    Assert-That -Name 'renaming the value sends its spellings back to pending' `
+        -Condition ($r.pending -eq $true) `
+        -Expected 'derivedSpellings null on the renamed Value' -Actual "$($r.pending)" `
+        -Hint 'This is the case with the most teeth: with nothing settled to draw, the chip row falls back to one line of text. Deleting a spelling CURATES and leaves the list settled, so it does not exercise the collapse.'
+    Assert-That -Name 'the card is the same height while its spellings are pending' `
+        -Condition ($r.heightRenamed -gt 0 -and $r.heightRenamed -eq $r.heightAfterEdit) `
+        -Expected "still $($r.heightAfterEdit)px" -Actual "$($r.heightRenamed)px" `
+        -Hint 'The pending line renders INSIDE the chip row, in place of the chips, never as a row under it.'
+    Assert-That -Name 'the list keeps its scroll position while the spellings are pending' `
+        -Condition ($r.scrollRenamed -eq $r.scrollAfterEdit) `
+        -Expected "scrollTop still $($r.scrollAfterEdit)" -Actual "$($r.scrollRenamed)" -Hint ''
     Assert-That -Name 'a warning renders as an icon on the card' `
         -Condition ($r.hasWarningIcon -eq $true) `
         -Expected 'a .warnpop on the card' -Actual "$($r.hasWarningIcon)" `
         -Hint 'ui.js warningPopover: the warning text and its actions live in a hover surface, not in a row.'
     Assert-That -Name 'the card is the same height once a warning appears' `
-        -Condition ($r.heightBefore -gt 0 -and $r.heightWarned -eq $r.heightAfterEdit) `
-        -Expected "still $($r.heightAfterEdit)px" -Actual "$($r.heightWarned)px" `
+        -Condition ($r.heightWarned -gt 0 -and $r.heightWarned -eq $r.heightRenamed) `
+        -Expected "still $($r.heightRenamed)px" -Actual "$($r.heightWarned)px" `
         -Hint 'A warning rendered as a row makes the card taller when it arrives and shorter when it clears.'
     Assert-That -Name 'the list keeps its scroll position when a warning appears' `
-        -Condition ($r.scrollWarned -eq $r.scrollAfterEdit) `
-        -Expected "scrollTop still $($r.scrollAfterEdit)" -Actual "$($r.scrollWarned)" -Hint ''
+        -Condition ($r.scrollWarned -eq $r.scrollRenamed) `
+        -Expected "scrollTop still $($r.scrollRenamed)" -Actual "$($r.scrollWarned)" -Hint ''
     $drift = [Math]::Abs($r.scrollBeforeDelete - $r.scrollAfterDelete)
     Assert-That -Name 'deleting a card moves the list by at most one card' `
         -Condition ($r.cardHeight -gt 0 -and $drift -le $r.cardHeight) `

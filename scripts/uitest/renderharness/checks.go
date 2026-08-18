@@ -392,14 +392,17 @@ type cardGeometryResult struct {
 	OverflowsChips *bool  `json:"overflowsChips"`
 	ListScrolls    *bool  `json:"listScrolls"`
 	Deleted        *bool  `json:"deleted"`
+	Pending        *bool  `json:"pending"`
 	HasWarningIcon *bool  `json:"hasWarningIcon"`
 
 	HeightBefore    int `json:"heightBefore"`
 	HeightAfterEdit int `json:"heightAfterEdit"`
+	HeightRenamed   int `json:"heightRenamed"`
 	HeightWarned    int `json:"heightWarned"`
 
 	ScrollBefore    int `json:"scrollBefore"`
 	ScrollAfterEdit int `json:"scrollAfterEdit"`
+	ScrollRenamed   int `json:"scrollRenamed"`
 	ScrollWarned    int `json:"scrollWarned"`
 
 	CardHeight         int `json:"cardHeight"`
@@ -470,20 +473,38 @@ func checkValueCardGeometry(c *cdpClient, r *reporter) {
 		"scroll.js restores a raw pixel offset, which the browser clamps when the content "+
 			"got shorter. The card holding its height is what makes the restore exact.")
 
+	r.assert("renaming the value sends its spellings back to pending",
+		boolIs(got.Pending, true),
+		"derivedSpellings null on the renamed Value", describeBool(got.Pending),
+		"This is the case with the most teeth: with nothing settled to draw, the chip row "+
+			"falls back to one line of text. Without it the probe never exercises the collapse "+
+			"the owner reported, because deleting a spelling CURATES and leaves the list settled.")
+
+	r.assert("the card is the same height while its spellings are pending",
+		got.HeightRenamed > 0 && got.HeightRenamed == got.HeightAfterEdit,
+		fmt.Sprintf("still %dpx", got.HeightAfterEdit), fmt.Sprintf("%dpx", got.HeightRenamed),
+		"The pending line renders INSIDE the chip row, in place of the chips, never as a row "+
+			"under it. A row that appears while Go answers is the collapse.")
+
+	r.assert("the list keeps its scroll position while the spellings are pending",
+		got.ScrollRenamed == got.ScrollAfterEdit,
+		fmt.Sprintf("scrollTop still %d", got.ScrollAfterEdit), fmt.Sprintf("%d", got.ScrollRenamed),
+		"")
+
 	r.assert("a warning renders as an icon on the card", boolIs(got.HasWarningIcon, true),
 		"a .warnpop on the card", describeBool(got.HasWarningIcon),
 		"ui.js warningPopover: the warning text and its actions live in a hover surface, "+
 			"not in a row of the card.")
 
 	r.assert("the card is the same height once a warning appears",
-		got.HeightBefore > 0 && got.HeightWarned == got.HeightAfterEdit,
-		fmt.Sprintf("still %dpx", got.HeightAfterEdit), fmt.Sprintf("%dpx", got.HeightWarned),
+		got.HeightWarned > 0 && got.HeightWarned == got.HeightRenamed,
+		fmt.Sprintf("still %dpx", got.HeightRenamed), fmt.Sprintf("%dpx", got.HeightWarned),
 		"A warning rendered as a row makes the card taller when it arrives and shorter when "+
 			"it clears, which moves every card below it.")
 
 	r.assert("the list keeps its scroll position when a warning appears",
-		got.ScrollWarned == got.ScrollAfterEdit,
-		fmt.Sprintf("scrollTop still %d", got.ScrollAfterEdit), fmt.Sprintf("%d", got.ScrollWarned), "")
+		got.ScrollWarned == got.ScrollRenamed,
+		fmt.Sprintf("scrollTop still %d", got.ScrollRenamed), fmt.Sprintf("%d", got.ScrollWarned), "")
 
 	// Deleting a card genuinely shortens the list, so the offset MAY move. What
 	// must not happen is a clamp to the top, which is what the user reported.
