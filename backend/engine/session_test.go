@@ -107,12 +107,11 @@ func TestCSVExportEqualsAnonymisedGrid(t *testing.T) {
 func TestSessionSaveLoadEquality(t *testing.T) {
 	_, reg := runExportFixture(t)
 	original := Session{
-		Entities:    []Entity{{Category: "entity_names", Canonical: "Alpine Trust", ManualVariants: []string{"Alpine"}}},
-		AllowTerms:  []string{"CSSF", "Luxembourg"},
-		Patterns:    []CustomPattern{{Expr: "PRJ-[0-9]+"}},
-		SimpleRules: []SimpleRule{{Find: "x", Replace: "y", CaseSensitive: true}},
-		Settings:    SessionSettings{Level: "advanced", OllamaPort: 12345, Model: "qwen2.5:3b-instruct"},
-		Registry:    reg.Export(),
+		Entities:   []Entity{{Category: "entity_names", Canonical: "Alpine Trust", ManualVariants: []string{"Alpine"}}},
+		AllowTerms: []string{"CSSF", "Luxembourg"},
+		Patterns:   []CustomPattern{{Expr: "PRJ-[0-9]+"}},
+		Settings:   SessionSettings{Level: "advanced", OllamaPort: 12345, Model: "qwen2.5:3b-instruct"},
+		Registry:   reg.Export(),
 	}
 	raw, err := SaveSession(original)
 	if err != nil {

@@ -35,14 +35,10 @@ type DocumentReport struct {
 	// Replacements is the total number of spans replaced in this document
 	// (all passes combined, including the registry post-pass).
 	Replacements int `json:"replacements"`
-	// ByCategory splits Replacements by category ("email", "person_names",
-	// "simple_replace", …).
+	// ByCategory splits Replacements by category ("email", "person_names", …).
 	ByCategory map[string]int `json:"byCategory"`
 	// Warnings are the document's ingestion + processing warnings.
 	Warnings []string `json:"warnings,omitempty"`
-	// LLMDurationMS is how long the deep-scan took for this document
-	// (0 when the LLM pass was skipped). Soft budget: 30 s per 50 KB.
-	LLMDurationMS int64 `json:"llmDurationMs,omitempty"`
 	// Values lists what was replaced IN THIS DOCUMENT, most frequent first.
 	Values []ValueReport `json:"values,omitempty"`
 	// DetectedCategories lists the categories that actually produced a value in
@@ -54,12 +50,8 @@ type DocumentReport struct {
 
 // Report aggregates a whole pipeline run.
 type Report struct {
-	GeneratedAt time.Time `json:"generatedAt"`
-	Level       Level     `json:"level"`
-	// LLMPass documents what happened to pass 3, e.g.
-	// "skipped (Ollama not available)" or "completed" or a degradation
-	// note when Ollama died mid-run.
-	LLMPass           string         `json:"llmPass"`
+	GeneratedAt       time.Time      `json:"generatedAt"`
+	Level             Level          `json:"level"`
 	TotalReplacements int            `json:"totalReplacements"`
 	ByCategory        map[string]int `json:"byCategory"`
 	// Values lists every replaced value across the whole run, most frequent
@@ -92,7 +84,6 @@ func (r *Report) ToMarkdown() string {
 	fmt.Fprintf(&b, "# Anonymisation report\n\n")
 	fmt.Fprintf(&b, "- Generated: %s\n", r.GeneratedAt.Format("2006-01-02 15:04:05"))
 	fmt.Fprintf(&b, "- Level: %s\n", r.Level)
-	fmt.Fprintf(&b, "- LLM deep-scan: %s\n", r.LLMPass)
 	fmt.Fprintf(&b, "- Documents processed: %d\n", len(r.Documents))
 	fmt.Fprintf(&b, "- Total replacements: %d\n", r.TotalReplacements)
 	fmt.Fprintf(&b, "- Duration: %d ms\n\n", r.DurationMS)
@@ -117,15 +108,9 @@ func (r *Report) ToMarkdown() string {
 		b.WriteString("\n")
 	}
 
-	// LLM per-file timing is surfaced here (soft budget: 30 s per 50 KB
-	// document); "—" when the pass was skipped.
-	b.WriteString("## Per document\n\n| Document | Replacements | Deep-scan | Warnings |\n| --- | --- | --- | --- |\n")
+	b.WriteString("## Per document\n\n| Document | Replacements | Warnings |\n| --- | --- | --- |\n")
 	for _, d := range r.Documents {
-		llm := "-"
-		if d.LLMDurationMS > 0 {
-			llm = fmt.Sprintf("%d ms", d.LLMDurationMS)
-		}
-		fmt.Fprintf(&b, "| %s | %d | %s | %s |\n", d.Name, d.Replacements, llm, strings.Join(d.Warnings, "; "))
+		fmt.Fprintf(&b, "| %s | %d | %s |\n", d.Name, d.Replacements, strings.Join(d.Warnings, "; "))
 	}
 
 	if len(r.Warnings) > 0 {

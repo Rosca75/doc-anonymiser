@@ -5,7 +5,7 @@
 //   - Detection returns SPANS (start, end, category, original), it never
 //     mutates text. Replacement is a separate step (ApplySpans) applying
 //     spans longest-first, non-overlapping — this span model is reused by
-//     every later pass (entities, LLM deep-scan).
+//     every later pass.
 //   - Every regex is compiled once at package init (performance budget:
 //     per-call compilation is the classic budget killer) and documented
 //     with examples of what it matches and deliberately does NOT match.

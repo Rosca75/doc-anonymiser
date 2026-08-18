@@ -6,14 +6,15 @@
 //  1. Deterministic PII regex pass (pii.go).
 //  2. Known-entity pass: entities expanded into variants, plus user
 //     custom patterns, longest-match-first (entities.go).
-//  3. Optional LLM deep-scan (behind the LLM interface; nil = skipped).
-//     Every proposal passes the hallucination filter (exact string must
-//     occur in the source text) and the allowlist.
-//  4. Post-pass: the FULL registry is re-applied to every document, so an
-//     entity discovered late (e.g. in doc 40) is also replaced in docs
-//     processed earlier — same real-world entity, same placeholder,
-//     everywhere.
-//     Finally the ordered simple-replace rules run (simplereplace.go).
+//  3. Post-pass: the FULL registry is re-applied to every document, so a
+//     value declared late (e.g. matched first in doc 40) is also replaced in
+//     the documents processed earlier — same real-world subject, same
+//     placeholder, everywhere.
+//
+// Anonymise is DETERMINISTIC end to end. No discovery method runs here, and no
+// value is created by the run itself: the local AI is an Identify-time
+// discovery route whose findings the user accepts as Suggestions first. A run
+// that could mint a value the user never saw would walk past the review gate.
 //
 // Run executes those passes in THREE phases rather than one loop, because
 // ownership has to be decided over the whole batch:
@@ -48,31 +49,8 @@ import (
 	"time"
 )
 
-// ProposedEntity is what the LLM deep-scan returns: a candidate entity the
-// deterministic passes missed. It still has to survive the hallucination
-// filter and the allowlist before it is used.
-type ProposedEntity struct {
-	Category string `json:"category"`
-	Text     string `json:"text"`
-	// Variants are the longer spellings folded into this one, for the same
-	// reason Candidate carries them: the review list shows one value with its
-	// spellings rather than two rivals.
-	Variants []string `json:"variants,omitempty"`
-}
-
-// LLM is the interface the engine consumes for the deep-scan slot
-// (CLAUDE.md §4: engine/* receives an interface, never the concrete Ollama
-// client — the P4 ONNX fallback would implement the same interface).
-type LLM interface {
-	// DeepScan proposes residual entities in text, given what is already
-	// known. Implementations must honour ctx cancellation (the UI cancel
-	// button interrupts mid-call).
-	DeepScan(ctx context.Context, text string, known []Entity) ([]ProposedEntity, error)
-}
-
 // ProgressEvent is emitted before each per-document stage so the UI can
-// render live progress. Stage is one of "deterministic",
-// "deep-scan", "post-pass".
+// render live progress. Stage is one of "deterministic" or "post-pass".
 type ProgressEvent struct {
 	Stage    string `json:"stage"`
 	DocIndex int    `json:"docIndex"` // 0-based
@@ -114,10 +92,6 @@ type PipelineInput struct {
 	// runs to keep placeholders stable for the whole session; nil creates
 	// a fresh one (fresh numbering).
 	Registry *Registry
-	// LLM is the deep-scan slot; nil skips pass 3 (the report notes it).
-	LLM LLM
-	// SimpleRules run last, in order (simplereplace.go).
-	SimpleRules []SimpleRule
 	// Removed tracks values the user deleted from the session.
 	// They must not appear in any run without explicit restoration.
 	Removed []RemovedValue
@@ -310,11 +284,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 			GeneratedAt: time.Now(),
 			Level:       in.Level,
 			ByCategory:  map[string]int{},
-			LLMPass:     "skipped (Ollama not available)",
 		},
-	}
-	if in.LLM != nil {
-		res.Report.LLMPass = "completed"
 	}
 
 	// The preamble, in this order and no other:
@@ -326,15 +296,12 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	//   2. validation second, over what is left, BEFORE any text is touched. A
 	//      half-run that assigned placeholders for a configuration the user was
 	//      just told is invalid is unrecoverable without a new session.
-	//   3. reservations third, so a rule's replacement cannot be handed to an
-	//      automatic assignment during the run that follows.
 	ApplyRemovals(in.Allowlist, in.Removed)
 	entities := FilterRemoved(filterEntities(in.Entities, sel), in.Removed)
 
 	res.Validation = ValidateValues(ValidationInput{
 		Entities:       entities,
 		Patterns:       in.Patterns,
-		SimpleRules:    in.SimpleRules,
 		Allowlist:      in.Allowlist,
 		Categories:     sel,
 		Registry:       reg,
@@ -342,12 +309,6 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	})
 	if len(res.Validation.Blocking) > 0 {
 		return res, nil
-	}
-
-	for _, rule := range in.SimpleRules {
-		// An error means the placeholder is already taken, which validation has
-		// just cleared, so there is nothing left to report.
-		_ = reg.Reserve(rule.Replace)
 	}
 
 	// Overlap warnings come from the ONE place the decision is made, the span
@@ -358,14 +319,9 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	// Nothing is replaced here, and no placeholder is minted. Detection has to
 	// finish across the whole batch before ownership can be decided by rule
 	// rather than by the order the documents happen to be in.
-	//
-	// llmDurations records per-document deep-scan timing for the report
-	// (soft budget 30 s / 50 KB, surfaced per).
-	llmDurations := make([]int64, len(in.Documents))
 	plans := make([]documentPlan, 0, len(in.Documents))
 	for i, doc := range in.Documents {
-		// Cancellation is honoured between documents;
-		// mid-LLM cancellation is the LLM implementation's job via ctx.
+		// Cancellation is honoured between documents.
 		if err := ctx.Err(); err != nil {
 			res.Report.Warnings = append(res.Report.Warnings,
 				fmt.Sprintf("run cancelled after %d of %d documents", i, len(in.Documents)))
@@ -374,33 +330,8 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		}
 		emit(in.Progress, ProgressEvent{Stage: "deterministic", DocIndex: i, DocCount: len(in.Documents), DocName: doc.Name})
 
-		// Pass 3 preparation: deep-scan proposals become extra entities
-		// for THIS document (they enter the registry, so the post-pass
-		// spreads them to every other document too).
-		docEntities := append([]Entity(nil), entities...)
-		if in.LLM != nil {
-			emit(in.Progress, ProgressEvent{Stage: "deep-scan", DocIndex: i, DocCount: len(in.Documents), DocName: doc.Name})
-			llmStart := time.Now()
-			proposals, err := in.LLM.DeepScan(ctx, doc.Markdown, entities)
-			llmMS := time.Since(llmStart).Milliseconds()
-			if err != nil {
-				if ctx.Err() != nil { // cancelled mid-call
-					finishReport(res, start, overlaps)
-					return res, ctx.Err()
-				}
-				// Ollama died mid-run: degrade THIS pass with a warning,
-				// keep the batch going (CLAUDE.md §4 graceful degradation).
-				res.Report.LLMPass = fmt.Sprintf("degraded: %v", err)
-				res.Report.Warnings = append(res.Report.Warnings,
-					fmt.Sprintf("deep-scan failed on %q, deterministic passes still applied: %v", doc.Name, err))
-			} else {
-				docEntities = append(docEntities, acceptProposals(proposals, doc.Markdown, in.Allowlist, sel)...)
-			}
-			llmDurations[i] = llmMS
-		}
-
 		scope := detectionScope{
-			entities:         docEntities,
+			entities:         entities,
 			patterns:         in.Patterns,
 			categories:       sel,
 			minConfidence:    in.MinConfidence,
@@ -434,9 +365,9 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		res.Documents = append(res.Documents, rd)
 	}
 
-	// --- Pass 4: registry post-pass across ALL documents. ---------------
-	// Late-discovered entities (or values first seen in doc N) are now in
-	// the registry; re-apply every known mapping everywhere.
+	// --- Pass 3: registry post-pass across ALL documents. ---------------
+	// Values first seen in document N are now in the registry; re-apply every
+	// known mapping everywhere.
 	entries := reg.Entries() // longest original first
 	for i := range res.Documents {
 		if err := ctx.Err(); err != nil {
@@ -447,20 +378,9 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 		applyRegistryPostPass(&res.Documents[i], entries)
 	}
 
-	// --- Final pass: ordered simple-replace rules. -----------------------
-	// Per-document, per-rule counts are kept so the report can name what each
-	// rule rewrote instead of a bare "simple_replace" total.
-	simpleCounts := make([][]int, len(res.Documents))
-	if len(in.SimpleRules) > 0 {
-		for i := range res.Documents {
-			simpleCounts[i] = applySimpleRulesToResult(&res.Documents[i], in.SimpleRules)
-		}
-	}
-
 	// Placeholders whose every occurrence matched the canonical value carry no
 	// bracketed original, so their all-"" variant slices are dropped to keep the
-	// per-document payload small. Runs after the simple-replace pass so a rule
-	// that rewrites to a placeholder keeps its recorded find text.
+	// per-document payload small.
 	for i := range res.Documents {
 		pruneCanonicalOnlyVariants(&res.Documents[i])
 	}
@@ -470,7 +390,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	// once, here. They used to be recomputed in JavaScript on every repaint of
 	// the report card, and they were absent from the exported report entirely.
 	entries = reg.Entries()
-	for i, rd := range res.Documents {
+	for _, rd := range res.Documents {
 		docTotal := 0
 		byCat := map[string]int{}
 		for cat, n := range rd.ByCategory {
@@ -486,15 +406,10 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 			Warnings:           rd.Warnings,
 			DetectedCategories: detectedCategoriesFromCounts(byCat),
 		}
-		if i < len(llmDurations) {
-			dr.LLMDurationMS = llmDurations[i]
-		}
 		dr.Values = valueReports(entries, []ResultDocument{rd})
-		dr.Values = appendSimpleRuleValues(dr.Values, in.SimpleRules, simpleCounts[i])
 		res.Report.Documents = append(res.Report.Documents, dr)
 	}
 	res.Report.Values = valueReports(entries, res.Documents)
-	res.Report.Values = appendSimpleRuleValues(res.Report.Values, in.SimpleRules, sumRuleCounts(in.SimpleRules, simpleCounts))
 	res.Report.DetectedCategories = detectedCategoriesFromCounts(res.Report.ByCategory)
 	finishReport(res, start, overlaps)
 	return res, nil
@@ -505,8 +420,8 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 //
 // The count is taken from the FINISHED text rather than from the registry's
 // own counter, for two reasons: the registry counts per SESSION, so it cannot
-// answer a per-document question, and the post-pass and the simple-replace
-// rules both rewrite text after the counter was incremented. Counting
+// answer a per-document question, and the post-pass rewrites text after the
+// counter was incremented. Counting
 // placeholders in the text that will be exported is the only figure that
 // matches what the user will see.
 //
@@ -545,43 +460,6 @@ func sortValueReports(out []ValueReport) {
 		}
 		return out[i].Placeholder < out[j].Placeholder
 	})
-}
-
-// appendSimpleRuleValues folds the manual find-and-replace rules into a value
-// report list and re-sorts the result. Without it the "simple_replace"
-// category shows a total in the by-category breakdown but drills down to
-// nothing, because the rules never touch the registry the other rows come
-// from. A rule that matched nothing, or whose replacement is not a value the
-// user would recognise, is still listed by find text so the drill-down agrees
-// with the total.
-func appendSimpleRuleValues(values []ValueReport, rules []SimpleRule, counts []int) []ValueReport {
-	for i, rule := range rules {
-		if i >= len(counts) || counts[i] == 0 || rule.Find == "" {
-			continue
-		}
-		values = append(values, ValueReport{
-			Original:    rule.Find,
-			Placeholder: rule.Replace,
-			Category:    "simple_replace",
-			Count:       counts[i],
-		})
-	}
-	sortValueReports(values)
-	return values
-}
-
-// sumRuleCounts totals each rule's replacements across every document, so the
-// run-level report aggregates what the per-document reports split.
-func sumRuleCounts(rules []SimpleRule, perDoc [][]int) []int {
-	totals := make([]int, len(rules))
-	for _, counts := range perDoc {
-		for i, c := range counts {
-			if i < len(totals) {
-				totals[i] += c
-			}
-		}
-	}
-	return totals
 }
 
 // pruneCanonicalOnlyVariants drops every placeholder whose recorded
@@ -636,41 +514,6 @@ func filterEntities(entities []Entity, active map[string]bool) []Entity {
 		if active[e.Category] {
 			out = append(out, e)
 		}
-	}
-	return out
-}
-
-// acceptProposals applies the HALLUCINATION FILTER and the allowlist to
-// LLM proposals (CLAUDE.md §5): a proposal is dropped unless its exact
-// string occurs in the source text; allowlisted terms are dropped; and
-// categories inactive at the current level are dropped. Survivors become
-// regular entities (variant expansion included).
-func acceptProposals(proposals []ProposedEntity, sourceText string, allow *Allowlist, active map[string]bool) []Entity {
-	var out []Entity
-	for _, p := range proposals {
-		if !strings.Contains(sourceText, p.Text) {
-			continue // hallucinated: the model invented a string
-		}
-		if allow.Contains(p.Text) {
-			continue // allowlist wins
-		}
-		if !active[p.Category] {
-			continue // e.g. organisation_names proposed at medium level
-		}
-		// An AI proposal is trusted LESS than a value the user listed
-		// stamping ConfidenceLLMDefault here is what lets
-		// PipelineInput.MinConfidence separate the two tiers.
-		out = append(out, Entity{
-			Category:   p.Category,
-			Canonical:  p.Text,
-			Confidence: ConfidenceLLMDefault,
-			// The route, recorded separately from the score. Confidence
-			// decides whether the MinConfidence floor keeps this value at all;
-			// origin decides who wins when it and another route claim the same
-			// text. One number cannot answer both without raising the floor
-			// silently reordering precedence.
-			Origin: OriginAI,
-		})
 	}
 	return out
 }
@@ -1126,69 +969,4 @@ func DetectKnownOriginals(text string, entries []MappingEntry) []Span {
 		}
 	}
 	return spans
-}
-
-// applySimpleRulesToResult runs the ordered manual rules over every
-// representation of the document and records counts under the
-// "simple_replace" category. It returns the per-rule replacement counts for
-// this document so the report can name what each rule rewrote.
-func applySimpleRulesToResult(rd *ResultDocument, rules []SimpleRule) []int {
-	perRule := make([]int, len(rules))
-	add := func(counts []int) {
-		for i, c := range counts {
-			if i < len(perRule) {
-				perRule[i] += c
-			}
-		}
-	}
-	if rd.Grid != nil {
-		for r, row := range rd.Grid {
-			for c, cell := range row {
-				out, counts := ApplySimpleRules(cell, rules)
-				rd.Grid[r][c] = out
-				add(counts)
-			}
-		}
-		rd.Anonymised = GridToMarkdownTable(rd.Grid)
-	} else if rd.JSON != "" {
-		out, counts := ApplySimpleRules(rd.JSON, rules)
-		rd.JSON = out
-		rd.Anonymised = "```json\n" + out + "\n```\n"
-		add(counts)
-	} else {
-		out, counts := ApplySimpleRules(rd.Anonymised, rules)
-		rd.Anonymised = out
-		add(counts)
-	}
-	total := 0
-	for _, c := range perRule {
-		total += c
-	}
-	if total > 0 {
-		rd.ByCategory["simple_replace"] += total
-	}
-	recordSimpleRuleVariants(rd, rules, perRule)
-	return perRule
-}
-
-// recordSimpleRuleVariants notes the find text behind each placeholder a rule
-// produced, so a mark the rule created hovers with the text it replaced
-// ("PwC") rather than only the placeholder's canonical owner. Only a rule
-// whose whole replacement IS a placeholder leaves a mark to hover; a rule that
-// rewrites to plain text produces nothing the tooltip can land on.
-func recordSimpleRuleVariants(rd *ResultDocument, rules []SimpleRule, counts []int) {
-	if rd.OccurrenceVariants == nil {
-		rd.OccurrenceVariants = map[string][]string{}
-	}
-	for i, rule := range rules {
-		if i >= len(counts) || counts[i] == 0 {
-			continue
-		}
-		if placeholderRe.FindString(rule.Replace) != rule.Replace {
-			continue
-		}
-		for n := 0; n < counts[i]; n++ {
-			rd.OccurrenceVariants[rule.Replace] = append(rd.OccurrenceVariants[rule.Replace], rule.Find)
-		}
-	}
 }

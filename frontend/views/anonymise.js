@@ -13,26 +13,26 @@
 //                        placeholder and a remove action, plus the collapsed
 //                        list of removed values with restore. This is THE
 //                        surface for both rules: a value can be renamed and a
-//                        value can be removed, whatever trigger found it.
+//                        value can be removed, whatever discovery method found it.
 //   Report the per-category drill-down, scoped to all files or
 //                        one, plus the run's dismissible warnings.
-//   Something missed?    add a value, then re-run the fast passes.
-//   Find and replace the ordered rules that run last.
+//   Add missed Value     declare a Value, then re-run the fast passes.
 //
 // The Compare card's two panes are the one place the anonymisation is actually
 // checked, which is why they get two thirds of the screen: hovering a mark shows
-// its original, clicking one selects it, and selecting free text offers to
-// replace it with a [CUSTOM_n] rule.
+// its original, clicking one selects it, and selecting free text offers to make
+// it a spelling of an existing Value or a new Value of its own. Both go through
+// the Value model, so everything the run replaced is in the re-identification
+// key.
 
 import {
   runPipeline, cancelPipeline, fastRerun, getMapping, getDocumentSource,
   valuePlaceholders, listRemovedValues, setValuePlaceholder, removeValue,
-  restoreValue, nextRulePlaceholder, copyText,
+  restoreValue, copyText,
 } from "../api.js";
 import {
   getState, setState,
   buildRunRequest, documentSource, cacheDocumentSource,
-  addSimpleRule, removeSimpleRule, moveSimpleRule,
   entityAutocomplete, reassignOriginal, addEntities,
   setValueTables, dismissWarning, visibleWarnings, blockingConflicts,
   foldIntoFamily,
@@ -49,10 +49,10 @@ import { toastHTML } from "../ui.js";
 
 // --- View-local state -----------------------------------------------------
 
-// Which of the four collapsible cards are folded shut. All four start closed:
+// Which of the collapsible cards are folded shut. All of them start closed:
 // the result cards open on demand, so the screen after a run is a compact
 // column of headings rather than a wall of tables.
-const collapsed = new Set(["missed", "rules", "selected", "removed", "values", "report"]);
+const collapsed = new Set(["missed", "selected", "removed", "values", "report"]);
 // Which report categories are expanded, by category key.
 const expandedCategories = new Set();
 // The report's scope: "__all" or one document name.
@@ -78,12 +78,11 @@ let selectedError = "";
 // A live text selection in either pane, or null: {text, x, y}. Coordinates are
 // relative to the Compare card, so the floating panel follows the selection.
 let selection = null;
-let selectionDraft = "";
 // The selection panel's stage: null (choose copy or replace), "replace" (choose
 // how), then a mode. All view state: it is about THIS selection and dies with
 // it, so it resets whenever `selection` is cleared or the document changes.
 let selectionStage = null;    // null | "replace"
-let selectionMode = null;     // null | "variant" | "value" | "text"
+let selectionMode = null;     // null | "variant" | "value"
 let selectionTarget = "";     // the variant autocomplete's draft
 let selectionCategory = "person_names";
 // A refusal from Apply. It belongs ON the panel, next to the field the fix goes
@@ -109,8 +108,8 @@ let search = { needle: "", index: 0 };
 // and scrolling unconditionally would fight it and drag the pane back on every
 // keystroke.
 let lastScrolledTo = null;
-// The three add rows' draft text, kept across repaints.
-const drafts = { missedCategory: "person_names", missed: "", find: "", replace: "", caseSensitive: false };
+// The Add missed Value row's draft text, kept across repaints.
+const drafts = { missedCategory: "person_names", missed: "" };
 
 export function renderAnonymise(container) {
   const s = getState();
@@ -130,7 +129,6 @@ export function renderAnonymise(container) {
           ${s.results && !blocked ? valuesCard(s) : ""}
           ${s.results && !blocked ? reportCard(s) : ""}
           ${s.results && !blocked ? missedCard(s) : ""}
-          ${s.results ? rulesCard(s) : ""}
         </div>
         ${compareCard(s, doc)}
       </div>
@@ -564,7 +562,7 @@ export function countOccurrences(text, needle) {
   return text.split(needle).length - 1;
 }
 
-// --- Something missed? card ----------------------------------------------
+// --- Add missed Value card -----------------------------------------------
 
 export function missedCard(s) {
   const body =
@@ -586,52 +584,6 @@ export function missedCard(s) {
 
   return collapsibleCard("missed", ANONYMISE.missedTitle,
     ANONYMISE.missedSummary(s.entities.length), body);
-}
-
-// --- Find and replace card ----------------------------------------------
-
-export function rulesCard(s) {
-  const rows = s.simpleRules.map((r, i) =>
-    `<div class="rule-row" data-index="${i}">` +
-    `<span class="rule-text mono">` +
-    `<span class="rule-find">${escapeHTML(r.find)}</span>` +
-    `<span class="hint">${escapeHTML(ANONYMISE.ruleTo)}</span>` +
-    `<span class="rule-replace">${escapeHTML(r.replace)}</span>` +
-    `</span>` +
-    `<span class="hint rule-case">${escapeHTML(r.caseSensitive ? ANONYMISE.exactCase : ANONYMISE.anyCase)}</span>` +
-    `<span class="rule-actions">` +
-    button("", {
-      kind: "ghost", cls: "rule-up icon-action", icon: "expand_less",
-      disabled: i === 0, ariaLabel: ANONYMISE.moveUp, title: ANONYMISE.moveUp,
-    }) +
-    button("", {
-      kind: "ghost", cls: "rule-down icon-action", icon: "expand_more",
-      disabled: i === s.simpleRules.length - 1,
-      ariaLabel: ANONYMISE.moveDown, title: ANONYMISE.moveDown,
-    }) +
-    button("", {
-      kind: "ghost", cls: "rule-del icon-action danger", icon: "close",
-      ariaLabel: ANONYMISE.removeRule, title: ANONYMISE.removeRule,
-    }) +
-    `</span></div>`).join("");
-
-  const body =
-    `<p class="hint">${escapeHTML(ANONYMISE.rulesHint)}</p>` +
-    (rows ? `<div class="rule-list">${rows}</div>` : "") +
-    `<div class="add-row">` +
-    `<input id="rule-find" class="grow" value="${escapeHTML(drafts.find)}"` +
-    ` placeholder="${escapeHTML(ANONYMISE.ruleFind)}" aria-label="${escapeHTML(ANONYMISE.ruleFind)}"/>` +
-    `<input id="rule-replace" class="grow" value="${escapeHTML(drafts.replace)}"` +
-    ` placeholder="${escapeHTML(ANONYMISE.ruleReplace)}" aria-label="${escapeHTML(ANONYMISE.ruleReplace)}"/>` +
-    `</div>` +
-    `<div class="row-between">` +
-    `<label class="cat-row"><input type="checkbox" id="rule-case"${drafts.caseSensitive ? " checked" : ""}/>` +
-    `<span class="cat-label">${escapeHTML(ANONYMISE.caseSensitive)}</span></label>` +
-    button(ANONYMISE.addRule, { kind: "secondary", id: "btn-add-rule" }) +
-    `</div>`;
-
-  return collapsibleCard("rules", ANONYMISE.rulesTitle,
-    ANONYMISE.rulesSummary(s.simpleRules.length), body);
 }
 
 /**
@@ -833,7 +785,7 @@ function selectionViewState() {
   return {
     selection, stage: selectionStage, mode: selectionMode,
     target: selectionTarget, category: selectionCategory,
-    draft: selectionDraft, error: selectionError,
+    error: selectionError,
   };
 }
 
@@ -853,9 +805,9 @@ function selectionStageChoose() {
 }
 
 /**
- * Stage 2: WHICH KIND of replacement. The three hints are load-bearing: the
- * modes differ in what ends up in the re-identification key, and that is not
- * guessable from the labels.
+ * Stage 2: WHICH KIND of replacement. Both hints are load-bearing: the modes
+ * differ in what ends up in the re-identification key, and that is not guessable
+ * from the labels.
  */
 function selectionStageMode() {
   const option = (mode, label, hint) =>
@@ -869,7 +821,6 @@ function selectionStageMode() {
   return `<div class="selection-options">` +
     option("variant", ANONYMISE.selectionModeVariant, ANONYMISE.selectionModeVariantHint) +
     option("value", ANONYMISE.selectionModeValue, ANONYMISE.selectionModeValueHint) +
-    option("text", ANONYMISE.selectionModeText, ANONYMISE.selectionModeTextHint) +
     `</div>` +
     `<div class="run-actions">` +
     button(ANONYMISE.selectionBack, { kind: "ghost", id: "btn-selection-back" }) +
@@ -891,7 +842,7 @@ function selectionStageFields(s, view) {
       ` placeholder="${escapeHTML(ANONYMISE.selectionTargetPlaceholder)}"` +
       ` aria-label="${escapeHTML(ANONYMISE.selectionTargetLabel)}"/></label>` +
       `<datalist id="selection-targets">${options}</datalist>`;
-  } else if (view.mode === "value") {
+  } else {
     fields =
       `<label class="field-label">${escapeHTML(ANONYMISE.selectionTypeLabel)}` +
       `<select id="selection-category" aria-label="${escapeHTML(ANONYMISE.selectionTypeLabel)}">` +
@@ -899,10 +850,6 @@ function selectionStageFields(s, view) {
         `<option value="${escapeHTML(c)}"${c === view.category ? " selected" : ""}>` +
         `${escapeHTML(CATEGORY_LABELS[c]?.label ?? c)}</option>`).join("") +
       `</select></label>`;
-  } else {
-    fields =
-      `<input id="selection-draft" class="mono" value="${escapeHTML(view.draft)}"` +
-      ` aria-label="${escapeHTML(ANONYMISE.replaceWith)}"/>`;
   }
 
   return fields +
@@ -939,7 +886,6 @@ function wire(container, s, doc) {
     wireReport(container);
     wireMissed(container);
   }
-  wireRules(container);
   wireCompare(container, doc);
   wireNotice(container);
   wireStepFooter(container);
@@ -1165,36 +1111,6 @@ function wireMissed(container) {
   container.querySelector("#btn-fast-rerun")?.addEventListener("click", async () => {
     await runFastRerun(container, ANONYMISE.fastRerunDone(getState().entities.length));
   });
-}
-
-function wireRules(container) {
-  const find = container.querySelector("#rule-find");
-  const replace = container.querySelector("#rule-replace");
-  const caseBox = container.querySelector("#rule-case");
-  find?.addEventListener("input", () => { drafts.find = find.value; });
-  replace?.addEventListener("input", () => { drafts.replace = replace.value; });
-  caseBox?.addEventListener("change", () => { drafts.caseSensitive = caseBox.checked; });
-
-  container.querySelector("#btn-add-rule")?.addEventListener("click", () => {
-    if (!addSimpleRule({
-      find: drafts.find, replace: drafts.replace, caseSensitive: drafts.caseSensitive,
-    })) {
-      // An empty needle is a no-op rule, and adding one silently would leave the
-      // user waiting for a row that never appears.
-      notify(ANONYMISE.ruleNeedsFind, "info");
-      return;
-    }
-    drafts.find = "";
-    drafts.replace = "";
-    setState({});
-  });
-
-  for (const row of container.querySelectorAll(".rule-row")) {
-    const i = parseInt(row.dataset.index, 10);
-    row.querySelector(".rule-up")?.addEventListener("click", () => moveSimpleRule(i, -1));
-    row.querySelector(".rule-down")?.addEventListener("click", () => moveSimpleRule(i, +1));
-    row.querySelector(".rule-del")?.addEventListener("click", () => removeSimpleRule(i));
-  }
 }
 
 /**
@@ -1500,15 +1416,6 @@ function wireSelectionPanel(container) {
       selectionMode = radio.value;
       selectionError = "";
       setState({});
-      // ONLY mode 3 needs a placeholder, so only mode 3 spends one. Go mints it,
-      // because only the registry knows every number already taken: CUSTOM is
-      // also the automatic label for custom_patterns matches, so numbering from
-      // the rules alone hands out one a pattern match already has.
-      if (selectionMode === "text") {
-        nextRulePlaceholder()
-          .then((placeholder) => { selectionDraft = placeholder; setState({}); })
-          .catch(() => { /* no bridge: the user types their own replacement */ });
-      }
     });
   }
 
@@ -1522,9 +1429,6 @@ function wireSelectionPanel(container) {
   container.querySelector("#selection-category")?.addEventListener("change", (ev) => {
     selectionCategory = ev.target.value;
   });
-  const draft = container.querySelector("#selection-draft");
-  draft?.addEventListener("input", () => { selectionDraft = draft.value; });
-
   // Cancel steps BACK to stage 1 rather than closing, so a mis-click on a mode
   // does not lose the selection.
   container.querySelector("#btn-cancel-selection")?.addEventListener("click", () => {
@@ -1542,10 +1446,11 @@ function wireSelectionPanel(container) {
 /**
  * applySelection(container) carries out the chosen replace mode.
  *
- * The three modes differ in what ends up in the re-identification key, which is
- * why they are three modes and not one field: a spelling of an existing value
- * shares that value's placeholder, a new value earns its own, and a
- * find-and-replace rule creates no value at all.
+ * The two modes differ in what ends up in the re-identification key, which is
+ * why they are two modes and not one field: a spelling of an existing Value
+ * shares that Value's placeholder, and a new Value earns its own. Both go
+ * through the Value model, so neither can rewrite text without the key saying
+ * what happened.
  */
 export async function applySelection(container, view = selectionViewState()) {
   const text = view.selection?.text;
@@ -1576,7 +1481,8 @@ export async function applySelection(container, view = selectionViewState()) {
     return;
   }
 
-  if (view.mode === "value") {
+  // The remaining mode is "value": a new Value of its own.
+  {
     // Through foldIntoFamily first, so a new value that belongs to an existing
     // family becomes a spelling of it instead of a rival that would fire inside
     // it. addEntities switches the category on, which is what makes the value
@@ -1591,22 +1497,7 @@ export async function applySelection(container, view = selectionViewState()) {
     resetSelectionPanel();
     clearSelection();
     await runFastRerun(container, message);
-    return;
   }
-
-  const replace = (view.draft ?? "").trim();
-  if (!replace) {
-    selectionError = ANONYMISE.selectionNeedsReplacement;
-    setState({});
-    return;
-  }
-  // Case-sensitive, because the user selected an exact string: matching it
-  // case-insensitively would replace things they did not point at.
-  addSimpleRule({ find: text, replace, caseSensitive: true });
-  resetSelectionPanel();
-  collapsed.delete("rules"); // show the rule that was just created
-  clearSelection();
-  await runFastRerun(container, ANONYMISE.selectionApplied(text, replace));
 }
 
 /**
@@ -1619,7 +1510,6 @@ function resetSelectionPanel() {
   selectionStage = null;
   selectionMode = null;
   selectionTarget = "";
-  selectionDraft = "";
   selectionError = "";
 }
 
@@ -1627,7 +1517,7 @@ function resetSelectionPanel() {
  * runFastRerun(container, message) re-runs the DETERMINISTIC passes only and
  * refreshes the mapping.
  *
- * "Fast" means no LLM: the values and rules on screen are re-applied, and
+ * "Fast" means no discovery: the Values on screen are re-applied, and
  * existing placeholders keep their numbers because the session registry is
  * unchanged. That last part is the whole point, and it is why every editing
  * action on this screen ends here rather than in a full re-run.

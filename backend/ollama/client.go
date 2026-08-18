@@ -1,7 +1,7 @@
 // Package ollama is THE ONLY package in this repository that talks to the
 // local Ollama server over HTTP (see CLAUDE.md §4, "One-file external
 // boundary"). Everything else — in particular engine/* — consumes the
-// engine.LLM interface, never this concrete client. That keeps the planned
+// LLM boundary interface, never this concrete client. That keeps the planned
 // P4 fallback (ONNX-in-WebView) a contained refactor.
 //
 // Local-only guarantee: the base URL host is locked to the loopback address
@@ -75,7 +75,6 @@ type OllamaStatus struct {
 }
 
 // Client talks to a local Ollama server using only the Go standard library.
-// It implements engine.LLM (the deep-scan slot of the pipeline).
 type Client struct {
 	// BaseURL of the Ollama server, e.g. "http://127.0.0.1:11434".
 	// Constructed from settings; the host always remains loopback.
@@ -100,10 +99,6 @@ type Client struct {
 	probeClient *http.Client
 	chatClient  *http.Client
 }
-
-// Compile-time proof that *Client satisfies the engine's LLM interface.
-// If the interface drifts, the build breaks here with a clear message.
-var _ engine.LLM = (*Client)(nil)
 
 // New returns a Client for the given base URL (pass "" for the default).
 // Any non-loopback host is REJECTED and replaced by the default: the
@@ -201,7 +196,7 @@ func (c *Client) ListModels() ([]string, error) {
 
 // chatRequest is the POST /api/chat body. Format "json" instructs Ollama
 // to constrain the output to valid JSON (CLAUDE.md §8: discovery and
-// deep-scan prompts must set it); stream=false gives one complete reply.
+// discovery prompts must set it); stream=false gives one complete reply.
 type chatRequest struct {
 	Model    string        `json:"model"`
 	Messages []chatMessage `json:"messages"`
@@ -396,41 +391,6 @@ func (c *Client) scanChunks(ctx context.Context, text string, onChunk func(index
 // helper for scanChunks).
 func ollamaMerge(batches [][]engine.ProposedEntity) []engine.ProposedEntity {
 	return MergeProposals(batches...)
-}
-
-// --- Deep-scan (residual pass) -------------------------------------------
-
-const deepScanSystemPromptPrefix = `You are an entity extraction engine performing a FINAL review of a business document that was already partially anonymised (placeholders look like [ENTITY_1]).
-Find ONLY residual proper names that are still visible and were missed. Respond with ONLY a JSON object, no prose, using exactly these keys:
-{"entity_names": [], "project_names": [], "product_names": [], "brand_names": [], "person_names": [], "identifier_names": [], "other_names": []}
-Rules:
-- entity_names: named organisations, companies, teams and internal systems, whether they are clients, counterparties or internal.
-- project_names: engagement, project or workstream names and code names.
-- product_names: named products, platforms, modules and software.
-- brand_names: brand or trade names, which are how something is marketed rather than the company that owns it.
-- person_names: every natural person, including members of staff. A human being is NEVER an entity_names.
-- identifier_names: reference, contract, invoice and case codes.
-- other_names: a proper name that is none of the above. Use it sparingly, and never as a place to put something you could file elsewhere.
-- Copy every name VERBATIM from the document. Never invent names.
-- Do NOT report placeholders like [ENTITY_1] or names from the known list below.
-- Use [] for a category with no findings.`
-
-// DeepScan implements engine.LLM: it proposes residual entities for one
-// document, excluding what is already known, and applies the hallucination
-// filter and allowlist veto before returning.
-func (c *Client) DeepScan(ctx context.Context, text string, known []engine.Entity) ([]engine.ProposedEntity, error) {
-	system := deepScanSystemPromptPrefix
-	if len(known) > 0 {
-		var names []string
-		for _, e := range known {
-			names = append(names, e.Canonical)
-		}
-		system += "\nKnown (do not report): " + strings.Join(names, "; ")
-	}
-
-	return c.scanChunks(ctx, text, nil, func(chunk string) (string, error) {
-		return c.Chat(ctx, c.Model, system, chunk)
-	})
 }
 
 // filterProposals applies the hallucination filter (exact string must occur

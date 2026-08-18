@@ -61,12 +61,11 @@ type Entity struct {
 	// stated", which DetectEntities reads as ConfidenceManualDefault:
 	// every entity the USER listed is a high-trust entity.
 	//
-	// The one thing that sets it explicitly today is acceptProposals,
-	// which stamps ConfidenceLLMDefault on entities the local AI proposed
-	// during the deep-scan pass. That is what gives the Configure screen's
+	// A value accepted from a Local AI Suggestion carries
+	// ConfidenceLLMDefault instead. That is what gives the Configure panel's
 	// minimum-confidence setting something real to act on: raising the
 	// minimum above the AI level stops replacing values only the model
-	// suggested, while everything the user listed keeps being replaced.
+	// suggested, while everything the user declared keeps being replaced.
 	Confidence float32 `json:"confidence,omitempty"`
 }
 

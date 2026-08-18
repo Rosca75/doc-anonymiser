@@ -98,15 +98,6 @@ func TestBlockingConflicts(t *testing.T) {
 			wantKind:  "collision",
 			wantValue: "CSSF",
 		},
-		{
-			name: "a rule that looks for a placeholder, so it would rewrite anonymised text",
-			in: ValidationInput{
-				SimpleRules: []SimpleRule{{Find: "call [PERSON_1] back", Replace: "redacted"}},
-				Categories:  PresetSelection(LevelMedium),
-			},
-			wantKind:  "reserved",
-			wantValue: "call [PERSON_1] back",
-		},
 	}
 
 	for _, tc := range cases {
@@ -149,39 +140,6 @@ func TestAnInactiveCategoryIsNotAConflict(t *testing.T) {
 	})
 	if len(got) != 0 {
 		t.Errorf("an off category must not conflict, got %+v", got)
-	}
-}
-
-func TestAnUnassignedCustomPlaceholderIsAllowed(t *testing.T) {
-	// The shipped select-and-replace flow mints a [CUSTOM_N] and the App
-	// reserves it. Blocking it would refuse the application's own feature.
-	registry := NewRegistry()
-	registry.Assign(CatPersonNames, "Marie Duval") // takes [PERSON_1], not [CUSTOM_9]
-
-	got := blocking(t, ValidationInput{
-		SimpleRules: []SimpleRule{{Find: "4471-B", Replace: "[CUSTOM_9]"}},
-		Categories:  PresetSelection(LevelMedium),
-		Registry:    registry,
-	})
-	if len(got) != 0 {
-		t.Errorf("an unassigned placeholder replacement must be allowed, got %+v", got)
-	}
-}
-
-func TestAReplacementTheRegistryAlreadyOwnsIsRefused(t *testing.T) {
-	registry := NewRegistry()
-	taken := registry.Assign(CatPersonNames, "Marie Duval")
-
-	got := blocking(t, ValidationInput{
-		SimpleRules: []SimpleRule{{Find: "4471-B", Replace: taken}},
-		Categories:  PresetSelection(LevelMedium),
-		Registry:    registry,
-	})
-	if len(got) != 1 || got[0].Kind != "reserved" {
-		t.Fatalf("want one reserved conflict, got %+v", got)
-	}
-	if !strings.Contains(got[0].Message, "Marie Duval") {
-		t.Errorf("the message must name the value that already owns it, got %q", got[0].Message)
 	}
 }
 

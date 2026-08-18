@@ -170,23 +170,26 @@ func TestDiscoverMalformedReply(t *testing.T) {
 	}
 }
 
-func TestDeepScanHallucinationFilterAndAllowlist(t *testing.T) {
-	text := "Residual mention of Borealis Fund and the CSSF here."
+// TestDiscoverHallucinationFilterAndAllowlist: a name the model invented is
+// dropped because it does not occur in the text, and an allowlisted term is
+// dropped because the never-anonymise list vetoes every producer.
+func TestDiscoverHallucinationFilterAndAllowlist(t *testing.T) {
+	text := "Mention of Borealis Fund and the CSSF here."
 	c := chatReplyServer(t, `{"entity_names":["Borealis Fund","Fabricated Corp","CSSF"],"project_names":[],"person_names":[]}`)
 	// Wire the allowlist veto exactly as app.go does.
 	allow := engine.NewAllowlist() // seeds CSSF
 	c.Allow = allow.Contains
 
-	got, err := c.DeepScan(context.Background(), text, []engine.Entity{{Category: "entity_names", Canonical: "Alpine Trust"}})
+	got, err := c.Discover(context.Background(), text)
 	if err != nil {
-		t.Fatalf("DeepScan: %v", err)
+		t.Fatalf("Discover: %v", err)
 	}
 	if len(got) != 1 || got[0].Text != "Borealis Fund" {
 		t.Errorf("filter failed: want only Borealis Fund, got %+v", got)
 	}
 }
 
-func TestDeepScanContextCancellation(t *testing.T) {
+func TestDiscoverContextCancellation(t *testing.T) {
 	// The mock hangs until the request context is cancelled, proving a
 	// cancelled UI run aborts the HTTP call rather than waiting 120 s.
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -194,9 +197,9 @@ func TestDeepScanContextCancellation(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := c.DeepScan(ctx, "text", nil)
+	_, err := c.Discover(ctx, "text")
 	if err == nil {
-		t.Fatal("cancelled DeepScan must return an error")
+		t.Fatal("cancelled Discover must return an error")
 	}
 }
 
@@ -220,27 +223,33 @@ func TestMergeProposals(t *testing.T) {
 	}
 }
 
-// TestPipelineWithOllamaClient wires the real Client (against the mock
-// server) into engine.Run, proving the LLM slot end to end headlessly.
-func TestPipelineWithOllamaClient(t *testing.T) {
-	text := "Final note about Zephyr Capital."
-	c := chatReplyServer(t, `{"entity_names":["Zephyr Capital"],"project_names":[],"person_names":[]}`)
+// TestAnonymiseNeverCallsOllama: Anonymise is deterministic end to end. If a
+// run could reach the model it could mint a value the user never reviewed,
+// which is the review gate being walked past rather than enforced.
+func TestAnonymiseNeverCallsOllama(t *testing.T) {
+	var calls atomic.Int32
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":{"content":"{}"}}`))
+	})
+	_ = c // the client exists and is reachable; the pipeline must still not use it
 
 	res, err := engine.Run(context.Background(), engine.PipelineInput{
-		Documents: []engine.Document{{Name: "z.txt", Format: engine.FormatTXT, Markdown: text}},
+		Documents: []engine.Document{{Name: "z.txt", Format: engine.FormatTXT,
+			Markdown: "Final note about Zephyr Capital."}},
+		Entities:  []engine.Entity{{Category: engine.CatEntityNames, Canonical: "Zephyr Capital"}},
 		Level:     engine.LevelMedium,
 		Allowlist: engine.NewEmptyAllowlist(),
-		LLM:       c,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	out := res.Documents[0].Anonymised
-	if strings.Contains(out, "Zephyr") || !strings.Contains(out, "[ENTITY_1]") {
-		t.Errorf("deep-scan finding not applied: %q", out)
+	if out := res.Documents[0].Anonymised; strings.Contains(out, "Zephyr") {
+		t.Errorf("the declared value was not replaced: %q", out)
 	}
-	if res.Report.LLMPass != "completed" {
-		t.Errorf("report LLM note = %q", res.Report.LLMPass)
+	if got := calls.Load(); got != 0 {
+		t.Errorf("Anonymise reached Ollama %d time(s); it must never call a discovery method", got)
 	}
 }
 
@@ -571,9 +580,8 @@ func TestClassifyCandidatesBatching(t *testing.T) {
 // how organisation_names survived for three phases.
 func TestPromptsAndParserAgreeOnTheCategoryKeys(t *testing.T) {
 	prompts := map[string]string{
-		"discover":  discoverSystemPrompt,
-		"deep scan": deepScanSystemPromptPrefix,
-		"classify":  classifySystemPrompt,
+		"discover": discoverSystemPrompt,
+		"classify": classifySystemPrompt,
 	}
 
 	for _, category := range engine.AllEntityCategories {

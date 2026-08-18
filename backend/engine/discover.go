@@ -48,6 +48,18 @@ import (
 	"unicode/utf8"
 )
 
+// ProposedEntity is what a Local AI discovery call returns: a potential value
+// the model extracted from the text. It still has to survive the hallucination
+// filter and the allowlist before the user ever sees it.
+type ProposedEntity struct {
+	Category string `json:"category"`
+	Text     string `json:"text"`
+	// Variants are the longer spellings folded into this one, for the same
+	// reason Candidate carries them: the review list shows one value with its
+	// spellings rather than two rivals.
+	Variants []string `json:"variants,omitempty"`
+}
+
 // Candidate is one Smart-detection proposal for the review UI (and for
 // LLM span classification).
 type Candidate struct {

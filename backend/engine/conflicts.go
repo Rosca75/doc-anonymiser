@@ -11,7 +11,6 @@ package engine
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 )
 
@@ -22,7 +21,7 @@ import (
 // run. Without them the frontend would receive Go's capitalised field names and
 // the report would silently disagree with what the engine produced.
 type ValueRef struct {
-	Kind      string `json:"kind"`             // "regex" | "entity" | "custom_pattern" | "simple_rule"
+	Kind      string `json:"kind"`             // "regex" | "entity" | "custom_pattern"
 	Category  string `json:"category"`         // category the value belongs to
 	Canonical string `json:"canonical"`        // lower-cased value
 	Detail    string `json:"detail,omitempty"` // extra context (e.g., the regex pattern)
@@ -30,7 +29,7 @@ type ValueRef struct {
 
 // Conflict is a value that violates an invariant and must be resolved.
 type Conflict struct {
-	Kind     string     `json:"kind"`           // "ambiguity" | "overlap" | "collision" | "reserved"
+	Kind     string     `json:"kind"`           // "ambiguity" | "overlap" | "collision"
 	Severity string     `json:"severity"`       // "block" | "warn"
 	Value    string     `json:"value"`          // the problematic value
 	Refs     []ValueRef `json:"refs,omitempty"` // all places this value appears
@@ -48,7 +47,6 @@ type ValidationResult struct {
 type ValidationInput struct {
 	Entities       []Entity          // declared entities
 	Patterns       []CustomPattern   // user-written regex patterns
-	SimpleRules    []SimpleRule      // find-and-replace rules
 	Allowlist      *Allowlist        // terms never to replace
 	Categories     CategorySelection // which categories are active
 	Registry       *Registry         // may be nil before the first run
@@ -84,7 +82,6 @@ func ValidateValues(in ValidationInput) ValidationResult {
 	result.Blocking = append(result.Blocking, checkDuplicateValues(active)...)
 	result.Blocking = append(result.Blocking, checkVariantCollisions(active)...)
 	result.Blocking = append(result.Blocking, checkAllowlistCollisions(active, in.Allowlist)...)
-	result.Blocking = append(result.Blocking, checkSimpleRuleConflicts(in.SimpleRules, in.Registry)...)
 	return result
 }
 
@@ -205,64 +202,6 @@ func checkAllowlistCollisions(entities []Entity, allowlist *Allowlist) []Conflic
 	}
 	return conflicts
 }
-
-// checkSimpleRuleConflicts finds find-and-replace rules that would corrupt the
-// re-identification key.
-//
-// Two shapes, and only two:
-//
-//	a FIND containing a placeholder. The rules run last, after the passes, so
-//	such a rule rewrites anonymised output and the key stops describing the
-//	text it claims to describe.
-//	a REPLACE naming a placeholder the registry has already given to a value.
-//	The exported key would then have two originals behind one placeholder.
-//
-// An UNASSIGNED placeholder-shaped replace is allowed on purpose: that is the
-// shipped select-and-replace flow, which mints a [CUSTOM_N] the App reserves.
-func checkSimpleRuleConflicts(rules []SimpleRule, registry *Registry) []Conflict {
-	var conflicts []Conflict
-	for _, rule := range rules {
-		if placeholder := placeholderInsideRe.FindString(rule.Find); placeholder != "" {
-			conflicts = append(conflicts, Conflict{
-				Kind:     "reserved",
-				Severity: "block",
-				Value:    rule.Find,
-				Refs:     []ValueRef{{Kind: "simple_rule", Detail: rule.Find}},
-				Message: fmt.Sprintf(
-					"the find-and-replace rule looks for %q, which is a placeholder this run produces, so the rule would rewrite anonymised text",
-					placeholder),
-				Fix: "Change what the rule looks for to the original text, not the placeholder.",
-			})
-			continue
-		}
-		if registry == nil || !placeholderShapeRe.MatchString(rule.Replace) {
-			continue
-		}
-		owner, assigned := registry.PlaceholderOwner(rule.Replace)
-		if !assigned {
-			continue // free, and the App reserves it when it hands it out
-		}
-		conflicts = append(conflicts, Conflict{
-			Kind:     "reserved",
-			Severity: "block",
-			Value:    rule.Replace,
-			Refs: []ValueRef{
-				{Kind: "simple_rule", Detail: rule.Find},
-				{Kind: "entity", Category: owner.Category, Canonical: strings.ToLower(owner.Original)},
-			},
-			Message: fmt.Sprintf(
-				"the rule replaces text with %s, which this session already assigned to %q, so the exported key would have two values behind one placeholder",
-				rule.Replace, owner.Original),
-			Fix: "Pick a different replacement. The select-and-replace action on step 3 mints a free one for you.",
-		})
-	}
-	return conflicts
-}
-
-// placeholderInsideRe matches a placeholder ANYWHERE in a string, unlike
-// placeholderShapeRe, which anchors. A rule looking for "call [PERSON_1] back"
-// is the same mistake as one looking for "[PERSON_1]".
-var placeholderInsideRe = regexp.MustCompile(`\[[A-Z][A-Z0-9_]*_[0-9]+\]`)
 
 // maxOverlapWarnings caps how many overlap warnings one run reports, and
 // maxOverlapSpansExamined caps how much work finding them may cost.

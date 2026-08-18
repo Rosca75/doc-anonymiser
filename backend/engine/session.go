@@ -1,7 +1,7 @@
 // engine/session.go — save/load of session state (CLAUDE.md §3/§5).
 //
 // A session file contains entities + allowlist + custom patterns +
-// simple-replace rules + settings + the placeholder REGISTRY. The registry
+// settings + the placeholder REGISTRY. The registry
 // is the re-identification key: whoever holds the file can map
 // placeholders back to real names. That is why saving is an explicit user
 // action behind a warning (CLAUDE.md §5, "sensitive state stays in
@@ -88,7 +88,6 @@ type Session struct {
 	Entities    []Entity        `json:"entities"`
 	AllowTerms  []string        `json:"allowTerms"`
 	Patterns    []CustomPattern `json:"patterns"`
-	SimpleRules []SimpleRule    `json:"simpleRules"`
 	Settings    SessionSettings `json:"settings"`
 	// Registry is the exported mapping — the re-identification key.
 	Registry []MappingEntry `json:"registry"`
@@ -108,9 +107,6 @@ type Session struct {
 	// RetiredPlaceholders tracks placeholders whose entries were
 	// forgotten but whose numbers were never freed.
 	RetiredPlaceholders []string `json:"retiredPlaceholders,omitempty"`
-	// ReservedPlaceholders tracks placeholders produced outside the
-	// registry (rule replacements).
-	ReservedPlaceholders []string `json:"reservedPlaceholders,omitempty"`
 }
 
 // SaveSession serialises a session to pretty-printed JSON (stable key
@@ -231,28 +227,18 @@ func NewRegistryFromSession(s Session) (*Registry, []error, error) {
 		return nil, nil, err
 	}
 
-	// Retired and reserved placeholders restore with the entries
-	// Both are numbers this session has already spent, and neither is
-	// recoverable from s.Registry, because neither has an entry there any more:
-	//
-	//   retired a Forget freed the entry and deliberately did NOT free the
-	//             number, because the user may already hold an export in which
-	//             [PERSON_4] means one person. Dropping the set on load would
-	//             hand 4 straight back out and make two artefacts of one session
-	//             disagree, which is the exact ambiguity the refusal exists to
-	//             prevent, arriving one save-and-reload later.
-	//   reserved a simple-replace rule's replacement, minted outside the
-	//             registry. Forgetting it on load lets an automatic assignment
-	//             collide with a rule the user wrote.
+	// Retired placeholders restore with the entries. They are numbers this
+	// session has already spent and are not recoverable from s.Registry,
+	// because a Forget freed the entry and deliberately did NOT free the
+	// number: the user may already hold an export in which [PERSON_4] means one
+	// person. Dropping the set on load would hand 4 straight back out and make
+	// two artefacts of one session disagree, which is the exact ambiguity the
+	// refusal exists to prevent, arriving one save-and-reload later.
 	//
 	// The counters move up too, or the set would be remembered and then skipped
 	// past one number at a time on every assignment.
 	for _, p := range s.RetiredPlaceholders {
 		r.retired[p] = true
-		r.raiseCounterFor(p)
-	}
-	for _, p := range s.ReservedPlaceholders {
-		r.reserved[p] = true
 		r.raiseCounterFor(p)
 	}
 

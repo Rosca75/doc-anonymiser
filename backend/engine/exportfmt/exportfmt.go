@@ -88,7 +88,7 @@ func (c Config) Replacements(text string) []Replacement {
 		spans = append(spans, engine.DetectCustomPatterns(text, c.Patterns, c.Allowlist)...)
 	}
 	// Registry post-pass equivalent: values that earned a placeholder in
-	// ANY document (including LLM deep-scan finds that never became
+	// ANY document (including values first matched elsewhere that never became
 	// session entities) are replaced here too, so the same-format copy
 	// can never leak something the markdown export already hides.
 	spans = append(spans, filterAllowedKnown(engine.DetectKnownOriginals(text, c.Registry.Entries()), c.Allowlist)...)

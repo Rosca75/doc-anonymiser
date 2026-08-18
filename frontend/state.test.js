@@ -303,25 +303,9 @@ test("patterns: only compile-clean ones feed the pipeline", () => {
   assert.equal(getState().patterns.length, 1);
 });
 
-// --- simple-replace rules + run request ----------------------------------
+// --- the run request -----------------------------------------------------
 
-import { addSimpleRule, removeSimpleRule, moveSimpleRule, buildRunRequest } from "./state.js";
-
-test("simple rules: add validates, move reorders, remove deletes", () => {
-  resetState();
-  assert.equal(addSimpleRule({ find: "  " }), false, "empty needle rejected");
-  addSimpleRule({ find: "a", replace: "1" });
-  addSimpleRule({ find: "b", replace: "2", caseSensitive: true });
-  assert.equal(getState().simpleRules.length, 2);
-
-  assert.equal(moveSimpleRule(1, -1), true);
-  assert.equal(getState().simpleRules[0].find, "b");
-  assert.equal(moveSimpleRule(0, -1), false, "cannot move above the top");
-  assert.equal(moveSimpleRule(5, 1), false, "out of range rejected");
-
-  removeSimpleRule(0);
-  assert.deepEqual(getState().simpleRules.map((r) => r.find), ["a"]);
-});
+import { buildRunRequest } from "./state.js";
 
 test("buildRunRequest assembles only pipeline-ready inputs", () => {
   resetState();
@@ -338,14 +322,14 @@ test("buildRunRequest assembles only pipeline-ready inputs", () => {
   addAllowTerm("CSSF");
   addPattern("PRJ-[0-9]+", null);
   addPattern("[", "broken");
-  addSimpleRule({ find: "x", replace: "y" });
 
   const req = buildRunRequest();
-  assert.equal(req.useDeepScan, undefined);
   assert.deepEqual(req.entities, [{ category: "entity_names", canonical: "Alpine", manualVariants: [], origin: "declared", autoExpand: true }]);
   assert.deepEqual(req.allowTerms, ["CSSF"]);
   assert.deepEqual(req.patterns, [{ expr: "PRJ-[0-9]+" }]);
-  assert.equal(req.simpleRules.length, 1);
+  // No literal replacement facility exists, so nothing in the request can
+  // rewrite text outside the Value model.
+  assert.equal(req.simpleRules, undefined);
 });
 
 // --- Screen navigation ---------------------------------------------------
@@ -488,10 +472,6 @@ test("the detection routes start with Smart detection on and both AI routes off"
   resetState();
   assert.equal(getState().settings.useSmartDetect, true);
   assert.equal(getState().settings.useAI, false);
-  // There is no useCloudAI: the cloud route is not built, and the rail renders a
-  // static panel rather than reading a flag (BRIDGE.md).
-  assert.ok(!("useCloudAI" in getState().settings),
-    "a setting Go discards and nothing reads must not exist");
   setState({ ollama: { available: true, models: [], detail: "" } });
   assert.equal(getState().settings.useAI, false, "detecting Ollama must not switch the route on");
 });
@@ -1006,17 +986,12 @@ test("resetStep(anonymise) clears the run and its re-identification mapping", ()
 });
 
 test("resetStep(anonymise) clears the editing surfaces the run screen owns", () => {
-  // The find-and-replace rules and the dismissed warnings only exist once
-  // there is a result to edit, so they are the Anonymise step's own data.
+  // The dismissed warnings only exist once there is a result to edit, so they
+  // are the Anonymise step's own data.
   fullSession();
-  setState({
-    simpleRules: [{ find: "x", replace: "[CUSTOM_1]", caseSensitive: true }],
-    dismissedWarnings: ["skipped-pdf"],
-  });
+  setState({ dismissedWarnings: ["skipped-pdf"] });
   resetStep("anonymise");
-  const s = getState();
-  assert.deepEqual(s.simpleRules, []);
-  assert.deepEqual(s.dismissedWarnings, []);
+  assert.deepEqual(getState().dismissedWarnings, []);
 });
 
 test("resetStep(anonymise) re-locks the export step, which needs results", () => {
@@ -1435,7 +1410,6 @@ function finishedBatch() {
   addEntities([{ category: "person_names", canonical: "Marie Duval" }]);
   addCandidates([{ text: "Thomas Berger", category: "person_names" }], "smart");
   addPattern("INV-\\d{6}");
-  addSimpleRule({ find: "4471-B", replace: "[CUSTOM_1]", caseSensitive: true });
   setValueTables(
     [{ original: "Marie Duval", placeholder: "[PERSON_1]", category: "person_names", count: 2 }],
     [{ original: "Aurora Group", placeholder: "[ENTITY_1]", category: "entity_names" }]);
@@ -1455,7 +1429,6 @@ test("startNewBatch clears everything about THIS batch", () => {
   assert.deepEqual(s.entities, []);
   assert.deepEqual(s.candidates, []);
   assert.deepEqual(s.patterns, []);
-  assert.deepEqual(s.simpleRules, []);
   assert.deepEqual(s.replacedValues, []);
   assert.deepEqual(s.removedValues, []);
   assert.deepEqual(s.dismissedWarnings, []);
@@ -1525,7 +1498,6 @@ test("startNewBatch reports what it cleared", () => {
   finishedBatch();
   const cleared = startNewBatch();
   assert.equal(cleared.documents, 2);
-  assert.equal(cleared.rules, 1);
   assert.ok(cleared.values >= 1);
 });
 

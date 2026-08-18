@@ -451,7 +451,6 @@ export function applySession(session) {
     entities: [],
     allowlist: session.allowTerms ?? [],
     patterns: (session.patterns ?? []).map((p) => ({ expr: p.expr, error: null })),
-    simpleRules: session.simpleRules ?? [],
     settings: {
       level: settings.level,
       // `categories` is omitted from the file when it equals nothing at all,

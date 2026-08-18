@@ -1,21 +1,18 @@
 // views/identifyrail.js, the LEFT RAIL of wizard step 2, Identify
 //
 // The rail lists the DETECTION ROUTES, one switchable section each, in the
-// order they run. It used to be four peer tabs (Scope, Smart detection, Local
-// AI, Cloud AI), which said three untrue things at once: that Scope was a
-// thing of its own rather than the scope OF smart detection, that the routes
-// were alternatives rather than independent switches, and that Cloud AI was as
-// real as the other three.
+// order they run. Scope is not a route of its own: it is the scope OF Smart
+// detection, so it is nested inside that section, and the two routes are
+// independent switches rather than alternatives.
 //
-//   Smart detection ON by default, switchable off. The offline heuristic
-//                    pass. Its SCOPE (document country, preset, the 22
-//                    detection categories, the confidence floor) and its
-//                    strictness are nested inside it, because they are the
-//                    settings this route reads.
+//   Smart detection ON by default, switchable off. Built-in pattern matching,
+//                    signal-based discovery and heuristic discovery. Its SCOPE
+//                    (document country, preset, the detection categories, the
+//                    confidence floor) and its strictness are nested inside it,
+//                    because they are the settings this route reads.
 //   Local AI OFF by default. The Ollama port (host locked to loopback,
 //                    CLAUDE.md §8), the model and the context size. Detecting
 //                    Ollama enables the switch; it never flips it.
-//   Cloud AI OFF and disabled, a placeholder.
 //
 // Nothing here gates the deterministic PII pass: that is not a detection
 // route, it is what the Anonymise step always does.
@@ -73,12 +70,13 @@ export function llmGateTooltip(s) {
 }
 
 // RAIL_SECTIONS is the rail's shape: [id, title, settings key that switches
-// the route on]. The order is the order the routes run in. A null key marks a
-// section whose switch cannot be operated (Cloud AI).
+// the route on]. The order is the order the routes run in.
+//
+// Smart detection's key is a MASTER over its own child settings rather than a
+// persisted flag of its own: the section is on when any of its methods is on.
 export const RAIL_SECTIONS = [
   ["rail-smart", RAIL.tabSmart, "useSmartDetect"],
   ["rail-local", RAIL.tabLocalAI, "useAI"],
-  ["rail-cloud", RAIL.tabCloudAI, null],
 ];
 
 // Which sections and which category groups the user folded shut. A VIEW
@@ -86,9 +84,9 @@ export const RAIL_SECTIONS = [
 // must not travel in a session file, and putting it in the store would mean
 // every fold went through a reducer.
 //
-// Local AI and Cloud AI start folded: they are off, and an open panel of
-// disabled fields is noise above the settings that ARE in use.
-const collapsedGroups = new Set(["rail-local", "rail-cloud", "rail-profile"]);
+// Local AI starts folded: it is off, and an open panel of disabled fields is
+// noise above the settings that ARE in use.
+const collapsedGroups = new Set(["rail-local", "rail-profile"]);
 
 // PRESETS: engine level → user-facing label. "soft/medium/advanced" reads too
 // technical; Standard and Thorough say what they mean.
@@ -156,14 +154,11 @@ export function renderIdentifyRail(container) {
     else collapsedGroups.add(id);
     setState({}); // repaint; folding is view state
   });
-  // Cloud AI is a placeholder panel with a switch that cannot be operated
-  // so there is deliberately nothing to wire for it.
 }
 
 /**
- * railBody(s) renders the three route sections. Exported for the render
- * tests: which sections exist and which switch is on is exactly what reported
- * issue 3 was about.
+ * railBody(s) renders the route sections. Exported for the render tests: which
+ * sections exist and which switch is on is load-bearing for what a run does.
  *
  * Each is a collapsibleGroup whose header carries the route's switch, so the
  * one control that decides whether a section matters sits on the section
@@ -171,7 +166,7 @@ export function renderIdentifyRail(container) {
  */
 export function railBody(s) {
   const routes = RAIL_SECTIONS.map(([id, title, key]) => {
-    const on = id === "rail-smart" ? smartRouteOn(s) : (key ? !!s.settings[key] : false);
+    const on = id === "rail-smart" ? smartRouteOn(s) : !!s.settings[key];
     return collapsibleGroup(id, title, sectionBody(s, id), {
       open: !collapsedGroups.has(id),
       cls: `rail-section${on ? "" : " route-off"}`,
@@ -184,7 +179,7 @@ export function railBody(s) {
   return routes + collapsibleGroup("rail-profile", RAIL.profileTitle, profileSection(s), {
     open: !collapsedGroups.has("rail-profile"),
     // NOT "rail-section": that class marks a detection ROUTE, and the render
-    // harness counts it to assert the rail is exactly three routes. Load profile
+    // harness counts it to assert the rail is exactly two routes. Load profile
     // is a switch-less utility panel, so it takes the parallel "rail-panel" class
     // (same layout, no route semantics).
     cls: "rail-panel",
@@ -224,17 +219,13 @@ function smartRouteOn(s) {
 
 /**
  * routeSwitch(s, id, key, on) is the on/off control in a section header.
- *
- * Cloud AI's is rendered disabled rather than omitted: a section with no
- * switch reads as "always on", which is the opposite of the truth.
  */
 function routeSwitch(s, id, key, on) {
-  const disabled = key === null;
-  const title = disabled ? RAIL.cloudNotYet
-    : (key === "useAI" && !s.ollama?.available ? llmDisabledTooltip(s.settings.ollamaPort) : "");
+  const title = key === "useAI" && !s.ollama?.available
+    ? llmDisabledTooltip(s.settings.ollamaPort) : "";
   return `<label class="route-switch"${title ? ` title="${escapeHTML(title)}"` : ""}>` +
     `<input type="checkbox" class="route-toggle" data-route="${escapeHTML(id)}"` +
-    `${on ? " checked" : ""}${disabled ? " disabled" : ""}` +
+    `${on ? " checked" : ""}` +
     ` aria-label="${escapeHTML(RAIL.routeSwitchLabel(RAIL_SECTIONS.find(([sid]) => sid === id)?.[1] ?? id))}"/>` +
     `<span class="route-state">${escapeHTML(on ? RAIL.routeOn : RAIL.routeOff)}</span>` +
     `</label>`;
@@ -244,7 +235,6 @@ function routeSwitch(s, id, key, on) {
 function sectionBody(s, id) {
   switch (id) {
     case "rail-local": return localAISection(s);
-    case "rail-cloud": return cloudAISection();
     default: return smartSection(s);
   }
 }
@@ -816,26 +806,6 @@ function wireProfile(container) {
       notify(String(err?.message ?? err), "warn");
     }
   });
-}
-
-// --- Cloud AI -------------------------------------------------------------
-
-/**
- * cloudAISection() is a placeholder panel and NOTHING else.
- *
- * Deliberately absent, because a separate improvement plan owns this feature and
- * must not have to trip over half-built scaffolding: no provider list, no
- * endpoint field, no settings shape in state.js, no BRIDGE.md row, no Go client.
- * The tab exists so the shape of the eventual feature is visible, and the copy
- * commits only to the thing that will not change about it, which is that nothing
- * leaves the machine before the user has said in writing what may.
- */
-function cloudAISection() {
-  return `<div class="rail-block">` +
-    `<div class="placeholder-panel">` +
-    `<span class="fmt-badge">${escapeHTML(RAIL.cloudNotYet)}</span>` +
-    `<p class="hint">${escapeHTML(RAIL.cloudBody)}</p>` +
-    `</div></div>`;
 }
 
 // --- Shared: push settings to Go -----------------------------------------

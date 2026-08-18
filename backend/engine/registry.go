@@ -106,9 +106,6 @@ type Registry struct {
 	// [PERSON_4] meaning one person, and handing 4 to somebody else would make
 	// two artefacts of one session disagree with nothing able to detect it.
 	retired map[string]bool
-	// reserved tracks placeholders produced outside the registry
-	// (rule replacements), so automatic assignment does not collide.
-	reserved map[string]bool
 }
 
 // NewRegistry returns an empty registry.
@@ -120,7 +117,6 @@ func NewRegistry() *Registry {
 		byOriginal:    map[string]string{},
 		byPlaceholder: map[string]string{},
 		retired:       map[string]bool{},
-		reserved:      map[string]bool{},
 	}
 }
 
@@ -164,8 +160,7 @@ func (r *Registry) Assign(category, original string) string {
 		panic("engine placeholder label missing for category " + category)
 	}
 	// Hand out the next number for this label, SKIPPING any that a user
-	// override has already taken, or that a reserved or
-	// retired placeholder has used. Renaming [CLIENT_1] to [CLIENT_5] means
+	// override has already taken, or that a retired placeholder has used. Renaming [CLIENT_1] to [CLIENT_5] means
 	// the fifth automatic client must not also become [CLIENT_5]: two
 	// originals sharing one placeholder makes the re-identification key
 	// ambiguous, which silently destroys the ability to undo the
@@ -191,13 +186,12 @@ func (r *Registry) Assign(category, original string) string {
 	return e.Placeholder
 }
 
-// placeholderTakenLocked reports whether a placeholder is taken by an entry,
-// or reserved, or retired. Caller holds r.mu.
+// placeholderTakenLocked reports whether a placeholder is taken by an entry
+// or retired. Caller holds r.mu.
 func (r *Registry) placeholderTakenLocked(placeholder string) bool {
 	_, inEntries := r.byPlaceholder[placeholder]
-	_, inReserved := r.reserved[placeholder]
 	_, inRetired := r.retired[placeholder]
-	return inEntries || inReserved || inRetired
+	return inEntries || inRetired
 }
 
 // Lookup returns the placeholder already assigned to (category, original)
@@ -327,8 +321,8 @@ func (r *Registry) SetPlaceholder(category, original, placeholder string) error 
 		return nil
 	}
 
-	// A collision check across the WHOLE registry, not just this category.
-	// also check reserved and retired placeholders.
+	// A collision check across the WHOLE registry, not just this category,
+	// and against retired placeholders.
 	for otherKey, other := range r.entries {
 		if otherKey == key {
 			continue
@@ -341,12 +335,6 @@ func (r *Registry) SetPlaceholder(category, original, placeholder string) error 
 					"different number",
 				next, other.Original)
 		}
-	}
-	if r.reserved[next] {
-		return fmt.Errorf(
-			"%s is reserved for an automatic rule assignment: two values cannot share "+
-				"one placeholder. Pick a different name or a different number",
-			next)
 	}
 	if r.retired[next] {
 		return fmt.Errorf(
@@ -507,42 +495,6 @@ func (r *Registry) Rename(current, next string) error {
 	r.mu.Unlock()
 
 	return r.SetPlaceholder(category, original, next)
-}
-
-// Reserve marks a placeholder as reserved, so automatic assignment
-// does not collide with rule replacements. Returns an error if the placeholder
-// is already taken.
-func (r *Registry) Reserve(placeholder string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if !placeholderShapeRe.MatchString(placeholder) {
-		return fmt.Errorf(
-			"%q is not a valid placeholder shape",
-			placeholder)
-	}
-
-	if r.placeholderTakenLocked(placeholder) {
-		return fmt.Errorf(
-			"%q is already taken or reserved",
-			placeholder)
-	}
-
-	r.reserved[placeholder] = true
-	return nil
-}
-
-// Reserved returns all reserved placeholders.
-func (r *Registry) Reserved() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	out := make([]string, 0, len(r.reserved))
-	for p := range r.reserved {
-		out = append(out, p)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // Retired returns all retired placeholders.

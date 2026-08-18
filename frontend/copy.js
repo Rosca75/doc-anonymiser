@@ -217,7 +217,6 @@ export function categoryLabels(examples = {}) {
 export const RAIL = {
   tabSmart: "Smart detection",
   tabLocalAI: "Local AI",
-  tabCloudAI: "Cloud AI",
 
   // the three routes are switchable sections, not tabs. Scope stopped
   // being a section of its own because it is the scope OF smart detection.
@@ -310,21 +309,15 @@ export const RAIL = {
     return `${name} (${count} ${u}${count === 1 ? "" : "s"})`;
   },
 
-  // The Cloud AI placeholder. It commits only to the thing that
-  // will not change about the feature: nothing leaves the machine until the user
-  // has said in writing what may.
-  cloudNotYet: "Not available yet",
-  cloudBody: "Connecting to a cloud endpoint is not built yet. When it is, this is where you will pick the provider, the model and the endpoint, and confirm in writing what may leave this machine before anything is sent.",
-
   // The Load profile section: a plain (switch-less) section at the foot of the
   // rail. Load restores a saved profile; Save writes one, but only once a run
   // has produced a registry worth preserving.
   profileTitle: "Load profile",
-  profileHint: "Reuse a saved setup: values, allowlist, patterns, rules and the placeholder registry, so a follow-up batch reuses the same placeholders.",
+  profileHint: "Reuse a saved setup: values, allowlist, patterns and the placeholder registry, so a follow-up batch reuses the same placeholders.",
   profileLoad: "Load",
   profileSave: "Save",
   profileSaveDisabled: "Run detection once before saving a profile.",
-  profileLoadDone: "Profile loaded: values, allowlist, patterns and rules restored.",
+  profileLoadDone: "Profile loaded: Values, allowlist and patterns restored.",
   profileSaveDone: "Profile saved. A follow-up batch will reuse these placeholders.",
 };
 
@@ -827,18 +820,18 @@ export const ANONYMISE = {
   noValuesInScope: "No values from this category appear in the files in scope.",
   dismissWarning: "Hide this warning",
 
-  // Something missed?
-  missedTitle: "Something missed?",
+  // Add missed Value.
+  missedTitle: "Add missed Value",
   /** missedSummary(n) is the folded card's read-out: how many values the next
    *  run will look for. */
   missedSummary(n) {
     return n === 0 ? "add a value" : `${n} value${n === 1 ? "" : "s"} to replace`;
   },
-  missedHint: "Add the value, then re-run the fast passes. Existing placeholders keep their numbers.",
-  missedCategoryLabel: "The type of value",
-  missedLabel: "A value the run missed",
-  missedPlaceholder: "missed value, e.g. P. Stone",
-  addValue: "Add value",
+  missedHint: "Declare the Value, then re-run the fast passes. It gets a category, a placeholder and a re-identification entry like any other Value. Existing placeholders keep their numbers.",
+  missedCategoryLabel: "The type of Value",
+  missedLabel: "A Value the run missed",
+  missedPlaceholder: "missed Value, e.g. P. Stone",
+  addValue: "Add Value",
   /** missedAlreadyThere(v) explains an add that changed nothing. */
   missedAlreadyThere(v) {
     return `${v} is already on the list of values to replace.`;
@@ -849,25 +842,6 @@ export const ANONYMISE = {
     return `Re-ran the fast passes over ${n} value${n === 1 ? "" : "s"}. ` +
       `Existing placeholders kept their numbers.`;
   },
-
-  // Find and replace.
-  rulesTitle: "Find and replace",
-  /** rulesSummary(n) is the folded card's read-out. */
-  rulesSummary(n) {
-    return n === 1 ? "1 rule" : `${n} rules`;
-  },
-  rulesHint: "These run last, in order, and each rule sees what the previous one produced.",
-  ruleFind: "find",
-  ruleReplace: "replace with",
-  ruleTo: "to",
-  caseSensitive: "Case-sensitive",
-  exactCase: "exact case",
-  anyCase: "any case",
-  addRule: "Add rule",
-  ruleNeedsFind: "Type the text to find. A rule with nothing to find would do nothing.",
-  moveUp: "Run this rule earlier",
-  moveDown: "Run this rule later",
-  removeRule: "Remove this rule",
 
   // The Compare card.
   compareDoc: "Which document to compare",
@@ -913,40 +887,34 @@ export const ANONYMISE = {
   },
 
   // The floating selection panel. Selecting text in either pane offers to copy
-  // it or to replace it, and replacing has three outcomes that differ in WHAT
+  // it or to replace it, and replacing has two outcomes that differ in WHAT
   // ENDS UP IN THE RE-IDENTIFICATION KEY. That difference is not guessable from
-  // the labels, which is why each mode carries a hint.
+  // the labels, which is why each mode carries a hint. Both outcomes go through
+  // the Value model: there is no way from here to rewrite text without the key
+  // recording it.
   selectionTitle: "Selected text",
   selectionCopy: "Copy",
   selectionReplace: "Replace",
-  selectionModeVariant: "Make it a spelling of an existing value",
-  selectionModeValue: "Add it as a new value",
-  selectionModeText: "Replace the text only",
-  selectionModeVariantHint: "The text is replaced with that value's placeholder, so both spellings share one number.",
-  selectionModeValueHint: "The text becomes a value of its own, with its own placeholder.",
-  selectionModeTextHint: "A find and replace rule. No value is created and nothing is added to the re-identification key.",
-  selectionTargetLabel: "Which value it is a spelling of",
-  selectionTargetPlaceholder: "start typing a value",
+  selectionModeVariant: "Make it a spelling of an existing Value",
+  selectionModeValue: "Add it as a new Value",
+  selectionModeVariantHint: "The text is replaced with that Value's placeholder, so both spellings share one number.",
+  selectionModeValueHint: "The text becomes a Value of its own, with its own placeholder.",
+  selectionTargetLabel: "Which Value it is a spelling of",
+  selectionTargetPlaceholder: "start typing a Value",
   selectionTypeLabel: "Type",
-  replaceWith: "What to replace it with",
   applySelection: "Apply",
   cancelSelection: "Cancel",
   selectionBack: "Back",
-  selectionNeedsReplacement: "Type what the selected text should become.",
-  selectionNeedsTarget: "Choose the value this is a spelling of.",
-  selectionUnknownTarget: "That value is not in the list. Pick one of the suggestions.",
+  selectionNeedsTarget: "Choose the Value this is a spelling of.",
+  selectionUnknownTarget: "That Value is not in the list. Pick one of the suggestions.",
   selectionCopied: "Copied to the clipboard.",
-  /** selectionBecameVariant(text, main) confirms mode 1. */
+  /** selectionBecameVariant(text, main) confirms the spelling mode. */
   selectionBecameVariant(text, main) {
     return `${text} now counts as a spelling of ${main}, so both share one placeholder.`;
   },
-  /** selectionBecameValue(text) confirms mode 2. */
+  /** selectionBecameValue(text) confirms the new-Value mode. */
   selectionBecameValue(text) {
-    return `${text} is now a value of its own, with its own placeholder.`;
-  },
-  /** selectionApplied(find, replace) confirms mode 3. */
-  selectionApplied(find, replace) {
-    return `${find} is now replaced with ${replace} everywhere, by a find and replace rule.`;
+    return `${text} is now a Value of its own, with its own placeholder.`;
   },
 
   // The footer.
@@ -1008,12 +976,12 @@ export const EXPORT = {
   // Profile (Save only; Load lives on the Identify rail).
   sessionTitle: "Profile",
   sessionSummary: "reuse placeholders",
-  sessionHint: "Saves values, allowlist, patterns, rules and the placeholder registry, so a follow-up batch reuses the same placeholders. Contains the key.",
+  sessionHint: "Saves Values, allowlist, patterns and the placeholder registry, so a follow-up batch reuses the same placeholders. Contains the key.",
   save: "Save",
   sessionSaveTitle: "Save the profile file",
   sessionSaveConfirm: "Save profile",
   sessionSaveDone: "Profile saved. A follow-up batch will reuse these placeholders.",
-  sessionLoadDone: "Profile loaded: values, allowlist, patterns and rules restored.",
+  sessionLoadDone: "Profile loaded: Values, allowlist and patterns restored.",
 
   // The document list.
   documentsTitle: "Documents",
@@ -1079,7 +1047,7 @@ export const EXPORT = {
   newBatch: "START A NEW BATCH",
   newBatchTooltip: "Clear this batch and keep your settings",
   newBatchTitle: "Start a new batch?",
-  newBatchBody: "This clears the imported documents, the run and its result, the values, the suggestions, the patterns and the find and replace rules. Your settings, your document country and your never anonymise list are kept, and so is the placeholder registry, so a follow-up batch reuses the same placeholders for the same values.",
+  newBatchBody: "This clears the imported documents, the run and its result, the Values, the Suggestions and the patterns. Your settings, your document country and your never anonymise list are kept, and so is the placeholder registry, so a follow-up batch reuses the same placeholders for the same Values.",
   newBatchConfirm: "Clear the batch",
   newBatchDone: "Batch cleared. Drop new files on the Import step; your settings were kept.",
 };

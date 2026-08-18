@@ -492,11 +492,11 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 	copy(removed, a.removed)
 	var registry []engine.MappingEntry
 	var overrides map[string]string
-	// retired and reserved are numbers this session has spent that no entry
-	// holds, so they cannot be recovered from `registry` on load
-	// Losing them hands the same number out twice, and the
-	// re-identification key stops being reversible with nothing able to notice.
-	var retired, reserved []string
+	// retired holds numbers this session has spent that no entry holds, so they
+	// cannot be recovered from `registry` on load. Losing them hands the same
+	// number out twice, and the re-identification key stops being reversible
+	// with nothing able to notice.
+	var retired []string
 	if a.registry != nil {
 		registry = a.registry.Export()
 		// The placeholders the user renamed. The renamed
@@ -504,15 +504,13 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 		// deliberate, so re-saving a reloaded session does not demote them.
 		overrides = a.registry.Overrides()
 		retired = a.registry.Retired()
-		reserved = a.registry.Reserved()
 	}
 	a.mu.Unlock()
 
 	data, err := engine.SaveSession(engine.Session{
-		Entities:    req.Entities,
-		AllowTerms:  req.AllowTerms,
-		Patterns:    req.Patterns,
-		SimpleRules: req.SimpleRules,
+		Entities:   req.Entities,
+		AllowTerms: req.AllowTerms,
+		Patterns:   req.Patterns,
 		Settings: engine.SessionSettings{
 			Level:           settings.Level,
 			Categories:      settings.Categories,
@@ -531,7 +529,6 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 		PlaceholderOverrides: overrides,
 		RemovedValues:        removed,
 		RetiredPlaceholders:  retired,
-		ReservedPlaceholders: reserved,
 	})
 	if err != nil {
 		return err
@@ -541,7 +538,7 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 
 // LoadSessionFromFile opens a session file, restores the Go-side state
 // (registry + settings) and returns the session so the frontend can
-// restore its own state (entities, allowlist, patterns, rules).
+// restore its own state (entities, allowlist, patterns).
 func (a *App) LoadSessionFromFile() (*engine.Session, error) {
 	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
 		Title:   "Load session",

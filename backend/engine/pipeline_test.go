@@ -103,80 +103,27 @@ func TestTwoDocumentConsistency(t *testing.T) {
 	}
 }
 
-// TestPostPassSpreadsLateEntities: an entity discovered LATE (here: by the
-// deep-scan while processing doc B) must also be replaced in doc A, which
-// was processed before the entity existed — that is exactly what the pass-4
-// registry re-application is for.
-func TestPostPassSpreadsLateEntities(t *testing.T) {
-	// Fake LLM: proposes "Project Borealis" only when scanning doc B —
-	// exactly how a late discovery happens in production.
-	llm := &fakeLLM{
-		perText: map[string][]ProposedEntity{
-			"doc B mentions Project Borealis explicitly.": {
-				{Category: CatProjectNames, Text: "Project Borealis"},
-			},
-		},
-	}
-	docA := Document{Name: "a.txt", Format: FormatTXT, Markdown: "Early notes on Project Borealis here."}
-	docB := Document{Name: "b.txt", Format: FormatTXT, Markdown: "doc B mentions Project Borealis explicitly."}
+// TestPostPassSpreadsRegistryEntries: a mapping the registry already holds is
+// re-applied to EVERY document, including one this run's configuration would
+// not detect on its own. That is what keeps a value the session assigned
+// earlier from reappearing in clear text in a document imported later.
+func TestPostPassSpreadsRegistryEntries(t *testing.T) {
+	reg := NewRegistry()
+	reg.Assign(CatProjectNames, "Project Borealis") // an earlier run in this session
 
 	res := runPipeline(t, PipelineInput{
-		Documents: []Document{docA, docB},
+		Documents: []Document{{Name: "a.txt", Format: FormatTXT, Markdown: "Early notes on Project Borealis here."}},
 		Level:     LevelMedium,
 		Allowlist: NewEmptyAllowlist(),
-		LLM:       llm,
+		Registry:  reg,
 	})
 
 	a := res.Documents[0].Anonymised
 	if strings.Contains(a, "Project Borealis") {
-		t.Errorf("post-pass did not spread the late-discovered entity to doc A: %q", a)
+		t.Errorf("post-pass did not re-apply the known mapping: %q", a)
 	}
 	if !strings.Contains(a, "[PROJECT_1]") {
-		t.Errorf("doc A should carry [PROJECT_1] after the post-pass: %q", a)
-	}
-}
-
-// fakeLLM implements the engine LLM interface for tests.
-type fakeLLM struct {
-	perText map[string][]ProposedEntity
-	err     error
-	calls   int
-}
-
-func (f *fakeLLM) DeepScan(ctx context.Context, text string, known []Entity) ([]ProposedEntity, error) {
-	f.calls++
-	if f.err != nil {
-		return nil, f.err
-	}
-	return f.perText[text], nil
-}
-
-// TestHallucinationFilterInPipeline: proposals whose exact string is NOT
-// in the source text are dropped; allowlisted proposals are dropped.
-func TestHallucinationFilterInPipeline(t *testing.T) {
-	text := "The CSSF reviewed the Alpine engagement."
-	llm := &fakeLLM{perText: map[string][]ProposedEntity{
-		text: {
-			{Category: CatEntityNames, Text: "Alpine"},          // real
-			{Category: CatEntityNames, Text: "Zenith Holdings"}, // hallucinated
-			{Category: CatEntityNames, Text: "CSSF"},            // allowlisted
-		},
-	}}
-	res := runPipeline(t, PipelineInput{
-		Documents: []Document{{Name: "x.txt", Format: FormatTXT, Markdown: text}},
-		Level:     LevelMedium,
-		Allowlist: NewAllowlist(), // seeds CSSF
-		LLM:       llm,
-	})
-	out := res.Documents[0].Anonymised
-	if strings.Contains(out, "Alpine") {
-		t.Errorf("accepted proposal not replaced: %q", out)
-	}
-	if !strings.Contains(out, "CSSF") {
-		t.Errorf("allowlisted CSSF must survive: %q", out)
-	}
-	if strings.Contains(out, "Zenith") {
-		t.Errorf("hallucinated text appeared in output?! %q", out)
+		t.Errorf("doc A should carry the registry's placeholder after the post-pass: %q", a)
 	}
 }
 
@@ -217,68 +164,6 @@ func TestLevelMatrix(t *testing.T) {
 	// Advanced: + other names, dates, amounts.
 	if advanced != "[PERSON_1] ([EMAIL_1]) met [ENTITY_1] about [OTHER_1] on [DATE_1] for [AMOUNT_1]." {
 		t.Errorf("advanced output unexpected: %q", advanced)
-	}
-}
-
-// TestSimpleReplaceOrderingAndCase pins rule ordering (later rules see
-// earlier output) and the case-sensitivity toggle.
-func TestSimpleReplaceOrderingAndCase(t *testing.T) {
-	out, counts := ApplySimpleRules("alpha Beta beta", []SimpleRule{
-		{Find: "alpha", Replace: "Beta"},                       // 1 hit
-		{Find: "beta", Replace: "gamma", CaseSensitive: false}, // sees 3 betas now
-	})
-	if out != "gamma gamma gamma" {
-		t.Errorf("ordered case-insensitive result = %q, want %q", out, "gamma gamma gamma")
-	}
-	if counts[0] != 1 || counts[1] != 3 {
-		t.Errorf("counts = %v, want [1 3]", counts)
-	}
-
-	out2, counts2 := ApplySimpleRules("Beta beta", []SimpleRule{
-		{Find: "beta", Replace: "x", CaseSensitive: true},
-	})
-	if out2 != "Beta x" || counts2[0] != 1 {
-		t.Errorf("case-sensitive result = %q %v, want 'Beta x' [1]", out2, counts2)
-	}
-
-	// In the pipeline, simple-replace runs last and is reported.
-	res := runPipeline(t, PipelineInput{
-		Documents:   []Document{{Name: "s.txt", Format: FormatTXT, Markdown: "internal codename NIGHTJAR"}},
-		Level:       LevelMedium,
-		Allowlist:   NewEmptyAllowlist(),
-		SimpleRules: []SimpleRule{{Find: "NIGHTJAR", Replace: "[CODENAME]", CaseSensitive: true}},
-	})
-	if !strings.Contains(res.Documents[0].Anonymised, "[CODENAME]") {
-		t.Errorf("simple rule not applied: %q", res.Documents[0].Anonymised)
-	}
-	if res.Report.ByCategory["simple_replace"] != 1 {
-		t.Errorf("simple_replace not reported: %+v", res.Report.ByCategory)
-	}
-
-	// The by-category total must drill down to a named value, or the report's
-	// simple_replace row expands to nothing (the reported bug).
-	found := false
-	for _, v := range res.Report.Values {
-		if v.Category == "simple_replace" {
-			found = true
-			if v.Original != "NIGHTJAR" || v.Placeholder != "[CODENAME]" || v.Count != 1 {
-				t.Errorf("simple_replace value row = %+v, want NIGHTJAR/[CODENAME]/1", v)
-			}
-		}
-	}
-	if !found {
-		t.Errorf("no simple_replace value in report.Values: %+v", res.Report.Values)
-	}
-	// The per-document report carries the same row so the "All files" and the
-	// single-file scopes agree.
-	foundDoc := false
-	for _, v := range res.Report.Documents[0].Values {
-		if v.Category == "simple_replace" && v.Original == "NIGHTJAR" {
-			foundDoc = true
-		}
-	}
-	if !foundDoc {
-		t.Errorf("simple_replace value missing from the per-document report")
 	}
 }
 
@@ -387,7 +272,7 @@ func TestComplexSheetConsistency(t *testing.T) {
 	}
 }
 
-// TestReportContents sanity-checks totals, categories and the LLM note.
+// TestReportContents sanity-checks totals and categories.
 func TestReportContents(t *testing.T) {
 	res := runPipeline(t, PipelineInput{
 		Documents: []Document{{Name: "r.txt", Format: FormatTXT, Markdown: "mail marie.duval@example.com now", Warnings: []string{"the file is empty — nothing to anonymise"}}},
@@ -395,9 +280,6 @@ func TestReportContents(t *testing.T) {
 		Allowlist: NewEmptyAllowlist(),
 	})
 	rep := res.Report
-	if rep.LLMPass != "skipped (Ollama not available)" {
-		t.Errorf("LLM note = %q", rep.LLMPass)
-	}
 	if rep.TotalReplacements != 1 || rep.ByCategory[CatEmail] != 1 {
 		t.Errorf("report totals wrong: %+v", rep)
 	}
@@ -492,48 +374,32 @@ func TestPipelineBudget(t *testing.T) {
 // score. The score alone cannot serve as provenance, because it is also what
 // MinConfidence filters on: raising the floor would otherwise reorder which
 // route wins.
-func TestAcceptProposalsStampsTheAIOrigin(t *testing.T) {
-	accepted := acceptProposals(
-		[]ProposedEntity{{Category: CatEntityNames, Text: "Meridian"}},
-		"Meridian signed the deed.\n",
-		NewEmptyAllowlist(),
-		PresetSelection(LevelMedium))
-
-	if len(accepted) != 1 {
-		t.Fatalf("want the proposal accepted, got %+v", accepted)
-	}
-	if accepted[0].Origin != OriginAI {
-		t.Errorf("an accepted proposal must carry OriginAI, got %q", accepted[0].Origin)
-	}
-	if accepted[0].Confidence != ConfidenceLLMDefault {
-		t.Errorf("the score must be unchanged, got %v", accepted[0].Confidence)
-	}
-}
-
 // TestOwnershipIsDecidedByRuleNotByDocumentOrder is the regression the
 // three-phase run exists for.
 //
-// The local AI is asked one document at a time, and it is entirely capable of
-// filing the same name under two different types in two documents. Detecting
-// and replacing in one step meant Registry.Assign's byOriginal index froze
-// whichever claim was ASSIGNED first, and assignment order is byte offset
-// within DOCUMENT order. So the category the value ended up under, and the
-// placeholder text the user reads and exports, depended on the order the files
-// were imported in.
+// Two routes can claim the same characters, and each claims them in a
+// different document. Detecting and replacing in one step meant
+// Registry.Assign's byOriginal index froze whichever claim was ASSIGNED first,
+// and assignment order is byte offset within DOCUMENT order. So the category
+// the value ended up under, and the placeholder text the user reads and
+// exports, depended on the order the files were imported in.
 //
 // Deciding ownership over the whole batch before any placeholder is minted is
 // what makes the answer a rule instead. The table runs both document orders and
 // demands the same one.
 func TestOwnershipIsDecidedByRuleNotByDocumentOrder(t *testing.T) {
 	const value = "Helios"
+	// One string, two claims, and each document only exposes one of them: the
+	// accepted brand value matches case-insensitively in both files, while the
+	// user's case-sensitive pattern can only fire on doc B's lower-cased
+	// spelling. The registry keys on the lower-cased string, so both claims are
+	// about the SAME value. Whichever is ASSIGNED first would freeze its
+	// category, so the answer has to come from the precedence rule rather than
+	// from the import order.
 	aText := "The " + value + " engagement closed in June.\n"
-	bText := "A separate note about " + value + " and its scope.\n"
-	// The same name, two types, one per document: the shape an LLM produces on
-	// its own without anything being wrong with the run.
-	llm := &fakeLLM{perText: map[string][]ProposedEntity{
-		aText: {{Category: CatOtherNames, Text: value}},
-		bText: {{Category: CatBrandNames, Text: value}},
-	}}
+	bText := "A separate note about helios and its scope.\n"
+	entities := []Entity{{Category: CatBrandNames, Canonical: value, Origin: OriginAI}}
+	patterns := []CustomPattern{{Expr: `helios`}}
 	docA := Document{Name: "a.txt", Format: FormatTXT, Markdown: aText}
 	docB := Document{Name: "b.txt", Format: FormatTXT, Markdown: bText}
 
@@ -548,10 +414,11 @@ func TestOwnershipIsDecidedByRuleNotByDocumentOrder(t *testing.T) {
 		reg := NewRegistry()
 		res, err := Run(context.Background(), PipelineInput{
 			Documents: tc.docs,
+			Entities:  entities,
+			Patterns:  patterns,
 			Level:     LevelAdvanced, // both types switched on
 			Allowlist: NewEmptyAllowlist(),
 			Registry:  reg,
-			LLM:       llm,
 		})
 		if err != nil {
 			t.Fatalf("%s: Run: %v", tc.name, err)

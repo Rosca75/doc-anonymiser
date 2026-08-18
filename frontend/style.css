@@ -825,17 +825,6 @@ input, select {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* The Cloud AI placeholder: dashed, because a dashed border is the standard
-   visual language for "this will hold something later" and it stops the panel
-   reading as a control that is merely disabled. */
-.placeholder-panel {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 0.75rem;
-  padding: 1.4rem 1.1rem;
-  border: 1px dashed var(--gray-3); border-radius: var(--card-radius);
-  background: var(--surface-subtle);
-}
-.placeholder-panel .hint { margin: 0; line-height: 1.55; }
-
 /* The settings error strip lives at the rail's foot, outside the scrolling
    body, so a rejected setting cannot scroll out of sight. */
 #settings-error { flex: none; }

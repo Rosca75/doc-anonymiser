@@ -75,23 +75,17 @@ func TestReloadDoesNotFreeTheNumbersARemovalRefusedToFree(t *testing.T) {
 	// Forget deliberately does not free the number: an export may already carry
 	// it. Before the retired set was in memory only, so saving and
 	// reloading the session handed the number straight back out, which is the
-	// same ambiguity arriving one round trip later. Reserved placeholders (a
-	// find-and-replace rule's replacement) have the identical problem.
+	// same ambiguity arriving one round trip later.
 	reg := NewRegistry()
 	reg.Assign(CatPersonNames, "Marie Duval") // [PERSON_1]
 	reg.Assign(CatPersonNames, "Jean Weber")  // [PERSON_2]
 	if _, ok := reg.Forget(CatPersonNames, "Jean Weber"); !ok {
 		t.Fatal("Forget did not find the entry")
 	}
-	if err := reg.Reserve("[CUSTOM_4]"); err != nil {
-		t.Fatalf("Reserve: %v", err)
-	}
-
 	session := Session{
-		Version:              SessionVersion,
-		Registry:             reg.Export(),
-		RetiredPlaceholders:  reg.Retired(),
-		ReservedPlaceholders: reg.Reserved(),
+		Version:             SessionVersion,
+		Registry:            reg.Export(),
+		RetiredPlaceholders: reg.Retired(),
 	}
 	restored, failures, err := NewRegistryFromSession(session)
 	if err != nil {
@@ -104,10 +98,7 @@ func TestReloadDoesNotFreeTheNumbersARemovalRefusedToFree(t *testing.T) {
 	if got := restored.Assign(CatPersonNames, "Someone New"); got == "[PERSON_2]" {
 		t.Error("a retired number was handed out again after a reload")
 	}
-	if err := restored.Reserve("[CUSTOM_4]"); err == nil {
-		t.Error("a reserved placeholder was free again after a reload")
-	}
-	// The counter moved with the sets, or the numbering would climb back over
+	// The counter moved with the set, or the numbering would climb back over
 	// the retired one on every single assignment instead of once.
 	if got := restored.Assign(CatPersonNames, "Another One"); got != "[PERSON_4]" {
 		t.Errorf("numbering after the reload = %q, want [PERSON_4] (3 taken by the previous assign)", got)

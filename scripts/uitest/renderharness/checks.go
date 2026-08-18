@@ -199,7 +199,7 @@ func checkImportPreview(c *cdpClient, r *reporter, fx fixture) {
 			"separately.")
 }
 
-// --- Reported issue 3: the Configure rail -----------------------------------
+// --- The Configure rail -----------------------------------------------------
 
 type railResult struct {
 	Error              string   `json:"error"`
@@ -208,23 +208,20 @@ type railResult struct {
 	Routes             []string `json:"routes"`
 	SmartOn            *bool    `json:"smartOn"`
 	LocalOn            *bool    `json:"localOn"`
-	CloudDisabled      *bool    `json:"cloudDisabled"`
-	CloudOn            *bool    `json:"cloudOn"`
 	Categories         int      `json:"categories"`
 	CategoriesWithSize int      `json:"categoriesWithSize"`
 }
 
-// checkConfigureRail asserts the rail is three detection-route sections with the
-// documented default switch positions and every category on screen.
+// checkConfigureRail asserts the rail is the two detection-route sections with
+// the documented default switch positions and every category on screen.
 //
-// Reported issue 3: Configure stopped being a screen and became the left rail of
-// Identify, restructured as three switchable DETECTION ROUTES rather than four
-// peer tabs (root CLAUDE.md section 5, frontend/CLAUDE.md discipline rules).
-// Smart detection is on by default and owns the scope controls; Local AI is off
-// by default because sending the document to a model is the user's decision;
-// Cloud AI renders disabled because a section with no switch reads as "always on".
+// The Configure choices are the left rail of Identify, restructured as
+// switchable DETECTION ROUTES rather than peer tabs (root CLAUDE.md section 5,
+// frontend/CLAUDE.md discipline rules). Smart detection is on by default and
+// owns the scope controls; Local AI is off by default because handing the
+// document to a model is the user's decision.
 func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
-	r.step("The Configure rail is three detection routes")
+	r.step("The Configure rail is the two detection routes")
 
 	var got railResult
 	if err := c.eval("__uiProbes.configureRail()", &got); err != nil {
@@ -238,13 +235,13 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 		return
 	}
 
-	r.assert("the rail is three route sections", got.Sections == 3,
-		"3 .rail-section elements", fmt.Sprintf("%d, routes: %s", got.Sections, strings.Join(got.Routes, ", ")),
-		"views/identifyrail.js RAIL_SECTIONS defines Smart detection, Local AI and Cloud AI.")
+	r.assert("the rail is two route sections", got.Sections == 2,
+		"2 .rail-section elements", fmt.Sprintf("%d, routes: %s", got.Sections, strings.Join(got.Routes, ", ")),
+		"views/identifyrail.js RAIL_SECTIONS defines Smart detection and Local AI.")
 
 	r.assert("the old tab strip is gone", got.RailTabs == 0,
 		"0 [data-railtab] chips anywhere in the document", fmt.Sprintf("%d", got.RailTabs),
-		"The rail switches sections on and off; it does not tab between them (BUILD-06).")
+		"The rail switches sections on and off; it does not tab between them.")
 
 	r.assert("Smart detection is on by default", boolIs(got.SmartOn, true),
 		"the rail-smart route switch checked", describeBool(got.SmartOn),
@@ -254,12 +251,6 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 		"the rail-local route switch unchecked", describeBool(got.LocalOn),
 		"state.js settings.useAI defaults to false. Detecting Ollama ENABLES this switch, "+
 			"it never flips it.")
-
-	r.assert("Cloud AI cannot be switched on",
-		boolIs(got.CloudDisabled, true) && boolIs(got.CloudOn, false),
-		"the rail-cloud route switch present, unchecked and disabled",
-		fmt.Sprintf("disabled: %s, checked: %s", describeBool(got.CloudDisabled), describeBool(got.CloudOn)),
-		"Cloud AI is not built (BUILD-05 decision 8) and renders disabled rather than omitted.")
 
 	r.assert("every category checkbox is present", got.Categories == fx.CategoryCount,
 		fmt.Sprintf("exactly %d .cat-toggle checkboxes", fx.CategoryCount),

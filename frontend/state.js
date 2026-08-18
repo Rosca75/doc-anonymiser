@@ -107,12 +107,6 @@ const initialState = {
   //                   Ollama ENABLES the switch, it never flips it: turning on
   //                   a route that sends the document to a model, however
   //                   local, is the user's decision to make.
-  //   (there is no useCloudAI. The cloud route is not built,
-  //   and the rail renders a static "not built yet" panel rather
-  //   than reading a flag. The field existed anyway, was pushed to Go on every
-  //   settings change, and Go discarded it: a setting nothing reads and nothing
-  //   can change is a contract the next reader has to disprove. BRIDGE.md said
-  //   it did not exist, and BRIDGE.md was right.)
   // contextSize is the Ollama num_ctx setting, default 8192.
   // minConfidence is the detection-confidence floor, 0 to
   // 1 on the engine's scale. 0 is the default and keeps every detection,
@@ -157,9 +151,6 @@ const initialState = {
   // Custom regex patterns: array of {expr, error} (error = compile
   // message or null).
   patterns: [],
-
-  // Ordered simple-replace rules: {find, replace, caseSensitive}.
-  simpleRules: [],
 
   // Pipeline execution state.
   running: false,
@@ -208,7 +199,7 @@ const initialState = {
   // Unified candidate review list: candidates from
   // any discovery method wait HERE until explicitly accepted; nothing
   // flows into entities without user confirmation. Each row:
-  // {source: "smart"|"local-ai"|"cloud-ai", text, category, count, contexts}.
+  // {source: "smart"|"local-ai", text, category, count, contexts}.
   candidates: [],
 
   // The values another detection route also claims, as Go last answered
@@ -1103,16 +1094,14 @@ export const STEP_RESETS = {
     // "Save profile" gate must close again until a fresh run completes.
     detectionRan: false,
   }),
-  // Anonymise owns the run itself, everything it produced, and the two
-  // editing surfaces that only exist once there is a result to edit: the
-  // ordered find-and-replace rules and the dismissed-warning list.
+  // Anonymise owns the run itself, everything it produced, and the editing
+  // surfaces that only exist once there is a result to edit.
   anonymise: () => ({
     running: false,
     progress: null,
     results: null,
     resultDoc: null,
     mapping: null,
-    simpleRules: [],
     replacedValues: [],
     removedValues: [],
     dismissedWarnings: [],
@@ -1300,7 +1289,7 @@ export function entityKey(category, canonical) {
  * existing value of the same type when the two are spellings of one thing.
  *
  * Detection folds families over its whole output (engine FoldValueFamilies),
- * but values also arrive singly: the "Something missed?" row, and the Compare
+ * but values also arrive singly: the "Add missed Value" row, and the Compare
  * pane's "add as a new value". Without this, typing "Coca-Cola company" beside
  * an existing "Coca-Cola" creates a rival, and the shorter one then fires
  * inside the longer one: the text reads "[BRAND_1] company", the rest of the
@@ -2200,10 +2189,10 @@ export function setExportDir(dir) {
  * reader of the object literal:
  *
  *   CLEARED the documents, the run and everything it produced (results, the
- *             mapping, the pending values, the dismissed warnings), the values
- *             and suggestions, the custom patterns, the find-and-replace rules,
- *             and the per-document metadata review decisions. All of it is about
- *             the batch that just finished.
+ *             mapping, the pending values, the dismissed warnings), the Values
+ *             and Suggestions, the custom patterns, and the per-document
+ *             metadata review decisions. All of it is about the batch that just
+ *             finished.
  *   KEPT the settings (categories, confidence, smart-detection tuning, the
  *             Ollama connection), the document country, and the never-anonymise
  *             list. All of it is about HOW this user works, and re-entering it
@@ -2228,7 +2217,6 @@ export function startNewBatch() {
   const cleared = {
     documents: state.documents.length,
     values: state.entities.length,
-    rules: state.simpleRules.length,
   };
   setState({
     step: "import",
@@ -2240,7 +2228,6 @@ export function startNewBatch() {
     candidates: [],
     intersections: [],
     patterns: [],
-    simpleRules: [],
     discovery: null,
     running: false,
     progress: null,
@@ -2295,43 +2282,6 @@ export function validPatterns(s = state) {
   return s.patterns.filter((p) => !p.error).map((p) => ({ expr: p.expr }));
 }
 
-// --- Simple-replace rule reducers ----------------------------------
-//
-// Rules are ORDERED: rule 1 runs before rule 2 and later rules see earlier
-// output (engine/simplereplace.go). Hence the move reducer.
-
-/** addSimpleRule({find, replace, caseSensitive}) appends a rule. */
-export function addSimpleRule(rule) {
-  const find = (rule.find ?? "").trim();
-  if (!find) return false; // an empty needle is a no-op rule
-  setState({
-    simpleRules: [...state.simpleRules, {
-      find,
-      replace: rule.replace ?? "",
-      caseSensitive: !!rule.caseSensitive,
-    }],
-  });
-  return true;
-}
-
-/** removeSimpleRule(index) deletes the rule at the given position. */
-export function removeSimpleRule(index) {
-  setState({ simpleRules: state.simpleRules.filter((_, i) => i !== index) });
-}
-
-/** moveSimpleRule(index, delta) reorders a rule (delta ±1); returns
- *  whether a move happened. */
-export function moveSimpleRule(index, delta) {
-  const to = index + delta;
-  if (index < 0 || index >= state.simpleRules.length || to < 0 || to >= state.simpleRules.length) {
-    return false;
-  }
-  const rules = [...state.simpleRules];
-  [rules[index], rules[to]] = [rules[to], rules[index]];
-  setState({ simpleRules: rules });
-  return true;
-}
-
 /** buildRunRequest() assembles the Go RunRequest from the current state, the
  *  single place the pipeline payload is shaped. It takes no arguments: a
  *  leftover boolean from an older caller (e.g. buildRunRequest(false)) is
@@ -2344,7 +2294,6 @@ export function buildRunRequest() {
     // The granular selection travels with every run request so the Go
     // pipeline always sees exactly what the configure screen shows.
     categories: state.settings.categories ?? presetCategories(state.settings.level),
-    simpleRules: state.simpleRules,
     // The "Native detection" master switch, inverted: when Native detection is
     // off, the Go pipeline skips pass 1 so no regex signal category is replaced.
     suppressRegexPII: !getState().settings.useNativeDetect,
@@ -2355,8 +2304,7 @@ export function buildRunRequest() {
  * buildIntersectionRequest() assembles the CheckIntersections payload.
  *
  * It is built from the SAME state buildRunRequest reads, minus the fields a
- * detection does not need (the find-and-replace rules run after everything and
- * cannot cover a value). Any drift between the two would make the check answer
+ * detection does not need. Any drift between the two would make the check answer
  * a different question from the run, and then the warning on a card describes
  * something that will not happen.
  */

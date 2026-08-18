@@ -57,9 +57,6 @@ type Settings struct {
 	// that is not there. UseSmartDetect is the offline heuristic pass: ON by
 	// default, because it needs nothing installed.
 	//
-	// There is no UseCloudAI: the cloud route is not built
-	// ), and a persisted switch for a route with no implementation
-	// is scaffolding that would have to be trusted later.
 	UseAI          bool `json:"useAI"`
 	UseSmartDetect bool `json:"useSmartDetect"`
 	// UseNativeDetect and UseAutoDetect are the two halves the "Smart detection"
@@ -146,9 +143,10 @@ type App struct {
 	// ctx is the Wails runtime context, stored at startup so methods can
 	// open native dialogs and emit events.
 	ctx context.Context
-	// llm is the Ollama client. It is handed to engine code as the
-	// engine.LLM interface — engine/* must never see the concrete client
-	// (CLAUDE.md §4, one-file external boundary).
+	// llm is the Ollama client, used ONLY by the Identify-time Local AI
+	// discovery route. Anonymise never touches it: a run that could reach the
+	// model could mint a value the user never reviewed. engine/* never sees the
+	// concrete client (CLAUDE.md §4, one-file external boundary).
 	llm *ollama.Client
 
 	// mu guards the mutable session state below (the pipeline runs in a

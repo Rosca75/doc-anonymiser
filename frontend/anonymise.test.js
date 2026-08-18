@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 import {
   countOccurrences, valuesInCategory, formatDuration, continueHint,
   compareCard, reportCard, valuesCard, filterValues, blockedPanel, selectedCard,
-  runCard, rulesCard, missedCard, renderAnonymise, searchWalk, searchControls,
+  runCard, missedCard, renderAnonymise, searchWalk, searchControls,
   selectionPanel, applySelection,
 } from "./views/anonymise.js";
 import { resetState, setState, getState, addEntities } from "./state.js";
@@ -86,7 +86,6 @@ function reportState(patch = {}) {
     replacedValues: RUN_VALUES,
     removedValues: [],
     entities: [],
-    simpleRules: [],
     dismissedWarnings: [],
     ...patch,
   };
@@ -160,7 +159,7 @@ test("the report note says the preset the run used, and nothing about an AI pass
   const note = textOf(reportCard(s), "#report-run-note");
   assert.match(note, /medium/);
   assert.doesNotMatch(note, /deep scan|AI/i,
-    "the deep-scan feature is gone, so the run note must not mention an AI pass");
+    "Anonymise runs no discovery method, so the run note must not mention an AI pass");
 });
 
 test("filterValues searches the value and the placeholder, because users use both", () => {
@@ -360,17 +359,17 @@ test("compareCard carries the truncation notice through to the ORIGINAL pane", (
   assert.ok(textOf(html, "#original-pane").includes(SOURCE));
 });
 
-// --- The run card: no deep-scan control, explanation on hover ------------
+// --- The run card: no discovery control, explanation on hover ------------
 //
-// The "Deep scan (AI)" checkbox was removed from step 3: the run offers only
-// the deterministic passes now. Its explanatory subtitle moved onto the
-// heading as a hover tooltip so the card stays a compact control strip.
+// Anonymise runs the deterministic passes and nothing else, so the card offers
+// no discovery switch at all. Its explanation is a hover tooltip on the heading
+// so the card stays a compact control strip.
 
-test("the run card offers no deep-scan control", () => {
+test("the run card offers no discovery control", () => {
   assert.equal(all(runCard(reportState()), "input#deep-scan").length, 0,
-    "the Deep scan (AI) checkbox is gone: the run runs the deterministic passes only");
+    "Anonymise runs the deterministic passes only");
   assert.doesNotMatch(runCard(reportState()), /Deep scan/i,
-    "no leftover copy naming the removed feature");
+    "no leftover copy naming a discovery pass on this step");
 });
 
 test("the run card carries its explanation on the heading, not as a subtitle", () => {
@@ -382,7 +381,7 @@ test("the run card carries its explanation on the heading, not as a subtitle", (
     "the heading spells out the run's state on hover");
 });
 
-// --- CR9: result sections start collapsed, rules gated on a run ----------
+// --- Result sections start collapsed, and are gated on a run -------------
 //
 // renderAnonymise reads the module state, so these tests seed it through the
 // state API and capture the HTML the view writes. wire() only touches a real
@@ -425,28 +424,29 @@ test("the Find and replace card is absent before the first run", () => {
   resetState();
   setState({ documents: [{ name: "a.txt", markdown: "x", previewTruncated: false, isGrid: false }] });
   const html = renderColumn();
-  assert.doesNotMatch(html, /Find and replace/,
-    "with no run yet there is nothing to find-and-replace against");
+  assert.doesNotMatch(html, new RegExp(ANONYMISE.missedTitle),
+    "with no run yet there is nothing to add a missed Value against");
 });
 
-test("after a run all four result cards render, and each starts collapsed", () => {
+test("after a run every result card renders, and each starts collapsed", () => {
   resetState();
   setState({ documents: [{ name: "a.txt", markdown: "x", previewTruncated: false, isGrid: false }] });
   seedRun();
   const html = renderColumn();
-  assert.match(html, /Find and replace/, "the rules card appears once a run has happened");
-  // The four foldable result cards (values, report, missed, rules) all fold shut.
-  assert.equal((html.match(/data-open="false"/g) ?? []).length, 4,
-    "values, report, something-missed and find-and-replace all start collapsed");
+  assert.match(html, new RegExp(ANONYMISE.missedTitle),
+    "Add missed Value appears once a run has happened");
+  // The three foldable result cards (values, report, missed) all fold shut.
+  assert.equal((html.match(/data-open="false"/g) ?? []).length, 3,
+    "values, report and Add missed Value all start collapsed");
   assert.equal((html.match(/data-open="true"/g) ?? []).length, 0,
     "nothing in the result column starts open");
 });
 
 test("each result card, rendered on its own, starts collapsed", () => {
-  // The collapsed set is the single source of truth for all four, so checking
-  // each helper directly guards the set membership CR9 relies on.
+  // The collapsed set is the single source of truth for all of them, so checking
+  // each helper directly guards that membership.
   const s = reportState();
-  for (const [name, fn] of [["values", valuesCard], ["report", reportCard], ["missed", missedCard], ["rules", rulesCard]]) {
+  for (const [name, fn] of [["values", valuesCard], ["report", reportCard], ["missed", missedCard]]) {
     assert.equal(attr(fn(s), ".cgroup", "data-open"), "false",
       `${name} card must start collapsed`);
   }
@@ -546,19 +546,19 @@ test("compareCard highlights the active hit in the pane that holds it", () => {
     "with no needle the panes render exactly as they did before");
 });
 
-// --- CR2: the selection panel is copy or replace, in three stages --------
+// --- The selection panel is copy or replace, in three stages -------------
 //
-// The panel used to be one field whose only outcome was a find-and-replace
-// rule. It now asks what to DO with the selection, and the three replace modes
+// The panel asks what to DO with the selection, and the two replace modes
 // differ in what ends up in the re-identification key, which is why each one
-// carries a hint: that difference is not guessable from the labels.
+// carries a hint: that difference is not guessable from the labels. Both modes
+// go through the Value model, so nothing here can rewrite text without the key
+// recording it.
 
 /** view(patch) is the panel's view-local state, as the card reads it. */
 function view(patch = {}) {
   return {
     selection: { text: "Meridian", x: 100, y: 40 },
-    stage: null, mode: null, target: "", category: "person_names",
-    draft: "", error: "",
+    stage: null, mode: null, target: "", category: "person_names", error: "",
     ...patch,
   };
 }
@@ -571,10 +571,10 @@ test("stage 1 offers exactly two things: copy, or replace", () => {
   assert.ok(!exists(html, "button#btn-apply-selection"), "there is nothing to apply yet");
 });
 
-test("stage 2 offers the three replace modes, each with its hint", () => {
+test("stage 2 offers the two replace modes, each with its hint", () => {
   const html = selectionPanel(compareState(), view({ stage: "replace" }));
   assert.deepEqual(all(html, "input.selection-mode").map((r) => r.attrs.value),
-    ["variant", "value", "text"]);
+    ["variant", "value"]);
 
   // The hints are the safety-relevant copy: they say what lands in the
   // re-identification key. Compared as rendered TEXT, because copy containing
@@ -584,7 +584,6 @@ test("stage 2 offers the three replace modes, each with its hint", () => {
     [
       ANONYMISE.selectionModeVariantHint,
       ANONYMISE.selectionModeValueHint,
-      ANONYMISE.selectionModeTextHint,
     ]);
 });
 
@@ -592,20 +591,16 @@ test("each mode's stage 3 shows its own field", () => {
   const s = compareState();
 
   const variant = selectionPanel(s, view({ stage: "replace", mode: "variant" }));
-  assert.ok(exists(variant, "input#selection-target"), "mode 1 asks which value");
-  assert.ok(!exists(variant, "input#selection-draft"));
+  assert.ok(exists(variant, "input#selection-target"), "the spelling mode asks which Value");
+  assert.ok(!exists(variant, "select#selection-category"));
 
   const value = selectionPanel(s, view({ stage: "replace", mode: "value" }));
-  assert.ok(exists(value, "select#selection-category"), "mode 2 asks which type");
+  assert.ok(exists(value, "select#selection-category"), "the new-Value mode asks which type");
   assert.ok(!exists(value, "input#selection-target"));
-
-  const text = selectionPanel(s, view({ stage: "replace", mode: "text" }));
-  assert.ok(exists(text, "input#selection-draft"), "mode 3 asks for the replacement");
-  assert.ok(!exists(text, "select#selection-category"));
 });
 
 test("stage 3 offers Apply and a Cancel that steps back rather than closing", () => {
-  const html = selectionPanel(compareState(), view({ stage: "replace", mode: "text" }));
+  const html = selectionPanel(compareState(), view({ stage: "replace", mode: "value" }));
   assert.ok(exists(html, "button#btn-apply-selection"));
   assert.ok(exists(html, "button#btn-cancel-selection"));
 });
@@ -669,55 +664,24 @@ test("mode 2 folds into an existing family instead of creating a rival", async (
   assert.ok(getState().entities[0].manualVariants.includes("Coca-Cola company"));
 });
 
-test("mode 3 creates a find and replace rule and nothing else", async () => {
-  resetState();
-  await applySelection(stubContainer(), view({
-    selection: { text: "Meridian", x: 0, y: 0 },
-    stage: "replace", mode: "text", draft: "[CUSTOM_1]",
-  }));
-
-  assert.deepEqual(getState().simpleRules.map((r) => [r.find, r.replace, r.caseSensitive]),
-    [["Meridian", "[CUSTOM_1]", true]]);
-  assert.equal(getState().entities.length, 0,
-    "mode 3 creates NO value, so nothing is added to the re-identification key");
-});
-
-test("mode 3 refuses an empty replacement, on the panel", async () => {
-  resetState();
-  await applySelection(stubContainer(), view({
-    selection: { text: "Meridian", x: 0, y: 0 },
-    stage: "replace", mode: "text", draft: "   ",
-  }));
-  assert.equal(getState().simpleRules.length, 0, "no rule was created");
-});
-
 test("mode 1 refuses a target that is not a value, on the panel", async () => {
   resetState();
   await applySelection(stubContainer(), view({
     selection: { text: "Meridian", x: 0, y: 0 },
     stage: "replace", mode: "variant", target: "Nobody",
   }));
-  assert.equal(getState().entities.length, 0);
-  assert.equal(getState().simpleRules.length, 0,
-    "a refused mode 1 must not fall through to creating a rule");
+  assert.equal(getState().entities.length, 0,
+    "a refused spelling target must not fall through to creating a Value");
 });
 
-test("selecting text reserves NO placeholder: only mode 3 spends one", () => {
-  // The reservation leak. Every stray drag used to mint a [CUSTOM_N] through
-  // nextRulePlaceholder, and numbers are never freed by design: an export or a
-  // mapping CSV in which [CUSTOM_4] means one thing may already have left the
-  // machine. The call moved to the mode-change handler, and this pins it there,
-  // because the drag path needs a real DOM to exercise.
+test("the Compare panel exposes only the two Value actions", () => {
+  // Everything the panel can do goes through the Value model. A literal
+  // replacement path would rewrite text with nothing in the re-identification
+  // key saying what happened, so there is deliberately no third mode and no
+  // free-text replacement field anywhere in the view.
   const source = readFileSync(new URL("./views/anonymise.js", import.meta.url), "utf8");
-  const start = source.indexOf("function wireTextSelection(");
-  const end = source.indexOf("function wireSelectionPanel(");
-  assert.ok(start > 0 && end > start, "both wiring functions are still there");
-  assert.ok(!source.slice(start, end).includes("nextRulePlaceholder"),
-    "wireTextSelection must not reserve a placeholder: a stray drag would spend a number " +
-    "that is never freed. Reserve when the user chooses the mode that needs one.");
-  // And the mode handler IS where it happens.
-  const modeHandler = source.slice(end);
-  assert.ok(modeHandler.includes("nextRulePlaceholder"),
-    "mode 3 still reserves its placeholder through Go, which is the only side that " +
-    "knows every number already taken");
+  assert.ok(!source.includes("selection-draft"),
+    "no free-text replacement field: a literal rewrite leaves no re-identification entry");
+  assert.ok(!/addSimpleRule|nextRulePlaceholder/.test(source),
+    "no find-and-replace path remains in the view");
 });

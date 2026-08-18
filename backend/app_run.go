@@ -21,8 +21,7 @@ type RunRequest struct {
 	// Categories is the granular per-category switch set from the
 	// Configure screen. nil falls back to the stored
 	// settings, then to the level preset.
-	Categories  engine.CategorySelection `json:"categories"`
-	SimpleRules []engine.SimpleRule      `json:"simpleRules"`
+	Categories engine.CategorySelection `json:"categories"`
 	// SuppressRegexPII is the "Native detection" master switch, inverted: true
 	// means the deterministic regex PII pass (pass 1) is skipped for this run,
 	// so no signal category is replaced. The frontend sends it as
@@ -149,7 +148,6 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 		Country:          a.settings.Country,
 		Allowlist:        allow,
 		Registry:         reg,
-		SimpleRules:      req.SimpleRules,
 		Removed:          removed,
 		SuppressRegexPII: req.SuppressRegexPII,
 		Progress: func(ev engine.ProgressEvent) {

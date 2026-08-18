@@ -287,13 +287,6 @@ export async function listRemovedValues() {
   return bridge().ListRemovedValues();
 }
 
-/** nextRulePlaceholder() resolves to the next free [CUSTOM_N], reserved as it
- *  is handed over so an automatic assignment cannot take it while the user is
- *  still typing the rule. */
-export async function nextRulePlaceholder() {
-  return bridge().NextRulePlaceholder();
-}
-
 /** validateValues(request) resolves to {blocking, warnings}. A blocking
  *  conflict refuses the run, so a screen calls this to say so beforehand. */
 export async function validateValues(request) {
@@ -413,9 +406,9 @@ export async function exportReport(format) {
   return bridge().ExportReport(format);
 }
 
-/** saveSession(request) persists the session (entities, allowlist,
- *  patterns, rules, settings, registry). Warn the user first, the file
- *  contains the re-identification key. */
+/** saveSession(request) persists the session (values, allowlist, patterns,
+ *  settings, registry). Warn the user first, the file contains the
+ *  re-identification key. */
 export async function saveSession(request) {
   return bridge().SaveSessionToFile(request);
 }

@@ -67,23 +67,20 @@ test("every group has a title and at least one category (CR10)", () => {
 
 // --- The rail's route sections -------------------------------------------
 //
-// The four peer tabs are gone. They said Scope was a thing of its own rather
-// than the scope OF smart detection, and they made Cloud AI, which is not
-// built, look like a peer of two routes that are.
+// The rail is the two user-operable detection routes, in the order they run.
+// Scope is not a peer of them: it is the scope OF Smart detection.
 
-test("the rail is three route sections, in the order the routes run", () => {
-  assert.deepEqual(RAIL_SECTIONS.map(([id]) => id),
-    ["rail-smart", "rail-local", "rail-cloud"]);
+test("the rail is two route sections, in the order the routes run", () => {
+  assert.deepEqual(RAIL_SECTIONS.map(([id]) => id), ["rail-smart", "rail-local"]);
   for (const [id, label] of RAIL_SECTIONS) {
     assert.ok(label.trim().length > 0, `${id} has no label`);
   }
 });
 
-test("only the two built routes have an operable switch", () => {
+test("each route section carries the settings key that switches it on", () => {
   const keys = Object.fromEntries(RAIL_SECTIONS.map(([id, , key]) => [id, key]));
   assert.equal(keys["rail-smart"], "useSmartDetect");
   assert.equal(keys["rail-local"], "useAI");
-  assert.equal(keys["rail-cloud"], null, "Cloud AI is not built, so its switch cannot be operated");
 });
 
 test("Scope is no longer a section: it is nested in the route it scopes", () => {
@@ -172,15 +169,14 @@ function railHTML(patch = {}) {
 
 test("the rail renders the three routes plus the Load profile section", () => {
   const html = railHTML();
-  // Exactly three DETECTION ROUTE sections carry .rail-section; the render
-  // harness (scripts/uitest/probes.js) counts the same class to assert the rail
-  // is three routes, not four peers. Load profile is a switch-less panel with
-  // its own .rail-panel class, so it must NOT be counted here.
+  // Exactly two DETECTION ROUTE sections carry .rail-section; the render
+  // harness (scripts/uitest/probes.js) counts the same class. Load profile is a
+  // switch-less panel with its own .rail-panel class, so it must NOT be counted.
   const sections = all(html, "section.rail-section");
-  assert.equal(sections.length, 3);
+  assert.equal(sections.length, 2);
   const titles = sections.map((sec) =>
     stripTags(all(sec.outer, "span.cgroup-title")[0].inner).trim());
-  assert.deepEqual(titles, [RAIL.tabSmart, RAIL.tabLocalAI, RAIL.tabCloudAI]);
+  assert.deepEqual(titles, [RAIL.tabSmart, RAIL.tabLocalAI]);
   // The Load profile panel sits after the routes as its own .rail-panel section.
   const panel = all(html, "section.rail-panel");
   assert.equal(panel.length, 1);
@@ -203,14 +199,6 @@ test("Local AI is OFF by default even when Ollama is detected", () => {
   assert.ok(!("checked" in local.attrs),
     "detecting Ollama enables the switch, it does not flip it");
   assert.ok(!("disabled" in local.attrs));
-});
-
-test("Cloud AI is off, disabled, and says why", () => {
-  const html = railHTML();
-  const cloud = all(html, "input.route-toggle")[2];
-  assert.ok(!("checked" in cloud.attrs));
-  assert.ok("disabled" in cloud.attrs, "a switch for a route that does not exist must not move");
-  assert.match(html, new RegExp(RAIL.cloudNotYet));
 });
 
 test("the scope controls live inside the Smart detection section", () => {
@@ -272,14 +260,14 @@ test("the Smart detection header switch is a master over both sub-toggles", () =
 
 // --- The Load profile section (CR7) --------------------------------------
 
-test("the Load profile section renders AFTER Cloud AI", () => {
+test("the Load profile section renders AFTER the routes", () => {
   resetState();
   const html = railBody(getState());
-  // Ordering by first appearance: the profile title must come after the Cloud
-  // AI placeholder copy, so the section sits at the foot of the rail.
+  // Ordering by first appearance: the profile title must come after the last
+  // route's title, so the section sits at the foot of the rail.
   assert.ok(html.includes(RAIL.profileTitle), "the Load profile section renders");
-  assert.ok(html.indexOf(RAIL.profileTitle) > html.indexOf(RAIL.cloudNotYet),
-    "Load profile is below Cloud AI");
+  assert.ok(html.indexOf(RAIL.profileTitle) > html.indexOf(RAIL.tabLocalAI),
+    "Load profile is below the Local AI route");
 });
 
 test("the Load profile section has a Load and a Save button", () => {

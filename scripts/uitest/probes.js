@@ -134,7 +134,6 @@
       progress: null,
       discovery: null,
       dismissedWarnings: [],
-      simpleRules: [],
       notice: null,
       confirm: null,
       results: {
@@ -145,7 +144,6 @@
         }],
         report: {
           level: "medium",
-          llmPass: "skipped (Ollama not available)",
           totalReplacements: 124,
           byCategory: { person_names: 61, entity_names: 61, email: 1, phone: 1 },
           values: VALUES,
@@ -321,10 +319,9 @@
     /**
      * configureRail() reports the shape of the Identify screen's left rail.
      *
-     * Reported issue 3: Configure stopped being a screen and its choices became
-     * three switchable DETECTION ROUTE sections, not four peer tabs. Smart
-     * detection on, Local AI off, Cloud AI present but unoperable, and every
-     * category checkbox reachable without clicking anything.
+     * The Configure choices are switchable DETECTION ROUTE sections rather than
+     * peer tabs: Smart detection on, Local AI off, and every category checkbox
+     * reachable without clicking anything.
      */
     async configureRail() {
       await seed("identify");
@@ -338,8 +335,6 @@
         routes: toggles.map((t) => t.dataset.route),
         smartOn: byRoute("rail-smart")?.checked ?? null,
         localOn: byRoute("rail-local")?.checked ?? null,
-        cloudDisabled: byRoute("rail-cloud")?.disabled ?? null,
-        cloudOn: byRoute("rail-cloud")?.checked ?? null,
         categories: rail.querySelectorAll(".cat-toggle").length,
         // Present in the DOM is not the same as reachable: a checkbox inside a
         // zero-height folded group is not something the user can tick. Measured,

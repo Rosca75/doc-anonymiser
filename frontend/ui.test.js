@@ -373,7 +373,7 @@ test("chipRow marks the active chip and reports it to assistive technology", () 
 });
 
 test("chipRow square variant and disabled chips", () => {
-  const html = chipRow([{ id: "cloud", label: "Cloud AI", disabled: true }], { square: true });
+  const html = chipRow([{ id: "later", label: "Not yet", disabled: true }], { square: true });
   assert.ok(html.includes("tint-chip square"));
   assert.ok(html.includes("disabled"));
 });
