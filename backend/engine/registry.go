@@ -53,20 +53,6 @@ var placeholderLabels = map[string]string{
 	CatESNIF:       "ES_NIF",
 }
 
-// PlaceholderLabel returns the label a category's placeholders carry, e.g.
-// "PERSON" for person_names, or "" for a category this build does not know.
-//
-// It exists so callers outside the engine (the App's rule-placeholder minting)
-// can build a placeholder in the SAME shape the registry assigns, rather than
-// upper-casing the identifier and getting [PERSON_NAMES_1] right up until
-// something compares the two.
-//
-// @param category an engine category identifier
-// @return the placeholder label, or "" when the category is unknown
-func PlaceholderLabel(category string) string {
-	return placeholderLabels[category]
-}
-
 // MappingEntry is one row of the exported re-identification key.
 type MappingEntry struct {
 	Original    string `json:"original"`

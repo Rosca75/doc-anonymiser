@@ -319,3 +319,60 @@ func TestSessionSettingsRoundTrip(t *testing.T) {
 		t.Error("a file that says nothing about a signal source must restore its default")
 	}
 }
+
+// TestApplySettingsRefusesAnUnknownSignalSource: an identifier Go does not
+// implement must not reach the settings at all.
+//
+// Stored, it would be a key nothing reads for the rest of the session, which
+// looks exactly like a control that works and does not. The frontend refuses one
+// too; this is the half that holds when the frontend is wrong.
+func TestApplySettingsRefusesAnUnknownSignalSource(t *testing.T) {
+	app := NewApp()
+	s := app.GetSettings()
+	s.SignalSuggestionSources = engine.SignalSourceSelection{"telepathy": true}
+
+	if _, err := app.ApplySettings(s); err == nil {
+		t.Fatal("an unknown signal source must be refused")
+	} else if !strings.Contains(err.Error(), "telepathy") {
+		t.Errorf("the refusal must name the source it rejected, got: %v", err)
+	}
+	if _, ok := app.GetSettings().SignalSuggestionSources["telepathy"]; ok {
+		t.Error("a refused source must not be stored")
+	}
+}
+
+// TestApplySettingsFillsAnOmittedSignalSource: a payload that says nothing about
+// a source must land on its DEFAULT, never on Go's zero value.
+//
+// Reading an absent key as "off" would silently disable a source the user never
+// touched, which is the failure mode the whole "absent means the default" rule
+// exists for.
+func TestApplySettingsFillsAnOmittedSignalSource(t *testing.T) {
+	app := NewApp()
+	s := app.GetSettings()
+	s.SignalSuggestionSources = engine.SignalSourceSelection{} // says nothing
+
+	if _, err := app.ApplySettings(s); err != nil {
+		t.Fatalf("ApplySettings: %v", err)
+	}
+	if !engine.SignalSourceEnabled(app.GetSettings().SignalSuggestionSources, engine.SignalSourceEmail) {
+		t.Errorf("an omitted source must fall back to its default, got %+v",
+			app.GetSettings().SignalSuggestionSources)
+	}
+}
+
+// TestApplySettingsObeysAnExplicitlyDisabledSource is the other half: an explicit
+// false must survive, or the fill-in above would quietly re-enable what the user
+// switched off.
+func TestApplySettingsObeysAnExplicitlyDisabledSource(t *testing.T) {
+	app := NewApp()
+	s := app.GetSettings()
+	s.SignalSuggestionSources = engine.SignalSourceSelection{engine.SignalSourceEmail: false}
+
+	if _, err := app.ApplySettings(s); err != nil {
+		t.Fatalf("ApplySettings: %v", err)
+	}
+	if engine.SignalSourceEnabled(app.GetSettings().SignalSuggestionSources, engine.SignalSourceEmail) {
+		t.Error("an explicit false must be obeyed, not filled back in from the defaults")
+	}
+}

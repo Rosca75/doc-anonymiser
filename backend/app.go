@@ -573,11 +573,26 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 	}
 	if s.HeuristicDiscovery.MinLength < 0 || s.HeuristicDiscovery.MinOccurrences < 0 {
 		return ollama.OllamaStatus{}, fmt.Errorf(
-			"invalid smart detection limits (minimum length %d, minimum occurrences %d), both must be zero or a positive number",
+			"invalid heuristic discovery limits (minimum length %d, minimum occurrences %d), both must be zero or a positive number",
 			s.HeuristicDiscovery.MinLength, s.HeuristicDiscovery.MinOccurrences)
+	}
+	// An unknown signal source is REFUSED rather than stored. Storing it would be a
+	// key nothing reads for the rest of the session: a control that appears to do
+	// something and does not, which is exactly what the identifier list exists to
+	// prevent.
+	for source := range s.SignalSuggestionSources {
+		if !engine.ValidSignalSource(source) {
+			return ollama.OllamaStatus{}, fmt.Errorf(
+				"unknown signal suggestion source %q, expected one of %v",
+				source, engine.AllSignalSources)
+		}
 	}
 
 	a.mu.Lock()
+	// Filled out to the complete set of known sources, so a payload that omitted
+	// one lands on its DEFAULT rather than on Go's zero value. Reading an absent
+	// key as "off" would silently disable a source the user never touched.
+	s.SignalSuggestionSources = engine.NormaliseSignalSources(s.SignalSuggestionSources)
 	a.settings = s
 	a.llm = ollama.New(fmt.Sprintf("http://127.0.0.1:%d", s.OllamaPort))
 	if s.Model != "" {
