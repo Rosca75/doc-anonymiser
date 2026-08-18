@@ -607,7 +607,6 @@ export const WORKSPACE = {
   // decides, so these are WARNINGS that explain the decision, never refusals.
   // The route names come from originLabel above, so a message names a route in
   // the same words the chip on the card uses.
-  intersectionTitle: "Overlaps another detection",
   /**
    * intersectedText(value, matchedTexts) names what actually sat inside the
    * winner. Usually that IS the value's own text and the sentence says so once;
@@ -663,8 +662,24 @@ export const WORKSPACE = {
   removeValue: "Remove this value",
   derivedSpellings: "Spellings",
   addSpelling: "add",
-  addSpellingPlaceholder: "another spelling, then Enter",
-  removeSpelling: "Stop replacing this spelling",
+  // The card's status icon. One glyph, two tones, and the accessible name is
+  // where the difference is stated: a conflict must be fixed before the run,
+  // a warning is something to know about a run that will go ahead.
+  cardConflictLabel: "This value would refuse the run. Open for the reason and the fixes.",
+  cardWarningLabel: "This value overlaps another detection. Open for the reason and the options.",
+  cardInfoLabel: "Why this value is here",
+  /**
+   * moreSpellings(n) is the overflow control on the compact card.
+   *
+   * The card shows the spellings that fit on one line and nothing more, because a
+   * chip row that grows with the data makes the card's height depend on it, and a
+   * list of cards that resize under the pointer loses the reader's place. The rest
+   * are not hidden, they are one click away in the popup that owns the full list.
+   */
+  moreSpellings(n) {
+    return `+${n} more`;
+  },
+  moreSpellingsTitle: "Show every spelling, and add, edit, delete or regroup them",
   spellingDragHint: "Drag this spelling onto another Value to regroup it",
   /** spellingMoved(v, target) confirms a regrouping drag. */
   spellingMoved(v, target) {
@@ -706,10 +721,6 @@ export const WORKSPACE = {
   valuesSearchLabel: "Filter values by name or spelling",
   valuesAllTypes: "All types",
   valuesFilterTypeTitle: "Show only one type",
-  showSpellings: "Show spellings",
-  hideSpellings: "Hide spellings",
-  showVariantsTitle: "Show the spellings under each value",
-  hideVariantsTitle: "Hide the spellings to see more values at once",
   noValuesMatch: "No value matches the current search and type filter.",
   clearAll: "Clear all",
   clearAllTitle: "Remove every value from this list",
@@ -721,9 +732,48 @@ export const WORKSPACE = {
   clearedN(n) {
     return n === 0 ? "The list was already empty." : `${n} value${n === 1 ? "" : "s"} removed.`;
   },
+  // The spellings popup: the one surface that owns a Value's whole spelling list.
+  // The compact card shows a preview and this shows everything, so every gesture
+  // that used to be a per-chip control on the card lives here.
+  /** spellingsPopupTitle(mainText) heads the popup with the value it belongs to. */
+  spellingsPopupTitle(mainText) {
+    return `Spellings for ${mainText}`;
+  },
+  /** spellingsPopupCount(n) counts the WHOLE list, never the filtered view: the
+   *  search narrows what is shown, it does not remove anything. */
+  spellingsPopupCount(n) {
+    return `${n} spelling${n === 1 ? "" : "s"}`;
+  },
+  spellingsPopupAddPlaceholder: "a new spelling",
+  spellingsPopupAddLabel: "Add a spelling to this value",
+  spellingsPopupAdd: "Add",
+  spellingsPopupSearchPlaceholder: "search spellings",
+  spellingsPopupSearchLabel: "Filter the spellings shown",
+  spellingsPopupNoMatch: "No spelling matches this search.",
+  spellingsPopupEmpty: "This value has no other spellings yet. Add one above.",
+  spellingsPopupClose: "Close",
+  // Said in the popup because the popup has no OK button and its absence is the
+  // thing to explain: every action here has already happened.
+  spellingsPopupLive: "Changes are reflected immediately in the compact card.",
+  spellingsPopupMainRow: "Main text",
+  // The main text is shown so the list is the whole family rather than the
+  // family minus its head, but it is not a spelling and the two actions that
+  // apply to spellings do not apply to it.
+  spellingsPopupMainNotDeletable: "This is the value's main text, not a spelling. Rename it on the card, or remove the whole value.",
+  spellingsPopupDelete: "Delete",
+  spellingsPopupDeleteTitle: "Stop replacing this spelling",
+  spellingsPopupMove: "Move to",
+  spellingsPopupMoveTitle: "Make this a spelling of another value instead",
+  spellingsPopupMoveHeading: "Move this spelling",
+  /** spellingsPopupMoveBody(spelling) says what the pick will do. */
+  spellingsPopupMoveBody(spelling) {
+    return `"${spelling}" stops being a spelling of this value and becomes a spelling of the one you pick, so it takes that value's placeholder.`;
+  },
+  spellingsPopupMoveNone: "There is no other value to move it to.",
+  spellingsPopupEditTitle: "Edit this spelling",
+
   editValueTitle: "Rename this value",
   editValuePlaceholder: "the value, then Enter",
-  editSpellingTitle: "Edit this spelling (double-click)",
   editVariantPlaceholder: "the spelling, then Enter",
   changeTypeLabel: "Change the type of this value",
   /** valueRenamedDuplicate(v) explains a rename refused because the type

@@ -8,6 +8,7 @@ import {
   card, countBadge, tabbar, chipRow, sectionLabel, statTile,
   collapsibleGroup, stepFooter, toastHTML, modalHTML,
   helpTooltip, wireHelpTooltips, expandableChecklist,
+  warningPopover, wireWarningPopovers,
 } from "./ui.js";
 import { ICONS } from "./icons.js";
 
@@ -786,8 +787,10 @@ test("Escape closes the tooltip and gives up the hover with it", () => {
 // rail's body is `overflow-y: auto` and a .cgroup is `overflow: hidden`, so an
 // absolutely positioned bubble is trimmed at the group's edge. Fixed coordinates
 // are measured from the viewport, which CSS cannot know from inside the trigger,
-// so wireHelpTooltips computes them. These pin that it does, and that the CSS
-// keeps exactly one positioning model.
+// so ui.js computes them. These pin that it does, and that the CSS keeps exactly
+// one positioning model. The property names are shared with every other hover
+// surface in the toolkit, because the clipping problem is the same for all of
+// them and two pairs would be two things to keep in step.
 
 test("opening a tooltip writes the bubble's viewport coordinates", () => {
   withWindow({ width: 1440, height: 900 }, () => {
@@ -799,8 +802,8 @@ test("opening a tooltip writes the bubble's viewport coordinates", () => {
     help.fire("pointerenter");
     assert.ok(help.isOpen(), "the wrapper opens");
     // Below the trigger, right-aligned to it: 418 - 320 = 98, 318 + 6 = 324.
-    assert.equal(bubble.props.get("--help-x"), "98px");
-    assert.equal(bubble.props.get("--help-y"), "324px");
+    assert.equal(bubble.props.get("--bubble-x"), "98px");
+    assert.equal(bubble.props.get("--bubble-y"), "324px");
   });
 });
 
@@ -814,7 +817,7 @@ test("a bubble with no room below flips above the trigger", () => {
     help.fire("focusin");
     // 858 + 6 + 120 would end at 984, past the 900 viewport, so it flips:
     // 840 - 120 - 6 = 714.
-    assert.equal(bubble.props.get("--help-y"), "714px");
+    assert.equal(bubble.props.get("--bubble-y"), "714px");
   });
 });
 
@@ -828,7 +831,7 @@ test("a bubble is clamped into the viewport rather than hanging off its edge", (
     help.fire("pointerenter");
     // Right-aligning would put it at 38 - 320 = -282, off screen: clamped to the
     // 8px margin instead.
-    assert.equal(bubble.props.get("--help-x"), "8px");
+    assert.equal(bubble.props.get("--bubble-x"), "8px");
   });
 });
 
@@ -840,8 +843,8 @@ test("the open rule only reveals the bubble, it does not reposition it", () => {
   const base = styleCSS.match(/\n\.help-bubble \{[^}]*\}/);
   assert.ok(base, "the .help-bubble rule must exist");
   assert.match(base[0], /position:\s*fixed/);
-  assert.match(base[0], /left:\s*var\(--help-x/);
-  assert.match(base[0], /top:\s*var\(--help-y/);
+  assert.match(base[0], /left:\s*var\(--bubble-x/);
+  assert.match(base[0], /top:\s*var\(--bubble-y/);
 
   const open = styleCSS.match(/\n\.help\[data-open\] \.help-bubble \{[^}]*\}/);
   assert.ok(open, "the open rule must exist");
@@ -971,4 +974,141 @@ test("expandableChecklist escapes every string it is given", () => {
     }],
   });
   assert.ok(!html.includes("<b>"), "copy is escaped, never trusted as markup");
+});
+
+// --- warningPopover -------------------------------------------------------
+//
+// A SECOND hover surface beside helpTooltip, and the one place the toolkit's
+// "exactly one way to draw each thing" rule admits two builders: a surface with
+// BUTTONS in it is a different control from one with a sentence in it. These pin
+// the two things that make it different: it carries actions, and it survives the
+// pointer travelling into it.
+
+test("warningPopover renders its text and its action buttons", () => {
+  const html = warningPopover({
+    tone: "warn",
+    label: "Overlaps another detection",
+    lines: ["Every occurrence is covered.", "Priority order: patterns first."],
+    actionsHTML: button("Never anonymise the covering term", { cls: "intersection-allow" }),
+    id: "warn-1",
+  });
+  assert.match(html, /class="warnpop warnpop-warn"/);
+  assert.match(html, /Every occurrence is covered\./);
+  assert.match(html, /Priority order: patterns first\./);
+  assert.match(html, /class="[^"]*intersection-allow/,
+    "the actions that resolve it travel with the sentence that explains it");
+});
+
+test("warningPopover is a disclosure, not a tooltip", () => {
+  // role="tooltip" is announced as a DESCRIPTION of its trigger, and a screen
+  // reader user told "description: two buttons" cannot reach them.
+  const html = warningPopover({ tone: "bad", label: "Conflict", lines: ["Two types claim it."] });
+  assert.match(html, /<button type="button" class="warnpop-icon"[^>]*aria-expanded="false"/);
+  assert.match(html, /aria-controls="([^"]+)"/);
+  assert.match(html, /role="group"/);
+  assert.ok(!html.includes('role="tooltip"'), "it holds actions, so it is not a description");
+});
+
+test("warningPopover renders a VISIBLE glyph, not an empty hit area", () => {
+  const html = warningPopover({ tone: "bad", label: "Conflict", lines: ["x"] });
+  assert.match(html, /<button type="button" class="warnpop-icon"[^>]*><span class="icon"/);
+  assert.match(html, /<svg/, "and the span holds real vendored markup");
+});
+
+test("warningPopover renders nothing when there is nothing to warn about", () => {
+  // A clean card must draw no icon at all: an icon that opens an empty surface
+  // is a warning about nothing.
+  assert.equal(warningPopover({ tone: "warn", label: "x", lines: [] }), "");
+  assert.equal(warningPopover({ tone: "warn", label: "x" }), "");
+});
+
+test("warningPopover escapes its copy and defaults to the warning tone", () => {
+  const html = warningPopover({ label: "x", lines: ['a <b>bold</b> "claim"'] });
+  assert.ok(!html.includes("<b>"), "copy is escaped, never trusted as markup");
+  assert.match(html, /warnpop-warn/, "an unnamed tone is the quieter one");
+});
+
+/** wirePop(pop) runs wireWarningPopovers over a container holding just `pop`,
+ *  with no document: the outside-click dismissal is a document-level fact and a
+ *  container without one simply has no such gesture. */
+function wirePop(pop) {
+  wireWarningPopovers({ querySelectorAll: () => [pop] });
+}
+
+/** popNode(children) is fakeNode plus the two calls the popover makes that a
+ *  tooltip does not: hasAttribute, and contains for the focus re-check. */
+function popNode(children = {}) {
+  const node = fakeNode(children);
+  node.hasAttribute = (k) => node.attrs.has(k);
+  node.contains = () => false;
+  return node;
+}
+
+test("the popover opens on hover AND on keyboard focus", () => {
+  const pop = popNode();
+  wirePop(pop);
+  assert.ok(!pop.isOpen(), "closed until asked");
+
+  pop.fire("pointerenter");
+  assert.ok(pop.isOpen(), "hover opens it");
+  assert.equal(pop.attrs.get("data-open"), "true");
+
+  pop.fire("keydown", { key: "Escape", stopPropagation() {} });
+  assert.ok(!pop.isOpen());
+
+  pop.fire("focusin");
+  assert.ok(pop.isOpen(), "Tab opens it too, or half the users never see it");
+});
+
+test("the popover survives the pointer travelling into it", async () => {
+  // The surface sits a few pixels below its trigger, so moving from the icon to a
+  // button inside it crosses page background and fires a leave. Closing on that
+  // leave makes the buttons unreachable by pointer, which is the whole point of
+  // the control.
+  const pop = popNode();
+  wirePop(pop);
+  pop.fire("pointerenter");
+  pop.fire("pointerleave");
+  assert.ok(pop.isOpen(), "still open the instant the pointer leaves");
+  pop.fire("pointerenter");
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(pop.isOpen(), "and the re-entry cancels the pending close");
+});
+
+test("the popover closes once the pointer has gone and stayed gone", async () => {
+  const pop = popNode();
+  wirePop(pop);
+  pop.fire("pointerenter");
+  pop.fire("pointerleave");
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(!pop.isOpen(), "a delay that never expires is a surface that never closes");
+});
+
+test("Escape closes the popover without also answering the shell's dialog", () => {
+  const iconBtn = {
+    blurred: false, blur() { this.blurred = true; }, setAttribute() {},
+  };
+  const pop = popNode({ ".warnpop-icon": iconBtn });
+  wirePop(pop);
+  pop.fire("pointerenter");
+
+  let stopped = false;
+  pop.fire("keydown", { key: "Escape", stopPropagation: () => { stopped = true; } });
+  assert.ok(!pop.isOpen(), "Escape closes it");
+  assert.ok(stopped, "and does not also reach the modal layer's own Escape handler");
+  assert.ok(iconBtn.blurred, "focus is released, or it reopens on the next repaint");
+});
+
+test("the popover's trigger announces whether it is open", () => {
+  const iconBtn = {
+    attrs: new Map(),
+    setAttribute(k, v) { this.attrs.set(k, v); },
+    blur() {},
+  };
+  const pop = popNode({ ".warnpop-icon": iconBtn });
+  wirePop(pop);
+  pop.fire("pointerenter");
+  assert.equal(iconBtn.attrs.get("aria-expanded"), "true");
+  pop.fire("keydown", { key: "Escape", stopPropagation() {} });
+  assert.equal(iconBtn.attrs.get("aria-expanded"), "false");
 });

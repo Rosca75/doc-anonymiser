@@ -51,8 +51,22 @@ without the runtime. Preserve that behaviour.
   wiring live in its module. Identify is the exception that proves the rule:
   it is one screen with two halves, each big enough to deserve its own file, so
   `identify.js` owns the layout and the footer, `identifyrail.js` the choices
-  and `identifyworkspace.js` the Values, Suggestions and patterns. The rail is
-  TWO switchable DETECTION ROUTE sections, not tabs: **Smart detection** (on by
+  and `identifyworkspace.js` the Values, Suggestions and patterns.
+
+  A **value card is a fixed-height surface**, and that is a behaviour rather than
+  a style. Its height must not depend on how many warnings it carries or how many
+  spellings it has: when one card resizes, every card below it moves, the browser
+  clamps the list's scroll offset to the shorter content, and the next repaint
+  snapshots the clamped value, so the reader's place is lost for good. So the
+  warnings are ONE hover icon (`warningPopover`), the evidence and related-values
+  notes are ONE info tooltip, and the spellings are ONE line of read-only pills up
+  to a character budget with the rest behind "+N more". The full spelling list,
+  and every gesture that manages it, lives in the spellings popup. There is no
+  show/hide-spellings toggle, because a toggle that changes every card's height is
+  the same failure wearing a switch.
+
+  The rail is TWO switchable DETECTION ROUTE sections, not tabs: **Smart
+  detection** (on by
   default, and the owner of the scope controls, because the country, preset,
   categories and confidence floor are the scope OF that route) and **Local AI**
   (off by default). There is no cloud route.
@@ -144,13 +158,23 @@ Windows it steals focus from the window it belongs to.
 - `ui.js` — shared UI toolkit: the card kit (`card`, `tabbar`, `countBadge`,
   `chipRow`, `sectionLabel`, `statTile`, `collapsibleGroup`, `stepFooter`,
   `toastHTML`, `modalHTML`), the explanation kit (`helpTooltip`,
-  `wireHelpTooltips`, `expandableChecklist`) plus `button` and `icon`. There is
+  `wireHelpTooltips`, `warningPopover`, `wireWarningPopovers`,
+  `expandableChecklist`) plus `button` and `icon`. There is
   exactly ONE way to draw each thing: `card` is the fixed-height surface,
   `collapsibleGroup` the foldable block, `helpTooltip` the explanation,
   `expandableChecklist` a set of switches that must not spend a permanent row
   each, grouped where the question they answer is nested (a master over its rows,
   the master derived for display and never stored). A second builder for the same
   control is the next inconsistency, so a replaced one is DELETED, not kept.
+
+  `warningPopover` is the ONE admitted exception, and it is an exception because
+  it is not the same control: a hover surface holding BUTTONS has a different
+  contract from one holding a sentence. A tooltip may vanish the instant the
+  pointer leaves its trigger, because nothing in it is worth reaching; a surface
+  with actions in it must survive the pointer travelling into it and must be
+  dismissible three ways. Both share ONE positioning model (`placeBubble`, writing
+  `--bubble-x` / `--bubble-y`), because the reason for `position: fixed` is the
+  same for both: every panel they open inside is a clipping ancestor.
 - `html.js` — tiny shared HTML helpers (`escapeHTML`).
 - `icons.js` — vendored Material Symbols SVG map. It holds exactly the icons
   the interface draws, no more and no fewer: `ui.js icon(name)` returns the

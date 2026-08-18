@@ -539,6 +539,53 @@ main#view.page { overflow-y: auto; }
 .modal-body p { margin: 0; font-size: 0.82rem; line-height: 1.55; color: var(--ink-2); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
 
+/* --- The spellings popup ---------------------------------------------- */
+/* One Value's whole spelling list, and every gesture that manages it. It reuses
+   the confirm's overlay shape (same backdrop, same panel, same head) because it
+   IS the same kind of surface, and one look for "a panel over the screen" is
+   what stops the application growing a second dialog vocabulary.
+
+   It stacks BELOW the confirm layer, not above: "Move to" opens the shared value
+   picker while this stays open, and the picker is the thing being answered. */
+.spellings-layer { z-index: 55; }
+.spellings-popup { width: 32rem; display: flex; flex-direction: column; max-height: 100%; }
+.spellings-popup .modal-head { justify-content: space-between; }
+/* The body is the scroll container's parent, so the head, the add row and the
+   footer line stay put while only the list moves. */
+.spellings-popup .modal-body { min-height: 0; overflow: hidden; }
+/* The list scrolls INSIDE the popup rather than growing it past the window: the
+   whole point of the surface is that a Value with fifty spellings is as reachable
+   as one with two. */
+.spelling-list {
+  display: flex; flex-direction: column;
+  min-height: 0; max-height: 18rem; overflow-y: auto;
+  border: 1px solid var(--gray-5); border-radius: var(--card-radius);
+}
+.spelling-list-row {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.3rem 0.35rem 0.3rem 0.6rem;
+  border-bottom: 1px solid var(--gray-6);
+  font-size: 0.82rem;
+}
+.spelling-list-row:last-child { border-bottom: none; }
+.spelling-list-row:hover { background: var(--gray-6); }
+/* The text is a button on a spelling row and a plain span on the main-text row,
+   because only one of the two can be edited here. Both are the flexible column,
+   so the actions stay right-aligned however long the spelling is. */
+.spelling-list-text {
+  flex: 1; min-width: 0;
+  text-align: left; color: var(--text);
+  background: none; border: none; padding: 0.1rem 0.15rem; margin: 0;
+  border-radius: 4px; cursor: text; font-size: 0.82rem;
+}
+button.spelling-list-text:hover { background: var(--gray-5); }
+.spelling-list-actions { display: flex; align-items: center; gap: 0.15rem; flex: none; }
+.spelling-list-actions .btn { font-size: 0.75rem; padding: 0.15rem 0.45rem; }
+/* The main text is the head of the family, not one of its spellings, so it reads
+   differently from the rows it sits above. */
+.main-row .spelling-list-text { color: var(--text); font-weight: inherit; }
+.main-row { background: var(--gray-6); }
+
 /* --- Shared small pieces --------------------------------------------- */
 /* A format badge (DOCX, PPTX) and the source badges. Both are read-only
    labels, so neither is a button. */
@@ -1055,8 +1102,24 @@ input, select {
 .ph-input:focus { border-color: var(--text); color: var(--text); background: var(--bg); }
 .ph-input:disabled { color: var(--muted); cursor: not-allowed; }
 
-.spelling-row { align-items: center; gap: 0.45rem; }
-.spelling-row .hint { margin: 0; font-size: 0.78rem; }
+/* The spelling preview is ONE LINE and it never wraps. That is a geometry
+   contract, not a look: the card's height must not depend on how many spellings
+   the value has, or adding, deleting and re-deriving one all resize the card and
+   throw the scroll position of every card below it. What does not fit goes behind
+   "+N more", which opens the popup that owns the full list.
+
+   min-height rather than height, so the row keeps its box while an expansion is
+   in flight and the chips are momentarily replaced by a single line of text. That
+   swap is the height change the user reported as a jumping scrollbar. */
+.spelling-row {
+  align-items: center; gap: 0.45rem;
+  flex-wrap: nowrap; overflow: hidden; min-height: 1.8rem;
+}
+.spelling-row .hint { margin: 0; font-size: 0.78rem; white-space: nowrap; }
+/* Nothing in the row may shrink or wrap: a chip squeezed to half its text reads
+   as a different spelling from the one it is. */
+.spelling-row > * { flex: none; }
+.spelling-row .chip-tag { white-space: nowrap; }
 .value-note { font-size: 0.78rem; }
 .value-note .hint { margin: 0; }
 /* An error on a row: the invalid tint's foreground, no fill, so it reads as a
@@ -1070,9 +1133,12 @@ input, select {
 .spelling-chip { cursor: grab; user-select: none; color: var(--text); }
 .spelling-chip:active { cursor: grabbing; }
 .spelling-chip:hover { background: var(--tint-orange-3); border-color: var(--accent-light); }
-/* The spelling text inside a chip is its own element so a double-click edits it
-   without the remove button beside it reacting. */
-.spelling-text { cursor: text; }
+/* The spelling text inside a chip is its own element, so the popup's row edit and
+   the card's drag handle are separate targets rather than one ambiguous one. */
+.spelling-text { cursor: inherit; }
+/* "+N more" leads to the same popup "+ add" does, so it is drawn as a sibling of
+   the add chip rather than as a link: one row of affordances, one destination. */
+.spelling-more { font-variant-numeric: tabular-nums; }
 
 /* --- Value editing, filtering and conflicts (My values) ----------------- */
 
@@ -1560,13 +1626,14 @@ mark[data-original]:focus-visible { outline: 2px solid var(--accent); outline-of
    the rail's `overflow: auto` body, or inside a `.cgroup` (which is
    `overflow: hidden`), is CLIPPED at the container's edge, and near the foot of a
    group nothing readable is left. Fixed takes it out of every clipping ancestor,
-   which is why the coordinates cannot come from CSS: `wireHelpTooltips` measures
-   the trigger when the bubble opens and writes --help-x / --help-y. So the
-   data-open rule may only reveal the bubble; anything it added about position
-   would fight the measurement and win. */
+   which is why the coordinates cannot come from CSS: ui.js measures the trigger
+   when the bubble opens and writes --bubble-x / --bubble-y. Every hover surface
+   in the toolkit reads that one pair, because the clipping problem is the same
+   for all of them. So the data-open rule may only reveal the bubble; anything it
+   added about position would fight the measurement and win. */
 .help-bubble {
   position: fixed; z-index: 60;
-  left: var(--help-x, auto); top: var(--help-y, auto);
+  left: var(--bubble-x, auto); top: var(--bubble-y, auto);
   display: none; max-width: 22rem;
   padding: 0.6rem 0.7rem;
   border: 1px solid var(--gray-3); border-radius: var(--card-radius);
@@ -1575,6 +1642,51 @@ mark[data-original]:focus-visible { outline: 2px solid var(--accent); outline-of
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
 }
 .help[data-open] .help-bubble { display: block; }
+
+/* --- The warning popover ------------------------------------------------
+
+   A status icon on a card, whose surface holds the warning text AND the buttons
+   that resolve it. It is what keeps a value card's height independent of how many
+   warnings it carries: a warning rendered as a row makes the card taller when it
+   appears and shorter when it clears, and a list of cards that changes height
+   under the pointer loses the reader's place.
+
+   It shares the fixed-positioning model with .help-bubble, and for the same
+   reason: the card list is a scroll container, so an absolutely positioned surface
+   would be clipped at its edge. */
+.warnpop { position: relative; display: inline-flex; align-items: center; flex: none; }
+/* A bordered circle in the tone's own colour, so it has a resting shape rather
+   than appearing only under the pointer. The glyph is the same for both tones and
+   the COLOUR carries the difference, which the surface then says in words. */
+.warnpop-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.15rem; height: 1.15rem; padding: 0;
+  border: 1px solid currentColor; border-radius: 50%;
+  background: var(--bg); cursor: help;
+}
+.warnpop-icon svg { width: 0.85rem; height: 0.85rem; }
+.warnpop-bad .warnpop-icon { color: var(--err); }
+.warnpop-warn .warnpop-icon { color: var(--warn); }
+.warnpop-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Wider than a help bubble, because it holds sentences and a row of buttons. The
+   coordinates come from ui.js placeBubble, so this rule may only reveal and
+   style: anything it said about position would fight the measurement. */
+.warnpop-bubble {
+  position: fixed; z-index: 60;
+  left: var(--bubble-x, auto); top: var(--bubble-y, auto);
+  display: none; width: max-content; max-width: 26rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--gray-3); border-radius: var(--card-radius);
+  background: var(--bg); color: var(--text);
+  font-size: 0.8rem; line-height: 1.5;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+.warnpop[data-open] .warnpop-bubble { display: flex; flex-direction: column; gap: 0.35rem; }
+.warnpop-bad .warnpop-bubble { border-color: var(--err); }
+.warnpop-warn .warnpop-bubble { border-color: var(--warn); }
+.warnpop-line { display: block; }
+.warnpop-bad .warnpop-line:first-child { color: var(--invalid-fg); }
+.warnpop-bubble .panel-actions { margin-top: 0.15rem; flex-wrap: wrap; }
 
 /* --- The expandable checklist -------------------------------------------
 

@@ -385,6 +385,215 @@ func checkValueCardActions(c *cdpClient, r *reporter) {
 		"The .value-remove handler calls deleteValue(category, mainText) from the card's dataset.")
 }
 
+// --- The value card's geometry, and the scroll position it used to lose -----
+
+type cardGeometryResult struct {
+	Error          string `json:"error"`
+	OverflowsChips *bool  `json:"overflowsChips"`
+	ListScrolls    *bool  `json:"listScrolls"`
+	Deleted        *bool  `json:"deleted"`
+	HasWarningIcon *bool  `json:"hasWarningIcon"`
+
+	HeightBefore    int `json:"heightBefore"`
+	HeightAfterEdit int `json:"heightAfterEdit"`
+	HeightWarned    int `json:"heightWarned"`
+
+	ScrollBefore    int `json:"scrollBefore"`
+	ScrollAfterEdit int `json:"scrollAfterEdit"`
+	ScrollWarned    int `json:"scrollWarned"`
+
+	CardHeight         int `json:"cardHeight"`
+	ScrollBeforeDelete int `json:"scrollBeforeDelete"`
+	ScrollAfterDelete  int `json:"scrollAfterDelete"`
+}
+
+// checkValueCardGeometry asserts a value card's HEIGHT does not depend on its
+// data, and that the value list keeps its place through the actions that used to
+// throw it.
+//
+// The reported symptom was the My values scrollbar jumping upward after editing a
+// spelling, editing a name or deleting a card. The scroll preserver was not
+// broken: it writes back a raw pixel offset, which is right only while the
+// content is the same height. Editing a spelling sends the row back to pending,
+// the chips are replaced by one line of text, the card shrinks, the browser
+// CLAMPS the restored offset to the shorter scrollHeight, and the next repaint
+// snapshots the clamped value. The position is then lost for good.
+//
+// Nothing cheaper can see this. The markup was correct at every step; only a
+// renderer with a real scroll container can measure a height that changed and an
+// offset that was clamped.
+func checkValueCardGeometry(c *cdpClient, r *reporter) {
+	r.step("A value card keeps its height, and the list keeps its place")
+
+	var got cardGeometryResult
+	if err := c.eval("__uiProbes.valueCardGeometry()", &got); err != nil {
+		r.assert("the card-geometry probe runs", false,
+			"a scrolling My values list", err.Error(),
+			"views/identifyworkspace.js valuesTab must render one .value-card per seeded Value.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the card-geometry probe runs", false,
+			"a My values list long enough to scroll", got.Error,
+			"The probe seeds fifteen Values inside #identify-workspace .card-body.")
+		return
+	}
+
+	r.assert("the measured card has more spellings than fit on its line",
+		boolIs(got.OverflowsChips, true),
+		"a \"+N more\" control on the card", describeBool(got.OverflowsChips),
+		"The chip row spends a character budget (identifyworkspace.js SPELLING_PREVIEW_BUDGET) "+
+			"and puts the rest behind \"+N more\". Without an overflow this check measures nothing.")
+
+	r.assert("the popup's own list scrolls rather than growing the popup",
+		boolIs(got.ListScrolls, true),
+		"a .spelling-list taller than its box", describeBool(got.ListScrolls),
+		"style.css .spelling-list caps its height and scrolls, so a Value with fifty "+
+			"spellings is as reachable as one with two.")
+
+	r.assert("a spelling was actually deleted, so the row went back to pending",
+		boolIs(got.Deleted, true),
+		"one spelling removed through the popup", describeBool(got.Deleted),
+		"The popup's per-row Delete calls deleteVariant, which is the edit that used to "+
+			"collapse the chip row.")
+
+	r.assert("the card is the same height after a spelling edit",
+		got.HeightBefore > 0 && got.HeightAfterEdit == got.HeightBefore,
+		fmt.Sprintf("still %dpx", got.HeightBefore), fmt.Sprintf("%dpx", got.HeightAfterEdit),
+		"style.css .spelling-row is one line, overflow:hidden, with a min-height, so a "+
+			"pending expansion swaps the chips for a line of text INSIDE the row instead of "+
+			"removing the row.")
+
+	r.assert("the list keeps its scroll position across a spelling edit",
+		got.ScrollBefore > 0 && got.ScrollAfterEdit == got.ScrollBefore,
+		fmt.Sprintf("scrollTop still %d", got.ScrollBefore), fmt.Sprintf("%d", got.ScrollAfterEdit),
+		"scroll.js restores a raw pixel offset, which the browser clamps when the content "+
+			"got shorter. The card holding its height is what makes the restore exact.")
+
+	r.assert("a warning renders as an icon on the card", boolIs(got.HasWarningIcon, true),
+		"a .warnpop on the card", describeBool(got.HasWarningIcon),
+		"ui.js warningPopover: the warning text and its actions live in a hover surface, "+
+			"not in a row of the card.")
+
+	r.assert("the card is the same height once a warning appears",
+		got.HeightBefore > 0 && got.HeightWarned == got.HeightAfterEdit,
+		fmt.Sprintf("still %dpx", got.HeightAfterEdit), fmt.Sprintf("%dpx", got.HeightWarned),
+		"A warning rendered as a row makes the card taller when it arrives and shorter when "+
+			"it clears, which moves every card below it.")
+
+	r.assert("the list keeps its scroll position when a warning appears",
+		got.ScrollWarned == got.ScrollAfterEdit,
+		fmt.Sprintf("scrollTop still %d", got.ScrollAfterEdit), fmt.Sprintf("%d", got.ScrollWarned), "")
+
+	// Deleting a card genuinely shortens the list, so the offset MAY move. What
+	// must not happen is a clamp to the top, which is what the user reported.
+	drift := got.ScrollBeforeDelete - got.ScrollAfterDelete
+	if drift < 0 {
+		drift = -drift
+	}
+	r.assert("deleting a card moves the list by at most one card",
+		got.CardHeight > 0 && drift <= got.CardHeight,
+		fmt.Sprintf("scrollTop within %dpx of %d", got.CardHeight, got.ScrollBeforeDelete),
+		fmt.Sprintf("%d (moved %dpx)", got.ScrollAfterDelete, drift),
+		"The list really is shorter by one card, so a small clamp is expected. Jumping to the "+
+			"top is not: that is the raw offset being clamped against content that shrank by more "+
+			"than the deleted card.")
+}
+
+// --- The spellings popup ----------------------------------------------------
+
+type spellingsPopupResult struct {
+	Error          string   `json:"error"`
+	MoreLabel      string   `json:"moreLabel"`
+	Box            rect     `json:"box"`
+	Painted        *bool    `json:"painted"`
+	OnScreen       *bool    `json:"onScreen"`
+	ListScrolls    *bool    `json:"listScrolls"`
+	ListScrolled   *bool    `json:"listScrolled"`
+	OnValueAfter   *bool    `json:"onValueAfter"`
+	ChipsAfter     []string `json:"chipsAfter"`
+	PopupHeight    int      `json:"popupHeight"`
+	ViewportHeight int      `json:"viewportHeight"`
+}
+
+// checkSpellingsPopup asserts the popup opens, is genuinely on screen, scrolls
+// inside itself, and updates the card behind it live.
+//
+// The card shows only the spellings that fit one line, so the popup is the only
+// way to reach the rest. A surface that is in the DOM but clipped, or one that
+// grows past the window because its list does not scroll, makes those spellings
+// unreachable while every string test stays green.
+func checkSpellingsPopup(c *cdpClient, r *reporter) {
+	r.step("The spellings popup opens, scrolls, and updates the card live")
+
+	var got spellingsPopupResult
+	if err := c.eval("__uiProbes.spellingsPopup()", &got); err != nil {
+		r.assert("the spellings-popup probe runs", false,
+			"a value card with overflowing spellings", err.Error(),
+			"views/identifyworkspace.js renders \"+N more\" when the chip budget overflows.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the spellings-popup probe runs", false,
+			"a .spellings-popup opened from \"+N more\"", got.Error,
+			"The \"+N more\" handler calls openSpellingsPopup, which sets the view state the "+
+				"workspace renders spellingsPopupHTML from.")
+		return
+	}
+
+	r.assert("\"+N more\" says how many are hidden", strings.HasPrefix(got.MoreLabel, "+"),
+		"a label of the form \"+N more\"", got.MoreLabel,
+		"copy.js WORKSPACE.moreSpellings(n). A control that does not say how much is behind it "+
+			"is a control nobody opens.")
+
+	r.assert("the popup is painted, not clipped away", boolIs(got.Painted, true),
+		"elementFromPoint at the popup's centre returning the popup itself",
+		fmt.Sprintf("%s at %s", describeBool(got.Painted), got.Box),
+		"The rect of a clipped element is still a full-size rect, so this is the check with "+
+			"teeth. The popup is rendered OUTSIDE the scrolling card body for exactly this reason.")
+
+	r.assert("the popup is on screen", boolIs(got.OnScreen, true),
+		fmt.Sprintf("a box inside the %dpx viewport", got.ViewportHeight),
+		fmt.Sprintf("%s at %s", describeBool(got.OnScreen), got.Box), "")
+
+	r.assert("the popup fits the window", got.PopupHeight > 0 && got.PopupHeight <= got.ViewportHeight,
+		fmt.Sprintf("a popup no taller than %dpx", got.ViewportHeight),
+		fmt.Sprintf("%dpx", got.PopupHeight),
+		"style.css .spellings-popup caps its height and the list inside it scrolls, so a Value "+
+			"with fifty spellings does not push the buttons off the bottom of the screen.")
+
+	r.assert("the list scrolls INSIDE the popup", boolIs(got.ListScrolls, true),
+		"a .spelling-list taller than its box", describeBool(got.ListScrolls), "")
+
+	r.assert("and it really scrolls when scrolled", boolIs(got.ListScrolled, true),
+		"a non-zero scrollTop on the .spelling-list", describeBool(got.ListScrolled),
+		"An overflowing element with overflow:hidden reports the same scrollHeight and moves "+
+			"nowhere, so the two checks are separate.")
+
+	r.assert("adding in the popup reaches the Value", boolIs(got.OnValueAfter, true),
+		"the new spelling in state.values", describeBool(got.OnValueAfter),
+		"The popup's Add calls addSpelling(category, mainText, value) from the open popup's own "+
+			"identity.")
+
+	r.assert("and the compact card behind it updates on the same repaint",
+		contains(got.ChipsAfter, "Zzz Popup Spelling"),
+		"the new spelling among the card's chips",
+		fmt.Sprintf("[%s]", strings.Join(got.ChipsAfter, ", ")),
+		"The popup and the card read the same store, which is what makes the edit live: there "+
+			"is no OK button and nothing to apply.")
+}
+
+// contains reports whether a string slice holds a value. The popup check needs
+// it and the standard library has no generic helper this file already imports.
+func contains(list []string, want string) bool {
+	for _, got := range list {
+		if got == want {
+			return true
+		}
+	}
+	return false
+}
+
 // --- The Configure panel's height and its help tooltips ---------------------
 
 type panelFitResult struct {

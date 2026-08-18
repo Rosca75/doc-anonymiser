@@ -15,7 +15,9 @@ import {
   groupValues, curate, acceptSuggestion, setIntersections, canGoTo,
   relatedTo,
 } from "./state.js";
-import { valuesTab, suggestionsTab, visibleValues } from "./views/identifyworkspace.js";
+import {
+  valuesTab, suggestionsTab, visibleValues, previewSpellings,
+} from "./views/identifyworkspace.js";
 import { all, one, exists, textOf, stripTags, attr } from "./testhtml.js";
 import { WORKSPACE } from "./copy.js";
 
@@ -112,13 +114,17 @@ test("visibleValues narrows to one type", () => {
   assert.equal(visibleValues(es, { type: "person_names" })[0].mainText, "Marie Duval");
 });
 
-test("spellings show by default, and the toggle offers to hide them", () => {
+test("spellings are always shown, and there is no toggle to hide them", () => {
+  // The card shows a bounded one-line preview and the popup owns the full list,
+  // so a toggle would change every card's height for no information the popup
+  // does not already give. Height is the whole point: a list of cards that
+  // resizes under the pointer loses the reader's place.
   resetState();
   seed("person_names", "Marie Duval", ["Marie Duval", "Marie"]);
   const html = valuesTab(getState());
-  assert.ok(exists(html, "span.spelling-chip"), "spellings are shown by default");
-  // The toggle is a live control that names the action it would take next.
-  assert.match(textOf(html, "button#btn-toggle-derivedSpellings"), /Hide spellings/);
+  assert.ok(exists(html, "span.spelling-chip"), "spellings are shown");
+  assert.ok(!exists(html, "button#btn-toggle-derivedSpellings"),
+    "a control that changes every card's height is not offered");
 });
 
 test("a suggestion row carries a type dropdown set to its guessed category", () => {
@@ -204,9 +210,14 @@ test("a Value card explains the evidence behind it", () => {
   acceptSuggestion("Pierre Dupont");
   setValueSpellings("person_names", "Pierre Dupont", ["Pierre Dupont"]);
 
-  const note = textOf(valuesTab(getState()), "span.evidence-note");
-  assert.match(note, /pierre\.dupont@tpps\.com/, "the evidence names what can be checked");
-  assert.match(note, /engagement\.md/, "and where it was found");
+  // It is behind the card's info tooltip rather than on a row of its own: it is
+  // informational, and a row that appears when evidence arrives is one more thing
+  // making the card's height depend on its data.
+  const note = attr(valuesTab(getState()), "span.help-bubble", "id");
+  assert.ok(note, "the card carries an info tooltip");
+  const text = textOf(valuesTab(getState()), "span.help-bubble");
+  assert.match(text, /pierre\.dupont@tpps\.com/, "the evidence names what can be checked");
+  assert.match(text, /engagement\.md/, "and where it was found");
 });
 
 test("a Value the user typed is labelled as theirs", () => {
@@ -235,13 +246,50 @@ test("a fully covered value says it is never replaced under its own type", () =>
   setIntersections([overlap()]);
   const html = valuesTab(getState());
 
-  const note = one(html, "div.intersection-note");
-  assert.ok(note.inner.includes("Every occurrence"),
+  // The warning is an ICON whose surface holds the text and the actions. It is
+  // not a row, because a row that appears when a warning arrives and vanishes
+  // when it clears makes the card's height depend on its data.
+  const pop = one(html, "span.warnpop");
+  assert.match(pop.attrs.class, /warnpop-warn/,
+    "an intersection is a warning, so it wears the warning tone");
+  const text = textOf(html, "span.warnpop-bubble");
+  assert.ok(text.includes("Every occurrence"),
     "a value nothing leaves alone is the case worth shouting about");
   // The winning method is named in the same words the method chip uses.
-  assert.ok(note.inner.includes(WORKSPACE.matchClassLabel.built_in_pattern),
+  assert.ok(text.includes(WORKSPACE.matchClassLabel.built_in_pattern),
     "the warning names the winning method, never an internal rank");
-  assert.ok(note.inner.includes("Priority order"), "the rule that decided is stated");
+  assert.ok(text.includes("Priority order"), "the rule that decided is stated");
+  // The two gestures that resolve it come with the sentence that explains it.
+  const bubble = one(html, "span.warnpop-bubble").inner;
+  assert.match(bubble, /class="[^"]*intersection-allow/,
+    "the covering term can be allowlisted from where the warning is read");
+  assert.match(bubble, /class="[^"]*value-group/,
+    "and the two values can be grouped from there too");
+});
+
+test("a blocking conflict wears the error tone, an intersection does not", () => {
+  // One icon and never two: a card with something to FIX before the run has that
+  // as its whole message until it is fixed.
+  resetState();
+  seed("entity_names", "Acme", ["Acme"]);
+  seed("person_names", "Acme", ["Acme"]); // the same name under two types
+  const html = valuesTab(getState());
+  const pops = all(html, "span.warnpop");
+  assert.equal(pops.length, 2, "both sides of the ambiguity are warned");
+  for (const pop of pops) {
+    assert.match(pop.attrs.class, /warnpop-bad/, "a conflict is an error, not a warning");
+  }
+  for (const bubble of all(html, "span.warnpop-bubble")) {
+    assert.match(bubble.inner, /class="[^"]*value-solve/,
+      "Solve conflicts is reached from the warning that explains it");
+  }
+});
+
+test("a clean card carries no status icon at all", () => {
+  resetState();
+  seed("entity_names", "Alpine", ["Alpine"]);
+  assert.ok(!exists(valuesTab(getState()), "span.warnpop"),
+    "nothing is wrong, so nothing is drawn");
 });
 
 test("a fully covered value with no separate literal names itself once", () => {
@@ -253,7 +301,7 @@ test("a fully covered value with no separate literal names itself once", () => {
   // The visible TEXT, not the HTML: the quotation marks the sentence puts round
   // the value are escaped entities in the markup and only decode on the way to
   // the user, which is who the sentence is for.
-  const sentence = textOf(valuesTab(getState()), "span.warn-hint");
+  const sentence = textOf(valuesTab(getState()), "span.warnpop-bubble");
   assert.ok(sentence.includes('"marie.duval@example.com"'), "the value is quoted");
   assert.ok(!sentence.includes("a spelling of"),
     "there is no other literal to name, so no spelling clause");
@@ -270,7 +318,7 @@ test("a covered value whose literal differs names the literal as a spelling", ()
     winnerMatchClass: "built_in_pattern",
     matchedTexts: ["coca"],
   })]);
-  const sentence = textOf(valuesTab(getState()), "span.warn-hint");
+  const sentence = textOf(valuesTab(getState()), "span.warnpop-bubble");
   assert.ok(sentence.includes('"coca" (a spelling of "Coca")'),
     `the literal covered text is named, got ${sentence}`);
 });
@@ -286,7 +334,7 @@ test("two covered fragments are both named, in the plural", () => {
     winnerMatchClass: "built_in_pattern",
     matchedTexts: ["pierre", "dupont"],
   })]);
-  const sentence = textOf(valuesTab(getState()), "span.warn-hint");
+  const sentence = textOf(valuesTab(getState()), "span.warnpop-bubble");
   assert.ok(sentence.includes('"pierre", "dupont" (spellings of "Pierre Dupont")'),
     `both fragments are named, got ${sentence}`);
 });
@@ -442,8 +490,8 @@ test("an accepted Value keeps naming the Values that share its evidence", () => 
     setValueSpellings("entity_names", v.mainText, [v.mainText]);
   }
 
-  const notes = all(valuesTab(getState()), "span.related-note").map((n) => stripTags(n.inner));
-  assert.equal(notes.length, 2);
+  const notes = all(valuesTab(getState()), "span.help-bubble").map((n) => stripTags(n.inner));
+  assert.equal(notes.length, 2, "each card carries its own info tooltip");
   assert.match(notes[0], /Tpps Holdings/);
 });
 
@@ -483,4 +531,96 @@ test("no attribute name in the values tab carries an upper-case letter", () => {
   }
   assert.deepEqual(offenders, [],
     `these rendered attribute names carry an upper-case letter and are unreachable through dataset: ${offenders.join(", ")}`);
+});
+
+// --- The bounded chip row -------------------------------------------------
+//
+// The card shows the spellings that fit ONE LINE and puts the rest behind
+// "+N more". That is a geometry contract: a chip row that grows with the data
+// makes the card's height a function of its data, and a list of cards that
+// resize under the pointer loses the reader's place.
+
+test("previewSpellings spends a character budget, not a chip count", () => {
+  // Three long spellings overflow a line that ten initials sit inside, which is
+  // why the budget is characters rather than a fixed number of chips.
+  const { shown, hidden } = previewSpellings(
+    ["Alpine Trust Holdings SA", "Alpine Trust Holdings", "Alpine Trust", "Alpine", "AT"], 30);
+  assert.deepEqual(shown, ["Alpine Trust Holdings SA"], "24 characters fit, the next 21 do not");
+  assert.deepEqual(hidden, ["Alpine Trust Holdings", "Alpine Trust", "Alpine", "AT"]);
+});
+
+test("previewSpellings always shows one chip, however long it is", () => {
+  // Otherwise a value whose only spelling is long renders a row of nothing but
+  // "+1 more", which reads as a card with no spellings at all.
+  const long = "an extremely long single spelling that alone exceeds any sane budget";
+  const { shown, hidden } = previewSpellings([long], 10);
+  assert.deepEqual(shown, [long]);
+  assert.deepEqual(hidden, []);
+});
+
+test("previewSpellings stops at the first chip that does not fit", () => {
+  // It does not skip past it to pick up a shorter one further down: the list is
+  // ordered, and a preview that reorders it is a preview of a different list.
+  const { shown, hidden } = previewSpellings(["abcde", "fghijklmno", "pq"], 10);
+  assert.deepEqual(shown, ["abcde"]);
+  assert.deepEqual(hidden, ["fghijklmno", "pq"]);
+});
+
+test("previewSpellings keeps everything when it all fits", () => {
+  const { shown, hidden } = previewSpellings(["Marie Duval", "Marie", "M. Duval"], 65);
+  assert.deepEqual(shown, ["Marie Duval", "Marie", "M. Duval"]);
+  assert.deepEqual(hidden, []);
+});
+
+test("a card with few spellings shows them all and offers no overflow", () => {
+  resetState();
+  seed("person_names", "Marie Duval", ["Marie Duval", "Marie"]);
+  const html = valuesTab(getState());
+  assert.equal(all(html, "span.spelling-chip").length, 2);
+  assert.ok(!exists(html, "button.spelling-more"), "nothing overflows, so nothing is offered");
+  assert.ok(exists(html, "button.spelling-add"), "adding is always offered");
+});
+
+test("a card with many spellings shows a preview and counts the rest", () => {
+  resetState();
+  const many = [
+    "Meridian Consulting Group SA", "Meridian Consulting Group",
+    "Meridian Consulting", "Meridian", "MCG", "MC",
+  ];
+  seed("entity_names", "Meridian", many);
+  const html = valuesTab(getState());
+
+  const chips = all(html, "span.spelling-chip").map((c) => c.attrs["data-spelling"]);
+  const { shown, hidden } = previewSpellings(many);
+  assert.deepEqual(chips, shown, "the card shows exactly what the budget allows");
+  assert.ok(hidden.length > 0, "this fixture must actually overflow, or it proves nothing");
+  assert.equal(textOf(html, "button.spelling-more"), WORKSPACE.moreSpellings(hidden.length));
+});
+
+test("the visible chips are drag sources and carry no delete of their own", () => {
+  // Dragging a chip onto another card still regroups it: that is the quick
+  // gesture. The per-chip delete grew the row, so it lives in the popup, which is
+  // also where a spelling in the overflow is reached.
+  resetState();
+  seed("person_names", "Marie Duval", ["Marie Duval", "Marie"]);
+  const html = valuesTab(getState());
+  for (const chip of all(html, "span.spelling-chip")) {
+    assert.equal(chip.attrs.draggable, "true");
+    assert.ok(chip.attrs["data-spelling"], "the drag payload is on the chip");
+  }
+  assert.ok(!exists(html, "button.spelling-del"), "no per-chip delete on the compact card");
+});
+
+test("a pending expansion replaces the chips inside the row, never below it", () => {
+  // This is the height change the owner reported as a jumping scrollbar: editing
+  // a spelling resets the row to pending, the chips vanish, the card shrinks, and
+  // the browser clamps the list's scroll offset to the shorter content.
+  resetState();
+  addValues([{ category: "person_names", mainText: "Marie Duval" }]);
+  const html = valuesTab(getState());
+  const row = one(html, "div.spelling-row");
+  assert.ok(stripTags(row.inner).includes(WORKSPACE.spellingsPending),
+    "the pending line is inside the one row");
+  assert.equal(all(html, "div.value-note").length, 0,
+    "and it adds no row of its own");
 });

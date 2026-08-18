@@ -188,6 +188,22 @@ unknown height is not a contract.
   a hit test at the bubble's own coordinates: the rect of a clipped element is
   still a full-size rect. The keyboard path is driven too, because an explanation
   only a pointer can reach is one half the users never get.
+- **a value card keeps its HEIGHT through a spelling edit and a warning
+  appearing, and the list keeps its scroll position.** This is the one the
+  cheaper layers structurally cannot make: the markup was correct at every step.
+  `scroll.js` restores a raw pixel offset, which is right only while the content
+  is the same height; a card that shrank made the browser clamp the restored
+  offset, and the next repaint snapshotted the clamped value. Deleting a card
+  legitimately shortens the list, so there the assertion is that the offset moves
+  by **at most one card height**, never to the top.
+- **the spellings popup opens, is painted rather than clipped, scrolls inside
+  itself, and updates the card behind it live.** The card shows only the
+  spellings that fit one line, so the popup is the only way to reach the rest: a
+  surface that is in the DOM but clipped, or one that grows past the window
+  because its list does not scroll, makes them unreachable while every string
+  test stays green. Painted is checked with `elementFromPoint` at the popup's own
+  centre, for the reason the tooltip check gives: the rect of a clipped element
+  is still a full-size rect.
 - **a real `mouseenter` on a `mark[data-original]` produces a visible
   `#mark-tooltip`** (issue 6). Three marks are hovered: the first, and the two
   nearest the pane's right and bottom edges, because the middle of the pane was
