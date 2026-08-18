@@ -681,73 +681,79 @@ function holdsFocus(pop, doc) {
 }
 
 /**
- * expandableChecklist(opts) is a list of expandable GROUPS, each a master switch
- * over the rows it holds.
+ * signalDrillDown(opts) draws ONE signal's readings as a drill-down ON the row of
+ * the built-in pattern category that IS that signal.
  *
- * It answers a nested question, which a flat checklist cannot: not "which signals
- * may derive Suggestions" but "what would this signal derive, and do I want each of
- * those?". Collapsed, a group is one row: its own checkbox and a read-out of what
- * is on. Expanded, it is the individual switches. That trade is what keeps the
- * panel short as sources and readings are added.
+ * The question is nested, so the control is nested where the question is. The row
+ * itself (`headHTML`, which this builder only places) asks whether the signal is
+ * matched and replaced at all; the drill-down asks what that same match may
+ * additionally be READ AS: an address's local part is evidence for a person and
+ * its domain is evidence for an organisation, through two separate mechanisms, and
+ * wanting one without the other is a reasonable thing to want. Putting the
+ * readings on the signal's own row is what keeps them beside the thing they read
+ * instead of in a block of the panel that has to name it again, and collapsed they
+ * cost no row at all.
  *
- * The group checkbox is a MASTER over its rows, and it is DERIVED for display (on
- * when any row is on) rather than stored: a flag beside the set it summarises can
- * disagree with it, and a group reading "on" while every row under it is off lies
- * about what a run does. The caller computes `checked`; this builder only draws it.
+ * The button opens and closes the readings and NEVER ticks anything: two jobs on
+ * one element is how a switch gets flipped by accident. The panel's own checkbox
+ * is a MASTER over the readings, DERIVED for display (on when any reading is on)
+ * rather than stored: a flag beside the set it summarises can disagree with it,
+ * and a master reading "on" while every reading under it is off lies about what a
+ * run does. The caller computes `checked`; this builder only draws it.
  *
- * It is DATA-DRIVEN: the groups and rows come from the caller's lists, so a new
- * entry needs no new markup and no new persisted flag.
+ * It is DATA-DRIVEN: the readings come from the caller's list, so a new reading is
+ * one constant and one producer rather than new markup and a new persisted flag.
  *
  * @param {object} opts
- * @param {string} opts.id the control's element id
- * @param {string} opts.label the label over the whole control
- * @param {Array<object>} opts.groups one per switchable group:
- *   {id, label, summary, checked, open,
- *    rows: Array<{id, label, detail?, checked, helpHTML?}>, helpHTML?}
- * @param {string} [opts.helpHTML] a helpTooltip to sit beside the control's label
+ * @param {string} opts.source the signal identifier, which is also the category key
+ * @param {string} opts.label the drill-down button's label
+ * @param {string} opts.headHTML trusted markup for the category row itself
+ * @param {string} [opts.helpHTML] a helpTooltip, placed AFTER the button: it
+ *   explains the readings, so it belongs beside the control that opens them
+ * @param {string} [opts.tailHTML] trusted markup closing the row (the example)
+ * @param {string} opts.title the panel's heading, naming what the readings derive from
+ * @param {string} [opts.summary] the panel's read-out of how many readings are on
+ * @param {boolean} [opts.checked] the derived master's state
+ * @param {boolean} [opts.open] whether the readings are revealed
+ * @param {Array<object>} opts.rows one per reading:
+ *   {id, label, detail?, checked, helpHTML?}
  * @returns {string} safe HTML
  */
-export function expandableChecklist(opts) {
-  const groups = (opts.groups ?? []).map((group) => {
-    const rows = (group.rows ?? []).map((row) =>
-      `<div class="checklist-row">` +
-      `<label class="checklist-row-label">` +
-      `<input type="checkbox" class="checklist-box" data-derivation="${escapeHTML(row.id)}"` +
-      `${row.checked ? " checked" : ""}/>` +
-      `<span class="checklist-label">${escapeHTML(row.label)}</span>` +
-      (row.detail ? `<span class="checklist-detail">${escapeHTML(row.detail)}</span>` : "") +
-      `</label>` +
-      (row.helpHTML ?? "") +
-      `</div>`).join("");
+export function signalDrillDown(opts) {
+  const rows = (opts.rows ?? []).map((row) =>
+    `<div class="signal-reading">` +
+    `<label class="signal-reading-label">` +
+    `<input type="checkbox" class="signal-box" data-derivation="${escapeHTML(row.id)}"` +
+    `${row.checked ? " checked" : ""}/>` +
+    `<span class="signal-label">${escapeHTML(row.label)}</span>` +
+    (row.detail ? `<span class="signal-detail">${escapeHTML(row.detail)}</span>` : "") +
+    `</label>` +
+    (row.helpHTML ?? "") +
+    `</div>`).join("");
 
-    const listId = `${opts.id}-${group.id}-rows`;
-    return `<div class="checklist-group" data-group="${escapeHTML(group.id)}"` +
-      `${group.open ? ` data-open="true"` : ""}>` +
-      `<div class="checklist-group-head">` +
-      // The chevron is its own button, so ticking the master does not fold the
-      // group and folding it does not tick the master. One control per intent.
-      `<button type="button" class="checklist-group-toggle"` +
-      ` aria-expanded="${group.open ? "true" : "false"}" aria-controls="${escapeHTML(listId)}"` +
-      ` aria-label="${escapeHTML(group.label)}">${icon("expand_more")}</button>` +
-      `<label class="checklist-group-label">` +
-      `<input type="checkbox" class="checklist-master" data-source="${escapeHTML(group.id)}"` +
-      `${group.checked ? " checked" : ""}/>` +
-      `<span class="checklist-label">${escapeHTML(group.label)}</span>` +
-      `</label>` +
-      `<span class="checklist-summary">${escapeHTML(group.summary ?? "")}</span>` +
-      (group.helpHTML ?? "") +
-      `</div>` +
-      `<div class="checklist-rows" id="${escapeHTML(listId)}"${group.open ? "" : " hidden"}>` +
-      rows +
-      `</div></div>`;
-  }).join("");
-
-  return `<div class="checklist" id="${escapeHTML(opts.id)}">` +
-    `<div class="checklist-head">` +
-    `<span class="checklist-title">${escapeHTML(opts.label)}${opts.helpHTML ?? ""}</span>` +
+  const panelId = `signal-${opts.source}-readings`;
+  return `<div class="signal-row" data-signal-source="${escapeHTML(opts.source)}"` +
+    `${opts.open ? ` data-open="true"` : ""}>` +
+    `<div class="signal-row-head">` +
+    (opts.headHTML ?? "") +
+    `<button type="button" class="signal-drill" data-signal-source="${escapeHTML(opts.source)}"` +
+    ` aria-expanded="${opts.open ? "true" : "false"}" aria-controls="${escapeHTML(panelId)}">` +
+    `<span class="signal-drill-label">${escapeHTML(opts.label)}</span>${icon("expand_more")}` +
+    `</button>` +
+    (opts.helpHTML ?? "") +
+    (opts.tailHTML ?? "") +
     `</div>` +
-    `<div class="checklist-groups">${groups}</div>` +
-    `</div>`;
+    `<div class="signal-readings" id="${escapeHTML(panelId)}"${opts.open ? "" : " hidden"}>` +
+    `<div class="signal-readings-head">` +
+    `<label class="signal-readings-title">` +
+    `<input type="checkbox" class="signal-master" data-source="${escapeHTML(opts.source)}"` +
+    `${opts.checked ? " checked" : ""}/>` +
+    `<span class="signal-label">${escapeHTML(opts.title ?? "")}</span>` +
+    `</label>` +
+    `<span class="signal-count">${escapeHTML(opts.summary ?? "")}</span>` +
+    `</div>` +
+    rows +
+    `</div></div>`;
 }
 
 /**

@@ -211,9 +211,16 @@ type railResult struct {
 	Categories                    int      `json:"categories"`
 	CategoriesWithSize            int      `json:"categoriesWithSize"`
 	CategoriesWithSizeAfterExpand int      `json:"categoriesWithSizeAfterExpand"`
-	SignalGroups                  []string `json:"signalGroups"`
+	SignalRows                    []string `json:"signalRows"`
 	SignalMasters                 []string `json:"signalMasters"`
-	MethodPairRow                 *struct {
+	SignalRowLine                 *struct {
+		SameRow           *bool  `json:"sameRow"`
+		DrillIsAfterLabel *bool  `json:"drillIsAfterLabel"`
+		HelpIsAfterDrill  *bool  `json:"helpIsAfterDrill"`
+		FitsTheRail       *bool  `json:"fitsTheRail"`
+		Widths            string `json:"widths"`
+	} `json:"signalRowLine"`
+	MethodPairRow *struct {
 		BuiltInTop            int      `json:"builtInTop"`
 		HeuristicTop          int      `json:"heuristicTop"`
 		SameRow               *bool    `json:"sameRow"`
@@ -285,20 +292,53 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 		"A folded group is only useful if it opens: collapsibleGroup + wireGroups reveal the "+
 			"checkboxes, and a folded-forever group would be a category the user cannot reach.")
 
-	// The signal control is a tree, and it is built from the frontend's lists, which
-	// the Go parity guard holds to the engine's. One group per signal, one master per
-	// group: a master over nothing, or a group with no master, is a control that
-	// cannot say what it does.
-	r.assert("the signal control is one group per signal", len(got.SignalGroups) == 1,
-		"1 .checklist-group (one implemented signal source)",
-		fmt.Sprintf("%d: %v", len(got.SignalGroups), got.SignalGroups),
-		"views/identifyrail.js builds the groups from state.js SIGNAL_SOURCES.")
+	// The signal control is a tree hanging off the category row of the signal it
+	// reads, and it is built from the frontend's lists, which the Go parity guard
+	// holds to the engine's. One drill-down per signal, one master per drill-down: a
+	// master over nothing, or a drill-down with no master, is a control that cannot
+	// say what it does.
+	r.assert("each signal has a drill-down on its own category row", len(got.SignalRows) == 1,
+		"1 .signal-row (one implemented signal source)",
+		fmt.Sprintf("%d: %v", len(got.SignalRows), got.SignalRows),
+		"views/identifyrail.js hangs a signalDrillDown off the category row of every "+
+			"state.js SIGNAL_SOURCES entry.")
 
-	r.assert("every signal group has its own master switch",
-		len(got.SignalMasters) == len(got.SignalGroups),
-		"one .checklist-master per group",
-		fmt.Sprintf("%d masters for %d groups: %v", len(got.SignalMasters), len(got.SignalGroups), got.SignalMasters),
+	r.assert("every drill-down has its own master switch",
+		len(got.SignalMasters) == len(got.SignalRows),
+		"one .signal-master per drill-down",
+		fmt.Sprintf("%d masters for %d drill-downs: %v", len(got.SignalMasters), len(got.SignalRows), got.SignalMasters),
 		"The master is what saves switching a whole signal off one reading at a time.")
+
+	// "On the row" is a claim about geometry: markup order proves nothing, since a
+	// row narrower than its contents wraps the same markup onto two lines and the
+	// rail is the narrowest column in the application.
+	if line := got.SignalRowLine; line == nil {
+		r.assert("the signal row renders its drill-down and help icon", false,
+			".cat-label, .signal-drill and span.help in one .signal-row-head",
+			"one of them is missing",
+			"views/identifyrail.js signalCategoryRow passes the row, the button and the help "+
+				"tooltip to ui.js signalDrillDown.")
+	} else {
+		r.assert("the drill-down and its help icon sit on the category row",
+			boolIs(line.SameRow, true),
+			"the label, the button and the icon at the same y (within 2px)",
+			fmt.Sprintf("sameRow=%s (%s)", describeBool(line.SameRow), line.Widths),
+			"style.css .signal-row-head is one flex line. A drill-down that wraps below its "+
+				"own label no longer reads as belonging to it.")
+
+		r.assert("they are ordered label, drill-down, help icon",
+			boolIs(line.DrillIsAfterLabel, true) && boolIs(line.HelpIsAfterDrill, true),
+			"the button after the label, the icon after the button",
+			fmt.Sprintf("drillAfterLabel=%s, helpAfterDrill=%s",
+				describeBool(line.DrillIsAfterLabel), describeBool(line.HelpIsAfterDrill)),
+			"The icon explains what the button opens, so it follows the button.")
+
+		r.assert("the row still fits the rail", boolIs(line.FitsTheRail, true),
+			"no horizontal overflow in .signal-row-head",
+			line.Widths,
+			"The rail is the narrowest column in the application and the page body never "+
+				"scrolls sideways (the fixed-height layout contract).")
+	}
 
 	// "Side by side" is a claim about geometry, so geometry is what answers it.
 	// Markup order proves nothing here: a column-flex parent stacks the same
@@ -689,12 +729,13 @@ func checkConfigurePanelFit(c *cdpClient, r *reporter) {
 			"to the end must land on them.")
 }
 
-// --- Expanding a signal shows its readings ----------------------------------
+// --- Opening a signal's drill-down shows its readings ------------------------
 
 type signalDerivationResult struct {
 	Error                    string `json:"error"`
 	Source                   string `json:"source"`
 	CollapsedRows            int    `json:"collapsedRows"`
+	RowLaidOut               *bool  `json:"rowLaidOut"`
 	CollapsedVisible         int    `json:"collapsedVisible"`
 	OpenedVisible            int    `json:"openedVisible"`
 	Derivation               string `json:"derivation"`
@@ -704,39 +745,39 @@ type signalDerivationResult struct {
 	MasterAfterTick          *bool  `json:"masterAfterTick"`
 }
 
-// checkSignalDerivations asserts that expanding a signal REVEALS its readings and
-// that each is independently switchable.
+// checkSignalDerivations asserts that opening a signal's drill-down REVEALS its
+// readings and that each is independently switchable.
 //
 // Collapsed, the readings are in the DOM at zero height: present to a string test
-// and absent to the user. So "expanding shows them" is a claim about geometry, and
+// and absent to the user. So "opening it shows them" is a claim about geometry, and
 // only this layer can answer it. It also drives the two controls that must stay
-// separate, since two jobs on one element is how a master gets switched by
-// accident: the chevron folds without ticking, and the master ticks without
-// folding.
+// separate, since two jobs on one element is how a setting gets flipped by
+// accident: the button opens without ticking, and a reading ticks without closing.
 func checkSignalDerivations(c *cdpClient, r *reporter) {
-	r.step("Expanding a signal reveals its readings, each switchable on its own")
+	r.step("Opening a signal's drill-down reveals its readings, each switchable on its own")
 
 	var got signalDerivationResult
 	if err := c.eval("__uiProbes.signalDerivations()", &got); err != nil {
-		r.assert("the signal-derivation probe runs", false, "a rendered signal control",
+		r.assert("the signal-derivation probe runs", false, "a rendered signal drill-down",
 			err.Error(),
-			"views/identifyrail.js signalSourceControl renders ui.js expandableChecklist.")
+			"views/identifyrail.js signalCategoryRow renders ui.js signalDrillDown.")
 		return
 	}
 	if got.Error != "" {
-		r.assert("the signal-derivation probe runs", false, "#signal-sources in the Identify rail",
-			got.Error, "The control is one of Smart detection's three methods.")
+		r.assert("the signal-derivation probe runs", false, ".signal-row in the Identify rail",
+			got.Error, "Every state.js SIGNAL_SOURCES entry is a category with a row of its own.")
 		return
 	}
 
-	r.assert("a collapsed signal costs no vertical space",
-		got.CollapsedRows > 0 && got.CollapsedVisible == 0,
-		fmt.Sprintf("%d readings in the DOM, none of them laid out", got.CollapsedRows),
-		fmt.Sprintf("%d readings, %d with a height", got.CollapsedRows, got.CollapsedVisible),
-		"Collapsed the group is one row. That trade is what keeps the panel short as "+
-			"sources and readings are added, and a string test cannot tell the two states apart.")
+	r.assert("a collapsed drill-down costs no vertical space",
+		got.CollapsedRows > 0 && got.CollapsedVisible == 0 && boolIs(got.RowLaidOut, true),
+		fmt.Sprintf("the category row laid out, its %d readings not", got.CollapsedRows),
+		fmt.Sprintf("row laid out=%s, %d readings, %d with a height",
+			describeBool(got.RowLaidOut), got.CollapsedRows, got.CollapsedVisible),
+		"Collapsed the readings cost no row at all. That trade is what keeps the panel short "+
+			"as signals and readings are added, and a string test cannot tell the two states apart.")
 
-	r.assert("expanding it reveals every reading",
+	r.assert("opening it reveals every reading",
 		got.OpenedVisible == got.CollapsedRows,
 		fmt.Sprintf("all %d readings laid out with a height after one click", got.CollapsedRows),
 		fmt.Sprintf("%d of %d", got.OpenedVisible, got.CollapsedRows),
@@ -752,15 +793,15 @@ func checkSignalDerivations(c *cdpClient, r *reporter) {
 		"The independence is the whole point of the per-reading switches; the engine "+
 			"honours each on its own (backend/engine/signaldiscovery.go).")
 
-	r.assert("ticking a reading does not fold the group",
+	r.assert("ticking a reading does not close the drill-down",
 		boolIs(got.GroupStayedOpenAfterTick, true),
 		"the readings still laid out after the tick", describeBool(got.GroupStayedOpenAfterTick),
-		"The checkbox stops the click reaching the head. A group that folds as you tick it "+
-			"makes switching two readings a four-click job.")
+		"The checkbox stops the click reaching anything else. A drill-down that closes as you "+
+			"tick it makes switching two readings a four-click job.")
 
 	r.assert("the master stays on while any reading is on",
 		boolIs(got.MasterAfterTick, true),
-		"the group's master still checked with one of two readings off",
+		"the drill-down's master still checked with one of two readings off",
 		describeBool(got.MasterAfterTick),
 		"The master is DERIVED (state.js signalSourceOn): on when any reading is on. A "+
 			"master that dropped with the first reading would misreport what the run does.")

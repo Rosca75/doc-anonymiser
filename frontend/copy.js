@@ -238,9 +238,10 @@ export const RAIL = {
   heuristicDiscovery: "Heuristic discovery",
   heuristicDiscoveryHelp: "Finds recurring names from spelling, context and frequency, and suggests them for review.",
 
-  // The signal-based control: one expandable row per signal, its individual
-  // READINGS underneath. It switches whether a built-in pattern match may be used
-  // as EVIDENCE to find related text, and nothing else.
+  // The signal-based control: a drill-down ON the category row of the signal it
+  // reads, opening that signal's individual READINGS. It switches whether a
+  // built-in pattern match may be used as EVIDENCE to find related text, and
+  // nothing else. This is the label of the button that opens the readings.
   signalSuggestions: "Signal-based suggestions",
   signalSuggestionsHelp: "A matched signal can also be evidence about text written elsewhere: an email address names a person and an organisation, and both may appear in prose in another file. Those become Suggestions you accept or reject. Clearing a reading here stops those suggestions and does NOT stop the signal itself being anonymised, which is governed by Built-in patterns and the signal's own category.",
   // One label per engine signal source, enforced by ../detection_parity_test.go.
@@ -267,16 +268,24 @@ export const RAIL = {
   },
   signalSourcesOff: "Off",
   /**
-   * signalDerivationSummary(names) is a collapsed signal row's read-out: "Off", the
-   * one reading that is on, or the readings joined. It names them rather than
-   * counting them, because the row is a question about WHICH reading and a count
-   * answers a different one; the list is short by construction, since a signal with
-   * many readings would be a signal whose row should not be one line.
+   * signalDerivedFrom(sourceLabel) heads the opened drill-down, naming the signal
+   * the readings under it are read FROM. The panel hangs off the signal's own row,
+   * so the heading confirms which row opened rather than introducing the feature
+   * again: that explanation is one hover away, in signalSuggestionsHelp.
    */
-  signalDerivationSummary(names) {
-    if (names.length === 0) return "Off";
-    if (names.length === 1) return names[0];
-    return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  signalDerivedFrom(sourceLabel) {
+    return `Suggestions derived from ${String(sourceLabel).toLowerCase()}`;
+  },
+  /**
+   * signalDerivationCount(n) is the opened panel's read-out: how many of this
+   * signal's readings are on. A COUNT rather than their names, because the names
+   * are the rows immediately below it, and repeating them there says nothing the
+   * user cannot already see. Zero reads as "Off", the one state worth naming: it
+   * means this signal derives nothing at all.
+   */
+  signalDerivationCount(n) {
+    if (n === 0) return this.signalSourcesOff;
+    return `${n} active`;
   },
   routeOn: "On",
   routeOff: "Off",

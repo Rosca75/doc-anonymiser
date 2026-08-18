@@ -242,32 +242,32 @@ test("the scope controls live inside the Smart detection section", () => {
   assert.ok(exists(smart, "#smart-min-length"), "and the strictness fields");
 });
 
-test("Smart detection's three methods lead the section", () => {
+test("Smart detection's two plain methods lead the section", () => {
   const smart = all(railHTML(), "section.rail-section")[0].outer;
   const builtIn = one(smart, "#smart-built-in");
   const heuristic = one(smart, "#smart-heuristic");
   assert.ok(builtIn, "the built-in pattern switch renders");
   assert.ok(heuristic, "the heuristic discovery switch renders");
-  assert.ok(exists(smart, "#signal-sources"), "the signal-source checklist renders");
   assert.ok("checked" in builtIn.attrs, "built-in patterns default on");
   assert.ok("checked" in heuristic.attrs, "heuristic discovery defaults on");
-  // All three lead the section: each appears before the first category checkbox.
+  // Both lead the section: each appears before the first category checkbox.
   const firstCat = smart.indexOf('class="cat-toggle"');
-  for (const marker of ['id="smart-built-in"', 'id="smart-heuristic"', 'id="signal-sources"']) {
+  for (const marker of ['id="smart-built-in"', 'id="smart-heuristic"']) {
     const at = smart.indexOf(marker);
     assert.ok(at >= 0, `${marker} renders`);
     assert.ok(at < firstCat, `${marker} comes before the category block it governs`);
   }
   assert.ok(smart.includes(RAIL.builtInPatterns), "the Built-in patterns label renders");
   assert.ok(smart.includes(RAIL.heuristicDiscovery), "the Heuristic discovery label renders");
-  assert.ok(smart.includes(RAIL.signalSuggestions), "the Signal-based suggestions label renders");
+  // The route's third method has no switch of its own up here: it is a set of
+  // readings OF particular signals, so it hangs off those signals' own rows.
+  assert.ok(smart.indexOf(RAIL.signalSuggestions) > firstCat,
+    "signal-based suggestions live in the category list, not above it");
 });
 
-test("the two plain method switches share one row, the expanding one does not", () => {
+test("the two plain method switches share one row, and nothing else joins them", () => {
   // The panel's height is its scarcest resource and these two carry the shortest
   // labels in the rail, so they are one row of two rather than two rows of one.
-  // The signal control keeps its own row because it EXPANDS: rows appearing under
-  // one half of a two-column pair would shove the other half's label off its line.
   const smart = all(railHTML(), "section.rail-section")[0].outer;
   const pairs = all(smart, ".rail-toggle-pair");
   assert.equal(pairs.length, 1, "exactly one pair, so nothing else is quietly folded into it");
@@ -275,8 +275,9 @@ test("the two plain method switches share one row, the expanding one does not", 
   const pair = pairs[0].outer;
   assert.ok(exists(pair, "#smart-built-in"), "Built-in patterns is one half of the pair");
   assert.ok(exists(pair, "#smart-heuristic"), "Heuristic discovery is the other");
-  assert.ok(!exists(pair, "#signal-sources"),
-    "the signal control must NOT be inside the pair: it expands, so it needs its own row");
+  assert.equal(all(pair, ".rail-toggle").length, 2,
+    "two halves and no third: a drill-down opening under one of them would shove "
+    + "the other half's label off its line");
 
   // Each half keeps its own help icon: pairing them is a layout change, not a
   // reason for either to stop explaining itself.
@@ -286,34 +287,58 @@ test("the two plain method switches share one row, the expanding one does not", 
   }
 });
 
-test("each signal is one collapsed row that says which readings are on", () => {
-  // Collapsed a signal costs ONE row, which is what keeps the panel short as
-  // sources and readings are added. The read-out names the readings rather than
-  // counting them: the row asks WHICH reading, and a count answers something else.
-  resetState();
-  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  const groups = all(smart, ".checklist-group");
-  assert.deepEqual(groups.map((g) => g.attrs["data-group"]), SIGNAL_SOURCES,
-    "one group per signal that implements discovery, and no other");
-  assert.ok(!("data-open" in groups[0].attrs), "a signal starts collapsed");
-  assert.equal(one(smart, ".checklist-group-toggle").attrs["aria-expanded"], "false");
-  assert.equal(textOf(smart, "span.checklist-summary"),
-    RAIL.signalDerivationSummary([
-      RAIL.signalDerivationLabel["email.person"],
-      RAIL.signalDerivationLabel["email.organisation"],
-    ]),
-    "both readings on reads as both their names");
-  assert.ok("hidden" in one(smart, ".checklist-rows").attrs,
-    "the readings are hidden while the signal is collapsed");
+test("every signal that derives Suggestions has a category row to hang off", () => {
+  // The drill-down lives ON the row of the pattern that produces the evidence,
+  // which only works because a signal source identifier IS a category key. A
+  // source with no row would be a control with nowhere to render.
+  const grouped = new Set(CATEGORY_GROUPS.flatMap(([, keys]) => keys));
+  for (const source of SIGNAL_SOURCES) {
+    assert.ok(grouped.has(source),
+      `the signal ${source} is in no category group, so its readings have no row`);
+  }
 });
 
-test("a signal's rows are its implemented readings, each individually switchable", () => {
-  // A row with nothing behind it is a control that appears to do something and
-  // does not, so the rows come from SIGNAL_DERIVATIONS, which the Go parity guard
-  // holds to the engine's own producers.
+test("a signal's readings hang off its own category row, collapsed", () => {
+  // Collapsed the readings cost NO row, which is what keeps the panel short as
+  // signals and readings are added, and puts them beside the signal they read
+  // rather than in a block of their own that has to name it again.
   resetState();
   const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  const boxes = all(smart, "input.checklist-box");
+  const rows = all(smart, ".signal-row");
+  assert.deepEqual(rows.map((r) => r.attrs["data-signal-source"]), SIGNAL_SOURCES,
+    "one drill-down per signal that implements discovery, and no other");
+
+  const row = rows[0].outer;
+  // The row it hangs off is the signal's own pattern category, checkbox and all.
+  assert.equal(one(row, "input.cat-toggle").attrs["data-category"], SIGNAL_SOURCES[0],
+    "the drill-down is on the row of the category that IS the signal");
+  assert.ok(!("data-open" in rows[0].attrs), "a signal starts collapsed");
+  assert.equal(one(row, ".signal-drill").attrs["aria-expanded"], "false");
+  assert.ok("hidden" in one(row, ".signal-readings").attrs,
+    "the readings are hidden while the drill-down is collapsed");
+  assert.equal(textOf(row, "span.signal-count"), RAIL.signalDerivationCount(2),
+    "and the panel says how many readings are on");
+});
+
+test("the help icon sits after the drill-down that opens what it explains", () => {
+  resetState();
+  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
+  const head = one(all(smart, ".signal-row")[0].outer, ".signal-row-head").outer;
+  assert.ok(head.indexOf('class="cat-label"') < head.indexOf('class="signal-drill"'),
+    "the category label comes first");
+  assert.ok(head.indexOf('class="signal-drill"') < head.indexOf('class="help"'),
+    "then the drill-down, then the icon explaining it");
+  assert.ok(head.indexOf('class="help"') < head.indexOf('class="cat-example"'),
+    "and the example closes the row");
+});
+
+test("a signal's readings are its implemented ones, each individually switchable", () => {
+  // A row with nothing behind it is a control that appears to do something and
+  // does not, so the readings come from SIGNAL_DERIVATIONS, which the Go parity
+  // guard holds to the engine's own producers.
+  resetState();
+  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
+  const boxes = all(smart, "input.signal-box");
   assert.deepEqual(boxes.map((b) => b.attrs["data-derivation"]),
     SIGNAL_DERIVATIONS.email);
   assert.ok(boxes.every((b) => "checked" in b.attrs),
@@ -321,7 +346,7 @@ test("a signal's rows are its implemented readings, each individually switchable
     + "is why the feature exists");
 
   // And the master is keyed by SOURCE, so the two levels cannot be confused.
-  const master = all(smart, "input.checklist-master");
+  const master = all(smart, "input.signal-master");
   assert.deepEqual(master.map((b) => b.attrs["data-source"]), SIGNAL_SOURCES);
 });
 
@@ -330,7 +355,7 @@ test("every reading explains itself through a tooltip", () => {
   // anonymised, which is the distinction the whole setting exists for.
   resetState();
   const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  const rows = all(one(smart, "#signal-sources").outer, ".checklist-row");
+  const rows = all(one(smart, ".signal-readings").outer, ".signal-reading");
   assert.equal(rows.length, SIGNAL_DERIVATIONS.email.length);
   for (const row of rows) {
     assert.ok(exists(row.outer, "span.help"),
@@ -338,29 +363,29 @@ test("every reading explains itself through a tooltip", () => {
   }
 });
 
-test("the signal's own checkbox is a DERIVED master over its readings", () => {
+test("the drill-down's own checkbox is a DERIVED master over its readings", () => {
   // On when any reading is on, off only when all of them are. Never stored: a
   // fourth flag beside the readings it summarises could disagree with them, and a
-  // row reading "on" over readings that are all off lies about what a run does.
+  // master reading "on" over readings that are all off lies about what a run does.
   resetState();
   const railFor = () => all(railBody(getState()), "section.rail-section")[0].outer;
 
   setSignalDerivation("email", "email.person", false);
-  let master = one(railFor(), "input.checklist-master");
+  let master = one(railFor(), "input.signal-master");
   assert.ok("checked" in master.attrs,
     "one reading off leaves the signal reading on, because it still derives something");
 
   setSignalDerivation("email", "email.organisation", false);
-  master = one(railFor(), "input.checklist-master");
+  master = one(railFor(), "input.signal-master");
   assert.ok(!("checked" in master.attrs),
     "every reading off is the only thing that reads as off");
 });
 
-test("the collapsed read-out reads Off once every reading is cleared", () => {
+test("the panel's read-out reads Off once every reading is cleared", () => {
   resetState();
   for (const source of SIGNAL_SOURCES) setSignalSource(source, false);
   const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  assert.equal(textOf(smart, "span.checklist-summary"), RAIL.signalSourcesOff);
+  assert.equal(textOf(smart, "span.signal-count"), RAIL.signalSourcesOff);
 });
 
 test("clearing ONE reading leaves the other producing its own Suggestions", () => {
@@ -369,11 +394,26 @@ test("clearing ONE reading leaves the other producing its own Suggestions", () =
   resetState();
   setSignalDerivation("email", "email.person", false);
   const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  const boxes = all(smart, "input.checklist-box");
+  const boxes = all(smart, "input.signal-box");
   const person = boxes.find((b) => b.attrs["data-derivation"] === "email.person");
   const org = boxes.find((b) => b.attrs["data-derivation"] === "email.organisation");
   assert.ok(!("checked" in person.attrs), "the cleared reading is off");
   assert.ok("checked" in org.attrs, "and the other one is untouched");
+});
+
+test("the drill-down stays usable while Built-in patterns is off", () => {
+  // Which readings may derive Suggestions is its OWN setting: switching the
+  // pattern pass off greys its categories out, and must not silently take the
+  // readings away with them.
+  resetState();
+  setUseBuiltInPatterns(false);
+  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
+  const row = all(smart, ".signal-row")[0].outer;
+  assert.ok("disabled" in one(row, "input.cat-toggle").attrs,
+    "the pattern category itself is greyed out");
+  for (const box of all(row, "input.signal-box")) {
+    assert.ok(!("disabled" in box.attrs), "and its readings stay switchable");
+  }
 });
 
 test("clearing a signal source does not disable the signal's own category", () => {

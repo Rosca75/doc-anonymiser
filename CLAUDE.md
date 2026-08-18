@@ -342,11 +342,16 @@ doc-anonymiser/
   A source has no boolean of its own. `SignalSourceEnabled` DERIVES the signal's
   state from its readings (on when any is on), for the reason `smartRouteOn`
   already states: a stored flag beside the set it summarises can disagree with it.
-  The rail renders one expandable row per signal with its readings under it, and
-  the signal's own checkbox is a master over them, derived for display and never
-  stored. `SignalDerivations` is the ONE definition of that tree; only readings
-  with a producer behind them appear, because a row with nothing behind it is a
-  control that appears to do something and does not.
+  The rail renders the readings ON the signal's OWN category row, because a signal
+  source identifier IS a built-in pattern category: a drill-down button after the
+  label ("Signal-based suggestions"), the help icon after the button, and the
+  readings revealed under the row. That is where the question belongs, beside the
+  pattern that produces the evidence, and it costs the panel no permanent row. The
+  row's own checkbox is untouched by it, and the opened panel carries a master over
+  the readings, derived for display and never stored. `SignalDerivations` is the
+  ONE definition of that tree; only readings with a producer behind them appear,
+  because a row with nothing behind it is a control that appears to do something
+  and does not.
 
   Discovery reads the WHOLE imported batch, because the evidence is in one file
   and the text it points at is usually in another. It suggests nothing unless the
