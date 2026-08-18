@@ -228,7 +228,7 @@ func TestMergeProposals(t *testing.T) {
 // which is the review gate being walked past rather than enforced.
 func TestAnonymiseNeverCallsOllama(t *testing.T) {
 	var calls atomic.Int32
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"message":{"content":"{}"}}`))
@@ -236,8 +236,10 @@ func TestAnonymiseNeverCallsOllama(t *testing.T) {
 	_ = c // the client exists and is reachable; the pipeline must still not use it
 
 	res, err := engine.Run(context.Background(), engine.PipelineInput{
-		Documents: []engine.Document{{Name: "z.txt", Format: engine.FormatTXT,
-			Markdown: "Final note about Zephyr Capital."}},
+		Documents: []engine.Document{{
+			Name: "z.txt", Format: engine.FormatTXT,
+			Markdown: "Final note about Zephyr Capital.",
+		}},
 		Values:    []engine.Value{{Category: engine.CatEntityNames, MainText: "Zephyr Capital"}},
 		Level:     engine.LevelMedium,
 		Allowlist: engine.NewEmptyAllowlist(),
@@ -464,8 +466,10 @@ func TestDiscoverCancelBetweenChunks(t *testing.T) {
 			cancel() // the user hits Cancel while chunk 2 is in flight
 		}
 		resp, _ := json.Marshal(map[string]interface{}{
-			"message": map[string]string{"role": "assistant",
-				"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`},
+			"message": map[string]string{
+				"role":    "assistant",
+				"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`,
+			},
 		})
 		w.Write(resp)
 	})
@@ -544,8 +548,10 @@ func TestClassifySuggestionsBatching(t *testing.T) {
 			}
 		}
 		resp, _ := json.Marshal(map[string]interface{}{
-			"message": map[string]string{"role": "assistant",
-				"content": `{"entity_names":[],"project_names":[],"person_names":[]}`},
+			"message": map[string]string{
+				"role":    "assistant",
+				"content": `{"entity_names":[],"project_names":[],"person_names":[]}`,
+			},
 		})
 		w.Write(resp)
 	})

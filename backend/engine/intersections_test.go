@@ -29,8 +29,10 @@ func findIntersection(rows []Intersection, value, category string) (Intersection
 // about, and Occurrences == TotalOccurrences is how the view knows.
 func TestIntersectionEmailCoversADeclaredValue(t *testing.T) {
 	const value = "marie.duval@example.com"
-	docs := []Document{{Name: "a.txt", Format: FormatTXT,
-		Markdown: "Write to " + value + " today, or to " + value + " tomorrow.\n"}}
+	docs := []Document{{
+		Name: "a.txt", Format: FormatTXT,
+		Markdown: "Write to " + value + " today, or to " + value + " tomorrow.\n",
+	}}
 
 	rows := DetectIntersections(docs,
 		scopeFor([]Value{{Category: CatPersonNames, MainText: value}}, nil))
@@ -62,8 +64,10 @@ func TestIntersectionEmailCoversADeclaredValue(t *testing.T) {
 func TestIntersectionPartialCoverage(t *testing.T) {
 	// "Meridian" is a declared value. A custom pattern claims it only where it
 	// is followed by a code, so one of the three occurrences is covered.
-	docs := []Document{{Name: "a.txt", Format: FormatTXT,
-		Markdown: "Meridian alone. Meridian again. Meridian-4471 is coded.\n"}}
+	docs := []Document{{
+		Name: "a.txt", Format: FormatTXT,
+		Markdown: "Meridian alone. Meridian again. Meridian-4471 is coded.\n",
+	}}
 
 	rows := DetectIntersections(docs, scopeFor(
 		[]Value{{Category: CatEntityNames, MainText: "Meridian"}},
@@ -88,8 +92,10 @@ func TestIntersectionPartialCoverage(t *testing.T) {
 // Smart detection outranks the local AI, so an auto value covering an AI one
 // reports the AI value as the loser.
 func TestIntersectionAutoCoversAI(t *testing.T) {
-	docs := []Document{{Name: "a.txt", Format: FormatTXT,
-		Markdown: "The Helios Fund closed in June.\n"}}
+	docs := []Document{{
+		Name: "a.txt", Format: FormatTXT,
+		Markdown: "The Helios Fund closed in June.\n",
+	}}
 
 	rows := DetectIntersections(docs, scopeFor([]Value{
 		// The longer name from Smart detection...
@@ -112,8 +118,10 @@ func TestIntersectionAutoCoversAI(t *testing.T) {
 // same characters are not an intersection, they are simply two values. Warning
 // about them trains the user to ignore the warning.
 func TestIntersectionSilentWhenValuesDoNotCoOccur(t *testing.T) {
-	docs := []Document{{Name: "a.txt", Format: FormatTXT,
-		Markdown: "Alpine Trust met Borealis Capital on the Tuesday.\n"}}
+	docs := []Document{{
+		Name: "a.txt", Format: FormatTXT,
+		Markdown: "Alpine Trust met Borealis Capital on the Tuesday.\n",
+	}}
 
 	rows := DetectIntersections(docs, scopeFor([]Value{
 		{Category: CatEntityNames, MainText: "Alpine Trust"},
@@ -130,8 +138,10 @@ func TestIntersectionSilentWhenValuesDoNotCoOccur(t *testing.T) {
 // allowlist the run does, or it warns about an overlap that will not happen.
 func TestIntersectionRespectsTheAllowlist(t *testing.T) {
 	const value = "marie.duval@example.com"
-	docs := []Document{{Name: "a.txt", Format: FormatTXT,
-		Markdown: "Write to " + value + " today.\n"}}
+	docs := []Document{{
+		Name: "a.txt", Format: FormatTXT,
+		Markdown: "Write to " + value + " today.\n",
+	}}
 
 	allow := NewEmptyAllowlist()
 	allow.Add(value)
@@ -151,8 +161,10 @@ func TestIntersectionRespectsTheAllowlist(t *testing.T) {
 // worse than no warning.
 func TestCheckAgreesWithTheRun(t *testing.T) {
 	const value = "marie.duval@example.com"
-	docs := []Document{{Name: "a.txt", Format: FormatTXT,
-		Markdown: "Write to " + value + " today.\n"}}
+	docs := []Document{{
+		Name: "a.txt", Format: FormatTXT,
+		Markdown: "Write to " + value + " today.\n",
+	}}
 	values := []Value{{Category: CatPersonNames, MainText: value}}
 
 	rows := DetectIntersections(docs, scopeFor(values, nil))

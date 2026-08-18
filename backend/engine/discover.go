@@ -869,7 +869,7 @@ func HeuristicDiscoverContext(ctx context.Context, text string, allow *Allowlist
 		if strictness == StrictnessStrict && !vouched {
 			continue
 		}
-		if !keepSuggestion(g.text, r, g.count, score, opts) {
+		if !keepSuggestion(g.text, g.count, score, opts) {
 			continue
 		}
 
@@ -890,7 +890,7 @@ func HeuristicDiscoverContext(ctx context.Context, text string, allow *Allowlist
 	// through one filter.
 	codes, codeStarts := detectCodes(text, allow)
 	for _, c := range codes {
-		if keepSuggestion(c.MainText, smartRun{words: 1}, c.Count, c.Confidence, opts) {
+		if keepSuggestion(c.MainText, c.Count, c.Confidence, opts) {
 			out = append(out, c)
 		}
 	}
@@ -1357,7 +1357,11 @@ func suggestionScore(r smartRun, count int) float32 {
 // testable and so the order of the checks is visible: cheapest first,
 // and the word list before the score, because "this is just the word
 // March" is a better reason to drop something than "it scored low".
-func keepSuggestion(text string, r smartRun, count int, score float32, opts HeuristicDiscoveryOptions) bool {
+//
+// Every filter reads the suggestion's own text, count and score, so the run
+// that produced it is deliberately not a parameter: a caller with no run to
+// hand over would otherwise have to invent one.
+func keepSuggestion(text string, count int, score float32, opts HeuristicDiscoveryOptions) bool {
 	if opts.MinLength > 0 && len([]rune(text)) < opts.MinLength {
 		return false
 	}

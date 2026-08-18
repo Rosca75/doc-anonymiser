@@ -179,8 +179,10 @@ func TestDetectionProgressNeverGoesBackwards(t *testing.T) {
 			w.Write([]byte(`{"models":[{"name":"m"}]}`))
 		case "/api/chat":
 			resp, _ := json.Marshal(map[string]interface{}{
-				"message": map[string]string{"role": "assistant",
-					"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`},
+				"message": map[string]string{
+					"role":    "assistant",
+					"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`,
+				},
 			})
 			w.Write(resp)
 		default:
@@ -267,8 +269,10 @@ func TestDetectionKeepsGoingWhenOneFileFails(t *testing.T) {
 				return
 			}
 			resp, _ := json.Marshal(map[string]interface{}{
-				"message": map[string]string{"role": "assistant",
-					"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`},
+				"message": map[string]string{
+					"role":    "assistant",
+					"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`,
+				},
 			})
 			w.Write(resp)
 		default:
@@ -378,8 +382,10 @@ func scopeChatServer(seen *[]string) *httptest.Server {
 				}
 			}
 			resp, _ := json.Marshal(map[string]interface{}{
-				"message": map[string]string{"role": "assistant",
-					"content": `{"entity_names":[],"project_names":[],"person_names":[]}`},
+				"message": map[string]string{
+					"role":    "assistant",
+					"content": `{"entity_names":[],"project_names":[],"person_names":[]}`,
+				},
 			})
 			w.Write(resp)
 		default:
@@ -398,8 +404,10 @@ func TestDetectionAIScopeLimitsToPageRange(t *testing.T) {
 
 	app := NewApp()
 	app.docs = []engine.Document{
-		{Name: "big.txt", Format: engine.FormatTXT, Unit: engine.UnitLine,
-			Markdown: "alpha line one\nbravo line two\ncharlie line three\ndelta line four\n"},
+		{
+			Name: "big.txt", Format: engine.FormatTXT, Unit: engine.UnitLine,
+			Markdown: "alpha line one\nbravo line two\ncharlie line three\ndelta line four\n",
+		},
 	}
 	app.llm = ollama.New(srv.URL)
 	app.settings.UseLocalAI = true
@@ -471,8 +479,10 @@ func TestDetectionAIScopeDiscontiguousPages(t *testing.T) {
 
 	app := NewApp()
 	app.docs = []engine.Document{
-		{Name: "big.txt", Format: engine.FormatTXT, Unit: engine.UnitLine,
-			Markdown: "alpha line one\nbravo line two\ncharlie line three\ndelta line four\n"},
+		{
+			Name: "big.txt", Format: engine.FormatTXT, Unit: engine.UnitLine,
+			Markdown: "alpha line one\nbravo line two\ncharlie line three\ndelta line four\n",
+		},
 	}
 	app.llm = ollama.New(srv.URL)
 	app.settings.UseLocalAI = true
@@ -586,10 +596,14 @@ func TestDetectionFoldsFamiliesAcrossRoutes(t *testing.T) {
 func signalApp() *App {
 	app := NewApp()
 	app.docs = []engine.Document{
-		{Name: "mail.md", Format: engine.FormatTXT,
-			Markdown: "From pierre.dupont@tpps.com about the fee note.\n"},
-		{Name: "engagement.md", Format: engine.FormatTXT,
-			Markdown: "Contact Pierre Dupont at Tpps France for approval.\n"},
+		{
+			Name: "mail.md", Format: engine.FormatTXT,
+			Markdown: "From pierre.dupont@tpps.com about the fee note.\n",
+		},
+		{
+			Name: "engagement.md", Format: engine.FormatTXT,
+			Markdown: "Contact Pierre Dupont at Tpps France for approval.\n",
+		},
 	}
 	// Heuristic discovery off, so what comes back is the signal method's work and
 	// not a heuristic finding that happens to agree with it.

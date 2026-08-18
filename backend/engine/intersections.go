@@ -207,8 +207,8 @@ func sortedIntersections(tallies map[string]*intersectionTally) []Intersection {
 // inputs, rather than growing a second notion of what a detection is.
 func NewDetectionScope(values []Value, patterns []CustomPattern,
 	categories CategorySelection, minConfidence float32, country string,
-	allow *Allowlist, suppressRegexPII bool) detectionScope {
-
+	allow *Allowlist, suppressRegexPII bool,
+) detectionScope {
 	if country == "" {
 		country = CountryLU
 	}

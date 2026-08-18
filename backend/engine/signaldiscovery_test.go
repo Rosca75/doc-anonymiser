@@ -409,8 +409,10 @@ func TestSharedDomainEvidenceDoesNotGroup(t *testing.T) {
 func TestSignalAndHeuristicFindingsMergeIntoOneRow(t *testing.T) {
 	signal := Suggestion{
 		MainText: "Pierre Dupont", Category: CatPersonNames, Count: 1,
-		Evidence: []Evidence{{Kind: EvidenceEmailLocalPart, SignalCategory: CatEmail,
-			SignalText: "pierre.dupont@tpps.com", Documents: []string{"mail.md"}}},
+		Evidence: []Evidence{{
+			Kind: EvidenceEmailLocalPart, SignalCategory: CatEmail,
+			SignalText: "pierre.dupont@tpps.com", Documents: []string{"mail.md"},
+		}},
 	}.WithMethod(MethodSignal)
 	heuristic := Suggestion{
 		MainText: "pierre dupont", Category: CatPersonNames, Count: 2,

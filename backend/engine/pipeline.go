@@ -721,8 +721,8 @@ func detectDocument(doc Document, scope detectionScope) documentPlan {
 //
 // @param traceEnabled collects the resolved spans for the caller's OnTrace hook
 func applyPlan(plan documentPlan, reg *Registry,
-	overlaps *overlapWarnings, traceEnabled bool) (ResultDocument, []SpanTrace) {
-
+	overlaps *overlapWarnings, traceEnabled bool,
+) (ResultDocument, []SpanTrace) {
 	doc := plan.doc
 	rd := ResultDocument{
 		Name:                doc.Name,
@@ -833,8 +833,8 @@ func detectText(text string, scope detectionScope) []Span {
 // batch, so resolution here only decides which of two OVERLAPPING stretches of
 // text to replace, never which route owns a value.
 func applySpansToText(text string, spans []Span, assign func(Span) string,
-	traceFn func([]Span), overlaps *overlapWarnings) string {
-
+	traceFn func([]Span), overlaps *overlapWarnings,
+) string {
 	// The losers are collected only while the warning collector still wants
 	// them. Gathering them regardless costs an allocation per discarded span on
 	// a path that runs over every document, and a document full of name

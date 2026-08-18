@@ -433,7 +433,6 @@ func collectSeedForm(seed emailSeed, form string, in SignalDiscoveryInput,
 			}})
 		}
 	}
-
 }
 
 // seedRun is one occurrence of a seed in a document, as byte offsets.
