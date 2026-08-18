@@ -1,9 +1,18 @@
-// to_sarif_test.go — tests for scripts/to_sarif.py.
+//go:build integration
+
+// to_sarif_integration_test.go — tests for scripts/to_sarif.py.
+//
+// TIER: integration (docs/TESTING.md). This test SPAWNS an external binary,
+// the Python interpreter, to run scripts/to_sarif.py, so it is gated behind
+// //go:build integration and stays out of the default `go test ./...` unit
+// tier. It remains deterministic and hermetic (no network), which is why it is
+// integration rather than deep. Run it with `task test:integration` or
+// `go test -tags=integration ./scripts/`.
 //
 // The converter is Python (see the script's docstring for why), but its test
-// lives in Go so that it runs under `go test ./...`, which is one of the two
-// suites that gate this repository (CLAUDE.md §6). A third test runner would
-// be a suite nobody remembers to run.
+// lives in Go so that it runs under the Go suite, one of the two suites that
+// gate this repository (CLAUDE.md §6). A third test runner would be a suite
+// nobody remembers to run.
 //
 // The test skips itself when no Python interpreter is on PATH rather than
 // failing: the converter is only needed when running the audit, and a
