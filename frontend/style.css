@@ -349,7 +349,7 @@ main#view.page { overflow-y: auto; }
    black on white text, which is the loudest a non-hero control gets. */
 .chip-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .tint-chip {
-  padding: 0.4rem 0.85rem; border-radius: 20px;
+  padding: 0.3rem 3rem; border-radius: 5px;
   border: 1px solid var(--gray-4); background: var(--bg); color: var(--ink-2);
   font-size: 0.8rem;
 }
@@ -364,7 +364,7 @@ main#view.page { overflow-y: auto; }
 .cgroup { border: 1px solid var(--gray-5); border-radius: var(--card-radius); overflow: hidden; }
 .cgroup-head {
   display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
-  padding: 0.55rem 0.8rem;
+  padding: 0.2rem 0.6rem;
   background: var(--surface-subtle);
   border-bottom: 1px solid var(--gray-5);
 }
@@ -877,7 +877,7 @@ input, select {
    ellipsis costs nothing (the full string is the title attribute). */
 .cat-row {
   display: flex; align-items: center; gap: 0.6rem;
-  padding: 0.4rem 0.8rem;
+  padding: 0.2rem 0.5rem;
   border-top: 1px solid var(--gray-6);
   cursor: pointer;
   font-size: 0.85rem;
@@ -1101,8 +1101,8 @@ input, select {
 /* --- Value cards -------------------------------------------------------- */
 
 .value-card {
-  display: flex; flex-direction: column; gap: 0.7rem;
-  padding: 0.9rem 1rem;
+  display: flex; flex-direction: column; gap: 0.2rem;
+  padding: 0.6rem 1rem;
   border: 1px solid var(--gray-5); border-radius: var(--card-radius);
 }
 /* The drop target while a spelling chip is being dragged over it. */
@@ -1700,7 +1700,7 @@ mark[data-original]:focus-visible { outline: 2px solid var(--accent); outline-of
   border: 1px solid currentColor; border-radius: 50%;
   background: var(--bg); cursor: help;
 }
-.warnpop-icon svg { width: 0.85rem; height: 0.85rem; }
+.warnpop-icon svg { width: 0.8rem; height: 0.8rem; }
 .warnpop-bad .warnpop-icon { color: var(--err); }
 .warnpop-warn .warnpop-icon { color: var(--warn); }
 .warnpop-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
