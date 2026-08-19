@@ -21,10 +21,10 @@ import {
 } from "./views/anonymise.js";
 import {
   resetState, setState, getState, subscribe, addValues, foldIntoFamily, buildRunRequest,
-  NAME_CATEGORIES, addAllowTerm,
+  NAME_CATEGORIES, addAllowTerm, valueKey,
 } from "./state.js";
 import { readFileSync } from "node:fs";
-import { ANONYMISE } from "./copy.js";
+import { ANONYMISE, WORKSPACE } from "./copy.js";
 import { textOf, all, attr, exists } from "./testhtml.js";
 import { container, fire } from "./testdom.js";
 
@@ -482,6 +482,126 @@ test("a refused run still shows Add missed Value, the one exit from a blocked sc
     "Add missed Value is the card that can clear the conflict it may have caused");
   assert.doesNotMatch(html, new RegExp(ANONYMISE.reportTitle),
     "the Report card stays hidden: a refused run has nothing to report");
+});
+
+// --- A refused run can be CLEARED from this screen ---------------------------
+//
+// Keeping the "Add missed Value" card visible makes the blocked screen a way back
+// in. These are the way OUT: the conflict the run refused over has no row anywhere
+// on step 3, and the only other route to a fix is Identify, which calls ResetRun on
+// the way and discards the registry, so a mistyped declaration would cost every
+// placeholder number the session had assigned.
+
+/** blockedFor(conflict) is a state carrying one refused run. */
+function blockedFor(conflict) {
+  return {
+    ...getState(),
+    results: {
+      documents: [],
+      report: { level: "medium", totalReplacements: 0, byCategory: {} },
+      validation: { blocking: [conflict] },
+    },
+  };
+}
+
+test("a blocking conflict over a declared value offers to delete it, by name", () => {
+  resetState();
+  addValues([{ category: "entity_names", mainText: "Meridian" }]);
+  const html = blockedPanel(blockedFor({
+    kind: "ambiguity", message: "conflict", fix: "fix it", value: "Meridian",
+    refs: [{ kind: "value", category: "entity_names", mainText: "meridian" }],
+  }));
+  const actions = all(html, "button.blocked-delete-value");
+  assert.equal(actions.length, 1);
+  assert.equal(textOf(actions[0].outer, "button"), ANONYMISE.blockedDeleteValue("Meridian"),
+    "named from the store, because the engine lower-cases mainText in a ref");
+  assert.equal(actions[0].attrs["data-main-text"], "meridian");
+  assert.equal(actions[0].attrs["data-category"], "entity_names");
+});
+
+test("an allowlist collision offers to take the term off the never-anonymise list", () => {
+  resetState();
+  addValues([{ category: "entity_names", mainText: "Meridian" }]);
+  addAllowTerm("Meridian");
+  const html = blockedPanel(blockedFor({
+    kind: "collision", message: "conflict", fix: "fix it", value: "Meridian",
+    refs: [
+      { kind: "value", category: "entity_names", mainText: "meridian" },
+      { kind: "allowlist", mainText: "meridian" },
+    ],
+  }));
+  assert.equal(all(html, "button.blocked-allow-remove").length, 1);
+  assert.equal(all(html, "button.blocked-delete-value").length, 0,
+    "the never-anonymise term is what has to go, not the value the user declared");
+  assert.equal(attr(html, "button.blocked-allow-remove", "data-term"), "Meridian");
+});
+
+test("a conflict naming no declared value offers nothing rather than a dead button", () => {
+  resetState();
+  const html = blockedPanel(blockedFor({
+    kind: "ambiguity", message: "conflict", fix: "fix it", value: "Ghost",
+    refs: [{ kind: "value", category: "entity_names", mainText: "ghost" }],
+  }));
+  assert.equal(all(html, "button.blocked-delete-value").length, 0);
+});
+
+test("the blocked panel's actions clear the conflict, through the real wiring", async () => {
+  resetState();
+  addValues([{ category: "entity_names", mainText: "Meridian" }]);
+  addAllowTerm("Meridian");
+  setState({
+    documents: [{ name: "a.txt", markdown: "x", previewTruncated: false, isGrid: false }],
+    running: false,
+    results: {
+      documents: [],
+      report: { level: "medium", totalReplacements: 0, byCategory: {} },
+      validation: {
+        blocking: [{
+          kind: "collision", message: "conflict", fix: "fix it", value: "Meridian",
+          refs: [
+            { kind: "value", category: "entity_names", mainText: "meridian" },
+            { kind: "allowlist", mainText: "meridian" },
+          ],
+        }],
+      },
+    },
+    replacedValues: [],
+  });
+
+  const root = container();
+  renderAnonymise(root);
+  const action = root.querySelector(".blocked-allow-remove");
+  assert.ok(action, "the refused run offers its resolve action");
+  await fire(action, "click");
+  assert.deepEqual(getState().allowlist, [], "the term is off the never-anonymise list");
+  assert.equal(getState().notice?.text, ANONYMISE.blockedAllowTermRemoved("Meridian"));
+});
+
+test("deleting the named value from the blocked panel removes exactly that value", async () => {
+  resetState();
+  addValues([{ category: "entity_names", mainText: "Meridian" }]);
+  addValues([{ category: "person_names", mainText: "Marie Duval" }]);
+  setState({
+    documents: [{ name: "a.txt", markdown: "x", previewTruncated: false, isGrid: false }],
+    running: false,
+    results: {
+      documents: [],
+      report: { level: "medium", totalReplacements: 0, byCategory: {} },
+      validation: {
+        blocking: [{
+          kind: "ambiguity", message: "conflict", fix: "fix it", value: "Meridian",
+          refs: [{ kind: "value", category: "entity_names", mainText: "meridian" }],
+        }],
+      },
+    },
+    replacedValues: [],
+  });
+
+  const root = container();
+  renderAnonymise(root);
+  await fire(root.querySelector(".blocked-delete-value"), "click");
+  assert.deepEqual(getState().values.map((v) => v.mainText), ["Marie Duval"]);
+  assert.equal(getState().notice?.text, ANONYMISE.blockedValueDeleted("Meridian"));
 });
 
 test("each result card, rendered on its own, starts collapsed", () => {
@@ -1004,6 +1124,148 @@ test("missingDeclaredTexts treats an empty expectation as nothing to check", () 
 });
 
 // --- Nothing that bypasses the Value model remains -------------------------
+
+// --- A declared Value another route covers entirely is warned about ----------
+//
+// The full-coverage intersection, which CHANGE-06 kept because it usually means a
+// mis-declaration: the Value is never replaced under its own type, so a user who
+// declared it and then cannot find it in the report has no other explanation.
+// This screen has no value card to paint it on, so the Report card's warning list
+// is its home, and it is said ONCE.
+
+/**
+ * withBridge(app, fn) runs fn with a stubbed Wails bridge in place, the same
+ * namespace api.js reads. Only the methods a fast re-run touches need stubbing;
+ * anything else still rejects, which every caller in the view already handles.
+ */
+async function withBridge(app, fn) {
+  const previous = globalThis.window;
+  globalThis.window = { go: { backend: { App: app } } };
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) delete globalThis.window;
+    else globalThis.window = previous;
+  }
+}
+
+/** rerunBridge(placeholders, intersections) answers the calls a declaring fast
+ *  re-run makes: the re-run itself, the mapping, and the two registry tables. */
+function rerunBridge(placeholders, intersections = []) {
+  return {
+    FastRerun: async () => ({
+      documents: [{ name: "a.txt", anonymised: "[ENTITY_1].", byCategory: {} }],
+      report: { level: "medium", totalReplacements: 1, byCategory: {}, values: [], documents: [] },
+      validation: { blocking: [], warnings: [] },
+    }),
+    GetMapping: async () => ({ rows: [] }),
+    ValuePlaceholders: async () => placeholders,
+    ListRemovedValues: async () => [],
+    CheckIntersections: async () => ({ intersections }),
+  };
+}
+
+/** declaredState() is one finished run with a document to declare against. */
+function declaredState() {
+  resetState();
+  setState({
+    documents: [{ name: "a.txt", markdown: "Meridian", previewTruncated: false, isGrid: false }],
+    running: false,
+    results: {
+      documents: [{ name: "a.txt", anonymised: "[ENTITY_1]", byCategory: {} }],
+      report: {
+        level: "medium", totalReplacements: 1, byCategory: {},
+        values: [], documents: [{ name: "a.txt", values: [] }],
+      },
+      validation: { blocking: [], warnings: [] },
+    },
+  });
+}
+
+const COVERED = {
+  value: "Meridian", category: "entity_names",
+  winnerValue: "Meridian Consulting", winnerMatchClass: "built_in_pattern",
+  matchedTexts: ["Meridian"],
+};
+
+/** coveredSentence() is the wording the card must show for COVERED. */
+function coveredSentence() {
+  return [
+    WORKSPACE.intersectionAll(COVERED.value, COVERED.winnerValue,
+      WORKSPACE.matchClassLabel.built_in_pattern, COVERED.matchedTexts),
+    WORKSPACE.intersectionFix,
+  ].join(" ");
+}
+
+/** cautionLines(s) is the Report card's warning strip, as rendered text. */
+function cautionLines(s) {
+  return all(reportCard(s), "div.caution")
+    .map((c) => textOf(c.outer, "span.caution-text"));
+}
+
+test("a Value declared here that another route covers entirely is warned about, once", async () => {
+  declaredState();
+  await withBridge(
+    rerunBridge([{ placeholder: "[ENTITY_1]", original: "Meridian", category: "entity_names" }], [COVERED]),
+    async () => {
+      await applySelection(stubContainer(), view({
+        selection: { text: "Meridian", x: 0, y: 0 },
+        stage: "replace", mode: "value", category: "entity_names",
+      }));
+    });
+
+  assert.deepEqual(cautionLines(getState()), [coveredSentence()],
+    "the sentence names the winning METHOD, never the internal rank");
+});
+
+test("the intersection warning dismisses like any other, by its text", async () => {
+  declaredState();
+  await withBridge(
+    rerunBridge([{ placeholder: "[ENTITY_1]", original: "Meridian", category: "entity_names" }], [COVERED]),
+    async () => {
+      await applySelection(stubContainer(), view({
+        selection: { text: "Meridian", x: 0, y: 0 },
+        stage: "replace", mode: "value", category: "entity_names",
+      }));
+    });
+  const dismissed = { ...getState(), dismissedWarnings: [coveredSentence()] };
+  assert.deepEqual(cautionLines(dismissed), [],
+    "one dismissal is enough, however often the Value is re-declared");
+});
+
+test("a Value no other route claims produces no intersection warning", async () => {
+  declaredState();
+  await withBridge(
+    rerunBridge([{ placeholder: "[ENTITY_1]", original: "Borealis", category: "entity_names" }], []),
+    async () => {
+      await applySelection(stubContainer(), view({
+        selection: { text: "Borealis", x: 0, y: 0 },
+        stage: "replace", mode: "value", category: "entity_names",
+      }));
+    });
+  assert.deepEqual(cautionLines(getState()), []);
+});
+
+test("an intersection over a Value this screen did not declare is left to step 2", async () => {
+  // Only declarations made HERE are listed: a Value accepted on Identify already
+  // met this warning on its own card, and repeating it here would be two
+  // warnings for one fact.
+  declaredState();
+  setState({ intersections: [COVERED] });
+  addValues([{ category: "entity_names", mainText: "Meridian" }]);
+  assert.deepEqual(cautionLines(getState()), []);
+});
+
+test("no bridge leaves the warning list empty rather than throwing into the repaint", async () => {
+  // The render harness and this suite both run without a bridge. An unhandled
+  // rejection here would blank the screen.
+  declaredState();
+  await applySelection(stubContainer(), view({
+    selection: { text: "Borealis", x: 0, y: 0 },
+    stage: "replace", mode: "value", category: "entity_names",
+  }));
+  assert.deepEqual(cautionLines(getState()), []);
+});
 
 test("no Find and replace surface remains anywhere on Anonymise", () => {
   // Every retired affordance in one assertion, because the point is not that the

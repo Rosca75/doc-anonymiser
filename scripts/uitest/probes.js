@@ -1348,6 +1348,131 @@
         visible,
       };
     },
+    /**
+     * selectionPanel() opens the Compare pane's REPLACE SELECTION panel by
+     * selecting text the way a mouse drag does, then reports what its two modes
+     * actually render.
+     *
+     * This is the only layer that renders a native <select>, and the one that can
+     * prove the panel opens against a real Selection at all. Both halves matter:
+     *
+     *   the new-Value mode's type list must offer CATEGORY KEYS. A hand-rolled
+     *     dropdown emitted the whole [key, label] pair as each option value, so
+     *     nothing was ever pre-selected and every Value declared through it was
+     *     filtered out by the engine before validation: no replacement, no
+     *     placeholder, no report row, no warning.
+     *   the spelling mode's target field must survive being typed into. Its input
+     *     handler repainted the whole view, which rebuilt the panel from strings
+     *     and destroyed the element mid-word, so the field took exactly one
+     *     letter and the mode could not be completed at all.
+     *
+     * No string test can see either one: the markup was correct throughout.
+     */
+    async selectionPanel() {
+      const s = await store();
+      await seed("anonymise");
+      // A Value to be a spelling OF, so the pick list has something to offer.
+      s.setState({ values: [] });
+      s.addValues([{ category: "person_names", mainText: "Marie Duval" }]);
+      await settle();
+
+      const pane = document.querySelector("#anonymised-pane");
+      if (!pane) return { error: "the Compare card did not render #anonymised-pane" };
+
+      // Select the first text run in the pane, then release the mouse over it:
+      // exactly the gesture wireTextSelection listens for.
+      const target = [...pane.querySelectorAll("*")]
+        .find((el) => el.children.length === 0 && (el.textContent ?? "").trim().length > 2)
+        ?? pane;
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      pane.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      await settle();
+
+      const card = document.querySelector("#selection-card");
+      if (!card) {
+        return { error: "selecting text in the anonymised pane opened no #selection-card" };
+      }
+      // Measured NOW, while both nodes are the ones on screen: every stage click
+      // below repaints the view, which replaces them, and a detached node reports
+      // a zero rect.
+      const compare = document.querySelector("#compare-card");
+      const cardRect = rect(card);
+      const compareRect = compare ? rect(compare) : null;
+      const geometry = {
+        insideCompare: !!compareRect &&
+          cardRect.left >= compareRect.left - 1 && cardRect.right <= compareRect.right + 1,
+        inViewport: cardRect.top >= 0 && cardRect.left >= 0 &&
+          cardRect.right <= innerWidth + 1 && cardRect.bottom <= innerHeight + 1,
+        hasSize: cardRect.width > 0 && cardRect.height > 0,
+        cardRect,
+        compareRect,
+      };
+
+      // Stage 1 to stage 2, then into the new-Value mode.
+      document.querySelector("#btn-selection-replace")?.click();
+      await settle(80);
+      const valueMode = [...document.querySelectorAll(".selection-mode")]
+        .find((r) => r.value === "value");
+      if (!valueMode) return { error: "the panel offered no new-Value mode radio" };
+      valueMode.checked = true;
+      valueMode.dispatchEvent(new Event("change", { bubbles: true }));
+      await settle();
+
+      const typeSelect = document.querySelector("#selection-category");
+      const optionValues = typeSelect
+        ? [...typeSelect.options].map((o) => o.value)
+        : [];
+      const selectedValue = typeSelect ? typeSelect.value : "";
+
+      // Back to stage 2, then into the spelling mode, and type into its field.
+      document.querySelector("#btn-cancel-selection")?.click();
+      await settle(80);
+      document.querySelector("#btn-selection-replace")?.click();
+      await settle(80);
+      const spellingMode = [...document.querySelectorAll(".selection-mode")]
+        .find((r) => r.value === "spelling");
+      if (!spellingMode) return { error: "the panel offered no spelling mode radio" };
+      spellingMode.checked = true;
+      spellingMode.dispatchEvent(new Event("change", { bubbles: true }));
+      await settle();
+
+      const field = document.querySelector("#selection-target");
+      if (!field) return { error: "the spelling mode rendered no #selection-target field" };
+      // Two keystrokes, because ONE used to be all the field accepted: the first
+      // repaint destroyed the element the second was aimed at.
+      field.value = "m";
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      await settle(80);
+      const survivedFirst = document.querySelector("#selection-target") === field;
+      field.value = "mar";
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      await settle(80);
+
+      const after = document.querySelector("#selection-target");
+      // Scoped to the target's own list: the Selected placeholder card renders
+      // the same .reassign-pick buttons from the same builder, so an unscoped
+      // query would count another card's suggestions as this field's.
+      const picks = [...(document.querySelector("#selection-target-list")
+        ?.querySelectorAll(".reassign-pick") ?? [])].map((b) => b.dataset.mainText);
+
+      return {
+        selectedText: (card.querySelector(".selection-text")?.innerText ?? "").trim(),
+        // The panel is positioned against the Compare card, so it must be inside
+        // it and on screen: a floating panel clipped away is a dead control.
+        ...geometry,
+        optionValues,
+        selectedValue,
+        hasDatalist: !!document.querySelector("datalist"),
+        survivedFirstKeystroke: survivedFirst,
+        survivedSecondKeystroke: after === field,
+        fieldValue: after ? after.value : "",
+        picks,
+      };
+    },
   };
 
   return "installed";

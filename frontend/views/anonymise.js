@@ -28,7 +28,7 @@
 import {
   runPipeline, cancelPipeline, fastRerun, getMapping, getDocumentSource,
   valuePlaceholders, listRemovedValues, setValuePlaceholder, removeValue,
-  restoreValue, copyText, countTermMatches,
+  restoreValue, copyText, countTermMatches, checkIntersections,
 } from "../api.js";
 import {
   getState, setState,
@@ -36,6 +36,8 @@ import {
   valueAutocomplete, reassignOriginal, addValues,
   setValueTables, dismissWarning, visibleWarnings, visibleValidationWarnings,
   blockingConflicts, foldIntoFamily, checkValueConflict,
+  valueKey, deleteValue, removeAllowTerm,
+  setIntersections, intersectionsFor, buildIntersectionRequest,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { renderHighlighted } from "../highlight.js";
@@ -128,6 +130,13 @@ let pendingMissedTexts = [];
 // next to the field the fix goes into, exactly like every other per-surface
 // error on this screen.
 let missedError = "";
+// The Values DECLARED FROM THIS SCREEN, by valueKey. A Value that a
+// higher-priority route covers ENTIRELY is the full-case intersection, which
+// usually means a mis-declaration, and this screen has no value card to paint it
+// on: the Report card's warning list is its home. Only declarations made here are
+// listed, because a Value accepted on Identify already met that warning on its
+// own card.
+const declaredHere = new Set();
 
 export function renderAnonymise(container) {
   const s = getState();
@@ -228,7 +237,7 @@ export function blockedPanel(s) {
     const fix = c.fix
       ? `<div class="hint"><strong>${escapeHTML(ANONYMISE.blockedFixLabel)}:</strong> ${escapeHTML(c.fix)}</div>`
       : "";
-    return `<li>${escapeHTML(c.message)}${fix}</li>`;
+    return `<li>${escapeHTML(c.message)}${fix}${blockedActions(s, c)}</li>`;
   }).join("");
   return `<div class="banner error blocked-banner" role="alert">` +
     `<span class="banner-icon">${icon("warning")}</span>` +
@@ -237,6 +246,44 @@ export function blockedPanel(s) {
     `<p class="hint">${escapeHTML(ANONYMISE.blockedIntro)}</p>` +
     `<ul class="blocked-list">${items}</ul>` +
     `</div></div>`;
+}
+
+/**
+ * blockedActions(s, c) is the resolve actions for ONE blocking conflict.
+ *
+ * Keeping the "Add missed Value" card on a refused run makes the screen a way
+ * back in; this makes it a way OUT. The conflict the run refused over has no row
+ * anywhere on this screen, and the only other route to a fix is the Identify
+ * step, which calls ResetRun on the way and discards the registry: a mistyped
+ * declaration would cost every placeholder number the session had assigned.
+ *
+ * The action follows the conflict's own shape, which the engine states in its
+ * refs: an allowlist collision is cleared by taking the term off the
+ * never-anonymise list, and every other blocking conflict by deleting one of the
+ * two Values that fight over the text.
+ */
+function blockedActions(s, c) {
+  const refs = c.refs ?? [];
+  if (refs.some((r) => r.kind === "allowlist")) {
+    return `<div class="run-actions">` +
+      button(ANONYMISE.blockedRemoveAllowTerm, {
+        kind: "secondary", cls: "blocked-allow-remove", data: { term: c.value },
+      }) + `</div>`;
+  }
+
+  // Named from the store rather than from the ref, because the engine
+  // lower-cases mainText in a ref and the user typed a capital letter. A ref
+  // naming no declared Value gets no button: the fix is not here.
+  const declared = (ref) => s.values
+    .find((v) => valueKey(v.category, v.mainText) === valueKey(ref.category, ref.mainText));
+  const actions = refs
+    .filter((r) => r.kind === "value" && r.category && declared(r))
+    .map((r) => button(ANONYMISE.blockedDeleteValue(declared(r).mainText), {
+      kind: "secondary", cls: "blocked-delete-value",
+      data: { category: r.category, "main-text": r.mainText },
+    }));
+  if (actions.length === 0) return "";
+  return `<div class="run-actions">${actions.join("")}</div>`;
 }
 
 function runSubtitle(s) {
@@ -382,11 +429,12 @@ export function reportCard(s) {
     .map(([category, count]) => categoryRow(s, scopeDocs, category, count))
     .join("") || `<div class="grid-empty">${escapeHTML(ANONYMISE.reportEmpty)}</div>`;
 
-  // Two sources, one rendered list: the run's own notes (Report.Warnings) and
-  // the overlap warnings the engine computes on every run but nothing was
-  // showing (Validation.Warnings, e.g. "this Value lost text to a built-in
-  // pattern"). Both dismiss the same way, keyed on the message text.
-  const warnings = [...visibleWarnings(s), ...visibleValidationWarnings(s)].map((w) =>
+  // Three sources, one rendered list: the run's own notes (Report.Warnings), the
+  // overlap warnings the engine computes on every run (Validation.Warnings, e.g.
+  // "this Value lost text to a built-in pattern"), and the full-coverage
+  // intersection for a Value declared on this screen. All dismiss the same way,
+  // keyed on the message text, so a third source needed no new mechanism.
+  const warnings = reportWarnings(s).map((w) =>
     `<div class="caution" data-warning="${escapeHTML(w)}">${icon("warning")}` +
     `<span class="caution-text">${escapeHTML(w)}</span>` +
     button("", {
@@ -405,6 +453,54 @@ export function reportCard(s) {
 
   return collapsibleCard("report", ANONYMISE.reportTitle,
     ANONYMISE.reportSummary(total, scopedValues(s).length), body);
+}
+
+/**
+ * reportWarnings(s) is every warning the card shows, deduplicated, in one list.
+ *
+ * One list because they all answer the same question, "why does the result not
+ * look like what I asked for", and because dismissWarning keys on the warning
+ * TEXT: a further source needs no new mechanism, and the same warning arriving
+ * twice cannot stack.
+ */
+function reportWarnings(s) {
+  const dismissed = new Set(s.dismissedWarnings ?? []);
+  const out = [];
+  for (const w of [
+    ...visibleWarnings(s),
+    ...visibleValidationWarnings(s),
+    ...declaredIntersectionWarnings(s),
+  ]) {
+    if (!w || dismissed.has(w) || out.includes(w)) continue;
+    out.push(w);
+  }
+  return out;
+}
+
+/**
+ * declaredIntersectionWarnings(s) is the intersection sentence for each Value
+ * declared on this screen that a higher-priority route covers entirely.
+ *
+ * CHANGE-06 kept the full-coverage case because it usually means a
+ * mis-declaration: the Value is never replaced under its own type, so a user who
+ * declared it and then cannot find it in the report has no other explanation. It
+ * names the winning METHOD and never the internal rank, exactly as the step 2
+ * value card does: the rank is an engine input, and "rank 1" teaches nobody
+ * anything.
+ */
+function declaredIntersectionWarnings(s) {
+  const overlaps = intersectionsFor(s);
+  const out = [];
+  for (const key of declaredHere) {
+    const row = overlaps.get(key);
+    if (!row) continue;
+    const route = WORKSPACE.matchClassLabel[row.winnerMatchClass] ?? row.winnerMatchClass;
+    out.push([
+      WORKSPACE.intersectionAll(row.value, row.winnerValue, route, row.matchedTexts),
+      WORKSPACE.intersectionFix,
+    ].join(" "));
+  }
+  return out;
 }
 
 /**
@@ -916,6 +1012,7 @@ export function continueHint(s) {
 
 function wire(container, s, doc) {
   wireRun(container);
+  wireBlocked(container, s);
   wireGroups(container, (id) => {
     if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
     setState({});
@@ -938,6 +1035,9 @@ function wireRun(container) {
       // beside a live progress bar reads as the new result, and it is not.
       selectedMark = null;
       selection = null;
+      // A full run applies the declarations too, so every Value on the list is a
+      // Value OF the run now rather than one this screen just added.
+      declaredHere.clear();
       setState({ running: true, progress: null, results: null, mapping: null });
       await runPipeline(buildRunRequest());
       // Results arrive via the "pipeline:done" event (see main.js boot).
@@ -947,6 +1047,34 @@ function wireRun(container) {
     }
   });
   container.querySelector("#btn-cancel")?.addEventListener("click", () => cancelPipeline());
+}
+
+/**
+ * wireBlocked(container, s) binds the refused-run panel's resolve actions.
+ *
+ * Neither re-runs. Clearing a conflict and deciding to run again are two
+ * decisions, and re-running on the first click would replace text the user has
+ * not looked at since the refusal.
+ */
+function wireBlocked(container, s) {
+  for (const btn of container.querySelectorAll(".blocked-allow-remove")) {
+    btn.addEventListener("click", () => {
+      const term = btn.dataset.term;
+      if (!term) return;
+      removeAllowTerm(term);
+      notify(ANONYMISE.blockedAllowTermRemoved(term), "ok");
+    });
+  }
+  for (const btn of container.querySelectorAll(".blocked-delete-value")) {
+    btn.addEventListener("click", () => {
+      const { category, mainText } = btn.dataset;
+      if (!category || !mainText) return;
+      const value = s.values
+        .find((v) => valueKey(v.category, v.mainText) === valueKey(category, mainText));
+      deleteValue(category, mainText);
+      notify(ANONYMISE.blockedValueDeleted(value?.mainText ?? mainText), "ok");
+    });
+  }
 }
 
 function wireSelected(container) {
@@ -1203,7 +1331,9 @@ function wireMissed(container) {
       return;
     }
 
-    if (!addValues([{ category: drafts.missedCategory, mainText: text }])) {
+    if (addValues([{ category: drafts.missedCategory, mainText: text }])) {
+      declaredHere.add(valueKey(drafts.missedCategory, text));
+    } else {
       notify(ANONYMISE.missedAlreadyThere(text), "info");
       return;
     }
@@ -1665,7 +1795,10 @@ export async function applySelection(container, view = selectionViewState()) {
       // a click that changed nothing.
       const added = addValues([{ category: view.category, mainText: text, discoveryMethods: ["manual"] }]);
       message = added > 0 ? ANONYMISE.selectionBecameValue(text) : ANONYMISE.selectionAlreadyThere(text);
-      if (added > 0) expect = [text];
+      if (added > 0) {
+        expect = [text];
+        declaredHere.add(valueKey(view.category, text));
+      }
     }
     resetSelectionPanel();
     clearSelection();
@@ -1712,6 +1845,9 @@ async function runFastRerun(container, message, expectedTexts = []) {
     tablesLoadedFor = results;
     setState({ results, mapping: await getMapping() });
     await refreshValueTables();
+    // A declaration is the only thing that can create a NEW intersection, so the
+    // check runs only when one was made.
+    if (expectedTexts.length > 0) await refreshIntersections();
     const missing = missingDeclaredTexts(getState().replacedValues, expectedTexts);
     if (missing.length > 0) {
       notify(ANONYMISE.declaredValueNotFound(missing.join(", ")), "warn");
@@ -1720,6 +1856,25 @@ async function runFastRerun(container, message, expectedTexts = []) {
     }
   } catch (err) {
     showError(container, err);
+  }
+}
+
+/**
+ * refreshIntersections() asks Go which Values another route also claims, so a
+ * declaration this screen just made can be told when a higher-priority match
+ * covers every occurrence of it.
+ *
+ * It uses the same request builder and the same comparator the run uses, so the
+ * warning cannot describe a decision the run did not make. Silent when there is
+ * no bridge: this is a warning the user never asked for, so its absence is not a
+ * failure, and it must never throw into a repaint.
+ */
+async function refreshIntersections() {
+  try {
+    const res = await checkIntersections(buildIntersectionRequest());
+    setIntersections(res?.intersections ?? []);
+  } catch {
+    setIntersections([]);
   }
 }
 

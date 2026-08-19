@@ -948,6 +948,23 @@ export const ANONYMISE = {
   blockedTitle: "The run was refused",
   blockedIntro: "Nothing was replaced. Two values would fight over the same text, which would make the re-identification key ambiguous. Fix each conflict below, then run again.",
   blockedFixLabel: "How to fix it",
+  // The per-conflict actions. A screen that can CREATE a blocking conflict has to
+  // be able to clear it: the only other route to a fix is the Identify step, and
+  // going there discards the registry, which would make the wizard punish a typo.
+  /** blockedDeleteValue(v) NAMES the value it removes, because a conflict has two
+   *  sides and two identical buttons would be a coin toss. */
+  blockedDeleteValue(v) {
+    return `Delete ${v}`;
+  },
+  blockedRemoveAllowTerm: "Remove the term from Never anonymise",
+  /** blockedValueDeleted / blockedAllowTermRemoved report the outcome. Neither
+   *  re-runs: clearing a conflict and deciding to run again are two decisions. */
+  blockedValueDeleted(v) {
+    return `${v} is no longer a value to replace. Run again.`;
+  },
+  blockedAllowTermRemoved(t) {
+    return `${t} is off the never anonymise list. Run again.`;
+  },
 
   // The selected placeholder card.
   selectedTitle: "Selected placeholder",
