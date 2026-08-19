@@ -107,10 +107,38 @@ jobs:
         with:
           go-version: "1.26.x"
 
-      - name: Install Linux WebView build dependencies
+      # Same cached closure as ci.yml's build-sanity job, and deliberately the
+      # SAME cache key: a cache written by a run on main is readable from a tag,
+      # so a release usually restores what CI already fetched. On a miss this
+      # behaves exactly as an ordinary apt install would. Keep the key and the
+      # package list identical to ci.yml or both sides quietly stop sharing.
+      - name: Identify the runner image
+        id: image
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the Linux WebView build dependencies
+        id: webview-debs
+        uses: actions/cache@v4
+        with:
+          path: /tmp/webview-debs
+          key: webview-debs-${{ steps.image.outputs.id }}-gtk3-webkit2gtk41
+
+      - name: Download the Linux WebView build dependencies (on a cache miss)
+        if: steps.webview-debs.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+          mkdir -p /tmp/webview-debs/partial
+          sudo chown -R _apt:root /tmp/webview-debs
+          sudo apt-get install -y --download-only \
+            -o Dir::Cache::archives=/tmp/webview-debs \
+            libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo rm -rf /tmp/webview-debs/partial
+          sudo chown -R "$(id -u):$(id -g)" /tmp/webview-debs
+
+      - name: Install the Linux WebView build dependencies
+        run: |
+          sudo dpkg --install /tmp/webview-debs/*.deb \
+            || sudo apt-get --fix-broken --yes install
 
       - name: Install pinned Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_CLI_VERSION}
