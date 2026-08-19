@@ -13,7 +13,9 @@ Python notebooks. The anonymisation pipeline is DETERMINISTIC end to end
 earlier step: heuristic and signal-based discovery run offline, and a local LLM
 served by Ollama over localhost HTTP can be switched on beside them. Every
 discovery method produces Suggestions the user accepts or rejects, so
-anonymisation itself reaches no model and creates no Value.
+anonymisation itself runs no discovery method and reaches no model: the only
+Values a run can apply are ones the user accepted on Identify or declared
+while reviewing the result on Anonymise.
 Fallback decision recorded: if local-LLM quality proves insufficient for NER,
 the fallback is pattern P4 (a small ONNX NER model running via ONNX Runtime
 Web inside the WebView) — do NOT introduce CGo bindings under any circumstance.
@@ -364,11 +366,19 @@ doc-anonymiser/
   organisations reached through one email domain may genuinely be two legal
   entities or two country branches, and one placeholder for two companies would
   make the mapping CSV state they were the same one. The user confirms grouping.
-- **Anonymise creates no Value.** No discovery method runs during a pipeline run
-  and Ollama is never reached: every method runs at Identify time and its
-  findings are Suggestions. A run that could mint a Value the user never saw
-  would walk past the review gate rather than enforce it, and
-  `TestAnonymiseNeverCallsOllama` asserts the call count is zero.
+- **Anonymise runs no discovery method and reaches no model.** `engine.Run` has
+  no LLM slot: every discovery method runs at Identify time and its findings
+  are Suggestions the user accepts. The only Values a run can apply are the
+  ones the user accepted on Identify or DECLARED while reviewing the result on
+  Anonymise, from the Compare pane selection ("Make it a spelling of an
+  existing Value" or "Add it as a new Value") or the "Add missed Value" card. A
+  declaration is the user acting, so it passes the review gate by definition:
+  the gate exists to stop an unreviewed MACHINE finding reaching the text, not
+  to stop the person reviewing the result from fixing what the machine missed.
+  A Value declared on Anonymise is a first-class Value: it reaches the
+  registry, the report, the Replaced values table, the mapping and the session
+  file exactly like one accepted on Identify.
+  `TestAnonymiseNeverCallsOllama` asserts the model call count is zero.
 - **An intersection is a warning, never a refusal.** When two methods claim the
   same text the precedence rule always has an answer, so refusing the run
   would punish the user for a configuration the engine can resolve.

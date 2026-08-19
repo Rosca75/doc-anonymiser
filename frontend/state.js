@@ -197,13 +197,6 @@ const initialState = {
   // It is never recomputed here.
   discovery: null,
 
-  // Has a detection run completed at least once this session? Gates the
-  // "Save profile" button on the Identify rail: a profile records what a run
-  // produced (the registry, the accepted values), so offering to save one
-  // before anything has been detected would write an empty key. Set true on the
-  // detection-done path (markDetectionRan), reset when the batch is cleared.
-  detectionRan: false,
-
   // Unified suggestion review list: suggestions from
   // any discovery method wait HERE until explicitly accepted; nothing
   // flows into values without user confirmation. Each row:
@@ -1281,9 +1274,6 @@ export const STEP_RESETS = {
     intersections: [],
     patterns: [],
     discovery: null,
-    // Stepping back to Identify clears what detection produced, so the
-    // "Save profile" gate must close again until a fresh run completes.
-    detectionRan: false,
   }),
   // Anonymise owns the run itself, everything it produced, and the editing
   // surfaces that only exist once there is a result to edit.
@@ -1900,18 +1890,6 @@ function mergeEvidence(into, from) {
 }
 
 /**
- * markDetectionRan() records that a detection run has completed at least once
- * this session. It is a one-way latch within a batch: the Identify rail's
- * "Save profile" button reads it, and a saved profile is only meaningful once a
- * run has produced a registry to preserve. It is called from the detection-done
- * path (main.js) and reset when the batch is cleared (startNewBatch, the
- * Identify step reset).
- */
-export function markDetectionRan() {
-  if (!state.detectionRan) setState({ detectionRan: true });
-}
-
-/**
  * acceptSuggestion(text) promotes one Suggestion into the Value list (with its
  * current category) and removes it from review.
  *
@@ -2412,6 +2390,29 @@ export function valueConflicts(s = state) {
   return result;
 }
 
+/**
+ * checkValueConflict(category, mainText, s) answers whether DECLARING this
+ * Value would conflict, WITHOUT mutating state, so a step 3 declaration can be
+ * refused at the point it is typed rather than only at the run that follows
+ * it. It runs valueConflicts against a hypothetical state carrying the
+ * candidate, with its category forced active: a category the user has never
+ * touched reads as off (categoryActive), and an off category can never
+ * conflict by design, which would silently let a genuinely ambiguous
+ * declaration through the very check meant to catch it.
+ *
+ * @returns {object[]} the candidate's conflicts (possibly empty)
+ */
+export function checkValueConflict(category, mainText, s = state) {
+  const text = (mainText ?? "").trim();
+  if (!text) return [];
+  const hypothetical = {
+    ...s,
+    values: [...s.values, { category, mainText: text }],
+    settings: { ...s.settings, categories: { ...s.settings.categories, [category]: true } },
+  };
+  return valueConflicts(hypothetical).get(valueKey(category, text))?.list ?? [];
+}
+
 // --- Reassignment helpers --------------------------------
 
 /**
@@ -2503,6 +2504,28 @@ export function dismissWarning(id) {
 export function visibleWarnings(s = state) {
   const dismissed = new Set(s.dismissedWarnings ?? []);
   return (s.results?.report?.warnings ?? []).filter((w) => !dismissed.has(w));
+}
+
+/**
+ * visibleValidationWarnings(s) is the run's OVERLAP warnings minus the
+ * dismissed ones: the same warning list `Report.Warnings` carries, but the
+ * one the engine computes on every run (a declared Value losing text to a
+ * built-in pattern) and that nothing was rendering. `Validation.Warnings` and
+ * `Report.Warnings` keep their distinct meanings (blocking aborts, warnings
+ * inform); this reads both rather than copying one into the other, so a later
+ * reader cannot show the same warning twice.
+ *
+ * Each entry is a Conflict object (`{message, ...}`); dismissal keys on the
+ * MESSAGE text, exactly like visibleWarnings, so dismissWarning needs no
+ * change to work for this second source.
+ * @param {object} [s] state
+ * @returns {string[]}
+ */
+export function visibleValidationWarnings(s = state) {
+  const dismissed = new Set(s.dismissedWarnings ?? []);
+  return (s.results?.validation?.warnings ?? [])
+    .map((c) => c.message)
+    .filter((m) => m && !dismissed.has(m));
 }
 
 /**
@@ -2605,7 +2628,6 @@ export function startNewBatch() {
     metaReview: {},
     exportDir: state.exportDir,
     notice: null,
-    detectionRan: false,
   });
   return cleared;
 }

@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { HOME, CARDS, NAV, WORKFLOW, CATEGORY_LABELS, WORKSPACE } from "./copy.js";
+import { HOME, CARDS, NAV, WORKFLOW, CATEGORY_LABELS, WORKSPACE, ANONYMISE } from "./copy.js";
 
 const staticDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -98,12 +98,26 @@ test("the navigation labels are built from the step names", () => {
   assert.equal(NAV.back("nonesuch"), "Back to nonesuch");
 });
 
-test("the reset question names the step and says what survives", () => {
+test("the reset question names the step, and claims only what is true", () => {
+  // Stepping back to Identify keeps far more than documents and the never
+  // anonymise list (Values, Suggestions, patterns, every setting), because
+  // Identify is the TARGET and a target keeps its own data. Enumerating two
+  // survivors implied the rest were lost, so the body names the step and
+  // stops there rather than listing survivors that could drift out of step
+  // with STEP_RESETS.
   const body = NAV.backConfirmBody("identify");
   assert.match(NAV.backConfirmTitle("identify"), /Identify/);
   assert.match(body, /Identify/);
-  assert.match(body, /imported documents/i, "the user must be told what is kept");
-  assert.match(body, /never anonymise/i);
+  assert.doesNotMatch(body, /imported documents/i,
+    "the body must not enumerate survivors: a shorter true claim beats a longer one that can go stale");
+  assert.doesNotMatch(body, /never anonymise/i);
+});
+
+test("the refused-run panel no longer sends the user to another screen for a fix available here", () => {
+  // The "Add missed Value" card stays visible on a refused run so a mistyped
+  // declaration can be fixed on the spot; the copy must stop claiming the fix
+  // is on the Identify step, because it no longer has to be.
+  assert.doesNotMatch(ANONYMISE.blockedIntro, /identify/i);
 });
 
 test("the step bar keeps an accessible name even though it shows no title", () => {

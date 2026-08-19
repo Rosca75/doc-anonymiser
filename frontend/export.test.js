@@ -8,11 +8,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { outputName, applySession, profileCard } from "./views/export.js";
+import { outputName, applySession, renderExport } from "./views/export.js";
 import {
   resetState, getState, smartDetectionOn, enabledSignalSources, signalDerivationOn, SIGNAL_SOURCES,
 } from "./state.js";
-import { one, exists, textOf } from "./testhtml.js";
+import { exists } from "./testhtml.js";
 
 test("outputName puts _anon before the extension", () => {
   assert.equal(outputName("services-agreement.docx"), "services-agreement_anon.docx");
@@ -104,10 +104,26 @@ test("applySession restores ONE reading off and leaves the other on", () => {
     "so the signal still derives something, and its master still reads on");
 });
 
-test("profileCard renders as Profile with Save and NO Load button", () => {
-  const html = profileCard();
-  // Renamed section: the Export step keeps the SAVE half of the profile only.
-  assert.ok(textOf(html, ".cgroup-title").includes("Profile"), "section titled Profile");
-  assert.ok(exists(html, "#ses-save"), "Save button present");
-  assert.equal(exists(html, "#ses-load"), false, "Load button removed (it lives on the rail)");
+test("the Export step has no profile control of its own: Save moved to Identify", () => {
+  // The profile has exactly one home now, the Identify rail's Load/Save
+  // section. A second Save control here duplicated the same file under a
+  // second name, which is what the owner asked to stop.
+  resetState();
+  let html = "";
+  const container = {
+    set innerHTML(v) { html = v; },
+    get innerHTML() { return html; },
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+  };
+  renderExport(container);
+  assert.equal(exists(html, "#ses-save"), false, "no Save profile control remains on Export");
+  assert.equal(exists(html, "#ses-load"), false, "no Load profile control remains on Export");
+  assert.ok(!/\bsave profile\b/i.test(html), "no leftover 'Save profile' copy renders on Export");
+  // The mapping and report exports are untouched: they are a different
+  // artefact (the re-identification key exports), not the profile.
+  assert.ok(exists(html, "#map-csv"));
+  assert.ok(exists(html, "#map-json"));
+  assert.ok(exists(html, "#rep-json"));
+  assert.ok(exists(html, "#rep-md"));
 });

@@ -77,7 +77,7 @@ import { CARDS, WORKSPACE, VALUES, CATEGORY_LABELS } from "../copy.js";
 //
 // The PII categories are absent because they are patterns, not values: there is
 // nothing to type into "email addresses" that a regex does not already find.
-export const CATEGORIES = NAME_CATEGORIES.map((c) => [c, CATEGORY_LABELS[c][0]]);
+const CATEGORIES = NAME_CATEGORIES.map((c) => [c, CATEGORY_LABELS[c][0]]);
 
 /** categoryLabel(key) is a category's display label, falling back to the key. */
 function categoryLabel(key) {
@@ -94,7 +94,7 @@ function categoryLabel(key) {
  * @param {object} [opts] {id, cls, title, ariaLabel, data}
  * @returns {string} safe HTML
  */
-function categorySelect(selected, opts = {}) {
+export function categorySelect(selected, opts = {}) {
   const attrs = [
     opts.id ? `id="${escapeHTML(opts.id)}"` : "",
     opts.cls ? `class="${escapeHTML(opts.cls)}"` : "",
@@ -549,7 +549,7 @@ export function visibleValues(values, filter) {
 
 /** conflictMessage(c) is the user-visible wording for one conflict, built from
  *  copy.js so no sentence lives in a view. */
-function conflictMessage(c) {
+export function conflictMessage(c) {
   switch (c.kind) {
     case "ambiguity": return WORKSPACE.conflictAmbiguity(c.value, categoryLabel(c.withCategory));
     case "collision": return WORKSPACE.conflictCollision(c.spelling, c.withValue);
