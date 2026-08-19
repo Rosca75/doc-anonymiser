@@ -187,11 +187,14 @@ export const CONFIGURE = {
   // deciding about; what they are deciding about is a little more recall against
   // roughly twice the wait.
   strictFormatHelp: "Makes the model answer for every category instead of only the ones it thought of. Sometimes finds a little more, and usually takes about twice as long.",
-  // The detail level, in OUTCOME terms. What the user is choosing between is how
-  // much they find and how long they wait, not a number of bytes: the byte size
-  // is the mechanism, and the request count it produces is dynamic and belongs in
-  // the read-out beside the control rather than in this sentence.
-  detailLevelHelp: "The local AI reads your document in slices. One page or slide at a time finds the most values and takes the longest. Larger slices are quicker and can miss values completely.",
+  // The detail level, in OUTCOME terms, and deliberately WITHOUT a promise of
+  // speed. Measured on both reference documents, larger slices did not reliably
+  // take less time on a model that finds anything: two runs of the same setting
+  // varied by more than the two settings varied from each other. What larger
+  // slices reliably do is send fewer requests and, on a small model, find
+  // nothing, so those are what the sentence says. The request count itself is
+  // dynamic and belongs in the read-out beside the control, not here.
+  detailLevelHelp: "The local AI reads your document in slices. Smaller slices find the most values and send more requests. Larger slices send fewer requests, and on a small model they can miss values completely. Whether fewer requests is quicker depends on your model and your machine.",
   aiOffTooltip: "Local AI is turned off. Turn it on with the switch on the Local AI section of Configure.",
   allowHint: "Terms in this list survive every pass, even when they also appear as names to replace.",
   // the group that surfaces the recognizers.
@@ -333,13 +336,17 @@ export const RAIL = {
   contextSize: "Context",
   // Short, as every rail label is: the explanation is the tooltip beside it.
   strictFormat: "Answer every category",
-  // The speed-versus-recall dial. The label names the QUESTION and the options
-  // name the two answers, so neither has to carry the explanation the tooltip
-  // holds.
+  // The slice-size dial. The label names the QUESTION and the options name what
+  // each answer DOES, so neither has to carry the explanation the tooltip holds.
+  //
+  // The options name the slice size rather than a speed. "Faster" is the engine's
+  // identifier for the larger slices, and it would be a promise here: measured on
+  // both reference documents, larger slices were not reliably quicker, while they
+  // reliably send fewer requests. A label states what a control does.
   detailLevel: "Detail",
   detailLevelOptions: {
-    thorough: "Thorough (slower)",
-    faster: "Faster (may miss)",
+    thorough: "Smaller slices",
+    faster: "Larger slices",
   },
 
   /**

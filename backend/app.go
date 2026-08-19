@@ -68,14 +68,15 @@ type Settings struct {
 	// switched it off" must stay distinguishable across a session file. Here nil
 	// reads as off, which is the default, so nothing is lost by silence.
 	AIStrictFormat *bool `json:"aiStrictFormat"`
-	// AIDetailLevel is the local AI's speed-versus-recall dial: how much text
-	// one request carries (engine.DetailThorough or engine.DetailFaster).
+	// AIDetailLevel is how much text one local AI request carries
+	// (engine.DetailThorough or engine.DetailFaster).
 	//
 	// It is a setting rather than a constant because the measurement has no
-	// single winner. Small slices find the most and take the longest; large ones
-	// are quicker and can miss a document's names entirely, and where the line
-	// falls depends on the model. The engine owns the sizes
-	// (engine.ScanTargetBytes); this field is only which of them a run asks for.
+	// single winner: small slices find the most and send the most requests, and
+	// large ones can miss a document's names entirely on a small model. Where
+	// that line falls depends on the model, which is the user's choice. The
+	// engine owns the sizes (engine.ScanTargetBytes); this field is only which of
+	// them a run asks for.
 	//
 	// An empty string is read as thorough, so a payload that says nothing lands
 	// on the safe end: a level nobody chose must not be the one that finds less.

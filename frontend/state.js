@@ -113,8 +113,9 @@ const initialState = {
   //   only the ones it thought of. OFF by default: it sometimes finds a little
   //   more, and usually takes about twice as long.
   // aiDetailLevel is how much text one local AI request carries: "thorough"
-  //   (the default, smallest slices, finds the most, slowest) or "faster".
-  //   Mirrors engine.AllDetailLevels; see AI_DETAIL_LEVELS below.
+  //   (the default: smaller slices, the most values, the most requests) or
+  //   "faster" (larger slices, fewer requests, and nothing found at all on a
+  //   small model). Mirrors engine.AllDetailLevels; see AI_DETAIL_LEVELS below.
   // contextSize is the Ollama num_ctx setting, default 8192.
   // minConfidence is the detection-confidence floor, 0 to
   // 1 on the engine's scale. 0 is the default and keeps every detection,

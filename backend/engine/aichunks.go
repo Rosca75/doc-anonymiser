@@ -20,16 +20,22 @@ import (
 	"strings"
 )
 
-// Detail levels: how much text one local-AI request carries. They are the
-// user's speed-versus-recall dial, so they are two named sizes rather than a
-// byte figure nobody outside this file could choose sensibly.
+// Detail levels: how much text one local-AI request carries. They are the user's
+// dial over that, so they are two named sizes rather than a byte figure nobody
+// outside this file could choose sensibly.
 //
 // The numbers are measured, not guessed. On a slide-heavy reference deck the
 // recall of a small model falls off a cliff between one and two kilobytes of
 // prompt: at 1 KB it finds values, at 2 KB it finds none. So DetailThorough
 // targets just under the cliff, and DetailFaster is deliberately past it,
-// because on a larger model the extra text costs recall little and saves real
-// time. The tooltip in the interface says exactly that, in those terms.
+// because on a larger model the extra text costs recall almost nothing.
+//
+// What DetailFaster reliably buys is FEWER REQUESTS, and not less time. On the
+// reference documents two runs of one level varied in wall clock by more than
+// the two levels varied from each other, and one request repeated with a
+// byte-identical prompt took twice as long the second time. So the interface
+// names the slice size rather than a speed, and the level's identifier is not a
+// claim the copy repeats.
 //
 // There is deliberately NO "whole document in one request" level. It measures
 // zero values on every model and both reference documents, and truncates the

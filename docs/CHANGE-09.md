@@ -678,6 +678,14 @@ setting achieves, in outcome terms:
 > the most values and takes the longest. Larger slices are quicker and can miss
 > values completely.
 
+**Amended once CR2 was measured.** The second sentence's promise did not survive
+the measurement (Appendix A, post-CR3 runs): larger slices were not reliably
+quicker on the model that finds anything, while they reliably send fewer
+requests. The shipped tooltip therefore names the request count rather than a
+speed, and the option labels name the slice size rather than "Faster". The engine
+identifiers `thorough` and `faster` are unchanged, because an identifier is a
+contract and a label is not.
+
 No em dashes (`frontend/copy.test.js` and `copy_guard_test.go` both police this).
 Do not put numbers of bytes or requests in the copy: those are dynamic and belong
 in the read-out.
@@ -1382,13 +1390,31 @@ come back to the owner (see criterion 4 below).
      must still hold. It is the cheapest signal that the slicing is stable.
   4. **The latency targets.** One page or slide, and a 5-page scope, inside 20
      seconds (30 absolute maximum). A whole document of the reference sizes at about
-     1 minute. On the owner's machine, with the GPU enabled and the default
-     (thorough, JSON mode), the deck measured 1 m 48 s for discovery plus the
-     classification call, so roughly 2 minutes end to end: **that is over target and
-     it is the one open point in this order.** Report the measured number and let the
-     owner decide between accepting it with honest progress, the faster detail level,
-     a different model, or a further change order. Do NOT close the gap by
-     quietly skipping units or dropping the classification pass.
+     1 minute.
+
+     **Measured, post-CR3, on the owner's machine with the GPU still DISABLED**
+     (the server log confirms `dropping integrated GPU`), the 4B, JSON mode and
+     the shipped default detail level (thorough): the reference deck is **10
+     requests and 2 m 09 s to 2 m 33 s of discovery** across two runs, plus the
+     classification call. The reference PDF is **2 requests and 53 s**. Per
+     request that is 13 s to 15 s on the deck, so a 5-slide scope lands inside
+     the 20 s target only when its slides pack into one or two requests; a
+     whole document does not, at either reference size.
+
+     **The whole-document target is missed by roughly a factor of two, and that
+     is the one open point in this order.** It is the owner's decision between
+     accepting it with honest progress, enabling the GPU (CR7, measured at 2.2x
+     and untested since), a different model, or a further change order. Do NOT
+     close the gap by quietly skipping units or dropping the classification
+     pass.
+
+     **The faster detail level does not close it.** Measured on both reference
+     documents (Appendix A), larger slices did not reliably take less time on
+     the model that finds anything: two runs of one level differed in wall clock
+     by more than the two levels differed from each other, and one
+     byte-identical request took 37.9 s and then 76.2 s. What the level reliably
+     changes is the REQUEST COUNT, which is why the read-out reports that and
+     the copy promises no speed-up.
   5. **Silence is legible.** Switch to the 0.8B, scan the deck whole, and confirm
      the run says the model returned nothing for N requests and names the model,
      rather than reporting "0 suggestions" as though the document were clean.
@@ -1515,6 +1541,81 @@ it was gathered for, and not as a prediction of what a run will return.
 | `code_fences.md` | 142 | 2 | 1 |
 | `sample.csv` | 305 | 3 | 3 |
 
+### Post-CR3 runs of the SHIPPED code (2026-08-19)
+
+The rows above were taken with a throwaway harness that set its own
+`num_predict`. These were taken with the committed instrument,
+`backend/ollama/probe_live_test.go` (`//go:build live`), which drives the real
+`engine.ScanChunks`, `buildChatRequest` and `postChat`, so every number here is
+one the application would produce. Ollama 0.32.14, `OLLAMA_IGPU_ENABLE` NOT set
+(the server log still reports `dropping integrated GPU` for the Intel Arc 140V),
+CPU only, JSON reply format, `go test -count=1` on each run.
+
+The harness is committed rather than rebuilt because two sessions had already
+written and deleted it, which is why criterion 4 went unmeasured twice. That
+supersedes Appendix C's instruction to delete it; Appendix C's method notes still
+stand.
+
+**The reference deck** (15 slides, 15,182 B of markdown after CR5):
+
+| model | level | requests | values | silent | wall clock | per request |
+|---|---|---:|---:|---:|---|---|
+| 4B | thorough | 10 | 118 | 1 | 2 m 09 s | 12.9 s |
+| 4B | thorough (repeat) | 10 | 118 | 1 | 2 m 33 s | 15.3 s |
+| 4B | faster | 6 | 119 | 0 | 3 m 01 s | 30.2 s |
+| 4B | faster (repeat) | 6 | 119 | 0 | 2 m 07 s | 21.2 s |
+| 0.8B | thorough | 10 | 2 | 9 | 1 m 01 s | 6.1 s |
+| 0.8B | faster | 6 | 0 | 6 | 29 s | 4.9 s |
+
+**The reference PDF** (2 pages, 4,360 B):
+
+| model | level | requests | values | silent | wall clock | per request |
+|---|---|---:|---:|---:|---|---|
+| 4B | thorough | 2 | 54 | 0 | 53 s | 26.4 s |
+| 4B | faster | 2 | 54 | 0 | 1 m 31 s | 45.6 s |
+| 0.8B | thorough | 2 | 3 | 0 | 14 s | 6.9 s |
+| 0.8B | faster | 2 | 3 | 0 | 14 s | 6.9 s |
+
+No request in any of these runs was truncated, so CR8's cap of 1,024 tokens is
+comfortably above what the shipped slices ask for: the densest reply measured
+here is 331 tokens (PDF page 1) and the densest on the deck is 255.
+
+**What these rows say, and it is not what CR2 assumed.**
+
+- **The reported failure is fixed, and by more than the plan predicted.** The
+  deck returns 118 values at the default settings, against zero before CR1, and
+  against the 76 the pre-CR1 harness measured at one slide per request. Fewer
+  requests than one-per-slide (10 rather than 15) and more values.
+- **The PDF is the control, and it says the timings are noisy.** Page 1 is
+  3,577 B and is ONE unit, so it is its own slice at BOTH levels: the two PDF
+  rows sent byte-identical prompts and got byte-identical replies (eval 331 and
+  71, the same 54 values). The wall clock still differed by 72 %, 37.9 s against
+  76.2 s on that one request. That is the noise floor of this machine, and it is
+  larger than any difference the level produced on the 4B.
+- **The faster level is not measurably faster on the model that finds
+  anything.** On the deck the two levels overlap (thorough 2 m 09 s to 2 m 33 s,
+  faster 2 m 07 s to 3 m 01 s) and find the same thing (118 against 119). Per
+  request the larger slices cost proportionally MORE, so the fewer requests buy
+  back roughly what they cost. Request cost does not track prompt size the way
+  the plan assumed, and it does not track reply length either: on the deck an
+  858 B slice took 19.6 s and a 3,380 B slice took 13.0 s in the same run.
+- **Where the level does buy time, it costs everything.** On the 0.8B, faster is
+  genuinely 2x quicker on the deck (29 s against 1 m 01 s) and finds nothing at
+  all (0 against 2). That is the recall cliff, and it is a small-model effect,
+  exactly as the byte-chunk rows above located it.
+- **The 0.8B is not usable on the deck at either level.** Two values from ten
+  requests, nine of them silent. It is fine on the PDF (3 values, 14 s). This is
+  consistent with the contradiction recorded in section 0 and does not settle
+  it: the spot-check against the library tag is still outstanding.
+- **The determinism criterion holds.** Every repeat produced identical per-slice
+  `eval_count` values and identical value counts. Only the wall clock moved.
+
+The consequence for CR2's copy: the tooltip and the option labels must not
+promise a speed-up, because on the measured evidence there is not one to
+promise. They name the slice size and the request count instead, which is what
+the setting demonstrably controls. The level stays a setting, because the
+recall cliff it exists for is real on a small model.
+
 ### What each group is evidence for
 
 - The deck's "whole document" rows are the reported bug, and they are why CR1 is a
@@ -1599,6 +1700,15 @@ document belongs to neither. Rebuilding it is about twenty minutes:
    probe at it. It shares the model blobs, so nothing is downloaded, and killing it
    afterwards leaves the user's own server untouched.
 
-Delete the probes when the measurement is done, and put the NUMBERS in the change
-order instead. A measurement harness that lingers becomes a test nobody runs and
-nobody trusts.
+**Superseded on the first point.** The probe was rebuilt and deleted twice, and
+criterion 4 went unmeasured both times, so the client half of it is now committed
+as `backend/ollama/probe_live_test.go` behind `//go:build live`. It is in no tier
+(`docs/TESTING.md` has three, and this belongs to none of them): the build tag
+keeps it out of every suite including `-tags=integration,deep`, so it is an
+instrument a human runs rather than a test that lingers. The method notes above
+still stand, and the NUMBERS still belong in this document rather than in the
+harness.
+
+The confidentiality rule the reference documents carry applies to the instrument
+too: it prints counts and shapes, never the strings a model returned, and no
+measurement taken with it may be quoted anywhere as a list of names.

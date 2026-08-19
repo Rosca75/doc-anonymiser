@@ -88,8 +88,7 @@ EXPLICITLY rather than omitting it. It does NOT reach the CLASSIFICATION call,
 which is always schema-constrained: that call files a bounded list of names, where
 "every category present" is what makes the re-filing complete.
 
-`aiDetailLevel` is the same route's speed-versus-recall dial: how much text one
-request carries. One of `engine.AllDetailLevels` (`"thorough"`, the default, or
+`aiDetailLevel` is how much text one request of the same route carries. One of `engine.AllDetailLevels` (`"thorough"`, the default, or
 `"faster"`), mirrored by `state.js AI_DETAIL_LEVELS` and guarded by
 `../detection_parity_test.go`. `applySettings` REFUSES a level Go cannot size and
 names the two valid ones; the EMPTY string is accepted, because absence has a
