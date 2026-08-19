@@ -11,7 +11,7 @@
 //
 // API surface used (pinned in CLAUDE.md §7, "Ollama HTTP API as of 2026"):
 //   - GET  /api/tags  — probe + model list
-//   - POST /api/chat  — {"format":"json","stream":false} completions
+//   - POST /api/chat  — {"format":<JSON Schema>,"stream":false} completions
 package ollama
 
 import (
@@ -59,6 +59,51 @@ const chunkOverlapBytes = 512
 // Beyond this the scan would take unreasonably long on a small local
 // model; the caller gets an actionable error instead.
 const MaxChunksPerDocument = 64
+
+// The sampling settings every request pins, rather than inheriting whatever
+// the model tag was published with.
+//
+// Discovery and classification are TRANSCRIPTION tasks: every answer is text
+// already present in the prompt, so there is nothing for creative sampling to
+// contribute and a great deal for it to spoil. Greedy decoding also makes two
+// runs over the same page agree, which is what lets the user's review of the
+// first run mean anything about the second.
+//
+// The penalties are pinned NEUTRAL deliberately. A presence or repeat penalty
+// punishes re-emitting a token that already appeared, and copying a name
+// verbatim out of the document is precisely that, so a tag shipping a penalty
+// pushes the model away from the one behaviour the prompt demands.
+const (
+	extractionTemperature     = 0.0
+	extractionTopK            = 1
+	extractionTopP            = 1.0
+	extractionPresencePenalty = 0.0
+	extractionRepeatPenalty   = 1.0
+	// A fixed seed, so a re-run of one page produces the same suggestion list.
+	// Any value works; what matters is that it never changes between runs.
+	extractionSeed = 7
+)
+
+// maxReplyTokens caps how much the model may generate for one chunk. The
+// schema-constrained replies this client asks for run to roughly a hundred
+// tokens, so the cap is a runaway guard rather than a budget: it stops a
+// degenerate reply holding chatClient's timeout open for two minutes.
+//
+// It is only safe BECAUSE every request sets think:false. With thinking on the
+// reasoning trace is generated first and spends the whole budget, so the cap
+// makes matters worse: the JSON is then truncated or never begins.
+const maxReplyTokens = 512
+
+// detectionKeepAlive is how long Ollama holds the model in memory after a
+// reply. Ollama's own default is five minutes, which is shorter than the time a
+// user spends reviewing one run's suggestions, so the next run pays the model
+// load again. It is a duration and never -1: see chatRequest.KeepAlive.
+const detectionKeepAlive = "30m"
+
+// warmTimeout bounds Warm. A pre-load that has not finished in this long is
+// not worth waiting for: it is an optimisation, and the run it would have
+// helped can pay the load itself.
+const warmTimeout = 30 * time.Second
 
 // OllamaStatus is the result of probing the local Ollama server. It is sent
 // to the frontend as-is (via app.go), so field names are chosen to read well
@@ -194,28 +239,83 @@ func (c *Client) ListModels() ([]string, error) {
 
 // --- /api/chat ----------------------------------------------------------
 
-// chatRequest is the POST /api/chat body. Format "json" instructs Ollama
-// to constrain the output to valid JSON (CLAUDE.md §8: discovery and
-// discovery prompts must set it); stream=false gives one complete reply.
+// chatRequest is the POST /api/chat body (CLAUDE.md §8). stream=false gives
+// one complete reply; the rest of the fields exist to make a small local model
+// behave like an extraction engine rather than a chat partner.
 type chatRequest struct {
 	Model    string        `json:"model"`
 	Messages []chatMessage `json:"messages"`
-	Format   string        `json:"format"`
-	Stream   bool          `json:"stream"`
+	// Format is one of two things: the string "json", which is Ollama's loose
+	// JSON mode, or a JSON Schema object, which constrains the reply's SHAPE
+	// as well as its syntax. The callers in this file send the schema
+	// (suggestionSchema); the type is any so the looser mode stays expressible
+	// and so a request that wants no formatting at all can omit it.
+	Format any  `json:"format,omitempty"`
+	Stream bool `json:"stream"`
+	// Think disables a reasoning model's hidden reasoning. It is a TOP-LEVEL
+	// field because Ollama's own options object is a map: a key it does not
+	// recognise there is dropped in silence, so a think flag nested in options
+	// reads as "set" on this side and never arrives.
+	//
+	// It is load-bearing rather than a tuning knob. Setting format does NOT stop
+	// a reasoning model reasoning: the grammar is applied only once the model
+	// transitions from thinking to content, so with thinking on the whole
+	// reasoning trace is generated first, unconstrained, at full cost, and
+	// returned in a field this client does not even read. On a small model asked
+	// to extract names from one page that trace ran to thousands of tokens and
+	// exhausted the reply budget, so the JSON never arrived.
+	//
+	// A pointer, so "unset" and "deliberately false" stay distinct: an omitted
+	// field means "let the model decide", exactly as Options already works.
+	Think *bool `json:"think,omitempty"`
+	// KeepAlive is how long Ollama holds the model in memory after the reply.
+	// TOP-LEVEL for the same reason as Think: it is not an entry in the options
+	// map. Ollama's own default is five minutes, which is shorter than a user
+	// spends reviewing suggestions between two runs, so every second run pays
+	// the model load again. It is deliberately NOT -1 (load until the process
+	// exits): this is a desktop application on someone's work laptop, and
+	// pinning a model in RAM until reboot is not ours to decide.
+	KeepAlive string `json:"keep_alive,omitempty"`
 	// Options carries model options; NumCtx sets the context window. A
 	// nil pointer omits the object entirely so the model default applies
 	// (a pointer with omitempty gives an unambiguous "unset" state).
 	Options *chatOptions `json:"options,omitempty"`
 }
 
-// chatOptions mirrors the Ollama options object; only num_ctx is used.
+// chatOptions mirrors the Ollama options object.
+//
+// Every sampling field is a pointer because "unset" and "deliberately zero" are
+// different requests and a plain float with omitempty cannot tell them apart:
+// temperature 0 is exactly the value extraction wants, and it would marshal
+// away.
 type chatOptions struct {
-	NumCtx int `json:"num_ctx,omitempty"`
+	NumCtx     int `json:"num_ctx,omitempty"`
+	NumPredict int `json:"num_predict,omitempty"`
+	// Extraction is a transcription task, not a creative one: the answer is
+	// text already present in the prompt. Greedy decoding makes two runs of
+	// one document agree, which is what lets the review gate mean something.
+	Temperature *float64 `json:"temperature,omitempty"`
+	TopK        *int     `json:"top_k,omitempty"`
+	TopP        *float64 `json:"top_p,omitempty"`
+	Seed        *int     `json:"seed,omitempty"`
+	// A presence penalty punishes re-emitting a token that already appeared.
+	// Copying a name verbatim out of the document IS re-emitting tokens that
+	// already appeared, so a model tag shipping a presence penalty works
+	// against the task and lengthens the reply. Both penalties are pinned
+	// neutral here rather than left to whatever the tag was built with.
+	PresencePenalty *float64 `json:"presence_penalty,omitempty"`
+	RepeatPenalty   *float64 `json:"repeat_penalty,omitempty"`
 }
 
 type chatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	// Thinking is where Ollama puts a reasoning model's hidden trace. Nothing
+	// in this client reads it for meaning: it is decoded so that a reply which
+	// still carries reasoning can be SEEN rather than silently discarded.
+	// omitempty matters because this same struct carries the messages SENT;
+	// without it every outgoing message would ship an empty thinking key.
+	Thinking string `json:"thinking,omitempty"`
 }
 
 type chatResponse struct {
@@ -224,40 +324,105 @@ type chatResponse struct {
 }
 
 // Chat sends one system+user exchange and returns the assistant's raw
-// content. ctx cancellation aborts the request mid-flight (the pipeline
-// cancel button relies on this).
-func (c *Client) Chat(ctx context.Context, model, systemPrompt, userPrompt string) (string, error) {
+// content. format is what the reply is constrained to (see chatRequest.Format);
+// the callers in this file pass suggestionSchema(). ctx cancellation aborts the
+// request mid-flight (the pipeline cancel button relies on this).
+func (c *Client) Chat(ctx context.Context, model, systemPrompt, userPrompt string, format any) (string, error) {
 	if model == "" {
 		model = c.Model
 	}
-	reqBody := chatRequest{
-		Model: model,
-		Messages: []chatMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: userPrompt},
+	reqBody := c.buildChatRequest(model, []chatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}, format)
+
+	out, err := c.postChat(ctx, c.chatClient, model, reqBody)
+	if err != nil {
+		return "", err
+	}
+	return out.Message.Content, nil
+}
+
+// Warm loads the model into Ollama's memory without asking it to generate
+// anything, so the first real detection run of a session does not begin with a
+// multi-second model load inside a wait the user is watching.
+//
+// An EMPTY messages array is the documented way to load a model without
+// generating; num_predict 0 is not, so do not reach for that instead.
+//
+// It is cheap to call and can never hang the caller: it carries its own short
+// timeout on top of ctx. Its error is safe to ignore, because a warm-up that
+// did not happen costs latency and not correctness.
+func (c *Client) Warm(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, warmTimeout)
+	defer cancel()
+
+	// No format: there is no reply to shape. keep_alive and the model name are
+	// the whole point of the call, and both come from the shared builder so the
+	// warm-up cannot hold the model for a different period than a real call.
+	req := c.buildChatRequest(c.Model, []chatMessage{}, nil)
+	_, err := c.postChat(ctx, c.chatClient, c.Model, req)
+	return err
+}
+
+// buildChatRequest is the ONE place a POST /api/chat body is shaped, so the
+// discovery call, the classification call and the warm-up cannot drift apart
+// on the settings that decide how the model behaves.
+func (c *Client) buildChatRequest(model string, messages []chatMessage, format any) chatRequest {
+	// Addressable copies: every sampling option is a pointer so that a
+	// deliberate zero survives omitempty (see chatOptions).
+	think := false
+	temperature := extractionTemperature
+	topK := extractionTopK
+	topP := extractionTopP
+	seed := extractionSeed
+	presencePenalty := extractionPresencePenalty
+	repeatPenalty := extractionRepeatPenalty
+
+	req := chatRequest{
+		Model:     model,
+		Messages:  messages,
+		Format:    format,
+		Stream:    false,
+		Think:     &think,
+		KeepAlive: detectionKeepAlive,
+		Options: &chatOptions{
+			NumPredict:      maxReplyTokens,
+			Temperature:     &temperature,
+			TopK:            &topK,
+			TopP:            &topP,
+			Seed:            &seed,
+			PresencePenalty: &presencePenalty,
+			RepeatPenalty:   &repeatPenalty,
 		},
-		Format: "json",
-		Stream: false,
 	}
 	if c.ContextSize > 0 {
 		// num_ctx only travels when explicitly configured; 0 keeps the
 		// model default.
-		reqBody.Options = &chatOptions{NumCtx: c.ContextSize}
+		req.Options.NumCtx = c.ContextSize
 	}
+	return req
+}
+
+// postChat sends one built request and maps Ollama's answer onto an actionable
+// error or a decoded reply. Chat and Warm share it so there is one description
+// of what each HTTP status means.
+func (c *Client) postChat(ctx context.Context, httpClient *http.Client, model string, reqBody chatRequest) (chatResponse, error) {
+	var out chatResponse
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", fmt.Errorf("could not build the Ollama request: %w", err)
+		return out, fmt.Errorf("could not build the Ollama request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/chat", bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("could not build the Ollama request: %w", err)
+		return out, fmt.Errorf("could not build the Ollama request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.chatClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf(
+		return out, fmt.Errorf(
 			"could not reach Ollama on %s (%v), check that Ollama is still running, then re-probe in settings", c.BaseURL, err)
 	}
 	defer resp.Body.Close()
@@ -279,17 +444,17 @@ func (c *Client) Chat(ctx context.Context, model, systemPrompt, userPrompt strin
 			// a bare 404 means the /api/chat endpoint itself is missing,
 			// which is the pinned pre-chat-API "too old" case.
 			if strings.Contains(strings.ToLower(apiErr.Error), "model") {
-				return "", fmt.Errorf(
+				return out, fmt.Errorf(
 					"model %q is not installed; run 'ollama pull %s' or pick another model in settings", model, model)
 			}
-			return "", fmt.Errorf("%s", ErrTooOld)
+			return out, fmt.Errorf("%s", ErrTooOld)
 		case http.StatusBadRequest:
 			msg := fmt.Sprintf("Ollama rejected the request (HTTP 400): %s", apiErr.Error)
 			low := strings.ToLower(apiErr.Error)
 			if strings.Contains(low, "context") || strings.Contains(low, "length") {
 				msg += " The document chunk was too large for the model's context window; lower the chunk size or raise the context size in Configure."
 			}
-			return "", fmt.Errorf("%s", msg)
+			return out, fmt.Errorf("%s", msg)
 		default:
 			excerpt := apiErr.Error
 			if excerpt == "" {
@@ -298,20 +463,19 @@ func (c *Client) Chat(ctx context.Context, model, systemPrompt, userPrompt strin
 					excerpt = excerpt[:200]
 				}
 			}
-			return "", fmt.Errorf(
+			return out, fmt.Errorf(
 				"Ollama answered HTTP %d on /api/chat (expected 200): %s; check that the Ollama server is healthy, then re-probe in settings",
 				resp.StatusCode, excerpt)
 		}
 	}
 
-	var out chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", fmt.Errorf("Ollama's /api/chat reply could not be parsed (%v), try updating Ollama", err)
+		return out, fmt.Errorf("Ollama's /api/chat reply could not be parsed (%v), try updating Ollama", err)
 	}
 	if out.Error != "" {
-		return "", fmt.Errorf("Ollama reported an error: %s, the model %q may not be installed; run 'ollama pull %s'", out.Error, model, model)
+		return out, fmt.Errorf("Ollama reported an error: %s, the model %q may not be installed; run 'ollama pull %s'", out.Error, model, model)
 	}
-	return out.Message.Content, nil
+	return out, nil
 }
 
 // --- Discovery (Phase-A prompt) ------------------------------------------
@@ -350,7 +514,7 @@ func (c *Client) Discover(ctx context.Context, text string) ([]engine.Suggestion
 // 0-based index and the total; nil disables it.
 func (c *Client) DiscoverWithProgress(ctx context.Context, text string, onChunk func(index, total int)) ([]engine.Suggestion, error) {
 	return c.scanChunks(ctx, text, onChunk, func(chunk string) (string, error) {
-		return c.Chat(ctx, c.Model, discoverSystemPrompt, chunk)
+		return c.Chat(ctx, c.Model, discoverSystemPrompt, chunk, suggestionSchema())
 	})
 }
 
@@ -462,7 +626,7 @@ func (c *Client) ClassifySuggestions(ctx context.Context, suggestions []engine.S
 		if batch.Len() == 0 {
 			return nil
 		}
-		reply, err := c.Chat(ctx, c.Model, classifySystemPrompt, batch.String())
+		reply, err := c.Chat(ctx, c.Model, classifySystemPrompt, batch.String(), suggestionSchema())
 		batch.Reset()
 		if err != nil {
 			return err
@@ -528,6 +692,45 @@ var promptCategories = []string{
 	engine.CatPersonNames,
 	engine.CatIdentifierNames,
 	engine.CatOtherNames,
+}
+
+// suggestionSchema is the reply shape the model is CONSTRAINED to, rather than
+// merely asked for: an object whose every property is an array of strings, with
+// all of them required.
+//
+// It is a recall win and not only a safety one. Requiring every category to be
+// present makes the model visit each one instead of stopping after the two it
+// thought of first, which on one measured page took a small model from six
+// names to sixteen. It costs effectively nothing: masking the next token
+// against a grammar is microseconds against a CPU decode step of tens of
+// milliseconds, and a stricter grammar lets more tokens be fast-forwarded
+// rather than sampled.
+//
+// It is DERIVED from promptCategories rather than written out, so the schema
+// cannot fall out of step with the parser and the prompts. That keeps
+// TestPromptsAndParserAgreeOnTheCategoryKeys covering it: a new engine category
+// added to the prompts but not here would otherwise be a category the model is
+// forbidden to fill, which no other test would notice.
+//
+// The schema is FLAT on purpose. Sub-4B models degrade badly on schemas
+// containing $defs or $ref, echoing the schema's own structure back in place of
+// the extracted values, so there are no reusable definitions here even though
+// every property is identical.
+func suggestionSchema() map[string]any {
+	properties := make(map[string]any, len(promptCategories))
+	required := make([]string, 0, len(promptCategories))
+	for _, category := range promptCategories {
+		properties[category] = map[string]any{
+			"type":  "array",
+			"items": map[string]any{"type": "string"},
+		}
+		required = append(required, category)
+	}
+	return map[string]any{
+		"type":       "object",
+		"properties": properties,
+		"required":   required,
+	}
 }
 
 // parseSuggestionJSON tolerantly parses the model's JSON reply into unified

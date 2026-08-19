@@ -332,6 +332,35 @@ func (a *App) Startup(ctx context.Context) {
 		// like dialog imports, so an event carries the result instead.
 		runtime.EventsEmit(a.ctx, "documents:changed", result)
 	})
+	a.warmLocalAI()
+}
+
+// warmLocalAI loads the local model into Ollama's memory ahead of the first
+// detection run, so the model load is not sitting inside a wait the user is
+// watching.
+//
+// Three properties matter, and each is deliberate.
+//
+// It runs in a GOROUTINE with its own background context: a slow or absent
+// Ollama must not delay the window appearing, and the warm-up's lifetime is not
+// the window's, so it is never handed the Wails context.
+//
+// It only runs when Local AI is switched on. A user who never uses the route
+// never pays RAM for a model they did not ask for.
+//
+// Its failure is SWALLOWED. ProbeOllama already owns telling the user that
+// Ollama is missing; a second, louder error path for a performance optimisation
+// would report a problem the user cannot act on, about a feature they may not
+// have asked for.
+func (a *App) warmLocalAI() {
+	a.mu.Lock()
+	on := a.settings.UseLocalAI
+	llm := a.llm
+	a.mu.Unlock()
+	if !on || llm == nil {
+		return
+	}
+	go func() { _ = llm.Warm(context.Background()) }()
 }
 
 // Ping proves the JavaScript ↔ Go bridge end to end: the shell calls it on
@@ -601,6 +630,9 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 	}
 
 	a.mu.Lock()
+	// Whether the Local AI route was already on decides whether this call is the
+	// moment to pre-load the model: see below.
+	wasOn := a.settings.UseLocalAI
 	// Filled out to the complete set of known sources and derivations, so a payload
 	// that omitted one lands on its DEFAULT rather than on Go's zero value. Reading
 	// an absent key as "off" would silently disable a reading the user never
@@ -613,6 +645,16 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 	}
 	a.llm.ContextSize = s.ContextSize
 	a.mu.Unlock()
+
+	// Switching the route ON is the moment to pre-load the model, and the only
+	// one that reaches most sessions: Local AI is off in the defaults a fresh
+	// app starts from, so the warm-up at startup fires only for a session that
+	// arrived with the route already on. Warming on the TRANSITION rather than
+	// on every settings write is what keeps an unrelated change (a country, a
+	// confidence slider) from re-posting a load request each time.
+	if !wasOn && s.UseLocalAI {
+		a.warmLocalAI()
+	}
 	return a.llm.Probe(), nil
 }
 

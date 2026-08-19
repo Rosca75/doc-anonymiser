@@ -7,6 +7,7 @@ package ollama
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -29,21 +30,23 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.S
 
 // chatReplyServer builds a mock that answers /api/tags happily and returns
 // the given content string from /api/chat.
+//
+// It also asserts the pinned request contract on EVERY call it serves, which is
+// most of the calls in this file. That is the point of putting the assertions
+// here rather than in one dedicated test: the contract has to hold on the
+// discovery call and the classification call alike, and a helper every path
+// goes through is the only place that covers both without being remembered.
 func chatReplyServer(t *testing.T, content string) *Client {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tags":
-			w.Write([]byte(`{"models":[{"name":"qwen2.5:3b-instruct"}]}`))
+			w.Write([]byte(`{"models":[{"name":"qwen3.5:0.8b"}]}`))
 		case "/api/chat":
-			// Sanity-check the pinned request contract (CLAUDE.md §8):
-			// format:json and stream:false.
 			var req map[string]interface{}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Errorf("chat request not JSON: %v", err)
 			}
-			if req["format"] != "json" || req["stream"] != false {
-				t.Errorf("chat request must pin format:json, stream:false — got %v", req)
-			}
+			assertPinnedChatRequest(t, req)
 			resp, _ := json.Marshal(map[string]interface{}{
 				"message": map[string]string{"role": "assistant", "content": content},
 			})
@@ -53,6 +56,90 @@ func chatReplyServer(t *testing.T, content string) *Client {
 		}
 	})
 	return c
+}
+
+// assertPinnedChatRequest holds one decoded /api/chat body to the request
+// contract this package guarantees (CLAUDE.md §8). Each assertion names the
+// failure it prevents, because every one of them is a setting whose absence is
+// silent: the request still succeeds and the reply is simply worse.
+func assertPinnedChatRequest(t *testing.T, req map[string]interface{}) {
+	t.Helper()
+
+	if req["stream"] != false {
+		t.Errorf("chat request must pin stream:false, got %v", req["stream"])
+	}
+
+	// think:false, at the TOP LEVEL. Ollama's options object is a map, so a
+	// key it does not recognise there is dropped in silence: a think flag
+	// nested in options reads as set on our side and never arrives, and the
+	// model reasons for thousands of tokens before answering.
+	if think, ok := req["think"].(bool); !ok || think {
+		t.Errorf("chat request must send think:false at the top level, got %v", req["think"])
+	}
+
+	// keep_alive, also top level and for the same reason: it is not an entry
+	// in the options map. Without it Ollama's five-minute default unloads the
+	// model while the user reviews the previous run's suggestions.
+	if keepAlive, ok := req["keep_alive"].(string); !ok || keepAlive == "" {
+		t.Errorf("chat request must send a top-level keep_alive, got %v", req["keep_alive"])
+	}
+
+	opts, _ := req["options"].(map[string]interface{})
+	for _, stray := range []string{"think", "keep_alive"} {
+		if _, present := opts[stray]; present {
+			t.Errorf("%q must not be nested in options: Ollama drops unknown option keys in silence, so it would never arrive", stray)
+		}
+	}
+
+	assertSuggestionSchemaFormat(t, req["format"])
+}
+
+// assertSuggestionSchemaFormat checks that format carries the flat suggestion
+// schema rather than the loose "json" string.
+func assertSuggestionSchemaFormat(t *testing.T, format interface{}) {
+	t.Helper()
+
+	schema, ok := format.(map[string]interface{})
+	if !ok {
+		t.Fatalf("format must carry a JSON Schema object, got %#v", format)
+	}
+	if schema["type"] != "object" {
+		t.Errorf("the schema must describe an object, got %v", schema["type"])
+	}
+
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("the schema must carry a properties object, got %#v", schema["properties"])
+	}
+	var required []string
+	for _, r := range schema["required"].([]interface{}) {
+		required = append(required, r.(string))
+	}
+	for _, category := range promptCategories {
+		property, ok := properties[category].(map[string]interface{})
+		if !ok {
+			t.Errorf("the schema has no property for %q, so the model is forbidden to fill it", category)
+			continue
+		}
+		items, _ := property["items"].(map[string]interface{})
+		if property["type"] != "array" || items["type"] != "string" {
+			t.Errorf("%q must be an array of strings in the schema, got %#v", category, property)
+		}
+		if !slices.Contains(required, category) {
+			t.Errorf("%q is not in the schema's required list, which is what makes the model visit every category", category)
+		}
+	}
+
+	// No $defs and no $ref, anywhere. Sub-4B models degrade badly on schemas
+	// with reusable definitions: they echo the schema's own structure back in
+	// place of the extracted values, so the reply parses and contains nothing.
+	rendered, _ := json.Marshal(schema)
+	for _, banned := range []string{"$defs", "$ref"} {
+		if strings.Contains(string(rendered), banned) {
+			t.Errorf("the schema must stay flat: %s makes a small model echo the schema back instead of filling it. Schema: %s",
+				banned, rendered)
+		}
+	}
 }
 
 func TestNewEnforcesLoopback(t *testing.T) {
@@ -75,10 +162,10 @@ func TestProbeHappyPath(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		w.Write([]byte(`{"models":[{"name":"qwen2.5:3b-instruct"},{"name":"llama3.2:3b"}]}`))
+		w.Write([]byte(`{"models":[{"name":"qwen3.5:0.8b"},{"name":"llama3.2:3b"}]}`))
 	})
 	st := c.Probe()
-	if !st.Available || len(st.Models) != 2 || st.Models[0] != "qwen2.5:3b-instruct" {
+	if !st.Available || len(st.Models) != 2 || st.Models[0] != "qwen3.5:0.8b" {
 		t.Errorf("probe mis-parsed: %+v", st)
 	}
 	models, err := c.ListModels()
@@ -118,7 +205,7 @@ func TestChatTooOld(t *testing.T) {
 		}
 		http.NotFound(w, r)
 	})
-	_, err := c.Chat(context.Background(), "", "sys", "user")
+	_, err := c.Chat(context.Background(), "", "sys", "user", suggestionSchema())
 	if err == nil || err.Error() != ErrTooOld {
 		t.Errorf("want %q, got %v", ErrTooOld, err)
 	}
@@ -269,7 +356,7 @@ func TestChat400ContextOverflow(t *testing.T) {
 		}
 		w.Write([]byte(`{"models":[]}`))
 	})
-	_, err := c.Chat(context.Background(), "m", "sys", "user")
+	_, err := c.Chat(context.Background(), "m", "sys", "user", suggestionSchema())
 	if err == nil {
 		t.Fatal("400 must be an error")
 	}
@@ -293,7 +380,7 @@ func TestChat404ModelNotFound(t *testing.T) {
 		}
 		w.Write([]byte(`{"models":[]}`))
 	})
-	_, err := c.Chat(context.Background(), "missing:3b", "sys", "user")
+	_, err := c.Chat(context.Background(), "missing:3b", "sys", "user", suggestionSchema())
 	if err == nil || !strings.Contains(err.Error(), "not installed") ||
 		!strings.Contains(err.Error(), "missing:3b") {
 		t.Errorf("404 model-not-found must name the model and the fix, got %v", err)
@@ -303,17 +390,17 @@ func TestChat404ModelNotFound(t *testing.T) {
 	}
 }
 
-// TestChatNumCtx: num_ctx must travel in the request body when
-// ContextSize is set, and stay absent when 0.
-func TestChatNumCtx(t *testing.T) {
-	var lastBody map[string]interface{}
+// recordingChatServer answers /api/chat with an empty JSON object and hands the
+// decoded request body back through the callback, so a test can assert on
+// exactly what was sent. A FRESH map is decoded per call: decoding into an
+// existing one would merge keys and hide a field the request stopped sending.
+func recordingChatServer(t *testing.T, record func(map[string]interface{})) *Client {
+	t.Helper()
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/chat" {
-			// Decode into a FRESH map each call; decoding into an existing
-			// map would merge keys and hide a removed "options" field.
 			var body map[string]interface{}
 			json.NewDecoder(r.Body).Decode(&body)
-			lastBody = body
+			record(body)
 			resp, _ := json.Marshal(map[string]interface{}{
 				"message": map[string]string{"role": "assistant", "content": "{}"},
 			})
@@ -322,22 +409,173 @@ func TestChatNumCtx(t *testing.T) {
 		}
 		w.Write([]byte(`{"models":[]}`))
 	})
+	return c
+}
+
+// TestChatOptionsContract pins the whole options object, not only num_ctx.
+//
+// Every value here is one a model tag would otherwise supply, and every one of
+// them is silent when it goes missing: the request still succeeds and the reply
+// is simply slower, longer or different between two runs of the same page.
+func TestChatOptionsContract(t *testing.T) {
+	var lastBody map[string]interface{}
+	c := recordingChatServer(t, func(body map[string]interface{}) { lastBody = body })
 
 	c.ContextSize = 4096
-	if _, err := c.Chat(context.Background(), "m", "s", "u"); err != nil {
+	if _, err := c.Chat(context.Background(), "m", "s", "u", suggestionSchema()); err != nil {
 		t.Fatal(err)
 	}
 	opts, ok := lastBody["options"].(map[string]interface{})
-	if !ok || opts["num_ctx"] != float64(4096) {
-		t.Errorf("num_ctx missing from request: %v", lastBody)
+	if !ok {
+		t.Fatalf("the request must carry an options object, got %v", lastBody)
+	}
+	if opts["num_ctx"] != float64(4096) {
+		t.Errorf("num_ctx = %v, want 4096 (from ContextSize); body was %v", opts["num_ctx"], lastBody)
 	}
 
+	// The pinned extraction sampling. temperature is the one to read twice:
+	// see TestChatTemperatureZeroIsNotDroppedByOmitempty.
+	for key, want := range map[string]float64{
+		"temperature":      0,
+		"top_k":            1,
+		"top_p":            1,
+		"presence_penalty": 0,
+		"repeat_penalty":   1,
+		"seed":             float64(extractionSeed),
+		"num_predict":      float64(maxReplyTokens),
+	} {
+		got, present := opts[key]
+		if !present {
+			t.Errorf("options.%s is missing, so the model keeps whatever its tag shipped with; options were %v", key, opts)
+			continue
+		}
+		if got != want {
+			t.Errorf("options.%s = %v, want %v", key, got, want)
+		}
+	}
+
+	// ContextSize 0 means "let the model default apply", so num_ctx drops out
+	// while the sampling options stay: they are ours to pin either way.
 	c.ContextSize = 0
-	if _, err := c.Chat(context.Background(), "m", "s", "u"); err != nil {
+	if _, err := c.Chat(context.Background(), "m", "s", "u", suggestionSchema()); err != nil {
 		t.Fatal(err)
 	}
-	if _, present := lastBody["options"]; present {
-		t.Errorf("options must be omitted when ContextSize is 0: %v", lastBody)
+	opts, ok = lastBody["options"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("the sampling options must survive ContextSize 0, got %v", lastBody)
+	}
+	if _, present := opts["num_ctx"]; present {
+		t.Errorf("num_ctx must be omitted when ContextSize is 0, got %v", opts["num_ctx"])
+	}
+	if _, present := opts["temperature"]; !present {
+		t.Errorf("the pinned sampling must not depend on ContextSize, options were %v", opts)
+	}
+}
+
+// TestChatTemperatureZeroIsNotDroppedByOmitempty guards the reason every
+// sampling field in chatOptions is a POINTER.
+//
+// The failure it prevents: a plain float64 with omitempty marshals 0 away, so
+// the request would silently carry no temperature and the model would keep
+// sampling at whatever its tag shipped with. Nothing else would notice: the
+// call succeeds, the JSON parses, and two runs of one page merely stop
+// agreeing with each other.
+func TestChatTemperatureZeroIsNotDroppedByOmitempty(t *testing.T) {
+	var raw []byte
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat" {
+			raw, _ = io.ReadAll(r.Body)
+			w.Write([]byte(`{"message":{"content":"{}"}}`))
+			return
+		}
+		w.Write([]byte(`{"models":[]}`))
+	})
+	if _, err := c.Chat(context.Background(), "m", "s", "u", suggestionSchema()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"temperature":0`) {
+		t.Errorf("temperature 0 must appear literally in the request body, got %s", raw)
+	}
+}
+
+// TestChatThinkIsTopLevelAndFalse states, in its own name, the regression no
+// other test would catch: nested in options the flag is dropped in SILENCE,
+// because Ollama's options object is a map of unknown keys. The request would
+// look correct on this side and the model would reason anyway.
+func TestChatThinkIsTopLevelAndFalse(t *testing.T) {
+	var lastBody map[string]interface{}
+	c := recordingChatServer(t, func(body map[string]interface{}) { lastBody = body })
+
+	if _, err := c.Chat(context.Background(), "m", "s", "u", suggestionSchema()); err != nil {
+		t.Fatal(err)
+	}
+	think, ok := lastBody["think"].(bool)
+	if !ok || think {
+		t.Errorf("think must be top-level false, got %v (body %v)", lastBody["think"], lastBody)
+	}
+	opts, _ := lastBody["options"].(map[string]interface{})
+	if _, present := opts["think"]; present {
+		t.Error("think must NOT be inside options: an unrecognised key there is dropped in silence, so the flag never reaches Ollama")
+	}
+}
+
+// TestDiscoverIgnoresAThinkingReply: a reply carrying BOTH a reasoning trace
+// and valid JSON must be parsed from content. The two fields are separate, and
+// reading the wrong one would turn a good answer into "the model rambled".
+func TestDiscoverIgnoresAThinkingReply(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			w.Write([]byte(`{"models":[]}`))
+			return
+		}
+		resp, _ := json.Marshal(map[string]interface{}{
+			"message": map[string]string{
+				"role":     "assistant",
+				"thinking": "Let me consider whether Alpine Trust is an organisation...",
+				"content":  `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`,
+			},
+		})
+		w.Write(resp)
+	})
+
+	got, err := c.Discover(context.Background(), "Alpine Trust appears here.")
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(got) != 1 || got[0].MainText != "Alpine Trust" {
+		t.Errorf("the parser must read message.content, not message.thinking; got %+v", got)
+	}
+}
+
+// TestWarmLoadsWithoutGenerating: Warm must load the weights and nothing else.
+// An EMPTY messages array is the documented way to do that; num_predict 0 is
+// not, which is why the assertion is on the messages array.
+func TestWarmLoadsWithoutGenerating(t *testing.T) {
+	var lastBody map[string]interface{}
+	c := recordingChatServer(t, func(body map[string]interface{}) { lastBody = body })
+
+	if err := c.Warm(context.Background()); err != nil {
+		t.Fatalf("Warm on a healthy server must succeed: %v", err)
+	}
+	messages, ok := lastBody["messages"].([]interface{})
+	if !ok || len(messages) != 0 {
+		t.Errorf("Warm must post an EMPTY messages array, got %v", lastBody["messages"])
+	}
+	if keepAlive, ok := lastBody["keep_alive"].(string); !ok || keepAlive == "" {
+		t.Errorf("Warm must send keep_alive, or the model it just loaded falls out of memory again: %v", lastBody)
+	}
+}
+
+// TestWarmFailureIsNotFatal documents that Warm's error is safe to ignore,
+// which is what App.warmLocalAI does: a warm-up that did not happen costs
+// latency, never correctness.
+func TestWarmFailureIsNotFatal(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	url := srv.URL
+	srv.Close() // nothing listens there any more
+
+	if err := New(url).Warm(context.Background()); err == nil {
+		t.Error("Warm against a closed port must report an error rather than pretend it warmed")
 	}
 }
 
@@ -578,12 +816,15 @@ func TestClassifySuggestionsBatching(t *testing.T) {
 
 // TestPromptsAndParserAgreeOnTheCategoryKeys is the parity guard for this file.
 //
-// Three lists have to name the same categories: the keys each prompt demands,
-// the keys parseSuggestionJSON reads back, and the engine's own category set. A key
-// in a prompt that parseSuggestionJSON does not know is dropped on parse; a key here
-// that no prompt requests is a category the model is never asked to fill.
-// Either way the category is dead and every test still passes, which is exactly
-// how organisation_names survived for three phases.
+// FOUR lists have to name the same categories: the keys each prompt demands,
+// the keys parseSuggestionJSON reads back, the schema the reply is constrained
+// to, and the engine's own category set. A key in a prompt that
+// parseSuggestionJSON does not know is dropped on parse; a key here that no
+// prompt requests is a category the model is never asked to fill; and a
+// category missing from the schema is one the model is FORBIDDEN to fill, which
+// is the quietest failure of the three. Either way the category is dead and
+// every other test still passes, which is exactly how organisation_names
+// survived for three phases.
 func TestPromptsAndParserAgreeOnTheCategoryKeys(t *testing.T) {
 	prompts := map[string]string{
 		"discover": discoverSystemPrompt,
@@ -606,10 +847,25 @@ func TestPromptsAndParserAgreeOnTheCategoryKeys(t *testing.T) {
 		}
 	}
 
+	schema := suggestionSchema()
+	properties, _ := schema["properties"].(map[string]any)
+	required, _ := schema["required"].([]string)
 	for _, category := range promptCategories {
 		if !slices.Contains(engine.AllValueCategories, category) {
 			t.Errorf("promptCategories names %q, which the engine does not have", category)
 		}
+		// The schema is what makes the category reachable at all: a property
+		// the schema omits is one the grammar forbids the model to emit.
+		if _, ok := properties[category]; !ok {
+			t.Errorf("suggestionSchema has no property for %q, so the model is forbidden to fill it", category)
+		}
+		if !slices.Contains(required, category) {
+			t.Errorf("suggestionSchema does not require %q, so the model may skip the category entirely", category)
+		}
+	}
+	if len(properties) != len(promptCategories) || len(required) != len(promptCategories) {
+		t.Errorf("the schema must describe exactly the prompt categories: %d properties and %d required, want %d of each",
+			len(properties), len(required), len(promptCategories))
 	}
 }
 
