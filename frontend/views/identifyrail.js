@@ -25,7 +25,10 @@
 // llmEnabled(state) = useLocalAI AND ollama.available, so the deterministic pipeline
 // stays fully usable with Ollama absent.
 
-import { applySettings, listOllamaModels, probeOllama, loadSession, saveSession } from "../api.js";
+import {
+  applySettings, listOllamaModels, probeOllama, loadSession, saveSession,
+  valuePlaceholders, listRemovedValues,
+} from "../api.js";
 import {
   getState, setState,
   applyPreset, toggleCategory, selectionPresetName, setUseLocalAI,
@@ -38,7 +41,7 @@ import {
   setHeuristicDiscoveryOptions, heuristicDiscoveryOptions,
   setAIScope,
   parsePageSpec,
-  buildRunRequest,
+  buildRunRequest, setValueTables,
   ALL_CATEGORIES,
   NAME_CATEGORIES, DECLARED_CATEGORIES,
 } from "../state.js";
@@ -215,13 +218,18 @@ export function railBody(s) {
 
 /**
  * profileSection(s) is the Load/Save profile body. Load restores a saved setup;
- * Save writes one, but only once detection has run at least once this session
- * (s.detectionRan), because a profile without a registry behind it saves an
- * empty key. The disabled Save says why in its tooltip rather than vanishing, so
- * the control that will become available is visible before it does.
+ * Save writes one, but only once Go actually holds a placeholder registry
+ * (s.replacedValues, the same mirror of App.ValuePlaceholders the Anonymise
+ * step reads), because a profile without a registry behind it saves an empty
+ * key. Detection completing is NOT that fact: detection mints no placeholders,
+ * only a run does, so gating on a "detection ran" latch left Save enabled
+ * right after a detection and, worse, after stepping back from Anonymise
+ * (which discards the registry but left the old latch on). The disabled Save
+ * says why in its tooltip rather than vanishing, so the control that will
+ * become available is visible before it does.
  */
 function profileSection(s) {
-  const canSave = !!s.detectionRan;
+  const canSave = (s.replacedValues?.length ?? 0) > 0;
   return `<div class="rail-block">` +
     `<div class="rail-label-row">` +
     `<span class="rail-field-label">${escapeHTML(RAIL.profileTitle)}</span>` +
@@ -980,10 +988,13 @@ function wireLocalAI(container) {
 
 /**
  * wireProfile(container) wires the Load/Save profile buttons. Load restores a
- * saved session with applySession (export.js owns the load half of the pair);
- * Save writes one. Save is guarded on detectionRan both in the disabled
- * attribute (profileSection) and here, so a click that slips through a stale
- * DOM cannot save an empty registry.
+ * saved session with applySession (export.js owns the load half of the pair),
+ * then refreshes the registry mirror: a loaded session can carry its own
+ * placeholder registry in Go, ready to re-save immediately, and the mirror
+ * would otherwise still show whatever it held before the load. Save is
+ * guarded on the same fact as the disabled attribute (profileSection), here
+ * too, so a click that slips through a stale DOM cannot save an empty
+ * registry.
  */
 function wireProfile(container) {
   container.querySelector("#profile-load")?.addEventListener("click", async () => {
@@ -991,6 +1002,10 @@ function wireProfile(container) {
       const session = await loadSession();
       if (!session) return; // cancelled
       applySession(session);
+      try {
+        const [replaced, removed] = await Promise.all([valuePlaceholders(), listRemovedValues()]);
+        setValueTables(replaced, removed);
+      } catch { /* no bridge: the gate stays as it was */ }
       notify(RAIL.profileLoadDone, "ok");
     } catch (err) {
       // A refused session file (a version this build does not read) lands here
@@ -999,7 +1014,7 @@ function wireProfile(container) {
     }
   });
   container.querySelector("#profile-save")?.addEventListener("click", async () => {
-    if (!getState().detectionRan) return; // guard: matches the disabled attribute
+    if ((getState().replacedValues?.length ?? 0) === 0) return; // guard: matches the disabled attribute
     try {
       await saveSession(buildRunRequest());
       notify(RAIL.profileSaveDone, "ok");

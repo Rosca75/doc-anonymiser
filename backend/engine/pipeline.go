@@ -223,6 +223,39 @@ var AllValueCategories = []string{
 	CatPersonNames, CatIdentifierNames, CatOtherNames, CatCustomPatterns,
 }
 
+// isValueCategory reports whether category is one of AllValueCategories. It
+// is the check that tells an unrecognised category (a bug upstream, such as
+// the JS dropdown that once emitted "person_names,Person names") apart from a
+// real category the user has simply switched off: only the first is a run
+// warning, because a switched-off category staying silent is by design.
+func isValueCategory(category string) bool {
+	for _, c := range AllValueCategories {
+		if c == category {
+			return true
+		}
+	}
+	return false
+}
+
+// unrecognisedValueWarnings names every declared Value whose category is not
+// a real engine category, so filterValues dropping it silently a moment later
+// does not read as a Value that simply matched nothing. It is a WARNING, not a
+// blocking conflict: refusing the whole run over one malformed declaration
+// would punish the user for a state the pipeline can already resolve (it
+// drops exactly that one Value and applies the rest), the same reasoning
+// CLAUDE.md gives for intersections.
+func unrecognisedValueWarnings(values []Value) []string {
+	var warnings []string
+	for _, v := range values {
+		if !isValueCategory(v.Category) {
+			warnings = append(warnings, fmt.Sprintf(
+				`the Value "%s" has an unrecognised type and was not applied, remove it and declare it again from the type list`,
+				v.MainText))
+		}
+	}
+	return warnings
+}
+
 // PresetSelection fills a CategorySelection from a level (CLAUDE.md §5):
 //
 //	soft     = hard PII + value, project and identifier names + custom patterns
@@ -297,7 +330,12 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	//      half-run that assigned placeholders for a configuration the user was
 	//      just told is invalid is unrecoverable without a new session.
 	ApplyRemovals(in.Allowlist, in.Removed)
-	values := FilterRemoved(filterValues(in.Values, sel), in.Removed)
+	declared := FilterRemoved(in.Values, in.Removed)
+	// Named here, before filterValues drops it below: a category filterValues
+	// has never heard of is not a switched-off category, it is a declaration
+	// nothing can ever apply.
+	res.Report.Warnings = append(res.Report.Warnings, unrecognisedValueWarnings(declared)...)
+	values := filterValues(declared, sel)
 
 	res.Validation = ValidateValues(ValidationInput{
 		Values:         values,

@@ -44,11 +44,16 @@ or above it. `main.go` imports this package and calls `backend.NewApp()`.
   `engine/*` never sees the concrete client, so swapping the NER backend is a
   contained refactor. Ollama host is locked to loopback `127.0.0.1:11434` (port
   is settable); never make the host remote.
-- **Anonymise reaches no model, and creates no Value.** `engine.Run` has no LLM
-  slot at all: every discovery method runs at Identify time and its findings
-  are Suggestions the user accepts. A run that could mint a Value the user never
-  saw would walk past the review gate rather than enforce it, and
-  `TestAnonymiseNeverCallsOllama` asserts the call count is zero.
+- **Anonymise runs no discovery method and reaches no model.** `engine.Run` has
+  no LLM slot at all: every discovery method runs at Identify time and its
+  findings are Suggestions the user accepts. The only Values a run can apply
+  are the ones the user accepted on Identify or DECLARED while reviewing the
+  result on Anonymise (the frontend's Compare pane selection and "Add missed
+  Value" card). A declaration is the user acting, so it passes the review gate
+  by definition: the gate exists to stop an unreviewed MACHINE finding
+  reaching the text, not to stop the person reviewing the result from fixing
+  what the machine missed. `TestAnonymiseNeverCallsOllama` asserts the model
+  call count is zero.
 - **Graceful degradation:** Ollama is probed at startup and on demand
   (`GET /api/tags`); the deterministic pipeline must be fully usable without
   it. LLM-dependent controls disable with a tooltip when it is absent.

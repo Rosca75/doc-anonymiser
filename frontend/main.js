@@ -28,7 +28,7 @@ import { ping, probeOllama, onEvent } from "./api.js";
 import {
   getState, setState, subscribe,
   WIZARD_STEPS, canGoTo, goToScreen, knownStep,
-  applyImportResult, markDetectionRan,
+  applyImportResult,
 } from "./state.js";
 import { escapeHTML } from "./html.js";
 import { topnavHTML, stepbarHTML, headerActionsHTML, appFooterHTML, showDocumentation } from "./shell.js";
@@ -135,9 +135,6 @@ export function boot(root) {
     });
   });
   onEvent("detection:done", () => {
-    // A completed run is what a saved profile preserves, so this is where the
-    // "Save profile" gate opens.
-    markDetectionRan();
     setState({ discovery: null });
   });
   onEvent("detection:error", (ev) => {

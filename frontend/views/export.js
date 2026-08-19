@@ -22,11 +22,11 @@
 
 import {
   exportDocumentFormats, saveDocument, exportAllZipTo, chooseExportFolder,
-  copyDocument, exportMapping, exportReport, saveSession,
+  copyDocument, exportMapping, exportReport,
   getSameFormatMetadata, saveSameFormat,
 } from "../api.js";
 import {
-  getState, setState, buildRunRequest, addValues, presetCategories,
+  getState, setState, addValues, presetCategories,
   setMetaReview, setExportDir, startNewBatch, setDocumentCountry,
   HEURISTIC_DISCOVERY_DEFAULTS, SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
 } from "../state.js";
@@ -42,10 +42,10 @@ import { DEFAULT_COUNTRY } from "../countries.js";
 // keep the original layout and never touch the source file.
 const NATIVE_EXTS = new Set(["docx", "pptx", "xlsx", "pdf"]);
 
-// Which of the three foldable cards are shut. Value mapping starts OPEN because
-// it is the one a user is most likely to be looking for and the one that needs
-// its warning read; the other two start shut.
-const collapsed = new Set(["report", "session"]);
+// Which of the foldable cards are shut. Value mapping starts OPEN because it
+// is the one a user is most likely to be looking for and the one that needs
+// its warning read; the report starts shut.
+const collapsed = new Set(["report"]);
 
 // Per-document format lists, fetched once per render (name → [ext...]).
 const formatCache = new Map();
@@ -61,7 +61,6 @@ export function renderExport(container) {
           ${exportCard(s, docs)}
           ${mappingCard()}
           ${reportCard(s)}
-          ${profileCard()}
         </div>
         ${documentsCard(s, docs)}
       </div>
@@ -129,21 +128,6 @@ function reportCard(s) {
     button(EXPORT.markdown, { kind: "secondary", id: "rep-md" }) +
     `</div>`;
   return foldCard("report", EXPORT.reportTitle, EXPORT.reportSummary(categories), body);
-}
-
-/**
- * profileCard() offers ONLY Save. Load moved to the Identify rail's "Load
- * profile" section, because loading a profile is a setup choice made before a
- * run, not an egress action taken after one. Exported so the render test can
- * assert the trimmed shape without standing up the whole screen.
- */
-export function profileCard() {
-  const body =
-    `<p class="hint">${escapeHTML(EXPORT.sessionHint)}</p>` +
-    `<div class="button-pair">` +
-    button(EXPORT.save, { kind: "secondary", id: "ses-save" }) +
-    `</div>`;
-  return foldCard("session", EXPORT.sessionTitle, EXPORT.sessionSummary, body);
 }
 
 /**
@@ -410,9 +394,6 @@ function wireKeyBearing(container) {
   container.querySelector("#map-json")?.addEventListener("click", () =>
     gate(EXPORT.mappingJsonTitle, EXPORT.mappingJsonConfirm,
       () => exportMapping("json"), EXPORT.mappingJsonDone));
-  container.querySelector("#ses-save")?.addEventListener("click", () =>
-    gate(EXPORT.sessionSaveTitle, EXPORT.sessionSaveConfirm,
-      () => saveSession(buildRunRequest(false)), EXPORT.sessionSaveDone));
 }
 
 function wireReport(container) {

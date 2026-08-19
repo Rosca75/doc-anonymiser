@@ -509,3 +509,62 @@ func TestRunIsDeterministic(t *testing.T) {
 			fingerprint(first), fingerprint(reversed))
 	}
 }
+
+// TestUnrecognisedValueCategoryWarnsAndDoesNotBlock: a declared Value whose
+// category is not a real engine category (the shape a broken frontend
+// dropdown could once emit) must not silently vanish and must not refuse the
+// whole run either. It is a run warning naming the Value, and everything else
+// still applies.
+func TestUnrecognisedValueCategoryWarnsAndDoesNotBlock(t *testing.T) {
+	doc := Document{Name: "a.txt", Format: FormatTXT, Markdown: "Meridian met Alpine Trust."}
+	res := runPipeline(t, PipelineInput{
+		Documents: []Document{doc},
+		Values: []Value{
+			{Category: "person_names,Person names", MainText: "Meridian"},
+			{Category: CatEntityNames, MainText: "Alpine Trust"},
+		},
+		Level:     LevelMedium,
+		Allowlist: NewEmptyAllowlist(),
+	})
+	if len(res.Validation.Blocking) != 0 {
+		t.Fatalf("an unrecognised category must warn, not block: %+v", res.Validation.Blocking)
+	}
+	found := false
+	for _, w := range res.Report.Warnings {
+		if strings.Contains(w, "Meridian") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a report warning naming the malformed Value, got %v", res.Report.Warnings)
+	}
+	out := res.Documents[0].Anonymised
+	if !strings.Contains(out, "Meridian") {
+		t.Errorf("the malformed Value must not apply, so its text stays put, got %q", out)
+	}
+	if !strings.Contains(out, "[ENTITY_1]") {
+		t.Errorf("the OTHER declared Value must still apply despite the malformed one, got %q", out)
+	}
+}
+
+// TestSwitchedOffCategoryStaysSilent: a real category the user has simply
+// switched off must produce no warning at all. Only a category the pipeline
+// has never heard of is a run warning; the whole point of a category switch
+// is that turning it off is unremarkable.
+func TestSwitchedOffCategoryStaysSilent(t *testing.T) {
+	doc := Document{Name: "a.txt", Format: FormatTXT, Markdown: "Meridian was here."}
+	sel := PresetSelection(LevelMedium)
+	sel[CatEntityNames] = false
+	res := runPipeline(t, PipelineInput{
+		Documents:  []Document{doc},
+		Values:     []Value{{Category: CatEntityNames, MainText: "Meridian"}},
+		Level:      LevelMedium,
+		Categories: sel,
+		Allowlist:  NewEmptyAllowlist(),
+	})
+	for _, w := range res.Report.Warnings {
+		if strings.Contains(w, "Meridian") {
+			t.Errorf("a switched-off category must stay silent, got warning %q", w)
+		}
+	}
+}

@@ -254,10 +254,15 @@ The run `request` is
 replaced, whatever `categories` selects; the Value, custom-pattern and code
 passes are unaffected.
 
-**Anonymise creates no Value.** No discovery method runs during a pipeline run and
-Ollama is never reached, so nothing can be replaced that the user did not accept
-on Identify. A run that could mint a Value the user never saw would walk past the
-review gate rather than enforce it.
+**Anonymise runs no discovery method and reaches no model.** No discovery
+method runs during a pipeline run and Ollama is never reached: nothing can be
+replaced that the user did not accept on Identify or DECLARE while reviewing
+the result on Anonymise (the Compare pane selection, or the "Add missed Value"
+card). A declaration is the user acting, so it passes the review gate by
+definition; what the gate forbids is an unreviewed MACHINE finding reaching
+the text. A Value declared on Anonymise is a first-class Value: it reaches
+the registry, the report, the Replaced values table, the mapping and the
+session file exactly like one accepted on Identify.
 
 ## Export screen
 

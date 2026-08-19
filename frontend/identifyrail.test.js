@@ -481,17 +481,28 @@ test("the Load profile section has a Load and a Save button", () => {
   assert.ok(exists(html, "#profile-save"), "Save button present");
 });
 
-test("the profile Save is disabled until detection has run once", () => {
+test("the profile Save is disabled until Go actually holds a registry", () => {
   resetState();
-  // Fresh session: no detection has run, so Save is disabled with the reason.
+  // Fresh session: no run yet, so Save is disabled with the reason.
   let save = one(railBody(getState()), "#profile-save");
-  assert.ok("disabled" in save.attrs, "Save is disabled before any detection");
+  assert.ok("disabled" in save.attrs, "Save is disabled before any run");
   assert.ok((save.attrs.title || "").includes(RAIL.profileSaveDisabled),
     "the disabled Save says why in its tooltip");
-  // After a detection run the gate opens.
-  setState({ detectionRan: true });
+  // A run producing a registry opens the gate.
+  setState({ replacedValues: [{ original: "Alpine Trust", placeholder: "[ENTITY_1]", category: "entity_names", count: 1 }] });
   save = one(railBody(getState()), "#profile-save");
-  assert.ok(!("disabled" in save.attrs), "Save is enabled once detection has run");
+  assert.ok(!("disabled" in save.attrs), "Save is enabled once a run has produced a registry");
+});
+
+test("the profile Save gate closes again once the registry empties, e.g. after stepping back from Anonymise", () => {
+  resetState();
+  setState({ replacedValues: [{ original: "Alpine Trust", placeholder: "[ENTITY_1]", category: "entity_names", count: 1 }] });
+  assert.ok(!("disabled" in one(railBody(getState()), "#profile-save").attrs));
+  // STEP_RESETS.anonymise() clears replacedValues on a backward move; a
+  // "detection ran" latch would stay on and silently offer to save nothing.
+  setState({ replacedValues: [] });
+  const save = one(railBody(getState()), "#profile-save");
+  assert.ok("disabled" in save.attrs, "Save must close again once the registry is gone");
 });
 
 test("the strictness lever is a select of the three levels, balanced by default", () => {

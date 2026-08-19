@@ -1495,6 +1495,11 @@ input, select {
 .selection-card .field-label {
   display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.78rem;
 }
+/* Up to 6 picks, each with a hint line, would otherwise push the floating
+   panel taller than the viewport near the bottom of a pane. The panel's own
+   width stays clamped (SELECTION_PANEL_WIDTH); this is the one place height
+   grows with the data, so it scrolls in place instead. */
+#selection-target-list { max-height: 9rem; overflow-y: auto; }
 
 /* Highlight tints per category family: black text on every fill (BUILD-02
    section 5 remapping). */
