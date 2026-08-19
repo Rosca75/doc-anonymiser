@@ -764,7 +764,14 @@ func TestClassifySuggestions(t *testing.T) {
 }
 
 // TestClassifySuggestionsBatching: 200 suggestions with contexts stay under
-// the byte budget per request (several requests, each bounded).
+// the byte budget per request (several requests, each bounded), and each row
+// carries at most ONE trimmed context snippet.
+//
+// The snippet count is pinned rather than left incidental. A Suggestion may
+// carry three, and on a document of one kind the second and third are usually
+// the same sentence again: prompt tokens spent re-reading text the model saw in
+// the line above. The byte budget alone would not notice them coming back,
+// because more rows per request simply become more requests.
 func TestClassifySuggestionsBatching(t *testing.T) {
 	var maxBody atomic.Int64
 	var calls atomic.Int32
@@ -783,6 +790,18 @@ func TestClassifySuggestionsBatching(t *testing.T) {
 		for _, m := range req.Messages[1:] { // user message only
 			if int64(len(m.Content)) > maxBody.Load() {
 				maxBody.Store(int64(len(m.Content)))
+			}
+			for _, line := range strings.Split(strings.TrimSpace(m.Content), "\n") {
+				_, context, found := strings.Cut(line, " | context: ")
+				if !found {
+					continue
+				}
+				if strings.Contains(context, " ... ") {
+					t.Errorf("a classify row carries more than one context snippet: %q", line)
+				}
+				if n := len([]rune(context)); n > classifyContextRunes {
+					t.Errorf("a context snippet is %d runes, want at most %d: %q", n, classifyContextRunes, context)
+				}
 			}
 		}
 		resp, _ := json.Marshal(map[string]interface{}{

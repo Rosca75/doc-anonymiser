@@ -528,6 +528,119 @@ func TestDetectionAIScopeDiscontiguousPages(t *testing.T) {
 	}
 }
 
+// TestClassifyRespectsTheAIScope is the scope-leak guard, and its absence is
+// what let the leak exist.
+//
+// The classification call is the LARGER of the two the Local AI route makes, so
+// scoping only the discovery call left the user's "just page 1" handing the
+// whole batch to the model: about half a scoped run's prompt tokens, spent on
+// text the user had explicitly excluded, while the interface promised otherwise.
+func TestClassifyRespectsTheAIScope(t *testing.T) {
+	var seen []string
+	srv := scopeChatServer(&seen)
+	defer srv.Close()
+
+	app := NewApp()
+	// Two pages, each with a name only heuristic discovery would find. Page 1's
+	// name may be classified; page 2's must never reach the model at all.
+	app.docs = []engine.Document{{
+		Name: "two.txt", Format: engine.FormatTXT, Unit: engine.UnitLine,
+		Markdown: "Alpine Trust signed. Alpine Trust confirmed. Alpine Trust paid.\n" +
+			"Borealis Fund objected. Borealis Fund replied. Borealis Fund withdrew.\n",
+	}}
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = true // it is the smart route that gets classified
+	withRecorder(t, app)
+
+	if _, err := app.RunDetection([]string{"two.txt"}, nil,
+		&AIScope{DocName: "two.txt", Pages: []int{1}}); err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+
+	// The classification call is whichever recorded payload lists suggestions:
+	// it is the one built as "- <name> | context: ...", never document prose.
+	var classify string
+	for _, payload := range seen {
+		if strings.Contains(payload, "- Alpine Trust") || strings.Contains(payload, "- Borealis Fund") {
+			classify = payload
+		}
+	}
+	if classify == "" {
+		t.Fatalf("no classification call was made, so the scope cannot be proven; payloads were %q", seen)
+	}
+	if !strings.Contains(classify, "Alpine Trust") {
+		t.Errorf("the in-scope name must still be classified; the classify payload was %q", classify)
+	}
+	if strings.Contains(classify, "Borealis Fund") {
+		t.Errorf("the classification call leaked a page the scope excluded; the payload was %q", classify)
+	}
+}
+
+// TestClassifyPayloadIsFoldedAndBounded pins the two compounding wastes in the
+// classification payload, both on SHAPE rather than on a byte total: a byte
+// assertion is a wall-clock proxy that breaks the moment the fixture text
+// changes, and it would not say which of the two regressed.
+//
+// Folding first is also the correctness half. Every other part of the system
+// works with the folded list, so an unfolded classification payload was the one
+// place a family's spellings were treated as separate names, and a category
+// assigned to one of them could split a family that was about to be folded.
+func TestClassifyPayloadIsFoldedAndBounded(t *testing.T) {
+	var seen []string
+	srv := scopeChatServer(&seen)
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{{
+		Name: "fold.txt", Format: engine.FormatTXT,
+		Markdown: "Alpine Trust signed here. Alpine Trust S.A. signed there. " +
+			"Alpine Trust confirmed later. Alpine Trust S.A. confirmed too.\n",
+	}}
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = true
+	withRecorder(t, app)
+
+	if _, err := app.RunDetection([]string{"fold.txt"}, nil, nil); err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+
+	var classify string
+	for _, payload := range seen {
+		if strings.Contains(payload, "- Alpine Trust") {
+			classify = payload
+		}
+	}
+	if classify == "" {
+		t.Fatalf("no classification call was made; payloads were %q", seen)
+	}
+	rows := 0
+	for _, line := range strings.Split(strings.TrimSpace(classify), "\n") {
+		if !strings.HasPrefix(line, "- ") {
+			continue
+		}
+		rows++
+		// Split the row into the NAME being classified and its context, so
+		// each assertion reads the half it is about. Matching the whole line
+		// would let the context's own words answer for the name.
+		name, context, _ := strings.Cut(strings.TrimPrefix(line, "- "), " | context: ")
+		// One row per family: the longer spelling folded into the shorter one
+		// before the model was ever asked about either.
+		if strings.TrimSpace(name) == "Alpine Trust S.A." {
+			t.Errorf("the classify payload names a folded spelling as its own row: %q", line)
+		}
+		// One context snippet per row. Several are joined by " ... ", so a
+		// second one shows up as that separator inside the context.
+		if strings.Contains(context, " ... ") {
+			t.Errorf("a classify row carries more than one context snippet: %q", line)
+		}
+	}
+	if rows != 1 {
+		t.Errorf("the folded family must be ONE row in the classify payload, got %d; payload was %q", rows, classify)
+	}
+}
+
 // TestDetectionRespectsTheRouteSwitches: Go decides, not the caller.
 func TestDetectionRespectsTheRouteSwitches(t *testing.T) {
 	app := detectionApp()

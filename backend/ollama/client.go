@@ -609,6 +609,27 @@ Rules:
 - Copy every suggestion VERBATIM into one list. Never invent, translate or reformat names.
 - Use [] for a category with no suggestions.`
 
+// A classified row carries ONE short context snippet, and no more.
+//
+// The snippet is there to disambiguate a name, which one sentence around it
+// already does. A Suggestion may carry three, and on a document of one kind
+// (an email thread, a contract) the second and third are usually the same
+// header or the same clause quoted again: prompt tokens spent re-reading text
+// the model has already seen in the line above.
+const classifyContextRunes = 40
+
+// trimContext shortens one context snippet to classifyContextRunes, cutting on
+// a RUNE boundary so a French document's accented characters cannot be split
+// into a byte that means nothing.
+func trimContext(context string) string {
+	context = strings.TrimSpace(context)
+	runes := []rune(context)
+	if len(runes) <= classifyContextRunes {
+		return context
+	}
+	return strings.TrimSpace(string(runes[:classifyContextRunes]))
+}
+
 // ClassifySuggestions re-files Smart detection's Suggestions through the local
 // model: they travel in byte-budgeted batches, each reply is parsed with the
 // usual tolerant parser, and any returned text that is not one of the INPUT main
@@ -653,7 +674,7 @@ func (c *Client) ClassifySuggestions(ctx context.Context, suggestions []engine.S
 		}
 		line := "- " + sugg.MainText
 		if len(sugg.Contexts) > 0 {
-			line += " | context: " + strings.Join(sugg.Contexts, " ... ")
+			line += " | context: " + trimContext(sugg.Contexts[0])
 		}
 		line += "\n"
 		if batch.Len() > 0 && batch.Len()+len(line) > budget {
