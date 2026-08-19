@@ -1040,28 +1040,24 @@ export const ANONYMISE = {
   paneOriginal: "ORIGINAL",
   paneAnonymised: "ANONYMISED",
 
-  // The Compare search. It walks ONE combined list, every original-pane hit
-  // then every anonymised-pane hit, and the readout names the pane of the
-  // active one, so crossing from one to the other is visible rather than
-  // silent. Two cursors, or one index over lists of different lengths, would
-  // drift.
-  searchLabel: "Search",
-  searchPlaceholder: "Find in both previews",
+  // The Compare search. There is one search bar PER pane, aligned right in the
+  // pane's own caption, so each searches only the pane it sits on: its own
+  // needle, its own cursor, its own readout. The readout does not name a pane
+  // because the bar is already on it.
+  searchLabelOriginal: "Search the original preview",
+  searchLabelAnonymised: "Search the anonymised preview",
+  searchPlaceholder: "Find in this preview",
   searchNext: "Next occurrence",
   searchPrev: "Previous occurrence",
-  searchNone: "No match in either preview.",
-  /** searchCount(index, total, pane) is the readout, e.g. "3 of 8 in Original". */
-  searchCount(index, total, pane) {
-    return `${index} of ${total} in ${pane}`;
+  searchNone: "No match in this preview.",
+  /** searchCount(index, total) is the readout, e.g. "3 of 8". */
+  searchCount(index, total) {
+    return `${index} of ${total}`;
   },
   /** searchCapped(max) says the highlight stopped rather than froze. */
   searchCapped(max) {
     return `Showing the first ${max} matches. Narrow the search to see fewer.`;
   },
-  // The pane names as they appear in the readout, in sentence case: the
-  // captions above the panes shout, a sentence does not.
-  searchPaneOriginal: "Original",
-  searchPaneAnonymised: "Anonymised",
   compareEmpty: "Run the anonymisation to compare the result with the original.",
   compareBlocked: "The run was refused, so there is nothing to compare. Resolve the conflict on the left, then run again.",
   /** tooltipTimes(n) is the second line of a mark's hover tooltip. */

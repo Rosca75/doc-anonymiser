@@ -1276,50 +1276,48 @@
     },
 
     /**
-     * compareSearch() types a needle present in BOTH Compare panes and reports
-     * whether the active hit is actually visible inside its pane.
+     * compareSearch() types a needle into EACH pane's own search bar and reports,
+     * per pane, whether that pane found it and scrolled its active hit into view.
      *
-     * This is the layer that can answer it. A string test proves the hit span
-     * was emitted; only a renderer can prove the pane scrolled to it rather than
-     * leaving it clipped hundreds of pixels below the fold, which is exactly how
-     * the mark-tooltip bug reached a build with a green suite.
+     * Each pane now carries its own bar in its caption, so the two are driven and
+     * measured independently. A string test proves the hit span was emitted; only
+     * a renderer can prove the pane scrolled to it rather than leaving it clipped
+     * hundreds of pixels below the fold, which is exactly how the mark-tooltip bug
+     * reached a build with a green suite.
      */
     async compareSearch() {
       await seed("anonymise");
-      const input = document.querySelector("#compare-search");
-      if (!input) {
-        return { error: "the Compare search box did not render (#compare-search missing)" };
-      }
 
       // A needle the seeded fixture carries in both panes: the ORIGINAL pane
       // holds the source prose and the ANONYMISED pane the rewritten copy, and
       // both keep the ordinary words between the replacements.
       const NEEDLE = "the";
-      input.value = NEEDLE;
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      // The search box is debounced so a burst of typing does not repaint per
-      // keystroke; wait past that before measuring.
-      await settle(400);
+      const out = { needle: NEEDLE, panes: {} };
 
-      const hits = [...document.querySelectorAll(".find-hit")];
-      const active = document.querySelector(".find-hit.active");
-      const readout = document.querySelector(".search-readout");
-      const panes = {
-        original: document.querySelector("#original-pane"),
-        anonymised: document.querySelector("#anonymised-pane"),
-      };
+      for (const name of ["original", "anonymised"]) {
+        const input = document.querySelector(`#compare-search-${name}`);
+        if (!input) {
+          return { error: `the ${name} pane search box did not render (#compare-search-${name} missing)` };
+        }
+        input.value = NEEDLE;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        // The search box is debounced so a burst of typing does not repaint per
+        // keystroke; wait past that before measuring.
+        await settle(400);
 
-      const perPane = {};
-      for (const [name, pane] of Object.entries(panes)) {
-        perPane[name] = pane ? pane.querySelectorAll(".find-hit").length : 0;
-      }
+        const paneBody = document.querySelector(`#${name}-pane`);
+        const bar = document.querySelector(`.compare-search[data-pane="${name}"]`);
+        // The active hit is looked up INSIDE this pane, so one pane's search can
+        // never be mistaken for the other's.
+        const active = paneBody ? paneBody.querySelector(".find-hit.active") : null;
+        const readout = bar ? bar.querySelector(".search-readout") : null;
+        const next = bar ? bar.querySelector(".search-next") : null;
+        const prev = bar ? bar.querySelector(".search-prev") : null;
 
-      let visible = null;
-      if (active) {
-        const pane = active.closest(".pane-body");
-        if (pane) {
+        let visible = null;
+        if (active && paneBody) {
           const a = active.getBoundingClientRect();
-          const p = pane.getBoundingClientRect();
+          const p = paneBody.getBoundingClientRect();
           visible = {
             // Inside its pane's box: a hit the pane's own overflow has scrolled
             // out of sight is a hit the user cannot see, whatever the DOM says.
@@ -1328,25 +1326,22 @@
             inViewport: a.top >= 0 && a.left >= 0 &&
               a.right <= innerWidth + 1 && a.bottom <= innerHeight + 1,
             hasSize: a.width > 0 && a.height > 0,
-            activeRect: rect(active), paneRect: rect(pane),
+            activeRect: rect(active), paneRect: rect(paneBody),
           };
         }
+
+        out.panes[name] = {
+          hits: paneBody ? paneBody.querySelectorAll(".find-hit").length : 0,
+          hasActive: !!active,
+          readout: (readout?.innerText ?? "").replace(/\s+/g, " ").trim(),
+          // The navigation buttons must be live when there is something to step to.
+          nextEnabled: !!next && !next.disabled,
+          prevEnabled: !!prev && !prev.disabled,
+          visible,
+        };
       }
 
-      // The navigation buttons must be live when there is something to step to.
-      const next = document.querySelector(".search-next");
-      const prev = document.querySelector(".search-prev");
-
-      return {
-        needle: NEEDLE,
-        hits: hits.length,
-        perPane,
-        hasActive: !!active,
-        readout: (readout?.innerText ?? "").replace(/\s+/g, " ").trim(),
-        nextEnabled: !!next && !next.disabled,
-        prevEnabled: !!prev && !prev.disabled,
-        visible,
-      };
+      return out;
     },
   };
 
