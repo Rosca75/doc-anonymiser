@@ -1341,6 +1341,80 @@
         };
       }
 
+      // The two behaviours a string test cannot see, both exercised on the
+      // original pane. The seed left "the" in both boxes; each block below starts
+      // by clearing the box, so they run against a known-empty field.
+      const box = () => document.querySelector("#compare-search-original");
+
+      // TYPING must survive the debounced repaint. Every keystroke schedules a
+      // setState that rewrites the whole shell (main.js paint) and replaces this
+      // very input; if the refocus that follows aims at the OLD, now-detached
+      // field, the box takes exactly one character and the user has to click back
+      // in. So type a word ONE character at a time, pausing PAST the 150 ms
+      // debounce between each so the repaint lands mid-word, and confirm the box
+      // is still the focused element the whole way through.
+      {
+        let el = box();
+        el.value = "";
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        await settle(200);
+        box().focus();
+        let keptFocus = true;
+        for (const ch of "Meridian") {
+          el = box();
+          el.value += ch;
+          el.setSelectionRange(el.value.length, el.value.length);
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          await settle(200); // > the 150 ms debounce, so the repaint fires here
+          if (document.activeElement !== box()) keptFocus = false;
+        }
+        const after = box();
+        out.typing = {
+          keptFocus,
+          focusedAfter: document.activeElement === after,
+          typedValue: after ? after.value : "",
+        };
+      }
+
+      // MOVING to the next match must bring it into view, the way a find in any
+      // editor scrolls the document to each hit. scrollToActiveHit runs during the
+      // render, but scroll.js restores each pane's previous offset AFTER the
+      // render, so the scroll has to outlive that restore. Type a needle with many
+      // hits, step forward far enough to reach one well below the fold, and check
+      // the active hit ends up inside the pane's own box.
+      {
+        let el = box();
+        el.value = "";
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        await settle(200);
+        el = box();
+        el.value = "Meridian";
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        await settle(200);
+        const bar = document.querySelector('.compare-search[data-pane="original"]');
+        const STEPS = 30;
+        for (let i = 0; i < STEPS; i += 1) {
+          bar.querySelector(".search-next").click();
+          await settle(60); // lets the deferred (rAF) scroll land before the next step
+        }
+        await settle(200);
+        const pane = document.querySelector("#original-pane");
+        const active = pane ? pane.querySelector(".find-hit.active") : null;
+        let insidePane = false;
+        let activeRect = null;
+        let paneRect = null;
+        if (active && pane) {
+          const a = active.getBoundingClientRect();
+          const p = pane.getBoundingClientRect();
+          insidePane = a.top >= p.top - 1 && a.bottom <= p.bottom + 1;
+          activeRect = rect(active);
+          paneRect = rect(pane);
+        }
+        out.stepScroll = {
+          steps: STEPS, hasActive: !!active, insidePane, activeRect, paneRect,
+        };
+      }
+
       return out;
     },
     /**
