@@ -1401,11 +1401,29 @@ come back to the owner (see criterion 4 below).
      the 20 s target only when its slides pack into one or two requests; a
      whole document does not, at either reference size.
 
-     **The whole-document target is missed by roughly a factor of two, and that
-     is the one open point in this order.** It is the owner's decision between
-     accepting it with honest progress, enabling the GPU (CR7, measured at 2.2x
-     and untested since), a different model, or a further change order. Do NOT
-     close the gap by quietly skipping units or dropping the classification
+     **Measured again with the GPU ENABLED**, the whole point of CR7, and the
+     verdict barely moves. With `OLLAMA_IGPU_ENABLE=1` set for the service and
+     the server log confirming the Arc as inference compute and `33/33 layers`
+     offloaded, the same deck is **10 requests and 1 m 55 s warm** (2 m 24 s
+     cold, which is inside the CPU range), and the same PDF is **2 requests and
+     41 s to 47 s**. So the PDF now MEETS the whole-document target and the deck
+     still misses it by roughly a factor of two. Per request the deck is 11.5 s,
+     so the 20 s bar for a small scope is still met only when the pages pack
+     into one or two requests.
+
+     **The GPU is worth about 1.2x, not the 2.2x the diagnosis recorded**, and
+     that correction is the one substantive change to this section. What the GPU
+     changed reliably was RECALL rather than the clock: 156 values against 118 on
+     the deck and 57 against 54 on the PDF, with identical `eval_count` figures
+     across repeats. Greedy decoding is deterministic per backend and not across
+     backends, so a backend changing what a model returns is expected. Appendix A
+     carries the rows.
+
+     **The whole-document target is missed by roughly a factor of two on the
+     deck, and that is the one open point in this order.** It is the owner's
+     decision between accepting it with honest progress, a different model, or a
+     further change order; the GPU has now been tried and does not close it. Do
+     NOT close the gap by quietly skipping units or dropping the classification
      pass.
 
      **The faster detail level does not close it.** Measured on both reference
@@ -1459,6 +1477,20 @@ come back to the owner (see criterion 4 below).
   behave very differently. If it does not, §7's model row needs revisiting in its
   own change order, and this order's measurements should be cited there. Report the
   result either way; do not change the pin unilaterally.
+
+  **BLOCKED, and not by anything in this order.** `ollama pull qwen3.5:0.8b`
+  fails on the owner's network with `max retries exceeded: EOF`, twice; a direct
+  request to `registry.ollama.ai` resolves the host and is then cut at the TLS
+  handshake, with no system proxy configured and Ollama's own `HTTP_PROXY` and
+  `HTTPS_PROXY` empty. That is a corporate egress filter, so the library tag
+  cannot be obtained on this machine. The locally imported side of the comparison
+  IS measured, on both reference documents and on both backends (Appendix A): the
+  local 0.8B returns 2 values from 10 requests on the deck with 9 silent, and 3
+  values from 2 requests on the PDF. The comparison therefore has one complete
+  side and no second side, so the contradiction in section 0 stands unsettled and
+  section 7's pin is unchanged, which is what decision 12 requires anyway. To
+  finish it, pull the tag from a network that permits it (or configure a proxy for
+  the Ollama service) and re-run the committed probe on both documents.
 
 ## First actions for the implementation coordinator
 
@@ -1577,8 +1609,9 @@ stand.
 | 0.8B | faster | 2 | 3 | 0 | 14 s | 6.9 s |
 
 No request in any of these runs was truncated, so CR8's cap of 1,024 tokens is
-comfortably above what the shipped slices ask for: the densest reply measured
-here is 331 tokens (PDF page 1) and the densest on the deck is 255.
+comfortably above what the shipped slices ask for IN JSON MODE: the densest reply
+measured here is 331 tokens (PDF page 1) and the densest on the deck is 255. With
+the SCHEMA on it is not, and the GPU rows below record where the cap does bite.
 
 **What these rows say, and it is not what CR2 assumed.**
 
@@ -1615,6 +1648,75 @@ promise a speed-up, because on the measured evidence there is not one to
 promise. They name the slice size and the request count instead, which is what
 the setting demonstrably controls. The level stays a setting, because the
 recall cliff it exists for is real on a small model.
+
+### GPU-enabled runs of the SHIPPED code (2026-08-20)
+
+Same instrument, same document state, `OLLAMA_IGPU_ENABLE=1` set for the service
+and the server log confirming `inference compute ... type=iGPU total="17.9 GiB"`,
+`offloaded 33/33 layers to GPU` and a 2,603 MiB Vulkan model buffer. No
+`dropping integrated GPU` line. Machine otherwise idle, `go test -count=1` per
+run.
+
+**The reference deck** (15 slides, 15,182 B):
+
+| model | level | format | requests | values | silent | truncated | wall clock | per request |
+|---|---|---|---:|---:|---:|---:|---|---|
+| 4B | thorough | json | 10 | 156 | 1 | 0 | 2 m 24 s (cold) | 14.4 s |
+| 4B | thorough | json | 10 | 156 | 1 | 0 | 1 m 55 s (warm) | 11.5 s |
+| 4B | faster | json | 6 | 152 | 0 | 0 | 1 m 41 s | 16.9 s |
+| 4B | thorough | schema | 10 | 361 | 1 | **2** | 4 m 31 s | 27.1 s |
+| 0.8B | thorough | json | 10 | 2 | 9 | 0 | 25 s | 2.5 s |
+
+**The reference PDF** (2 pages, 4,360 B):
+
+| model | level | format | requests | values | silent | truncated | wall clock | per request |
+|---|---|---|---:|---:|---:|---:|---|---|
+| 4B | thorough | json | 2 | 57 | 0 | 0 | 47 s | 23.4 s |
+| 4B | thorough | json | 2 | 57 | 0 | 0 | 41 s | 20.4 s |
+| 0.8B | thorough | json | 2 | 3 | 0 | 0 | 5 s | 2.3 s |
+
+**What these rows say.**
+
+- **The GPU is about 1.2x, not 2.2x.** Deck 2 m 21 s (the CPU mean) to 1 m 55 s
+  warm; PDF 53 s to 41 s and 47 s. The COLD deck run, 2 m 24 s, falls inside the
+  CPU range, so on a single-run basis the difference is barely outside this
+  machine's own noise floor. The 2.2x came from a throwaway harness that set its
+  own `num_predict`; the committed instrument does not reproduce it. CR7's copy
+  and `CLAUDE.md` section 8 carry 1.2x for that reason.
+- **What the GPU reliably changed is recall, not the clock.** 156 values against
+  118 on the deck and 57 against 54 on the PDF. Greedy decoding is deterministic
+  per BACKEND and not across backends, which Appendix A already says about the
+  schema rows, so this is expected rather than a fault. Per output token the GPU
+  is clearly faster: it produced roughly a third more output in roughly a fifth
+  less time.
+- **Determinism still holds within a backend.** Both deck repeats produced
+  identical per-slice `eval_count` figures and the identical 156; both PDF
+  repeats produced identical 340 and 71 and the identical 57. Only the wall clock
+  moved.
+- **The detail level changes the REQUEST COUNT and little else**, exactly as CR2's
+  amended copy says: 10 requests against 6, 156 values against 152. On this
+  backend faster also happened to be quicker (1 m 41 s against 1 m 55 s), which
+  the CPU rows did not show, and both differences are inside the noise band.
+- **The schema switch is the one control with a large, reproducible cost.**
+  2.4x the wall clock on the deck (4 m 31 s against 1 m 55 s), which is the
+  "about twice as long" the tooltip promises. Its 361 is NOT 361 distinct
+  findings: two slices ran to the 1,024-token cap and one of them alone
+  contributed 200, which is the degenerate repeat loop CR8 documents being
+  counted string by string. So the schema still busts the shipped cap on this
+  deck, CR8's salvage still keeps the run whole, and the raw value count is not
+  comparable across formats when truncation is in play.
+- **The 0.8B is still not usable on the deck.** Two values from ten requests,
+  nine silent, on the GPU as on the CPU, with every silent slice returning the
+  same 37-token empty object.
+
+**The model spot-check could not be completed.** `ollama pull qwen3.5:0.8b` fails
+on the owner's network with `max retries exceeded: EOF`, and a direct request to
+`registry.ollama.ai` resolves and is then cut at the TLS handshake with no proxy
+configured, which is a corporate egress filter rather than anything this order can
+work around. The locally imported side of the comparison is measured above and in
+the CPU section; the library-tag side is outstanding, so the contradiction recorded
+in section 0 stands unsettled and section 7's pin is unchanged, as decision 12
+requires.
 
 ### What each group is evidence for
 
