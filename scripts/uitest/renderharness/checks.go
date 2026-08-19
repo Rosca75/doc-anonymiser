@@ -1095,6 +1095,103 @@ type tooltipResult struct {
 	Samples   []tooltipSample `json:"samples"`
 }
 
+// --- The hover link between the two Compare panes ---------------------------
+
+type originLinkResult struct {
+	Error           string   `json:"error"`
+	Placeholder     string   `json:"placeholder"`
+	Forms           []string `json:"forms"`
+	Spans           int      `json:"spans"`
+	Family          int      `json:"family"`
+	LitBefore       int      `json:"litBefore"`
+	Lit             int      `json:"lit"`
+	Bled            int      `json:"bled"`
+	LitAfter        int      `json:"litAfter"`
+	Background      string   `json:"background"`
+	PlainBackground string   `json:"plainBackground"`
+	HasSize         bool     `json:"hasSize"`
+	InsidePane      bool     `json:"insidePane"`
+	PaintedOnTop    bool     `json:"paintedOnTop"`
+	PaneRect        rect     `json:"paneRect"`
+	SpanRect        rect     `json:"spanRect"`
+}
+
+// checkOriginLink asserts that hovering a placeholder actually TINTS, in the
+// original pane, everything that placeholder replaced.
+//
+// The string and wiring suites can prove the spans are emitted and the class is
+// toggled. Only a renderer can prove the class resolves to a background the user
+// can see: a rule that never applied, a token that does not exist, or a span
+// covered by something else all leave a green suite and an unchanged pane.
+func checkOriginLink(c *cdpClient, r *reporter) {
+	r.step("Hovering a placeholder tints what it replaced in the original pane")
+
+	var got originLinkResult
+	if err := c.eval("__uiProbes.originLink()", &got); err != nil {
+		r.assert("the two panes can be linked by a hover", false,
+			"origin spans in #original-pane and a mark to hover", err.Error(),
+			"views/anonymise.js compareCard renders the original pane through "+
+				"valuespans.js renderOriginWithSpans.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the two panes can be linked by a hover", false,
+			"a .value-origin per stretch the run replaced", got.Error,
+			"valuespans.js valueSpans reads state.mapping and the document's "+
+				"occurrenceSpellings; an empty result usually means one of them never arrived.")
+		return
+	}
+
+	r.assert("the original pane marks every stretch the run replaced", got.Spans > 0,
+		"at least one .value-origin in #original-pane",
+		fmt.Sprintf("%d spans", got.Spans),
+		"valuespans.js renderOriginWithSpans wraps each span valueSpans found.")
+
+	r.assert("nothing is tinted before the pointer arrives", got.LitBefore == 0,
+		"no .is-linked span in the resting pane",
+		fmt.Sprintf("%d span(s) already lit", got.LitBefore),
+		"The tint is a hover state: the pane must read as plain text until a mark is hovered.")
+
+	r.assert("the hover lights the WHOLE family, main text and spellings alike",
+		got.Family > 1 && got.Lit == got.Family,
+		fmt.Sprintf("all %d spans of %s lit (forms: %v)", got.Family, got.Placeholder, got.Forms),
+		fmt.Sprintf("%d of %d lit", got.Lit, got.Family),
+		"views/anonymise.js wireOriginLink matches on data-ph, which every spelling of one "+
+			"Value shares.")
+
+	r.assert("the hover lights nothing belonging to another Value", got.Bled == 0,
+		"no span of a different placeholder lit",
+		fmt.Sprintf("%d span(s) of another Value lit", got.Bled),
+		"Compare span.dataset.ph with the hovered mark's, not merely its category.")
+
+	r.assert("the tint is a real painted colour, not a class nothing styles",
+		got.Background != "" && got.Background != got.PlainBackground,
+		"a resolved background differing from an untinted span's",
+		fmt.Sprintf("lit %q, untinted %q", got.Background, got.PlainBackground),
+		"style.css .value-origin.is-linked must set a background from a token brand.css "+
+			"actually defines (--origin-bg).")
+
+	r.assert("the tinted span has a size", got.HasSize,
+		"a span with width and height", got.SpanRect.String(),
+		"A zero-sized span means the wrapper was emitted around nothing.")
+
+	r.assert("the tinted span is inside the pane's visible box", got.InsidePane,
+		"the span rect within the pane rect",
+		fmt.Sprintf("span %s, pane %s", got.SpanRect, got.PaneRect),
+		"The probe scrolls the span into view first, so a failure here means the pane "+
+			"refused to scroll to it.")
+
+	r.assert("the tinted span is painted, not covered", got.PaintedOnTop,
+		"elementFromPoint at the span's centre returning the span",
+		fmt.Sprintf("something else is at %s", got.SpanRect),
+		"A search hit or another overlay is painting over the origin tint.")
+
+	r.assert("leaving the mark clears the tint", got.LitAfter == 0,
+		"no .is-linked span after mouseleave",
+		fmt.Sprintf("%d span(s) still lit", got.LitAfter),
+		"wireOriginLink binds mouseleave (and blur) to the same clear.")
+}
+
 // checkTooltip asserts a real hover produces a tooltip a user could actually see.
 //
 // This is THE check that cannot be made without a renderer, and the reason this

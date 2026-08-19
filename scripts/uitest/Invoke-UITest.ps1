@@ -268,6 +268,7 @@ function Invoke-DevChecks {
                 Test-HelpTooltip $cdp
                 Test-ScrollRetention $cdp
                 Test-TooltipVisibility $cdp
+                Test-OriginLink $cdp
                 Test-CompareSearch $cdp
                 Test-SelectionPanel $cdp
                 Save-Screenshot $cdp 'wizard.png'
@@ -837,6 +838,53 @@ function Test-TooltipVisibility([CdpSession]$cdp) {
             -Actual "something else is at $tip" `
             -Hint 'The rect of a clipped element is still a full-size rect, so this is the check that catches it.'
     }
+}
+
+# The hover link between the two Compare panes. Same reason as the tooltip
+# check: the string and wiring suites can prove the spans are emitted and the
+# class is toggled, and only a real engine can prove the class resolves to a
+# background the user can see rather than to nothing at all.
+function Test-OriginLink([CdpSession]$cdp) {
+    Write-Step 'Hovering a placeholder tints what it replaced in the original pane'
+    $r = $cdp.Eval('__uiProbes.originLink()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the two panes can be linked by a hover' -Condition $false `
+            -Expected 'a .value-origin per stretch the run replaced' -Actual $r.error `
+            -Hint 'valuespans.js valueSpans reads state.mapping and the document occurrenceSpellings.'
+        return
+    }
+    Assert-That -Name 'the original pane marks every stretch the run replaced' -Condition ($r.spans -gt 0) `
+        -Expected 'at least one .value-origin in #original-pane' -Actual "$($r.spans) spans" `
+        -Hint 'valuespans.js renderOriginWithSpans wraps each span valueSpans found.'
+    Assert-That -Name 'nothing is tinted before the pointer arrives' -Condition ($r.litBefore -eq 0) `
+        -Expected 'no .is-linked span in the resting pane' -Actual "$($r.litBefore) already lit" `
+        -Hint 'The tint is a hover state: the pane reads as plain text until a mark is hovered.'
+    Assert-That -Name 'the hover lights the WHOLE family, main text and spellings alike' `
+        -Condition (($r.family -gt 1) -and ($r.lit -eq $r.family)) `
+        -Expected "all $($r.family) spans of $($r.placeholder) lit" -Actual "$($r.lit) of $($r.family) lit" `
+        -Hint 'views/anonymise.js wireOriginLink matches on data-ph, which every spelling of one Value shares.'
+    Assert-That -Name 'the hover lights nothing belonging to another Value' -Condition ($r.bled -eq 0) `
+        -Expected 'no span of a different placeholder lit' -Actual "$($r.bled) lit" `
+        -Hint 'Compare span.dataset.ph with the hovered mark own placeholder, not merely its category.'
+    Assert-That -Name 'the tint is a real painted colour, not a class nothing styles' `
+        -Condition ($r.background -and ($r.background -ne $r.plainBackground)) `
+        -Expected "a resolved background differing from an untinted span's" `
+        -Actual "lit '$($r.background)', untinted '$($r.plainBackground)'" `
+        -Hint 'style.css .value-origin.is-linked must set a background from a token brand.css defines.'
+    Assert-That -Name 'the tinted span has a size' -Condition ($r.hasSize) `
+        -Expected 'a span with width and height' `
+        -Actual "$($r.spanRect.width)x$($r.spanRect.height)" `
+        -Hint 'A zero-sized span means the wrapper was emitted around nothing.'
+    Assert-That -Name "the tinted span is inside the pane's visible box" -Condition ($r.insidePane) `
+        -Expected 'the span rect within the pane rect' `
+        -Actual "span top $($r.spanRect.top), pane top $($r.paneRect.top)" `
+        -Hint 'The probe scrolls the span into view first, so a failure means the pane refused to scroll.'
+    Assert-That -Name 'the tinted span is painted, not covered' -Condition ($r.paintedOnTop) `
+        -Expected 'elementFromPoint at the span centre returning the span' -Actual 'something else is on top' `
+        -Hint 'A search hit or another overlay is painting over the origin tint.'
+    Assert-That -Name 'leaving the mark clears the tint' -Condition ($r.litAfter -eq 0) `
+        -Expected 'no .is-linked span after mouseleave' -Actual "$($r.litAfter) still lit" `
+        -Hint 'wireOriginLink binds mouseleave (and blur) to the same clear.'
 }
 
 # The Compare search. Like the tooltip check, the interesting half cannot be

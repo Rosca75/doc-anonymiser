@@ -1533,6 +1533,19 @@ mark.custom { background: var(--src-ai-bg); border-bottom: 1px solid var(--src-a
   outline-offset: 0;
 }
 
+/* The ORIGINAL pane's origin spans: one per stretch the run replaced, carrying
+   the placeholder that replaced it. They are INVISIBLE until the matching mark
+   in the anonymised pane is hovered or focused (views/anonymise.js
+   wireOriginLink), so the original text reads exactly as it was written. The
+   transition is on the span rather than the tint, so a span already on screen
+   fades in instead of blinking as the pointer crosses a run of marks. */
+.value-origin { border-radius: 3px; transition: background-color 90ms ease-in; }
+.value-origin.is-linked {
+  background: var(--origin-bg);
+  box-shadow: 0 0 0 1px var(--origin-edge);
+  color: var(--origin-fg);
+}
+
 /* Each pane's search bar, living aligned right in the pane's caption. It is
    compact so it fits the caption strip: a shorter field, and the field shrinks
    with the pane rather than forcing the caption wider. */

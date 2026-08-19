@@ -80,6 +80,14 @@
       "Meridian Consulting and signed it off without further comment or query.",
     );
   }
+  // ONE occurrence where a Value appears under a SPELLING rather than its main
+  // text. Without it the seed cannot exercise the hover link between the panes
+  // at all: with every occurrence spelled the same way, a tint covering only the
+  // main text would look exactly like a tint covering the whole family.
+  const SPELLING = "Duval";
+  const SPELLING_SOURCE = `Countersigned for the engagement team by ${SPELLING}.`;
+  SOURCE_LINES.push("", SPELLING_SOURCE);
+
   const SOURCE = SOURCE_LINES.join("\n");
 
   // The anonymised counterpart: the same text with placeholders in it. It exists
@@ -92,10 +100,23 @@
     .replaceAll("Alice Nowak", "[PERSON_3]")
     .replaceAll("Meridian Consulting", "[ENTITY_1]")
     .replaceAll("marie.duval@meridian-consulting.example", "[EMAIL_1]")
-    .replaceAll("+352 621 123 456", "[PHONE_1]");
+    .replaceAll("+352 621 123 456", "[PHONE_1]")
+    .replaceAll(SPELLING_SOURCE, SPELLING_SOURCE.replace(SPELLING, "[PERSON_1]"));
+
+  // Which spelling each occurrence of a placeholder replaced, positionally, the
+  // way Go emits it (ResultDocument.occurrenceSpellings): "" means that
+  // occurrence WAS the main text. Every [PERSON_1] above the last one is
+  // "Marie Duval"; the last is the spelling line.
+  const PERSON_1_OCCURRENCES = ANONYMISED.split("[PERSON_1]").length - 1;
+  const OCCURRENCE_SPELLINGS = {
+    "[PERSON_1]": [
+      ...Array(Math.max(0, PERSON_1_OCCURRENCES - 1)).fill(""),
+      SPELLING,
+    ],
+  };
 
   const VALUES = [
-    { original: "Marie Duval", placeholder: "[PERSON_1]", category: "person_names", count: 21 },
+    { original: "Marie Duval", placeholder: "[PERSON_1]", category: "person_names", count: 22 },
     { original: "Thomas Berger", placeholder: "[PERSON_2]", category: "person_names", count: 20 },
     { original: "Alice Nowak", placeholder: "[PERSON_3]", category: "person_names", count: 20 },
     { original: "Meridian Consulting", placeholder: "[ENTITY_1]", category: "entity_names", count: 61 },
@@ -146,12 +167,13 @@
         documents: [{
           name: DOC_NAME,
           anonymised: ANONYMISED,
-          byCategory: { person_names: 61, entity_names: 61, email: 1, phone: 1 },
+          byCategory: { person_names: 62, entity_names: 61, email: 1, phone: 1 },
+          occurrenceSpellings: OCCURRENCE_SPELLINGS,
         }],
         report: {
           level: "medium",
-          totalReplacements: 124,
-          byCategory: { person_names: 61, entity_names: 61, email: 1, phone: 1 },
+          totalReplacements: 125,
+          byCategory: { person_names: 62, entity_names: 61, email: 1, phone: 1 },
           values: VALUES,
           documents: [{ name: DOC_NAME, values: VALUES }],
         },
@@ -1272,6 +1294,107 @@
         hoverable: marks.length,
         paneWidth: Math.round(paneBox.width),
         samples,
+      };
+    },
+
+    /**
+     * originLink() hovers a placeholder in the ANONYMISED pane and reports what
+     * the ORIGINAL pane does about it.
+     *
+     * Only a renderer can answer this one. A string test proves the origin spans
+     * were emitted and a wiring test proves the class is toggled; neither can say
+     * the tinted span is PAINTED and inside the visible part of a pane that is
+     * `overflow: auto` over a long document. A tint the user has to scroll to
+     * find answers nothing, which is the same failure the mark tooltip had.
+     *
+     * The mark it hovers is one whose Value was matched under more than one
+     * spelling, because the whole point of the feature is that the tint covers
+     * the family and not merely the main text.
+     */
+    async originLink() {
+      await seed("anonymise");
+      const anon = document.querySelector("#anonymised-pane");
+      const origin = document.querySelector("#original-pane");
+      if (!anon || !origin) {
+        return { error: "the Compare card did not render (#original-pane / #anonymised-pane missing)" };
+      }
+
+      const spans = [...origin.querySelectorAll(".value-origin")];
+      if (spans.length === 0) {
+        return { error: "no .value-origin in #original-pane, so nothing can be tinted" };
+      }
+      // The placeholder that stands for more than one spelling in the source.
+      const families = new Map();
+      for (const span of spans) {
+        const ph = span.dataset.ph ?? "";
+        if (!families.has(ph)) families.set(ph, new Set());
+        families.get(ph).add(span.innerText);
+      }
+      const target = [...families].find(([, forms]) => forms.size > 1)?.[0];
+      if (!target) {
+        return { error: "no placeholder in #original-pane covers more than one spelling, " +
+          "so the seed cannot exercise the family case" };
+      }
+
+      const mark = [...anon.querySelectorAll("mark[data-ph]")]
+        .find((m) => m.dataset.ph === target);
+      if (!mark) return { error: `no mark for ${target} in #anonymised-pane` };
+
+      const mine = spans.filter((sp) => sp.dataset.ph === target);
+      const others = spans.filter((sp) => sp.dataset.ph !== target);
+      const litBefore = spans.filter((sp) => sp.classList.contains("is-linked")).length;
+
+      mark.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+      await settle(150);
+
+      // Scroll the first tinted span into view before measuring: the pane is
+      // taller than its box, and "is it painted" is a question about a span the
+      // user can actually see.
+      mine[0].scrollIntoView({ block: "center" });
+      await settle(120);
+
+      const paneBox = rect(origin);
+      const sampleBox = rect(mine[0]);
+      // Both READ AS STRINGS here, not held as live CSSStyleDeclarations: the
+      // object a browser returns from getComputedStyle keeps tracking the
+      // element, so a value read after the mouseleave below would report the
+      // resting colour and the tint would look like a rule that never applied.
+      const background = getComputedStyle(mine[0]).backgroundColor;
+      const plain = others.length > 0 ? getComputedStyle(others[0]).backgroundColor : "";
+
+      const lit = mine.filter((sp) => sp.classList.contains("is-linked")).length;
+      const bled = others.filter((sp) => sp.classList.contains("is-linked")).length;
+
+      mark.dispatchEvent(new MouseEvent("mouseleave", { bubbles: false }));
+      await settle(120);
+      const litAfter = spans.filter((sp) => sp.classList.contains("is-linked")).length;
+
+      return {
+        placeholder: target,
+        forms: [...families.get(target)],
+        spans: spans.length,
+        family: mine.length,
+        litBefore,
+        lit,
+        bled,
+        litAfter,
+        // The tint as the browser resolved it, so a rule that never applied (a
+        // typo in the class, a token that does not exist) is visible here as a
+        // background identical to an untinted span's.
+        background,
+        plainBackground: plain,
+        // Painted and reachable: the span has a size, sits inside the pane's
+        // visible box, and is what the browser finds at its own centre.
+        hasSize: sampleBox.width > 0 && sampleBox.height > 0,
+        insidePane: sampleBox.top >= paneBox.top - 1 && sampleBox.bottom <= paneBox.bottom + 1,
+        paintedOnTop: (() => {
+          const hit = document.elementFromPoint(
+            Math.round((sampleBox.left + sampleBox.right) / 2),
+            Math.round((sampleBox.top + sampleBox.bottom) / 2));
+          return !!hit && (hit === mine[0] || mine[0].contains(hit) || hit.contains(mine[0]));
+        })(),
+        paneRect: paneBox,
+        spanRect: sampleBox,
       };
     },
 

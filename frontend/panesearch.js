@@ -5,7 +5,8 @@
 // like "mark" or "&" would corrupt the markup and take the tooltips and the
 // click-to-select with it. So hits are computed over the PLAIN text and
 // rendered during the same pass that escapes it: highlight.js does that for the
-// anonymised pane, and renderPlainWithHits below for the original one.
+// escapeWithHits below is the one function that does it, and every pane
+// renderer hands its stretches to it.
 //
 // Pure JavaScript, no DOM required, unit-tested with `node --test`
 // (panesearch.test.js).
@@ -61,37 +62,57 @@ export function findHits(text, needle) {
 }
 
 /**
- * renderPlainWithHits(text, hits, activeIndex) escapes text and wraps each hit
- * in a span, the active one marked so the pane can scroll to it.
+ * escapeWithHits(text, hits, activeIndex, from, to) escapes ONE stretch of the
+ * pane text and wraps whatever hits fall entirely inside it.
  *
- * @param {string} text the plain pane text
+ * This is THE definition of "escaped text with the search highlighted", and
+ * every pane renderer goes through it. Both panes nest other elements over the
+ * text (category marks in the anonymised pane, value-origin spans in the
+ * original one), so each renderer walks its own elements and hands the stretches
+ * BETWEEN and INSIDE them here. Two spellings of this loop would mean the
+ * navigation could step to a hit one pane does not tint.
+ *
+ * A hit STRADDLING the stretch's edge is deliberately left alone rather than
+ * split: splitting would cut the enclosing element in two and take its data
+ * attributes, its tooltip and its click target with it, and a needle spanning
+ * the edge of a placeholder is a rare thing to search for.
+ *
+ * @param {string} text the WHOLE plain pane text (hit offsets index into it)
  * @param {Array<{start:number,end:number}>} hits from findHits, in order
- * @param {number} [activeIndex] which hit is the current one, -1 for none
+ * @param {number} activeIndex which hit is the current one, -1 for none
+ * @param {number} from first character of the stretch to emit
+ * @param {number} to one past its last character
  * @returns {string} safe HTML
  */
-export function renderPlainWithHits(text, hits, activeIndex = -1) {
+export function escapeWithHits(text, hits, activeIndex, from, to) {
   const source = String(text ?? "");
-  if (!hits || hits.length === 0) return escapeHTML(source);
+  const list = hits ?? [];
+  if (list.length === 0) return escapeHTML(source.slice(from, to));
 
   let out = "";
-  let last = 0;
-  hits.forEach((hit, i) => {
-    if (hit.start < last) return; // overlapping input; keep the earlier hit
-    out += escapeHTML(source.slice(last, hit.start));
+  let cursor = from;
+  for (let i = 0; i < list.length; i++) {
+    const hit = list[i];
+    // Already emitted, or an overlapping input hit: keep the earlier one rather
+    // than emit the same characters twice.
+    if (hit.start < cursor) continue;
+    if (hit.start >= to) break; // hits are ordered, so nothing later fits either
+    if (hit.end > to) continue; // straddles the far edge
+    out += escapeHTML(source.slice(cursor, hit.start));
     out += `<span class="${hitClass(i === activeIndex)}">` +
       `${escapeHTML(source.slice(hit.start, hit.end))}</span>`;
-    last = hit.end;
-  });
-  out += escapeHTML(source.slice(last));
-  return out;
+    cursor = hit.end;
+  }
+  return out + escapeHTML(source.slice(cursor, to));
 }
 
+
 /**
- * hitClass(active) is the class one hit span carries. Exported so highlight.js
- * emits exactly the same markup for hits inside the anonymised pane: two
- * spellings of the same class would mean the navigation could find a hit the
- * stylesheet does not tint, or the other way round.
+ * hitClass(active) is the class one hit span carries. Module-private, because
+ * escapeWithHits is the only thing that emits a hit: two spellings of the class
+ * would mean the navigation could step to a hit the stylesheet does not tint, or
+ * the other way round.
  */
-export function hitClass(active) {
+function hitClass(active) {
   return active ? "find-hit active" : "find-hit";
 }
