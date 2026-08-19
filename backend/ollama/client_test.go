@@ -767,15 +767,19 @@ func TestTruncationDegradesOneSliceAndTheScanContinues(t *testing.T) {
 		}
 		n := atomic.AddInt32(&calls, 1)
 		payload := map[string]interface{}{
-			"message": map[string]string{"role": "assistant",
-				"content": `{"entity_names":["Zephyr Capital"],"person_names":[]}`},
+			"message": map[string]string{
+				"role":    "assistant",
+				"content": `{"entity_names":["Zephyr Capital"],"person_names":[]}`,
+			},
 			"done_reason": "stop",
 		}
 		if n == 1 {
 			// The first slice runs long: one name finished, the next cut in half.
 			payload = map[string]interface{}{
-				"message": map[string]string{"role": "assistant",
-					"content": `{"entity_names":["Alpine Trust","Borea`},
+				"message": map[string]string{
+					"role":    "assistant",
+					"content": `{"entity_names":["Alpine Trust","Borea`,
+				},
 				"done_reason": "length",
 				"eval_count":  1024,
 			}
