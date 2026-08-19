@@ -1219,9 +1219,30 @@ func checkNoConsoleErrors(c *cdpClient, r *reporter) {
 // compareSearchResult mirrors the compareSearch probe's payload: one entry per
 // pane, because each pane now carries its own search bar.
 type compareSearchResult struct {
-	Error  string                      `json:"error"`
-	Needle string                      `json:"needle"`
-	Panes  map[string]paneSearchResult `json:"panes"`
+	Error      string                      `json:"error"`
+	Needle     string                      `json:"needle"`
+	Panes      map[string]paneSearchResult `json:"panes"`
+	Typing     *typingResult               `json:"typing"`
+	StepScroll *stepScrollResult           `json:"stepScroll"`
+}
+
+// typingResult is the focus-retention outcome: a word typed one character at a
+// time, with a pause past the debounce between each so the repaint lands
+// mid-word. A box that loses focus there takes exactly one character.
+type typingResult struct {
+	KeptFocus    bool   `json:"keptFocus"`
+	FocusedAfter bool   `json:"focusedAfter"`
+	TypedValue   string `json:"typedValue"`
+}
+
+// stepScrollResult is the move-to-next-match outcome: after stepping forward to
+// a hit well below the fold, whether that hit ended up inside the pane's box.
+type stepScrollResult struct {
+	Steps      int   `json:"steps"`
+	HasActive  bool  `json:"hasActive"`
+	InsidePane bool  `json:"insidePane"`
+	ActiveRect *rect `json:"activeRect"`
+	PaneRect   *rect `json:"paneRect"`
 }
 
 // paneSearchResult is one pane's search outcome.
@@ -1318,6 +1339,42 @@ func checkCompareSearch(c *cdpClient, r *reporter) {
 			"the active hit's rect within the viewport",
 			fmt.Sprintf("hit %s", p.Visible.ActiveRect),
 			"scrollIntoView({block: \"center\"}) on the pane's .find-hit.active.")
+	}
+
+	// Typing must not lose focus. Each keystroke schedules a debounced setState
+	// that rewrites the whole shell and replaces the search input; if the refocus
+	// aims at the old, detached field, the box takes exactly one character.
+	if got.Typing == nil {
+		r.assert("the search box keeps focus while typing", false,
+			"a typing result from the probe", "the probe returned none",
+			"views/anonymise.js wirePaneSearch re-queries the LIVE document for the field after the repaint.")
+	} else {
+		r.assert("the search box stays focused through a word typed with pauses", got.Typing.KeptFocus,
+			"the field is document.activeElement after every keystroke",
+			fmt.Sprintf("keptFocus=%t, focusedAfter=%t, value=%q",
+				got.Typing.KeptFocus, got.Typing.FocusedAfter, got.Typing.TypedValue),
+			"The debounced repaint replaces the input; wirePaneSearch must refocus the FRESH field "+
+				"(container.ownerDocument.getElementById), not the detached one this closure captured.")
+	}
+
+	// Moving to the next match must scroll it into view. scrollToActiveHit runs
+	// during the render, but scroll.js restores the pane's previous offset AFTER
+	// the render, so the scroll is deferred a frame to outlive that restore.
+	if got.StepScroll == nil {
+		r.assert("stepping to the next match scrolls it into view", false,
+			"a stepScroll result from the probe", "the probe returned none",
+			"views/anonymise.js scrollToActiveHit defers scrollIntoView past scroll.js restoreScrollPositions.")
+	} else {
+		r.assert("stepping forward keeps finding an active hit", got.StepScroll.HasActive,
+			"an active hit after stepping through the matches", "no active hit",
+			"stepSearch wraps the index; paneWalk always resolves an active hit when there are any.")
+		r.assert("the match reached by stepping down is scrolled INSIDE the pane, not left below the fold",
+			got.StepScroll.InsidePane,
+			"the active hit's rect within its pane's rect after stepping",
+			fmt.Sprintf("after %d steps: hit %v, pane %v", got.StepScroll.Steps,
+				got.StepScroll.ActiveRect, got.StepScroll.PaneRect),
+			"scrollToActiveHit runs scrollIntoView on the next frame, so it wins over scroll.js "+
+				"restoring the pre-step offset; without the deferral the restore drags the pane back.")
 	}
 }
 

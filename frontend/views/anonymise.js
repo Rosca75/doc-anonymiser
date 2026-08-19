@@ -1392,7 +1392,12 @@ function wirePaneSearch(container, pane, paneSelector) {
     compareSearchTimer[pane] = setTimeout(() => {
       compareSearchTimer[pane] = null;
       setState({});
-      const again = container.querySelector(`#${id}`);
+      // The repaint rewrote the whole shell (main.js paint), so the field this
+      // closure captured through `container` is now a DETACHED node: focusing it
+      // does nothing and the caret lands nowhere, which is why the box took
+      // exactly one character before the user had to click back into it. Re-query
+      // the LIVE document for the freshly-rendered field instead.
+      const again = (container.ownerDocument ?? globalThis.document)?.getElementById(id);
       if (again) {
         again.focus();
         again.setSelectionRange?.(caret, caret);
@@ -1457,7 +1462,24 @@ function scrollToActiveHit(container, pane, paneSelector) {
   const key = `${st.needle}|${st.index}`;
   if (key === lastScrolledTo[pane]) return;
   lastScrolledTo = { ...lastScrolledTo, [pane]: key };
-  active.scrollIntoView?.({ block: "center" });
+
+  // The scroll is deferred one frame ON PURPOSE. This runs DURING the view
+  // render, but main.js paint() calls scroll.js restoreScrollPositions AFTER the
+  // view renders, which puts every pane back to the offset it had BEFORE this
+  // paint. A scrollIntoView done now would be overwritten a moment later, so
+  // moving to the next match never repositioned the preview. Running it after
+  // the paint completes lets the move win, which is exactly right: the active
+  // hit changed, so this pane SHOULD travel to it, the way a document search in
+  // any editor does. The element is re-queried live at that point in case a
+  // further paint has replaced it.
+  const doc = container.ownerDocument ?? globalThis.document;
+  const win = doc?.defaultView;
+  const bringIntoView = () => {
+    const liveActive = doc?.querySelector(`${paneSelector} .find-hit.active`);
+    liveActive?.scrollIntoView?.({ block: "center" });
+  };
+  if (win?.requestAnimationFrame) win.requestAnimationFrame(bringIntoView);
+  else bringIntoView();
 }
 
 function wireCompare(container, doc) {
