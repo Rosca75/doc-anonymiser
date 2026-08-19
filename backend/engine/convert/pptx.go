@@ -4,8 +4,12 @@
 // (ppt/slides/slide1.xml, slide2.xml, …, DrawingML). Mapping implemented
 // (CLAUDE.md §5):
 //   - one "## Slide N: <title>" section per slide, in slide order
-//     ("## Slide N" when the slide has no title placeholder)
+//     ("## Slide N" when the slide has no title placeholder). Only the title
+//     placeholder's FIRST line becomes the heading; a title box that holds
+//     more lines than that (an author list, a date) keeps them as plain body
+//     lines, because they are document text the anonymisation must see.
 //   - body text frames with bullet indentation (a:pPr lvl)
+//   - soft line breaks (a:br) end the line, exactly as a paragraph end does
 //   - tables (a:tbl) → markdown tables
 //   - speaker notes under a "**Notes:**" sub-block, resolved through the
 //     slide's relationships file (robust against reordered slides)
@@ -164,6 +168,26 @@ func walkShapes(data []byte, notesMode bool) (title, body string, err error) {
 		paraLvl  int
 		paraText strings.Builder
 	)
+	// flushLine ends the line the current paragraph has built so far and
+	// starts the next one. A paragraph end and a soft line break (a:br) mean
+	// the same thing here: the source broke the line, so the markdown breaks
+	// it. Both go through this one closure so the two cannot drift apart and
+	// leave a break gluing the runs on either side of it into one word.
+	flushLine := func() {
+		line := strings.TrimSpace(paraText.String())
+		paraText.Reset()
+		if line == "" {
+			return
+		}
+		if notesMode || phType == "title" || phType == "ctrTitle" {
+			// Notes and titles read as plain lines, not bullets.
+			shapeText.WriteString(line + "\n")
+			return
+		}
+		// Body paragraphs are bullets by PowerPoint convention;
+		// indentation mirrors the outline level.
+		shapeText.WriteString(strings.Repeat("  ", paraLvl) + "- " + line + "\n")
+	}
 	flushShape := func() {
 		text := shapeText.String()
 		if strings.TrimSpace(text) == "" {
@@ -171,9 +195,21 @@ func walkShapes(data []byte, notesMode bool) (title, body string, err error) {
 		}
 		isTitle := phType == "title" || phType == "ctrTitle"
 		if isTitle && !notesMode {
-			// The title becomes the section heading, first line only.
+			// The title becomes the section heading, first line only: a
+			// heading is one line by definition.
+			lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 			if title == "" {
-				title = strings.TrimSpace(strings.SplitN(text, "\n", 2)[0])
+				title = strings.TrimSpace(lines[0])
+				lines = lines[1:]
+			}
+			// Whatever else the title box held is still document text (an
+			// author list, a date, a version), so it goes to the body rather
+			// than being dropped: anonymisation cannot replace what the
+			// converter threw away. Plain lines, not bullets, because they
+			// are prose continuation and the bullet convention belongs to
+			// body placeholders.
+			if rest := strings.Join(lines, "\n"); strings.TrimSpace(rest) != "" {
+				out.WriteString(rest + "\n\n")
 			}
 			return
 		}
@@ -240,6 +276,13 @@ func walkShapes(data []byte, notesMode bool) (title, body string, err error) {
 					}
 					paraText.WriteString(chunk.String())
 				}
+			case "br":
+				// a:br — a soft line break inside a paragraph. It ends the
+				// line and the next run starts a new one at the same outline
+				// level; the paragraph itself continues.
+				if inPara {
+					flushLine()
+				}
 			case "tbl":
 				// a:tbl — a table inside a graphic frame (not inside a
 				// shape, so it flushes straight to the output).
@@ -256,17 +299,7 @@ func walkShapes(data []byte, notesMode bool) (title, body string, err error) {
 			case "p":
 				if inPara {
 					inPara = false
-					line := strings.TrimSpace(paraText.String())
-					if line != "" {
-						if notesMode || phType == "title" || phType == "ctrTitle" {
-							// Notes and titles read as plain lines, not bullets.
-							shapeText.WriteString(line + "\n")
-						} else {
-							// Body paragraphs are bullets by PowerPoint
-							// convention; indentation mirrors the outline level.
-							shapeText.WriteString(strings.Repeat("  ", paraLvl) + "- " + line + "\n")
-						}
-					}
+					flushLine()
 				}
 			case "sp":
 				if inShape {
