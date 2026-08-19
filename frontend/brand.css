@@ -139,6 +139,15 @@
   --more-chip-bg: #EEF5FF;
   --more-chip-edge: #CFE0FB;
 
+  /* The origin tint: where in the ORIGINAL pane the placeholder under the
+     pointer came from. It is a POSITIONAL answer, not a category one, so it
+     must not be confused with the category marks (orange, grey, violet) or
+     with a search hit (yellow): a pale blue no other state uses. The edge is
+     what keeps two adjacent spellings readable as two spans. */
+  --origin-fg: #205FAE;
+  --origin-bg: #EEF5FF;
+  --origin-edge: #CFE0FB;
+
   /* Typography: Windows system fonts only, no font files, no CDNs */
   /* Helvetica first, Arial as the fallback on machines without it, then the
      generic sans-serif. Headings and body share the face (BUILD-04 CR2). */

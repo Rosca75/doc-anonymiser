@@ -190,11 +190,25 @@ Windows it steals focus from the window it belongs to.
   A hit STRADDLING a mark boundary is deliberately not highlighted: splitting
   the mark would break the click-to-select and the tooltip contract.
 - `panesearch.js` — the Compare search's pure half: `findHits` over the PLAIN
-  pane text and `renderPlainWithHits`. Hits are never applied to
-  already-rendered HTML, because the anonymised pane is full of `<mark>`
-  elements and escaped entities and a needle like `mark` or `&` would corrupt
-  them; they are emitted during the same pass that escapes the text, which is
-  why `highlight.js` takes an optional search argument instead.
+  pane text, and `escapeWithHits`, THE one definition of "escaped text with the
+  search highlighted" (`renderPlainWithHits` is its no-elements case). Hits are
+  never applied to already-rendered HTML, because the panes are full of elements
+  and escaped entities and a needle like `mark` or `&` would corrupt them; they
+  are emitted during the same pass that escapes the text, which is why
+  `highlight.js` and `valuespans.js` both hand their stretches to
+  `escapeWithHits` instead. Two spellings of that loop would mean the navigation
+  could step to a hit one pane does not tint.
+- `valuespans.js` — the hover link BETWEEN the two Compare panes: which
+  stretches of the ORIGINAL text each placeholder replaced, and the renderer
+  that wraps them. One placeholder stands for a whole family (a mainText value
+  and its spellings), so the tint is what answers "what did `[PERSON_1]` used to
+  be" when the tooltip can only name the one form under the pointer. The
+  spellings come from the RUN (`ResultDocument.occurrenceSpellings`), never from
+  re-deriving the Value's expansion: a derivation done twice can disagree with
+  itself, and the recorded list is what the pipeline actually matched. Spans
+  respect WORD BOUNDARIES and give an overlap to the LONGEST claim, because a
+  tint claiming a replacement the engine would never make is worse than no
+  tint.
 - `valuemodel.js` — pure spelling-expansion view-model (regression-tested).
   Three states are distinct and must stay distinct: `derivedSpellings` null means
   an expansion is in flight, `[]` means it finished and found none, an error

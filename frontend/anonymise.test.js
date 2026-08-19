@@ -18,6 +18,7 @@ import {
   compareCard, reportCard, valuesCard, filterValues, blockedPanel, selectedCard,
   runCard, missedCard, renderAnonymise, paneWalk, paneCaption, paneSearchControls,
   selectionPanel, applySelection, wireSelectionPanel, missingDeclaredTexts,
+  wireOriginLink,
 } from "./views/anonymise.js";
 import {
   resetState, setState, getState, subscribe, addValues, foldIntoFamily, buildRunRequest,
@@ -1273,4 +1274,109 @@ test("no Find and replace surface remains anywhere on Anonymise", () => {
   }
   const copySource = readFileSync(new URL("./copy.js", import.meta.url), "utf8");
   assert.ok(!/Find and replace/.test(copySource), "no copy names the retired facility");
+});
+
+// --- The hover link between the two panes --------------------------------
+//
+// Pointing at a placeholder in the ANONYMISED pane tints, in the ORIGINAL one,
+// every stretch that placeholder replaced. It is the one gesture that answers
+// "what did [PERSON_1] used to be" for a Value with more than one spelling, so
+// these tests pin what gets tinted, that the pane still reads unchanged, and
+// that the tint is driven by the real wiring rather than by a class the view
+// happened to write.
+
+const FAMILY_SOURCE = "Johannes Borch signed. Borch invoiced Delta.";
+const FAMILY_ANON = "[PERSON_1] signed. [PERSON_1] invoiced [ENTITY_1].";
+
+/** familyState() is one document whose PERSON value was matched under two
+ *  spellings, which is the case the link exists for. */
+function familyState() {
+  return {
+    documents: [{ name: "a.txt", markdown: FAMILY_SOURCE, previewTruncated: false, isGrid: false }],
+    sourceCache: {},
+    results: {
+      documents: [{
+        name: "a.txt", anonymised: FAMILY_ANON, byCategory: { person_names: 2 },
+        // Slot 0 was the mainText value, slot 1 the "Borch" spelling. This is
+        // the key Go actually emits (ResultDocument.OccurrenceSpellings): read
+        // any other name here and the whole link is silently empty.
+        occurrenceSpellings: { "[PERSON_1]": ["", "Borch"] },
+      }],
+    },
+    mapping: {
+      "[PERSON_1]": { original: "Johannes Borch", category: "person_names" },
+      "[ENTITY_1]": { original: "Delta", category: "entity_names" },
+    },
+  };
+}
+
+test("the ORIGINAL pane carries one origin span per stretch the run replaced", () => {
+  const s = familyState();
+  const html = compareCard(s, s.results.documents[0]);
+  const spans = all(html, ".value-origin");
+  assert.deepEqual(spans.map((sp) => sp.inner), ["Johannes Borch", "Borch", "Delta"]);
+  assert.deepEqual(spans.map((sp) => sp.attrs["data-ph"]),
+    ["[PERSON_1]", "[PERSON_1]", "[ENTITY_1]"],
+    "the mainText value and its spelling share ONE placeholder");
+});
+
+test("the origin spans leave the ORIGINAL pane reading exactly as before", () => {
+  const s = familyState();
+  assert.equal(textOf(compareCard(s, s.results.documents[0]), "#original-pane"), FAMILY_SOURCE,
+    "the spans are invisible until a mark is hovered; they must add no text");
+});
+
+test("hovering a mark tints every stretch its placeholder replaced, and nothing else", async () => {
+  const s = familyState();
+  const c = container();
+  c.innerHTML = compareCard(s, s.results.documents[0]);
+  wireOriginLink(c);
+
+  const mark = c.querySelector("#anonymised-pane").querySelectorAll("mark[data-ph]")[0];
+  await fire(mark, "mouseenter");
+
+  const spans = c.querySelector("#original-pane").querySelectorAll(".value-origin");
+  assert.deepEqual(spans.map((sp) => sp.classList.contains("is-linked")), [true, true, false],
+    "both spellings of the hovered Value light up; the other Value does not");
+});
+
+test("leaving the mark clears the tint, so the pane does not stay lit", async () => {
+  const s = familyState();
+  const c = container();
+  c.innerHTML = compareCard(s, s.results.documents[0]);
+  wireOriginLink(c);
+
+  const mark = c.querySelector("#anonymised-pane").querySelectorAll("mark[data-ph]")[0];
+  await fire(mark, "mouseenter");
+  await fire(mark, "mouseleave");
+
+  const spans = c.querySelector("#original-pane").querySelectorAll(".value-origin");
+  assert.ok(spans.every((sp) => !sp.classList.contains("is-linked")));
+});
+
+test("keyboard focus tints the same stretches the pointer does", async () => {
+  // The marks are focusable, and the link is the second thing (after the
+  // tooltip) that would otherwise be mouse-only on the one screen where the
+  // anonymisation is actually checked.
+  const s = familyState();
+  const c = container();
+  c.innerHTML = compareCard(s, s.results.documents[0]);
+  wireOriginLink(c);
+
+  const marks = c.querySelector("#anonymised-pane").querySelectorAll("mark[data-ph]");
+  await fire(marks[2], "focus");
+
+  const spans = c.querySelector("#original-pane").querySelectorAll(".value-origin");
+  assert.deepEqual(spans.map((sp) => sp.classList.contains("is-linked")), [false, false, true]);
+
+  await fire(marks[2], "blur");
+  assert.ok(spans.every((sp) => !sp.classList.contains("is-linked")));
+});
+
+test("wireOriginLink is a no-op when there is no result to compare", () => {
+  // No panes at all: the card renders its empty hint instead, and the wiring
+  // must not throw on the way past.
+  const c = container();
+  c.innerHTML = compareCard({ documents: [], sourceCache: {}, results: null }, null);
+  assert.doesNotThrow(() => wireOriginLink(c));
 });

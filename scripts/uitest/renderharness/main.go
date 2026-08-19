@@ -180,6 +180,7 @@ func run(frontendDir, probesPath, artifactDir string, keepArtifacts bool) error 
 	checkHelpTooltip(client, r)
 	checkScrollRetention(client, r)
 	checkTooltip(client, r, fx)
+	checkOriginLink(client, r)
 	checkCompareSearch(client, r)
 	checkSelectionPanel(client, r)
 	// Last, so it sees everything every other check provoked.

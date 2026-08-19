@@ -213,6 +213,16 @@ unknown height is not a contract.
   tooltip out of it is the whole fix), and for `elementFromPoint` at its centre
   returning the tooltip. That last one is the check with real teeth: the rect of a
   clipped element is still a full-size rect.
+- **a real `mouseenter` on a `mark[data-ph]` tints, in `#original-pane`, every
+  stretch that placeholder replaced.** The seed gives one Value two spellings
+  precisely so this can be asserted: the check fails unless the whole family
+  lights up and nothing belonging to another Value does. The teeth are in the
+  colour, read with `getComputedStyle` and compared against an untinted span's:
+  a class nothing styles, or one styled from a token `brand.css` does not
+  define, leaves the markup, the wiring and the string suite all correct and the
+  pane visibly unchanged. The span is also checked for a size, for sitting inside
+  the pane's visible box after being scrolled to, and for `elementFromPoint` at
+  its centre, because a tint painted under something else is not a tint.
 - **no console error** during the run, collected from
   `Runtime.consoleAPICalled` and `Runtime.exceptionThrown` as they happen.
 

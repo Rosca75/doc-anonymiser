@@ -66,6 +66,9 @@ doc-anonymiser/
 │                              #   entry is drawn: icon() fails soft to ""
 ├── value_shape_test.go        # the Value wire shape: no retired key comes back,
 │                              #   and every current field is present
+├── result_shape_test.go       # every doc.<field> the Anonymise view reads IS a key
+│                              #   engine.ResultDocument emits: JS reads a missing
+│                              #   key as undefined and says nothing about it
 ├── copy_guard_test.go         # no em dashes in Go user-facing strings (package main)
 ├── uitest_parity_test.go      # keeps the two UI harnesses on ONE probes.js (package main)
 ├── frontend/                  # THE GUI — vanilla ES modules, embedded via go:embed
@@ -78,7 +81,8 @@ doc-anonymiser/
 │   ├── main.js / shell.js / ui.js / html.js / icons.js / copy.js / scroll.js
 │   ├── nav.js                 # THE one place the wizard moves (per-screen footers + step bar)
 │   ├── toast.js / modal.js    # state-backed notice strip + in-app confirm (no native dialogs)
-│   ├── highlight.js / panesearch.js / valuemodel.js / suggestionmodel.js
+│   ├── highlight.js / panesearch.js / valuespans.js / valuemodel.js
+│   ├── suggestionmodel.js
 │   ├── countries.js
 │   ├── views/                 # one JS module per wizard step + shared panels:
 │   │                          #   home.js, import.js, export.js, anonymise.js,

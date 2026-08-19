@@ -11,7 +11,7 @@
 // quotes and angle brackets) and must never reach innerHTML raw.
 
 import { escapeHTML } from "./html.js";
-import { hitClass } from "./panesearch.js";
+import { escapeWithHits } from "./panesearch.js";
 
 // Placeholder shape produced by the Go registry: [LABEL_N].
 const PLACEHOLDER_RE = /\[([A-Z][A-Z0-9_]*)_(\d+)\]/g;
@@ -58,7 +58,7 @@ export function markClass(label) {
  * @param {string} text anonymised document text
  * @param {object} [mapping] placeholder → {original, category} lookup
  * @param {object} [derivedSpellings] placeholder → ordered array of the spellings each
- *   occurrence replaced (Go's ResultDocument.occurrenceVariants). Slot i is the
+ *   occurrence replaced (Go's ResultDocument.occurrenceSpellings). Slot i is the
  *   text the i-th occurrence of that placeholder replaced, "" or absent when it
  *   was the mainText value. The marks are walked in the same left-to-right
  *   order Go recorded them, so slot i lines up with occurrence i.
@@ -76,26 +76,10 @@ export function renderHighlighted(text, mapping, derivedSpellings, search) {
   let last = 0;
   const hits = search?.hits ?? [];
   const activeIndex = search?.activeIndex ?? -1;
-  // withHits escapes a stretch of the text and wraps whatever hits fall
-  // ENTIRELY inside it. Passing every stretch through one function is what
-  // keeps the plain text and a mark's inner text behaving the same way.
-  const withHits = (from, to) => {
-    if (hits.length === 0) return escapeHTML(text.slice(from, to));
-    let piece = "";
-    let cursor = from;
-    for (let i = 0; i < hits.length; i++) {
-      const hit = hits[i];
-      if (hit.end <= cursor) continue;
-      if (hit.start >= to) break;
-      // Straddles this stretch's edge: leave it alone rather than split a mark.
-      if (hit.start < from || hit.end > to) continue;
-      piece += escapeHTML(text.slice(cursor, hit.start));
-      piece += `<span class="${hitClass(i === activeIndex)}">` +
-        `${escapeHTML(text.slice(hit.start, hit.end))}</span>`;
-      cursor = hit.end;
-    }
-    return piece + escapeHTML(text.slice(cursor, to));
-  };
+  // The stretches between and inside the marks all go through panesearch.js's
+  // one escaper, so a mark's inner text and the plain text either side of it
+  // treat a search hit identically.
+  const withHits = (from, to) => escapeWithHits(text, hits, activeIndex, from, to);
 
   const seen = Object.create(null); // placeholder → occurrences emitted so far
   for (const m of String(text).matchAll(PLACEHOLDER_RE)) {

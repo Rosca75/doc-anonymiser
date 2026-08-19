@@ -41,7 +41,8 @@ import {
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { renderHighlighted } from "../highlight.js";
-import { findHits, renderPlainWithHits, MAX_HITS } from "../panesearch.js";
+import { findHits, MAX_HITS } from "../panesearch.js";
+import { valueSpans, renderOriginWithSpans } from "../valuespans.js";
 import {
   button, card, statTile, collapsibleGroup, wireGroups, icon, sectionLabel,
   searchBox, wireSearchBox,
@@ -771,10 +772,19 @@ export function compareCard(s, doc) {
   const originalWalk = paneWalk(doc ? originalText : "", search.original);
   const anonWalk = paneWalk(doc ? (doc.anonymised ?? "") : "", search.anonymised);
 
+  // The ORIGINAL pane's text also carries the ORIGIN SPANS: one invisible span
+  // per stretch this run replaced, carrying the placeholder that replaced it.
+  // Hovering a mark in the other pane tints the spans that share its
+  // placeholder (wireOriginLink), which is how the reader sees the mainText
+  // value AND every spelling one placeholder stands for.
   const originalBody = source?.found
     ? (source.truncated
       ? `<div class="banner warn">${escapeHTML(IMPORT.previewTruncated)}</div>` : "") +
-      renderPlainWithHits(source.markdown, originalWalk.hits, originalWalk.active)
+      renderOriginWithSpans(
+        source.markdown,
+        originSpans(doc?.name, source.markdown, s.mapping, doc?.occurrenceSpellings),
+        originalWalk.hits, originalWalk.active,
+      )
     : `<span class="hint">${escapeHTML(ANONYMISE.originalUnavailable)}</span>`;
 
   const panes = doc
@@ -786,7 +796,7 @@ export function compareCard(s, doc) {
       `<div class="compare-pane">` +
       paneCaption(ANONYMISE.paneAnonymised, "anonymised", anonWalk, search.anonymised) +
       `<pre class="pane-body" id="anonymised-pane">${renderHighlighted(
-        doc.anonymised ?? "", s.mapping, doc.occurrenceVariants,
+        doc.anonymised ?? "", s.mapping, doc.occurrenceSpellings,
         { hits: anonWalk.hits, activeIndex: anonWalk.active },
       )}</pre>` +
       `</div></div>`
@@ -805,6 +815,28 @@ export function compareCard(s, doc) {
     panes +
     toastHTML(getState().notice) +
     `</section>`;
+}
+
+// The ORIGINAL pane's origin spans, cached for the exact inputs they were
+// computed from. Finding every value in the source is one scan per spelling, and
+// the Compare card repaints on every keystroke in a search field, so recomputing
+// them per repaint would make typing in the search box lurch on a long document.
+// The keys are compared by IDENTITY: the store hands out the same text and the
+// same mapping object until something actually replaces them, so an identity
+// miss means the inputs really are new and a hit cannot be stale.
+let originCache = { name: null, text: null, mapping: null, spellings: null, spans: [] };
+
+/** originSpans(name, text, mapping, spellings) is the memoised valueSpans call.
+ *  The Compare card asks for the spans on every repaint and gets the same array
+ *  back until one of the four inputs is genuinely a different object. */
+function originSpans(name, text, mapping, spellings) {
+  if (originCache.name === name && originCache.text === text &&
+      originCache.mapping === mapping && originCache.spellings === spellings) {
+    return originCache.spans;
+  }
+  const spans = valueSpans(text, mapping, spellings);
+  originCache = { name, text, mapping, spellings, spans };
+  return spans;
 }
 
 /**
@@ -1522,6 +1554,7 @@ function wireCompare(container, doc) {
   }
 
   wireMarkTooltip(container, doc);
+  wireOriginLink(container);
 
   // Clicking a mark fills the Selected placeholder card. highlight.js already
   // emits data-ph and data-original, so this needs no parsing.
@@ -1613,6 +1646,53 @@ function wireMarkTooltip(container, doc) {
   // Scrolling moves the text, not the tooltip: hide it rather than let it
   // point at whatever has scrolled under it.
   pane.addEventListener("scroll", hide);
+}
+
+/**
+ * wireOriginLink(container) tints, in the ORIGINAL pane, everything one
+ * placeholder replaced, while the pointer (or the keyboard focus) is on that
+ * placeholder in the ANONYMISED pane.
+ *
+ * This is the one gesture that answers "what did [PERSON_1] used to be" for a
+ * value with several spellings. The tooltip names ONE of them, the one under
+ * the pointer; the tint shows the whole family in place, so a reader checking
+ * the anonymisation can see that "Johannes Borch" and "Borch" both went and
+ * that nothing else did.
+ *
+ * It is deliberately its own wiring rather than a branch inside
+ * wireMarkTooltip: the tooltip is about what the mark MEANS and has to measure
+ * and place a floating element, this is about where the mark CAME FROM and only
+ * toggles a class. Folding them together would make the tint depend on the
+ * tooltip's layout maths succeeding.
+ *
+ * Exported for the wiring tests.
+ */
+export function wireOriginLink(container) {
+  const originPane = container.querySelector("#original-pane");
+  const anonPane = container.querySelector("#anonymised-pane");
+  if (!originPane || !anonPane) return;
+
+  // Collected once: the pane is rebuilt on every repaint, so this list lives
+  // exactly as long as the elements in it do.
+  const spans = originPane.querySelectorAll(".value-origin");
+
+  const clear = () => {
+    for (const span of spans) span.classList.remove("is-linked");
+  };
+  const link = (placeholder) => {
+    for (const span of spans) {
+      span.classList.toggle("is-linked", span.dataset.ph === placeholder);
+    }
+  };
+
+  for (const mark of anonPane.querySelectorAll("mark[data-ph]")) {
+    mark.addEventListener("mouseenter", () => link(mark.dataset.ph));
+    mark.addEventListener("mouseleave", clear);
+    // Keyboard parity: the marks are focusable, so the tint is reachable
+    // without a pointer, exactly like the tooltip.
+    mark.addEventListener("focus", () => link(mark.dataset.ph));
+    mark.addEventListener("blur", clear);
+  }
 }
 
 /** tooltipMeta(category, count) is the second line: what kind of value it is
