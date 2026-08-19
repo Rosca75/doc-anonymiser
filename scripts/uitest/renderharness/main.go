@@ -181,6 +181,7 @@ func run(frontendDir, probesPath, artifactDir string, keepArtifacts bool) error 
 	checkScrollRetention(client, r)
 	checkTooltip(client, r, fx)
 	checkCompareSearch(client, r)
+	checkSelectionPanel(client, r)
 	// Last, so it sees everything every other check provoked.
 	checkNoConsoleErrors(client, r)
 

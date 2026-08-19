@@ -269,6 +269,7 @@ function Invoke-DevChecks {
                 Test-ScrollRetention $cdp
                 Test-TooltipVisibility $cdp
                 Test-CompareSearch $cdp
+                Test-SelectionPanel $cdp
                 Save-Screenshot $cdp 'wizard.png'
             } finally {
                 $cdp.Close()
@@ -898,6 +899,75 @@ function Test-CompareSearch([CdpSession]$cdp) {
     Assert-That -Name 'the active hit is on screen' -Condition ($r.visible.inViewport) `
         -Expected 'the active hit rect within the viewport' -Actual "hit $hit" `
         -Hint 'scrollIntoView with block center on .find-hit.active.'
+}
+
+# The Compare pane's REPLACE SELECTION panel. This is the only layer that renders
+# a native <select> and the only one that can open the panel against a real text
+# selection, and both defects it guards against left the markup correct and the
+# feature unusable: a dropdown whose option values were "person_names,Person names"
+# produced Values the engine dropped before validation, and a field whose input
+# handler repainted the view was destroyed mid-word and took exactly one letter.
+function Test-SelectionPanel([CdpSession]$cdp) {
+    Write-Step 'The Compare selection panel declares a Value the engine can apply'
+    $r = $cdp.Eval('__uiProbes.selectionPanel()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'selecting text in the anonymised pane opens the panel' -Condition $false `
+            -Expected '#selection-card beside the selection' -Actual $r.error `
+            -Hint 'views/anonymise.js wireTextSelection listens for mouseup on .pane-body.'
+        return
+    }
+
+    Assert-That -Name 'the panel names the text that was selected' -Condition ($r.selectedText) `
+        -Expected 'the selected run echoed in .selection-text' -Actual 'an empty .selection-text' `
+        -Hint 'views/anonymise.js selectionPanel renders the selection own text, escaped.'
+
+    Assert-That -Name 'the panel is inside the Compare card' -Condition ($r.insideCompare) `
+        -Expected 'the panel rect within #compare-card' -Actual 'the panel is outside it' `
+        -Hint 'wireTextSelection clamps x to the card bounds, the same clamp the mark tooltip makes.'
+
+    Assert-That -Name 'the panel is on screen' -Condition ($r.inViewport) `
+        -Expected 'the panel rect within the viewport' -Actual 'the panel is off screen' `
+        -Hint 'SELECTION_PANEL_WIDTH is the clamp half-width; the panel is translate(-50%, -100%).'
+
+    Assert-That -Name 'the panel is painted' -Condition ($r.hasSize) `
+        -Expected 'a panel with a width and a height' -Actual 'a zero-size panel' `
+        -Hint '.selection-card in style.css sets its width and padding.'
+
+    # The type list: every option value must be a category key the engine knows.
+    $declarable = @(
+        'entity_names', 'project_names', 'identifier_names',
+        'person_names', 'product_names', 'brand_names', 'other_names')
+    $bad = @($r.optionValues | Where-Object { $declarable -notcontains $_ })
+    Assert-That -Name 'the type list offers only real category keys' `
+        -Condition (($r.optionValues.Count -gt 0) -and ($bad.Count -eq 0)) `
+        -Expected 'one option per declarable category, each value a category key' `
+        -Actual "$($r.optionValues.Count) option(s), not a category: $($bad -join ', ')" `
+        -Hint 'views/anonymise.js selectionStageFields uses the shared categorySelect builder; a hand-rolled copy read the key/label pair list as a list of strings.'
+
+    Assert-That -Name 'a type is pre-selected' -Condition ($declarable -contains $r.selectedValue) `
+        -Expected 'the panel current type selected in the list' -Actual "selected value '$($r.selectedValue)'" `
+        -Hint 'categorySelect marks the option whose KEY equals the selected category.'
+
+    # The spelling target: the field is typeable and it suggests.
+    Assert-That -Name 'no native datalist is used for the suggestions' -Condition (-not $r.hasDatalist) `
+        -Expected 'real pick buttons' -Actual 'a datalist in the page' `
+        -Hint 'A platform popup is destroyed by every repaint and is empty on the render the user starts typing into.'
+
+    Assert-That -Name 'the field survives the first keystroke' -Condition ($r.survivedFirstKeystroke) `
+        -Expected 'the same input element still in the DOM' -Actual 'the element was replaced' `
+        -Hint 'The input handler patches the suggestion list in place and never calls setState.'
+
+    Assert-That -Name 'the field survives the second keystroke' -Condition ($r.survivedSecondKeystroke) `
+        -Expected 'the same input element still in the DOM' -Actual 'the element was replaced' `
+        -Hint 'This is the one-letter symptom: a repaint destroys the element the next keystroke needs.'
+
+    Assert-That -Name 'both keystrokes are in the field' -Condition ($r.fieldValue -eq 'mar') `
+        -Expected "the field holding 'mar'" -Actual "the field holding '$($r.fieldValue)'" `
+        -Hint 'Nothing in the keystroke path resets the value.'
+
+    Assert-That -Name 'the suggestions narrow to what was typed' -Condition ($r.picks.Count -gt 0) `
+        -Expected 'at least one .selection-pick for the query' -Actual "$($r.picks.Count) pick(s)" `
+        -Hint 'views/anonymise.js selectionPicks renders valueAutocomplete answer as buttons.'
 }
 
 # --- Packaged-binary smoke test (UI Automation) -----------------------------
