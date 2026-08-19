@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 
 import {
   CATEGORY_GROUPS, RAIL_SECTIONS, PRESETS, confidenceEffect, llmGateTooltip,
-  llmDisabledTooltip, railBody,
+  llmDisabledTooltip, railBody, settingsPayload,
 } from "./views/identifyrail.js";
 import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
 import {
@@ -23,6 +23,7 @@ import {
   SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
 } from "./state.js";
 import { textOf, stripTags, all, one, exists } from "./testhtml.js";
+import { container } from "./testdom.js";
 
 // --- every category is reachable from some group -------------------------
 
@@ -839,6 +840,66 @@ test("the rail reports cut-off requests beside the silent ones, never folded int
   const clean = stripTags(one(railBody(getState()), "#last-ai-scan").inner);
   assert.ok(!/ran out of room/.test(clean),
     `a scan where nothing was cut off must not mention it: ${clean}`);
+});
+
+// --- The reply-format switch ---------------------------------------------
+
+test("the reply-format switch renders off, explained, and gated", () => {
+  // Off by default, because it is the slow end of a trade-off with no single
+  // winner: it finds a little more on some documents and takes about twice as
+  // long. Gated with the model and the context size, because it changes what a
+  // request asks the model for and means nothing without one running.
+  resetState();
+  const off = railBody(getState());
+  const box = one(off, "#ai-strict-format");
+  assert.ok(!("checked" in box.attrs),
+    "asking for every category is opt-in, so it must render unchecked");
+  assert.ok("disabled" in box.attrs,
+    "with the route off it is gated, exactly as the model field is");
+
+  const toggle = all(off, ".rail-toggle").find((t) => exists(t.outer, "#ai-strict-format"));
+  assert.ok(exists(toggle.outer, "span.help"),
+    "a control whose only explanation would be a paragraph must carry a tooltip");
+  assert.equal(stripTags(one(toggle.outer, "span.cat-label").inner).trim(), RAIL.strictFormat);
+  assert.ok(RAIL.strictFormat.split(" ").length <= 4,
+    `a rail label stays short, got "${RAIL.strictFormat}"`);
+  assert.ok(stripTags(one(toggle.outer, "span.help-bubble").inner).includes("every category"),
+    "the tooltip must say what the setting achieves, in outcome terms");
+});
+
+test("the reply-format switch reflects a stored on", () => {
+  resetState();
+  setUseLocalAI(true);
+  setState({ ollama: { available: true, models: ["m:1b"], detail: "" } });
+  setState({ settings: { ...getState().settings, aiStrictFormat: true } });
+  const box = one(railBody(getState()), "#ai-strict-format");
+  assert.ok("checked" in box.attrs, "a stored on must draw a ticked box");
+  assert.ok(!("disabled" in box.attrs),
+    "with the route on and Ollama there, the control is usable");
+});
+
+test("the reply-format choice reaches the settings payload", () => {
+  // The payload is what Go acts on, and this boolean must travel EXPLICITLY:
+  // Go reads an absent value as off, so an omitted key would make "on"
+  // unsayable.
+  resetState();
+  setUseLocalAI(true);
+  setState({ ollama: { available: true, models: ["m:1b"], detail: "" } });
+
+  const root = container();
+  root.innerHTML = railBody(getState());
+  assert.equal(settingsPayload(getState(), root).aiStrictFormat, false,
+    "an unticked box sends false, not nothing");
+
+  root.querySelector("#ai-strict-format").checked = true;
+  assert.equal(settingsPayload(getState(), root).aiStrictFormat, true,
+    "ticking the box must reach Go, or the control is decoration");
+
+  // A rail rendered without the Local AI body contributes no element, and the
+  // store's value is what travels: switching tabs must not reset the choice.
+  setState({ settings: { ...getState().settings, aiStrictFormat: true } });
+  assert.equal(settingsPayload(getState(), container()).aiStrictFormat, true,
+    "with the control off screen the stored choice is what is sent");
 });
 
 test("the last scan read-out is a read-out, never an explanatory paragraph", () => {

@@ -484,6 +484,20 @@ test("Smart detection starts on and Local AI starts off", () => {
     "detecting Ollama must not switch the route on");
 });
 
+test("the local AI's reply format starts on the fast end", () => {
+  // The schema finds a little more on a short dense page and on very small
+  // documents, and on a slide-heavy one it costs about twice the time for no more
+  // values, while on a small model it finds nothing at all. So the default is off,
+  // and it is a real boolean in the store rather than an absent key: the rail draws
+  // a checkbox from it and an undefined would render as unchecked by accident
+  // rather than by decision.
+  resetState();
+  assert.equal(getState().settings.aiStrictFormat, false,
+    "asking the model for every category is the slow option, so it is opt-in");
+  assert.ok("aiStrictFormat" in getState().settings,
+    "the setting must exist in the store, not be implied by its absence");
+});
+
 test("the Smart detection section state is DERIVED from its methods", () => {
   // There is no stored section boolean. A fourth flag beside three methods can
   // disagree with them, and a section claiming to be on while every method is off

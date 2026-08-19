@@ -76,6 +76,18 @@ There are TWO detection routes, and the settings say so directly.
 on the live Ollama probe, so a stale `true` can never start a model that is not
 running.
 
+`aiStrictFormat` is the same route's reply-format choice, off by default: on, the
+DISCOVERY request asks the model to answer for every category (a JSON Schema in
+`format`); off, it asks for loose JSON mode. It changes recall and time and
+nothing else, and the two directions are both real: the schema found a little more
+on a short dense page and on very small documents, cost about twice the wall clock
+on a slide-heavy deck for no more values, and returned nothing at all on a 0.8B
+model. It is a `*bool` in Go so a session file can tell "absent" from "switched
+off"; absent reads as OFF, which is the default, so the rail sends the boolean
+EXPLICITLY rather than omitting it. It does NOT reach the CLASSIFICATION call,
+which is always schema-constrained: that call files a bounded list of names, where
+"every category present" is what makes the re-filing complete.
+
 **Smart detection** is THREE methods, each with its own setting, and no switch of
 its own:
 

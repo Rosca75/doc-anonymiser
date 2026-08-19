@@ -937,6 +937,16 @@ function localAISection(s) {
     `</label>` +
     helpTooltip(CONFIGURE.contextSizeHelp, { label: RAIL.contextSize }) +
     `</div>` +
+    // The reply format, gated like the model and the context size are: it changes
+    // what a request asks the model for, so it means nothing without one running.
+    // Off by default, which is the fast end of a trade-off with no single winner.
+    `<div class="rail-toggle">` +
+    `<label class="cat-row" for="ai-strict-format">` +
+    `<input type="checkbox" id="ai-strict-format"${s.settings.aiStrictFormat ? " checked" : ""}${gated}/>` +
+    `<span class="cat-label">${escapeHTML(RAIL.strictFormat)}</span>` +
+    `</label>` +
+    helpTooltip(CONFIGURE.strictFormatHelp, { label: RAIL.strictFormat }) +
+    `</div>` +
     lastScanReadout(s) +
     button(RAIL.reprobe, { kind: "secondary", id: "btn-reprobe", icon: "refresh" }) +
     `</div>` +
@@ -956,7 +966,7 @@ function localAISection(s) {
 }
 
 function wireLocalAI(container) {
-  for (const id of ["#ollama-port", "#ollama-model", "#context-size"]) {
+  for (const id of ["#ollama-port", "#ollama-model", "#context-size", "#ai-strict-format"]) {
     container.querySelector(id)?.addEventListener("change", () => pushSettings(container));
   }
   container.querySelector("#btn-reprobe")?.addEventListener("click", async () => {
@@ -1048,16 +1058,20 @@ function wireProfile(container) {
 // --- Shared: push settings to Go -----------------------------------------
 
 /**
- * pushSettings assembles the full settings payload from state plus the Local AI
- * tab's inputs (when that tab is rendered) and applies it in one round-trip. The
- * store mirror updates from what Go accepted; errors surface as a banner.
+ * settingsPayload(s, container) is the ONE definition of what a settings write
+ * sends to Go: the store plus whatever the Local AI tab's inputs say when that
+ * tab is on screen. Pure, so a test can read the payload a given state and DOM
+ * produce without a bridge to answer the call.
+ *
+ * A tab that is not rendered contributes nothing and its value comes from the
+ * store, so switching tabs never resets a setting.
  */
-async function pushSettings(container) {
-  const s = getState();
+export function settingsPayload(s, container) {
   const port = container.querySelector("#ollama-port");
   const model = container.querySelector("#ollama-model");
   const ctxSize = container.querySelector("#context-size");
-  const settings = {
+  const strictFormat = container.querySelector("#ai-strict-format");
+  return {
     level: s.settings.level,
     categories: s.settings.categories,
     country: s.settings.country ?? s.documentCountry,
@@ -1067,6 +1081,11 @@ async function pushSettings(container) {
     model: model?.value || s.settings.model,
     contextSize: ctxSize ? (parseInt(ctxSize.value, 10) || 0) : (s.settings.contextSize ?? 8192),
     useLocalAI: !!s.settings.useLocalAI,
+    // The reply format the Local AI's discovery call asks for. Sent EXPLICITLY as
+    // a boolean, never left out: Go reads an absent value as off, so an omitted
+    // key and a cleared checkbox would be the same thing on the wire and there
+    // would be no way to say "on".
+    aiStrictFormat: strictFormat ? strictFormat.checked : !!s.settings.aiStrictFormat,
     useBuiltInPatterns: s.settings.useBuiltInPatterns !== false,
     useHeuristicDiscovery: s.settings.useHeuristicDiscovery !== false,
     // Which READINGS of which built-in signals may DERIVE Suggestions. Sent as a
@@ -1082,6 +1101,14 @@ async function pushSettings(container) {
     minConfidence: s.settings.minConfidence ?? 0,
     heuristicDiscovery: heuristicDiscoveryOptions(s),
   };
+}
+
+/**
+ * pushSettings applies the payload in one round-trip. The store mirror updates
+ * from what Go accepted; errors surface as a banner.
+ */
+async function pushSettings(container) {
+  const settings = settingsPayload(getState(), container);
   try {
     const status = await applySettings(settings);
     setState({ settings: { ...getState().settings, ...settings }, ollama: status });

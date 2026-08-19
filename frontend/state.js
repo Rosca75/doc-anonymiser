@@ -109,13 +109,16 @@ const initialState = {
   //                   Ollama ENABLES the switch, it never flips it: turning on
   //                   a route that sends the document to a model, however
   //                   local, is the user's decision to make.
+  // aiStrictFormat asks the local AI to answer for EVERY category instead of
+  //   only the ones it thought of. OFF by default: it sometimes finds a little
+  //   more, and usually takes about twice as long.
   // contextSize is the Ollama num_ctx setting, default 8192.
   // minConfidence is the detection-confidence floor, 0 to
   // 1 on the engine's scale. 0 is the default and keeps every detection,
   // which is exactly the behaviour before the setting existed.
   settings: {
     level: "medium", categories: null, ollamaPort: 11434, model: "", country: DEFAULT_COUNTRY,
-    contextSize: 8192, useLocalAI: false,
+    contextSize: 8192, useLocalAI: false, aiStrictFormat: false,
     useBuiltInPatterns: true, useHeuristicDiscovery: true,
     // Which READINGS of which built-in signals may DERIVE Suggestions.
     // Data-driven, keyed by SIGNAL_SOURCES and then by SIGNAL_DERIVATIONS: a new

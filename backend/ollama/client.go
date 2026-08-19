@@ -11,7 +11,7 @@
 //
 // API surface used (pinned in CLAUDE.md §7, "Ollama HTTP API as of 2026"):
 //   - GET  /api/tags  — probe + model list
-//   - POST /api/chat  — {"format":<JSON Schema>,"stream":false} completions
+//   - POST /api/chat  — {"format":<"json"|JSON Schema>,"stream":false} completions
 package ollama
 
 import (
@@ -168,6 +168,13 @@ type Client struct {
 	// default applies. It also drives PromptBudgetBytes, which is the ceiling
 	// for one request rather than the size a document is sliced to.
 	ContextSize int
+	// StrictFormat asks the DISCOVERY call for a schema-constrained reply instead
+	// of loose JSON mode. It is a user setting because the measurements point both
+	// ways and no default can be right for every model: see discoveryFormat.
+	//
+	// It does not reach the classification call, which is always
+	// schema-constrained (see ClassifySuggestions).
+	StrictFormat bool
 
 	// probeClient carries a short timeout so a missing Ollama never hangs
 	// the UI; chatClient allows slow small-model generations. Both honour
@@ -279,9 +286,11 @@ type chatRequest struct {
 	Messages []chatMessage `json:"messages"`
 	// Format is one of two things: the string "json", which is Ollama's loose
 	// JSON mode, or a JSON Schema object, which constrains the reply's SHAPE
-	// as well as its syntax. The callers in this file send the schema
-	// (suggestionSchema); the type is any so the looser mode stays expressible
-	// and so a request that wants no formatting at all can omit it.
+	// as well as its syntax. The type is any so both stay expressible, and so a
+	// request that wants no formatting at all can omit it.
+	//
+	// Which one a call sends is per call: classification always sends the schema,
+	// discovery sends what discoveryFormat chose, and the warm-up sends neither.
 	Format any  `json:"format,omitempty"`
 	Stream bool `json:"stream"`
 	// Think disables a reasoning model's hidden reasoning. It is a TOP-LEVEL
@@ -364,9 +373,10 @@ type chatResponse struct {
 }
 
 // Chat sends one system+user exchange and returns the assistant's raw
-// content. format is what the reply is constrained to (see chatRequest.Format);
-// the callers in this file pass suggestionSchema(). ctx cancellation aborts the
-// request mid-flight (the pipeline cancel button relies on this).
+// content. format is what the reply is constrained to (see chatRequest.Format),
+// and the caller chooses it: classification passes suggestionSchema(), discovery
+// passes discoveryFormat(). ctx cancellation aborts the request mid-flight (the
+// pipeline cancel button relies on this).
 func (c *Client) Chat(ctx context.Context, model, systemPrompt, userPrompt string, format any) (string, error) {
 	if model == "" {
 		model = c.Model
@@ -642,7 +652,7 @@ func (c *Client) DiscoverSlices(ctx context.Context, slices []string, sourceText
 			return finish(), err
 		}
 		out.Requests++
-		reply, err := c.Chat(ctx, c.Model, discoverSystemPrompt, slice, suggestionSchema())
+		reply, err := c.Chat(ctx, c.Model, discoverSystemPrompt, slice, c.discoveryFormat())
 
 		// A cut-off reply degrades THIS slice and stops nothing. Returning here
 		// would leave every later slice unsent, so one dense page in the middle
@@ -754,6 +764,14 @@ func trimContext(context string) string {
 // texts verbatim is dropped (hallucination filter), as is anything the allowlist
 // vetoes. Only main texts and short context snippets are sent, never whole
 // documents.
+//
+// Its reply is ALWAYS schema-constrained, and StrictFormat does not reach it.
+// That is a different task from discovery rather than an omission: the input is a
+// bounded list of names the model only has to file, so "every category present"
+// is exactly the property that makes a re-filing complete, and the payload is
+// small enough that the schema's token cost is noise. Discovery hands over
+// document text, where the same requirement makes a small model pad the
+// categories it has nothing for.
 func (c *Client) ClassifySuggestions(ctx context.Context, suggestions []engine.Suggestion) ([]engine.Suggestion, error) {
 	if len(suggestions) == 0 {
 		return nil, nil
@@ -843,15 +861,17 @@ var promptCategories = []string{
 
 // suggestionSchema is the reply shape the model is CONSTRAINED to, rather than
 // merely asked for: an object whose every property is an array of strings, with
-// all of them required.
+// all of them required. Classification always asks for it; discovery asks for it
+// when the user opted in (discoveryFormat).
 //
-// It is a recall win and not only a safety one. Requiring every category to be
-// present makes the model visit each one instead of stopping after the two it
-// thought of first, which on one measured page took a small model from six
-// names to sixteen. It costs effectively nothing: masking the next token
-// against a grammar is microseconds against a CPU decode step of tens of
-// milliseconds, and a stricter grammar lets more tokens be fast-forwarded
-// rather than sampled.
+// Requiring every category to be present makes the model visit each one instead
+// of stopping after the two it thought of first, which on one measured page took
+// a small model from six names to sixteen, and which is what makes a re-filing of
+// a bounded name list complete. The grammar itself is nearly free: masking the
+// next token against it is microseconds against a CPU decode step of tens of
+// milliseconds, and a stricter grammar lets more tokens be fast-forwarded rather
+// than sampled. What is NOT free is what it makes the model generate, which is
+// why discovery over document text can choose otherwise: see discoveryFormat.
 //
 // It is DERIVED from promptCategories rather than written out, so the schema
 // cannot fall out of step with the parser and the prompts. That keeps
@@ -880,6 +900,33 @@ func suggestionSchema() map[string]any {
 	}
 }
 
+// discoveryFormat is THE one answer to "what shape does the discovery call ask
+// its reply to be", so no call site decides it inline and the two possible
+// answers cannot drift apart.
+//
+// The default is Ollama's loose JSON mode, and the schema is what the user opts
+// into, because the measurements point both ways and no single answer is right
+// for every model:
+//
+//   - On a slide-heavy document the schema costs roughly twice the wall clock
+//     for recall that is equal or slightly worse, because it forces every
+//     category array to be emitted whether or not it has content.
+//   - On a small model it is worse than that: asked to fill seven required
+//     arrays with nothing to put in most of them, it returns seven empty ones,
+//     so a document full of names measures zero values at every slice size.
+//   - On a short, dense page of prose, and on documents of a few hundred bytes,
+//     it measures a real recall win, which is why it stays available.
+//
+// Loose JSON mode is why parseSuggestionJSON's tolerances are load-bearing: with
+// no grammar applied, a missing category key and a bare string in place of a list
+// are shapes the parser genuinely meets.
+func (c *Client) discoveryFormat() any {
+	if c.StrictFormat {
+		return suggestionSchema()
+	}
+	return "json"
+}
+
 // stripCodeFence removes the ```json ... ``` wrapper some models add despite
 // being asked for JSON. It is shared by the full parser and the salvage reader
 // so a fenced reply is understood the same way whether or not it was cut off.
@@ -899,6 +946,12 @@ func stripCodeFence(reply string) string {
 // ignored, and each known key may hold a list of strings. A reply that still
 // fails to parse produces an actionable error (the model or prompt needs
 // attention, and the user should know which model misbehaved).
+//
+// The tolerances are load-bearing, not belt-and-braces. Discovery's default reply
+// format is loose JSON mode (discoveryFormat), so nothing constrains the reply's
+// shape: a missing category key, a bare string where a list belongs and a fenced
+// object are all shapes a real model returns, and each one would otherwise cost
+// the whole slice.
 //
 // Every Suggestion it produces is stamped with the Local AI discovery method
 // HERE, at the boundary, so no caller has to remember to do it and nothing the

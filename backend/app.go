@@ -54,6 +54,20 @@ type Settings struct {
 	// It is a setting rather than a per-call argument so it survives in the
 	// session file and so Go, not the frontend, decides whether a route runs.
 	UseLocalAI bool `json:"useLocalAI"`
+	// AIStrictFormat asks the local AI's discovery call for a schema-constrained
+	// reply instead of loose JSON mode: it makes the model answer for every
+	// category rather than only the ones it thought of.
+	//
+	// It is the user's choice because the measurement has no single winner: the
+	// schema finds a little more on a short dense page and on small documents, and
+	// on a slide-heavy document it costs about twice the time for no more values,
+	// while on a small model it finds nothing at all. Default OFF, which is the
+	// fast end.
+	//
+	// A POINTER for the reason UseBuiltInPatterns is one: "absent" and "the user
+	// switched it off" must stay distinguishable across a session file. Here nil
+	// reads as off, which is the default, so nothing is lost by silence.
+	AIStrictFormat *bool `json:"aiStrictFormat"`
 	// UseBuiltInPatterns and UseHeuristicDiscovery are two of Smart detection's
 	// three methods, controlled independently.
 	//
@@ -654,6 +668,9 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 		a.llm.Model = s.Model
 	}
 	a.llm.ContextSize = s.ContextSize
+	// nil reads as off, which is the shipped default: a payload that says nothing
+	// about the reply format gets the fast one rather than the slow one.
+	a.llm.StrictFormat = s.AIStrictFormat != nil && *s.AIStrictFormat
 	a.mu.Unlock()
 
 	// Switching the route ON is the moment to pre-load the model, and the only

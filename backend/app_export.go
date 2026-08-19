@@ -519,6 +519,7 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 			ContextSize:             settings.ContextSize,
 			Country:                 settings.Country,
 			UseLocalAI:              settings.UseLocalAI,
+			AIStrictFormat:          settings.AIStrictFormat,
 			UseBuiltInPatterns:      &settings.UseBuiltInPatterns,
 			UseHeuristicDiscovery:   &settings.UseHeuristicDiscovery,
 			SignalSuggestionSources: engine.NormaliseSignalSources(settings.SignalSuggestionSources),
@@ -637,6 +638,7 @@ func (a *App) restoredSettings(session engine.Session) Settings {
 		ContextSize:           session.Settings.ContextSize,
 		Country:               session.Settings.Country,
 		UseLocalAI:            session.Settings.UseLocalAI,
+		AIStrictFormat:        session.Settings.AIStrictFormat, // absent means "off": that is the default
 		UseBuiltInPatterns:    true, // absent means "on": that is the default
 		UseHeuristicDiscovery: true, // absent means "on": that is the default
 		// A missing key falls back to the default rather than to "off", so a file

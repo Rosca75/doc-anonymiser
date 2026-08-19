@@ -114,6 +114,100 @@ func TestSessionSettingsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestApplySettingsCarriesTheStrictFormatChoice: the discovery reply format is a
+// setting, and all three states of the pointer have to reach the client
+// correctly.
+//
+// It is a POINTER so a session file can tell "absent" from "switched off", and
+// absent has to read as OFF here, because off is the shipped default. Reading nil
+// as on would double every scan's wall clock for a user who never touched the
+// control.
+func TestApplySettingsCarriesTheStrictFormatChoice(t *testing.T) {
+	on, off := true, false
+	for _, tc := range []struct {
+		name string
+		set  *bool
+		want bool
+	}{
+		{"absent reads as off, the shipped default", nil, false},
+		{"switched off is obeyed", &off, false},
+		{"switched on reaches the client", &on, true},
+	} {
+		t.Run("config/"+tc.name, func(t *testing.T) {
+			app := NewApp()
+			s := app.GetSettings()
+			s.AIStrictFormat = tc.set
+
+			if _, err := app.ApplySettings(s); err != nil {
+				t.Fatalf("ApplySettings: %v", err)
+			}
+			if got := app.llm.StrictFormat; got != tc.want {
+				t.Errorf("the client's StrictFormat is %v, want %v: the setting decides what shape "+
+					"the discovery call asks its reply to be", got, tc.want)
+			}
+			// The stored setting round-trips as it arrived, so the rail redraws the
+			// checkbox the user left rather than a value Go invented.
+			if got := app.GetSettings().AIStrictFormat; (got == nil) != (tc.set == nil) {
+				t.Errorf("the stored setting is %v, want the pointer it was given (%v)", got, tc.set)
+			} else if got != nil && *got != *tc.set {
+				t.Errorf("the stored setting is %v, want %v", *got, *tc.set)
+			}
+		})
+	}
+}
+
+// TestStrictFormatSurvivesTheSessionFile: the format choice persists, and a file
+// that says nothing about it restores as OFF without bumping the version.
+//
+// A bump is for a field whose old meaning cannot be recovered. Here silence and
+// the default agree, so an older file needs no migration and gets none: the
+// version stays 8.
+func TestStrictFormatSurvivesTheSessionFile(t *testing.T) {
+	on := true
+	data, err := engine.SaveSession(engine.Session{
+		Settings: engine.SessionSettings{Level: "medium", OllamaPort: 11434, AIStrictFormat: &on},
+	})
+	if err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	loaded, err := engine.LoadSession(data)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if loaded.Settings.AIStrictFormat == nil || !*loaded.Settings.AIStrictFormat {
+		t.Errorf("the format choice did not survive the file: %v", loaded.Settings.AIStrictFormat)
+	}
+	if engine.SessionVersion != 8 {
+		t.Errorf("SessionVersion is %d: an added field the loader can read as its default is not a bump",
+			engine.SessionVersion)
+	}
+
+	app := NewApp()
+	if _, err := app.applyRestoredSession(loaded); err != nil {
+		t.Fatalf("applyRestoredSession: %v", err)
+	}
+	if !app.llm.StrictFormat {
+		t.Error("a restored session that asked for the schema must reach the client with it")
+	}
+
+	// And a file with nothing to say about it restores as off, never as on.
+	silent, err := engine.SaveSession(engine.Session{Settings: engine.SessionSettings{Level: "medium", OllamaPort: 11434}})
+	if err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	loadedSilent, err := engine.LoadSession(silent)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	fresh := NewApp()
+	if _, err := fresh.applyRestoredSession(loadedSilent); err != nil {
+		t.Fatalf("applyRestoredSession: %v", err)
+	}
+	if fresh.llm.StrictFormat {
+		t.Error("a file that says nothing about the reply format must restore the fast default, not the slow one")
+	}
+}
+
 // TestApplySettingsRefusesAnUnknownSignalSource: an identifier Go does not
 // implement must not reach the settings at all.
 //

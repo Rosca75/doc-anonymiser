@@ -182,6 +182,11 @@ export const CONFIGURE = {
   groupThorough: "Only for thorough anonymisation",
   useAIHelp: "A language model running on this machine reads the documents and suggests Values. Nothing leaves your computer, and nothing it finds is replaced until you accept it.",
   contextSizeHelp: "Higher values let the model read longer documents at once but use more memory.",
+  // The reply-format switch, in OUTCOME terms. The mechanism (a JSON schema
+  // constraining which keys the reply must carry) is not what a business user is
+  // deciding about; what they are deciding about is a little more recall against
+  // roughly twice the wait.
+  strictFormatHelp: "Makes the model answer for every category instead of only the ones it thought of. Sometimes finds a little more, and usually takes about twice as long.",
   aiOffTooltip: "Local AI is turned off. Turn it on with the switch on the Local AI section of Configure.",
   allowHint: "Terms in this list survive every pass, even when they also appear as names to replace.",
   // the group that surfaces the recognizers.
@@ -321,6 +326,8 @@ export const RAIL = {
   port: "Port",
   model: "Model",
   contextSize: "Context",
+  // Short, as every rail label is: the explanation is the tooltip beside it.
+  strictFormat: "Answer every category",
   noModels: "(no models found)",
   reprobe: "Check again",
 

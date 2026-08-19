@@ -69,6 +69,17 @@ type SessionSettings struct {
 	Country     string            `json:"country,omitempty"`
 	// UseLocalAI is the Local AI detection route switch.
 	UseLocalAI bool `json:"useLocalAI,omitempty"`
+	// AIStrictFormat is the local AI's discovery reply format: schema-constrained
+	// when true, Ollama's loose JSON mode otherwise. A POINTER so "absent" and
+	// "the user switched it off" stay distinguishable, exactly as the two method
+	// switches below are pointers.
+	//
+	// It does NOT bump SessionVersion, and neither does any field of this shape.
+	// A reader of an older file finds it absent, absent reads as off, and off is
+	// the default the file was written under, so nothing is guessed and no
+	// migration is needed. A bump is for a field whose OLD meaning cannot be
+	// recovered, which is what version 7's per-source booleans were.
+	AIStrictFormat *bool `json:"aiStrictFormat,omitempty"`
 	// UseBuiltInPatterns and UseHeuristicDiscovery are two of Smart detection's
 	// three methods. Both are POINTERS because their default is TRUE: with a
 	// plain bool, "absent" and "the user switched it off" are the same value,

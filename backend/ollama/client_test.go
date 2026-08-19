@@ -36,8 +36,13 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.S
 // here rather than in one dedicated test: the contract has to hold on the
 // discovery call and the classification call alike, and a helper every path
 // goes through is the only place that covers both without being remembered.
+//
+// The reply format is the one part of that contract that differs PER CALL, so
+// the handler reads it off the client it serves rather than from a constant: a
+// test that flips StrictFormat gets the assertion that goes with it.
 func chatReplyServer(t *testing.T, content string) *Client {
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	var c *Client
+	c, _ = newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tags":
 			w.Write([]byte(`{"models":[{"name":"qwen3.5:0.8b"}]}`))
@@ -46,7 +51,7 @@ func chatReplyServer(t *testing.T, content string) *Client {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Errorf("chat request not JSON: %v", err)
 			}
-			assertPinnedChatRequest(t, req)
+			assertPinnedChatRequest(t, req, c)
 			resp, _ := json.Marshal(map[string]interface{}{
 				"message": map[string]string{"role": "assistant", "content": content},
 			})
@@ -62,7 +67,10 @@ func chatReplyServer(t *testing.T, content string) *Client {
 // contract this package guarantees (CLAUDE.md §8). Each assertion names the
 // failure it prevents, because every one of them is a setting whose absence is
 // silent: the request still succeeds and the reply is simply worse.
-func assertPinnedChatRequest(t *testing.T, req map[string]interface{}) {
+//
+// c is the client that sent it, because the expected reply format depends on
+// which call this is and on that client's StrictFormat setting.
+func assertPinnedChatRequest(t *testing.T, req map[string]interface{}, c *Client) {
 	t.Helper()
 
 	if req["stream"] != false {
@@ -91,7 +99,54 @@ func assertPinnedChatRequest(t *testing.T, req map[string]interface{}) {
 		}
 	}
 
-	assertSuggestionSchemaFormat(t, req["format"])
+	assertReplyFormat(t, req, c)
+}
+
+// systemPromptOf reads the system message out of a decoded request body, which
+// is what says WHICH call it is. Comparing against the prompt constants rather
+// than against a substring means a reworded prompt cannot quietly make a
+// discovery request look like a classification one.
+func systemPromptOf(req map[string]interface{}) string {
+	messages, _ := req["messages"].([]interface{})
+	for _, raw := range messages {
+		message, _ := raw.(map[string]interface{})
+		if message["role"] == "system" {
+			text, _ := message["content"].(string)
+			return text
+		}
+	}
+	return ""
+}
+
+// assertReplyFormat holds each call to the format it is supposed to ask for.
+//
+// The rule is per call, and that is the whole point of it. Classification always
+// carries the schema, because "every category present" is what makes a re-filing
+// of a bounded name list complete and the payload is tiny. Discovery carries what
+// the user chose, because over document text the same requirement makes a small
+// model pad the categories it has nothing for. Asserting one rule for both would
+// let a later tidy-up make classification switchable too.
+func assertReplyFormat(t *testing.T, req map[string]interface{}, c *Client) {
+	t.Helper()
+
+	switch systemPromptOf(req) {
+	case classifySystemPrompt:
+		assertSuggestionSchemaFormat(t, req["format"])
+	case discoverSystemPrompt:
+		if c.StrictFormat {
+			assertSuggestionSchemaFormat(t, req["format"])
+			return
+		}
+		if req["format"] != "json" {
+			t.Errorf("discovery with StrictFormat off must ask for Ollama's loose JSON mode, got %#v", req["format"])
+		}
+	case "":
+		// A warm-up sends no messages and shapes no reply, so it has no format
+		// to be right or wrong about.
+	default:
+		t.Errorf("this helper serves the discovery and classification calls; a new call shape must say " +
+			"which reply format it asks for, or it goes unchecked")
+	}
 }
 
 // assertSuggestionSchemaFormat checks that format carries the flat suggestion
@@ -954,6 +1009,108 @@ func TestDiscoverCancelBetweenSlices(t *testing.T) {
 	}
 	if len(out.Suggestions) != 1 || out.Suggestions[0].MainText != "Alpine Trust" {
 		t.Errorf("partial proposals must survive cancellation: %+v", out.Suggestions)
+	}
+}
+
+// --- The reply format, per call ------------------------------------------
+
+// TestDiscoveryFormatFollowsTheSetting: the discovery call asks for loose JSON
+// mode by default and for the schema when the user opted in.
+//
+// The default is the measured one. Constraining the reply to a schema whose every
+// category is required costs about twice the wall clock on a slide-heavy document
+// for no more values, and on a small model it returns seven empty arrays instead
+// of the names that are there. It stays available because on a short dense page,
+// and on documents of a few hundred bytes, it finds a little more.
+func TestDiscoveryFormatFollowsTheSetting(t *testing.T) {
+	const text = "Alpine Trust appears here."
+	const reply = `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`
+
+	for _, tc := range []struct {
+		name   string
+		strict bool
+	}{
+		{"loose JSON mode by default", false},
+		{"the schema when the user asks for it", true},
+	} {
+		t.Run("config/"+tc.name, func(t *testing.T) {
+			// The mock captures what arrived; chatReplyServer's own assertions
+			// already hold it to the rule, and this reads the wire directly so
+			// the expectation is stated here too rather than only in a helper.
+			var format any
+			c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/chat" {
+					w.Write([]byte(`{"models":[]}`))
+					return
+				}
+				var req map[string]interface{}
+				json.NewDecoder(r.Body).Decode(&req)
+				format = req["format"]
+				resp, _ := json.Marshal(map[string]interface{}{
+					"message": map[string]string{"role": "assistant", "content": reply},
+				})
+				w.Write(resp)
+			})
+			c.StrictFormat = tc.strict
+
+			if _, err := c.DiscoverSlices(context.Background(), []string{text}, text, nil); err != nil {
+				t.Fatalf("DiscoverSlices: %v", err)
+			}
+			if tc.strict {
+				assertSuggestionSchemaFormat(t, format)
+				return
+			}
+			if format != "json" {
+				t.Errorf("discovery must ask for %q with StrictFormat off, got %#v", "json", format)
+			}
+		})
+	}
+}
+
+// TestClassificationAlwaysCarriesTheSchema: StrictFormat is the DISCOVERY call's
+// setting and reaches classification in neither position.
+//
+// The two calls do different work. Classification hands the model a bounded list
+// of names it only has to file, so requiring every category is what makes the
+// re-filing complete, and the payload is small enough that the cost is noise.
+// This is the assertion that stops a later tidy-up from "consistently" making
+// classification switchable too.
+func TestClassificationAlwaysCarriesTheSchema(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		name := "the discovery format is loose"
+		if strict {
+			name = "the discovery format is strict"
+		}
+		t.Run("config/"+name, func(t *testing.T) {
+			var format any
+			c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/chat" {
+					w.Write([]byte(`{"models":[]}`))
+					return
+				}
+				var req map[string]interface{}
+				json.NewDecoder(r.Body).Decode(&req)
+				format = req["format"]
+				if systemPromptOf(req) != classifySystemPrompt {
+					t.Errorf("this test must exercise the classification call, got a different system prompt")
+				}
+				resp, _ := json.Marshal(map[string]interface{}{
+					"message": map[string]string{
+						"role":    "assistant",
+						"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`,
+					},
+				})
+				w.Write(resp)
+			})
+			c.StrictFormat = strict
+
+			if _, err := c.ClassifySuggestions(context.Background(), []engine.Suggestion{
+				{MainText: "Alpine Trust", Category: "person_names"},
+			}); err != nil {
+				t.Fatalf("ClassifySuggestions: %v", err)
+			}
+			assertSuggestionSchemaFormat(t, format)
+		})
 	}
 }
 

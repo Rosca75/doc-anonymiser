@@ -1261,21 +1261,21 @@ silent ones and never folds them together.
     with a spot-check rather than a guess.
 13. **The GPU setting is documented, never automated**, and no timing-based
     warning is added for it.
-15. **A cut-off reply is a per-slice degradation, never the end of a scan.**
+14. **A cut-off reply is a per-slice degradation, never the end of a scan.**
     What the model finished writing is salvaged and the next slice is sent. The
     hallucination filter is what makes salvage safe: nothing that is not verbatim
     in the source can reach the user, so a fragment of a name cannot.
-16. **The generation cap is sized from the densest HONEST reply, not from the
+15. **The generation cap is sized from the densest HONEST reply, not from the
     longest possible one.** The densest honest reply measured on a real document
     finishes at about 560 tokens, so the cap is 1024. Raising it further only
     feeds the degenerate replies, which consume any cap they are given, and a cap
     the request window cannot deliver converts a salvageable cut-off reply into a
     timeout that yields nothing. The cap and the request timeout are a coupled
     pair and move together.
-17. **No retry at a smaller size.** Salvage keeps every complete string the cut
+16. **No retry at a smaller size.** Salvage keeps every complete string the cut
     reply had already written, so a retry pays a second full request for the tail
     of an answer whose useful half is already in hand.
-18. **Heuristic discovery's category quality stays out of scope.** Filing
+17. **Heuristic discovery's category quality stays out of scope.** Filing
     "Impact High" as a person is a real defect with its own root cause, and folding
     it in here would make this order unreviewable.
 
@@ -1285,16 +1285,16 @@ silent ones and never folds them together.
 
 | File | CRs | Note |
 |---|---|---|
-| `backend/ollama/client.go` | CR1, CR3, CR4, CR6 | the centre of gravity. CR1 removes the chunking, CR3 adds the format switch, CR4 adds `done_reason`. Sequence them in that order inside one file pass. |
-| `backend/ollama/client_test.go` | CR1, CR3, CR4 | and specifically `chatReplyServer` (`:39`), which CR3 changes structurally. See the hotspot below. |
-| `backend/app_detect.go` | CR1, CR2 (`EstimateAIRequests`), CR4 | CR1 restructures `scopedUnits`/`runLocalAIPhase`; do CR1 before the other two touch it. |
+| `backend/ollama/client.go` | CR1, CR3, CR4, CR6, CR8 | the centre of gravity. CR1 removes the chunking, CR4 adds `done_reason`, CR8 raises the reply cap and adds the salvage path, CR3 adds the format switch. Sequence them in the recommended order inside one file pass. |
+| `backend/ollama/client_test.go` | CR1, CR3, CR4, CR8 | and specifically `chatReplyServer` (`:39`), which CR3 changes structurally. See the hotspot below. |
+| `backend/app_detect.go` | CR1, CR2 (`EstimateAIRequests`), CR4, CR8 | CR1 restructures `scopedUnits`/`runLocalAIPhase`; do CR1 before the others touch it. CR4 and CR8 both add `DetectionResult` fields and both write a message into `res.Errors`. |
 | `backend/app.go` | CR2 (settings + validation), CR3 (settings), CR6 (model resolution) | three edits to `Settings` and `ApplySettings`; make the `Settings` additions in one pass. |
 | `backend/engine/session.go` | CR2, CR3 | two fields, one comment about why neither bumps the version. Write that comment once. |
-| `backend/app_detect_integration_test.go` | CR1, CR2, CR4 | the scope tests need CR1's multi-request shape before CR2 and CR4 add to them. |
-| `frontend/state.js` | CR2, CR3, CR6 | settings defaults and the probe-result handling. |
+| `backend/app_detect_integration_test.go` | CR1, CR2, CR4, CR8 | the scope tests need CR1's multi-request shape before CR2, CR4 and CR8 add to them. CR8 also UPDATES the per-file failure test, because a cut-off reply stops being the file's failure. |
+| `frontend/state.js` | CR2, CR3, CR6, CR8 | settings defaults, `lastAIScan`, and the probe-result handling. |
 | `frontend/views/identifyrail.js` | CR2, CR3, CR6 | `localAISection` and `pushSettings` both take three small edits; do them together. |
-| `frontend/copy.js` | CR2, CR3, CR7 | three tooltips and one read-out template. |
-| `frontend/BRIDGE.md` | CR2, CR4, CR6 | one new method, three new result fields, one changed probe return. Update it once, at the end, from the code rather than from this plan. |
+| `frontend/copy.js` | CR2, CR3, CR7, CR8 | three tooltips and one read-out template, which CR8 extends with the cut-off clause. |
+| `frontend/BRIDGE.md` | CR2, CR3, CR4, CR6, CR8 | one new method, four new result fields, one new setting, one changed probe return, and CR8's per-slice truncation rule. Update it once, at the end, from the code rather than from this plan. |
 | `CLAUDE.md` | CR1 (§5), CR3 (§7 row + §8 bullet), CR7 (§8 bullet) | both CR3 and CR7 edit §8; make the §8 edits in one pass so the section is not rewritten twice. |
 
 ### Hotspots
