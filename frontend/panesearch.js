@@ -5,7 +5,8 @@
 // like "mark" or "&" would corrupt the markup and take the tooltips and the
 // click-to-select with it. So hits are computed over the PLAIN text and
 // rendered during the same pass that escapes it: highlight.js does that for the
-// anonymised pane, and renderPlainWithHits below for the original one.
+// escapeWithHits below is the one function that does it, and every pane
+// renderer hands its stretches to it.
 //
 // Pure JavaScript, no DOM required, unit-tested with `node --test`
 // (panesearch.test.js).
@@ -105,20 +106,6 @@ export function escapeWithHits(text, hits, activeIndex, from, to) {
   return out + escapeHTML(source.slice(cursor, to));
 }
 
-/**
- * renderPlainWithHits(text, hits, activeIndex) escapes the whole text and wraps
- * each hit in a span, the active one marked so the pane can scroll to it. It is
- * the no-elements case of escapeWithHits, for a pane with nothing over its text.
- *
- * @param {string} text the plain pane text
- * @param {Array<{start:number,end:number}>} hits from findHits, in order
- * @param {number} [activeIndex] which hit is the current one, -1 for none
- * @returns {string} safe HTML
- */
-export function renderPlainWithHits(text, hits, activeIndex = -1) {
-  const source = String(text ?? "");
-  return escapeWithHits(source, hits, activeIndex, 0, source.length);
-}
 
 /**
  * hitClass(active) is the class one hit span carries. Module-private, because

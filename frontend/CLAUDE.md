@@ -191,7 +191,8 @@ Windows it steals focus from the window it belongs to.
   the mark would break the click-to-select and the tooltip contract.
 - `panesearch.js` — the Compare search's pure half: `findHits` over the PLAIN
   pane text, and `escapeWithHits`, THE one definition of "escaped text with the
-  search highlighted" (`renderPlainWithHits` is its no-elements case). Hits are
+  search highlighted": one stretch escaped, with whatever hits fall entirely
+  inside it wrapped. Hits are
   never applied to already-rendered HTML, because the panes are full of elements
   and escaped entities and a needle like `mark` or `&` would corrupt them; they
   are emitted during the same pass that escapes the text, which is why
