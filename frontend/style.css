@@ -1448,14 +1448,24 @@ input, select {
   border-right: 1px solid var(--gray-5);
 }
 .compare-pane:last-child { border-right: none; }
+/* The caption holds the pane's name on the left and its OWN search bar aligned
+   right (margin-left:auto on the bar). It is a fixed-height strip, so the bar
+   sits inside it rather than adding a second row. */
 .pane-caption {
   flex: none;
-  padding: 0.7rem 1.25rem;
-  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em;
-  color: var(--ink-3);
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.4rem 1.25rem;
   background: var(--surface-subtle);
   border-bottom: 1px solid var(--gray-5);
 }
+.pane-caption-label {
+  flex: none;
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+/* The search bar is pushed to the right edge of the caption. The letter-spacing
+   and weight above are on the label only, so the field is not inherited into. */
+.pane-caption .compare-search { margin-left: auto; }
 /* THE scroll owner of each pane. Both directions: a long unbroken line in an
    extracted pdf is legitimately wider than the pane and must not widen the page.
    word-break keeps ordinary prose wrapping. */
@@ -1523,9 +1533,12 @@ mark.custom { background: var(--src-ai-bg); border-bottom: 1px solid var(--src-a
   outline-offset: 0;
 }
 
-/* The search controls in the Compare card head, beside the document selector. */
-.compare-search { display: flex; align-items: center; gap: 0.3rem; }
-.compare-search .search-box { min-width: 12rem; }
+/* Each pane's search bar, living aligned right in the pane's caption. It is
+   compact so it fits the caption strip: a shorter field, and the field shrinks
+   with the pane rather than forcing the caption wider. */
+.compare-search { display: flex; align-items: center; gap: 0.25rem; min-width: 0; }
+.compare-search .search-box { height: 1.9rem; min-width: 0; }
+.compare-search .search-box input { width: 8rem; max-width: 100%; }
 .search-readout { white-space: nowrap; }
 
 /* --- The original-term tooltip (BUILD-06) -------------------------------- */
