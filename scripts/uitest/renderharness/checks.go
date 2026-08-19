@@ -225,6 +225,7 @@ type railResult struct {
 		LabelFullyShown *bool    `json:"labelFullyShown"`
 		Label           string   `json:"label"`
 		SameRow         *bool    `json:"sameRow"`
+		LabelLines      int      `json:"labelLines"`
 		FitsTheRail     *bool    `json:"fitsTheRail"`
 		Widths          string   `json:"widths"`
 		OptionsSelected []string `json:"optionsSelected"`
@@ -374,12 +375,20 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 			"copy.js RAIL.detailLevel stays short precisely because the rail is the "+
 				"narrowest column; an ellipsis here is a control the user cannot read.")
 
+		// One row is a claim about vertical CENTRES: the field is a two-column
+		// grid with align-items:center, so a short label and a taller select are
+		// on one line while their TOPS differ by half the height difference.
+		// The label being a single line is the separate question, and the one a
+		// narrow column can genuinely break.
 		r.assert("the detail level and its label share one row",
-			boolIs(row.SameRow, true) && boolIs(row.FitsTheRail, true),
-			"label and select at the same y, with no horizontal overflow",
-			fmt.Sprintf("sameRow=%s, fits=%s (%s)",
-				describeBool(row.SameRow), describeBool(row.FitsTheRail), row.Widths),
-			"style.css .rail-field is one flex line, and the page body never scrolls "+
+			boolIs(row.SameRow, true) && boolIs(row.FitsTheRail, true) && row.LabelLines == 1,
+			"label and select centred on one line, label on a single line, no horizontal overflow",
+			fmt.Sprintf("sameRow=%s, fits=%s, labelLines=%d (%s)",
+				describeBool(row.SameRow), describeBool(row.FitsTheRail),
+				row.LabelLines, row.Widths),
+			"style.css .rail-field is a two-column grid whose control column is a "+
+				"fixed 18rem, so a label longer than the space left over wraps. Keep "+
+				"copy.js RAIL.detailLevel short, and the page body never scrolls "+
 				"sideways (the fixed-height layout contract).")
 
 		r.assert("exactly one detail level is marked selected",

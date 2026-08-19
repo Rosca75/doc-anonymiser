@@ -481,14 +481,28 @@
         if (!row || !label || !select || !help) return null;
         const l = label.getBoundingClientRect();
         const sel = select.getBoundingClientRect();
+        // "One row" is a claim about vertical CENTRES, not about tops. The field
+        // is a two-column grid with align-items:center, so a short label and a
+        // taller select are centred on the same line and their TOPS therefore
+        // differ by half the height difference. Comparing tops fails a layout
+        // that is correct.
+        //
+        // What could still be wrong is the label WRAPPING inside a narrow column,
+        // which is a genuine two-line label, so that is measured separately: an
+        // inline span laid out over two lines returns two client rects.
+        const labelMid = l.top + l.height / 2;
+        const selectMid = sel.top + sel.height / 2;
         return {
           laidOut: sel.height > 0,
           // A rail label clipped to an ellipsis is a control the user cannot read.
           labelFullyShown: label.scrollWidth <= label.clientWidth + 1,
           label: `${(label.textContent ?? "").trim()}: ${label.clientWidth} of ${label.scrollWidth}px`,
-          sameRow: Math.abs(l.top - sel.top) <= 2,
+          sameRow: Math.abs(labelMid - selectMid) <= 2,
+          labelLines: label.getClientRects().length,
           fitsTheRail: row.scrollWidth <= row.clientWidth + 1,
-          widths: `row ${Math.round(row.clientWidth)} of ${Math.round(row.scrollWidth)}px`,
+          widths: `row ${Math.round(row.clientWidth)} of ${Math.round(row.scrollWidth)}px, ` +
+            `label ${Math.round(l.height)}px centred at ${Math.round(labelMid)}, ` +
+            `select ${Math.round(sel.height)}px centred at ${Math.round(selectMid)}`,
           // Exactly one option marked, or the browser chooses the level by option
           // ordering, which is the defect that picked the wrong model.
           optionsSelected: [...select.querySelectorAll("option")]
