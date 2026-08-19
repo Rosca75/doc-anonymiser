@@ -827,3 +827,240 @@ Mechanical:
     asserts is the half of the charter sentence that was always true.
 14. No file under `frontend/` or `backend/` claims that Anonymise creates no
     Value, and no comment names a deleted function or a change request.
+
+---
+
+# Addendum A — CR8: warning parity between declaring a Value on step 3 and accepting one on step 2
+
+This addendum extends the order above. It came from a second owner question:
+does a Value declared on step 3 get the same error and warning handling that a
+Suggestion accepted, or a Value reviewed, gets on step 2? It does not. CR1 to
+CR7 restore the DATA path (the Value applies, and reaches the registry, the
+report, the tables and the JSON). They leave the FEEDBACK path unequal, and one
+of the gaps turns a typo into a lost registry.
+
+CR8 is therefore part of this order, and the sections at the end of the document
+(decisions, conflict analysis, sequence, acceptance criteria) are extended here
+rather than rewritten.
+
+## What step 2 gives a Value, and step 3 does not
+
+Established by reading the code, not assumed. Step 2's workspace paints two
+things on the card that owns a value, through the one `warningPopover`
+affordance (`identifyworkspace.js` `cardStatus` ~695):
+
+| Feedback on step 2 | Source | Reaches step 3? |
+|---|---|---|
+| Blocking conflicts on the card that causes them: the same name under two types, a spelling two values both claim, a value that is also allowlisted, each with a "Solve conflicts" action | `state.js valueConflicts` (~2339), a PURE function over state that mirrors the engine's three blocking checks | **No.** Only `identifyworkspace.js` imports it (~53). `anonymise.js` imports neither it nor `intersectionsFor` |
+| The intersection warning, naming the winning method, with "Never anonymise the covering term" and "Group with" actions | `App.CheckIntersections` via `intersectionsFor` (~612, called at ~1989) | **No.** `checkIntersections` is called from the workspace only |
+| A live match count under the add field, "Found N times in M documents" | `App.CountTermMatches` (~1509) | **No** on the "Add missed Value" card (CR4 fixes that half), and none on the selection panel |
+
+Step 3 has real per-surface error handling, and it is the right pattern: a
+refused rename lands on its own row (`rowErrors`, ~1053), a refused rename in the
+Selected placeholder card lands on that card (`selectedError`, ~929), and a
+refused Apply lands on the selection panel (`selectionError`, ~1468). All three
+put the refusal where the fix is. What is missing is everything that would warn
+BEFORE the run, plus one thing the run computes and nobody shows.
+
+## Finding 7: the refused run is a dead end on step 3, and it costs the registry
+
+When a declaration conflicts, `engine.Run` refuses before pass 1 and
+`renderAnonymise` hides three cards at once (`anonymise.js` ~132 to ~134): the
+Replaced values card, the Report card AND the "Add missed Value" card, all gated
+on `s.results && !blocked`.
+
+That leaves the user with no way to undo the declaration that caused the
+refusal:
+
+- The Replaced values table reads the REGISTRY, and a refused run assigned
+  nothing, so the offending Value has no row there. It has no row anywhere on
+  step 3: the step has no list of declared Values and no delete control for one.
+- The card that would let them declare (and therefore re-declare) is hidden too.
+- `ANONYMISE.blockedIntro` (`copy.js` ~941) says "Fix each conflict below on the
+  Identify step, then run again", which is the copy admitting the fix lives on
+  another screen.
+- Going to that screen calls `resetRun()` (`nav.js` ~84), which nils the
+  registry. So a mistyped declaration on step 3 costs the user every placeholder
+  number the session had assigned.
+
+`frontend/CLAUDE.md` requires the step 2 to 3 gate never to be a dead end: its
+hint "is the refusal itself, naming the bulk Reject all shown". The step 3
+refusal has no such exit.
+
+## Finding 8: the overlap warnings the run computes are shown nowhere
+
+`finishReport` appends `overlaps.conflicts()` to `res.Validation.Warnings`
+(`pipeline.go` ~502 to ~507). Step 3 renders `results.report.warnings`
+(`state.js visibleWarnings` ~2503) and `results.validation.blocking`
+(`blockingConflicts` ~2524), and nothing renders `results.validation.warnings`.
+
+So "the Value you declared lost this text to a built-in pattern" is computed on
+every run, by the one place that decides it, and then dropped. This is the
+warning that explains a declared Value replacing less than the user expected,
+which is the most likely outcome of declaring something on step 3 that a pattern
+already covers.
+
+The main document mentions this field only as a reason to route CR3's new
+warning to `Report.Warnings`. CR8 also surfaces the warnings already being
+computed.
+
+## CR8 — The change
+
+Four parts. None of them changes what gets replaced.
+
+### 8a. Warn on the declaration, before the run
+
+`valueConflicts(s)` is pure and already exported. Call it from `anonymise.js` at
+the two points where a Value is declared, and refuse the declaration with the
+reason ON the surface the user is looking at, exactly as the existing per-row
+errors do:
+
+- The selection panel's new-Value mode: after resolving the category (CR1) and
+  the family fold, run the check against the state the declaration WOULD produce.
+  On a conflict, set `selectionError` to the conflict sentence and do not
+  re-run. The panel already renders `selectionError` and the user is one click
+  from a different category or Cancel.
+- The "Add missed Value" card: on a conflict, keep the draft text in the field
+  and show the sentence under the row, next to the input the fix goes into. Do
+  NOT use a toast: a toast is gone before the user has re-read the field.
+
+Reuse `conflictMessage`'s wording. It lives in `identifyworkspace.js` (~552) and
+builds every sentence from `copy.js WORKSPACE.conflict*`; export it, or move it
+to `copy.js` beside the strings it assembles, so both screens say the same thing
+about the same conflict. Do not write a second set of sentences.
+
+This is the load-bearing half of CR8: it converts a refused run into a refused
+declaration, which is recoverable on the screen the user is on.
+
+### 8b. Give the refused run an exit on step 3
+
+Even with 8a, a refusal can still arrive: the allowlist can gain a term, a
+category can be switched off and on, and a session can be loaded. So the blocked
+state needs a way out that does not cost the registry:
+
+- Keep the "Add missed Value" card VISIBLE when the run was refused, so the
+  screen that caused the problem can also address it. Its summary already reads
+  the declared-Value count, so the card is the natural home for the exit.
+- Give the blocked panel, per conflict, the action that resolves it where the
+  data allows: for an allowlist conflict, "Remove the term from Never
+  anonymise"; for an ambiguity or a collision, a control that DELETES the
+  declared Value named in the conflict. Both already exist as state actions
+  (`removeAllowTerm`, `deleteValue`).
+- Change `ANONYMISE.blockedIntro` so it stops sending the user to another
+  screen for a fix that is now available here. Proposed:
+  `Nothing was replaced. Two values would fight over the same text, which would make the re-identification key ambiguous. Fix each conflict below, then run again.`
+
+If the owner prefers the smaller version of 8b, implement only the first bullet
+(keep the card visible) plus the copy change, and leave the per-conflict actions
+out. That alone removes the dead end, because the user can re-declare correctly.
+Record which version was built.
+
+### 8c. Surface the warnings the run already computes
+
+Render `results.validation.warnings` on step 3, in the Report card beside
+`visibleWarnings`, with the same dismiss affordance. Two acceptable shapes:
+
+- a) The view reads both fields and renders one list. Cheapest, and keeps the
+  engine's two fields meaning what they mean: blocking aborts, warnings inform.
+- b) The engine copies overlap warnings into `Report.Warnings` too. Rejected:
+  one warning in two fields is a shape where a later reader shows it twice.
+
+Use (a). `dismissWarning` keys on the warning TEXT (`state.js` ~2490), so it
+already works for warnings from a second source with no change.
+
+### 8d. Run the intersection check for a Value declared on step 3
+
+A Value declared on step 3 that another route entirely covers is the FULL-case
+intersection, which CHANGE-06 kept because it usually means a mis-declaration.
+After a fast re-run that declared a Value, call `checkIntersections` with
+`buildIntersectionRequest()` and, if the newly declared Value is among the
+results, show the warning. Two decisions to respect:
+
+- Put it on the surface the declaration happened on (the selection panel is
+  gone by then, so the Report card's warning list from 8c is the right home),
+  NOT on a value card that does not exist on this screen.
+- Say it once. The same Value re-declared must not stack warnings; the text-keyed
+  dismissal handles repeats.
+
+This is the lowest-value part of CR8 and the one to drop first if the change gets
+long, because 8c already explains the same outcome after the fact for the
+partial case. Drop it explicitly, in the commit message, rather than silently.
+
+### Files
+
+- `frontend/views/anonymise.js` (the two declaration paths, the blocked panel,
+  the Report card's warning list, `runFastRerun`)
+- `frontend/views/identifyworkspace.js` (export `conflictMessage`, or move it)
+- `frontend/copy.js` (`blockedIntro`, and any new per-conflict action label)
+- `frontend/state.js` only if the blocked-panel actions need a reducer that does
+  not exist yet
+
+### Tests
+
+- ADD, `frontend/anonymise.test.js`: declaring a Value whose name is already
+  allowlisted is REFUSED on the panel with the allowlist sentence, and no
+  `fastRerun` is attempted. Same for an ambiguity and for a spelling collision.
+- ADD: the same three from the "Add missed Value" card, asserting the draft text
+  survives the refusal.
+- ADD: with `results.validation.warnings` non-empty, the Report card renders
+  them, and dismissing one hides it.
+- ADD: when `blockingConflicts` is non-empty, the "Add missed Value" card is
+  still rendered (the assertion that pins the exit), while the Replaced values
+  and Report cards stay hidden.
+- ADD, `backend/engine/pipeline_test.go`: a run in which a declared Value is
+  fully covered by a built-in pattern produces an overlap warning in
+  `Validation.Warnings`. If that is already asserted, extend it rather than
+  duplicating it.
+- UPDATE, `frontend/copy.test.js`: `blockedIntro` no longer names the Identify
+  step.
+
+## Extensions to the closing sections
+
+### Decisions (added to the list above)
+
+11. **A conflicting declaration is refused at the declaration, not at the run.**
+    The engine's refusal stays exactly as it is, because it is the last line of
+    defence and it protects the registry. What changes is that the user meets
+    the conflict on the surface they are typing into, which is what step 2
+    already does.
+12. **Step 3 keeps its own exit from a refused run.** A screen that can create a
+    blocking conflict must be able to clear it. Sending the user to Identify
+    costs the registry, which makes the wizard punish a typo.
+13. **One set of conflict sentences.** `conflictMessage` is shared, not
+    reimplemented. Two screens describing one conflict in two ways is the
+    inconsistency the copy rules exist to prevent.
+14. **`Validation.Warnings` is rendered, not copied.** The engine's two fields
+    keep their distinct meanings; the view reads both.
+
+### Conflict analysis (added)
+
+- **CR8a depends on CR1.** Until the category is real, the conflict check would
+  run against a phantom category, and `valueConflicts` skips values whose
+  category is not active (`categoryActive`, `state.js` ~2314), so it would
+  report nothing. Do CR1 first or 8a is untestable.
+- **CR8a overlaps CR4.** Both edit `wireMissed`'s add handler; CR4 adds the
+  family fold, 8a adds the conflict refusal. The fold runs FIRST: a value folded
+  into an existing family is not a new declaration and cannot conflict with
+  itself.
+- **CR8c overlaps CR3.** CR3 adds a warning to `Report.Warnings`, 8c adds a
+  second source to the same rendered list. Do CR3 first, then 8c widens the
+  reader.
+- **CR8b touches the same render gate as CR1 to CR4** (`s.results && !blocked`).
+  Land it after them so the card it keeps visible is already correct.
+
+### Recommended sequence (revised)
+
+CR1, CR2, CR3, CR4, then **CR8a, CR8c, CR8b, CR8d**, then CR5, CR7, CR6. CR8
+sits with the functional work; the copy and charter CRs stay last.
+
+### Acceptance criteria (added)
+
+15. Declaring a Value on step 3 whose name is already a never-anonymise term, or
+    already declared under another type, or whose spelling another Value claims,
+    is refused AT THE DECLARATION with the same sentence step 2 would show, and
+    no run is attempted.
+16. A run refused by a blocking conflict still offers a way to clear it on
+    step 3, and the user never has to go back to Identify (and lose the
+    registry) to fix a declaration they made on step 3.
+17. The overlap warnings a run computes are visible on step 3 and dismissible.
+18. No conflict sentence exists in two places in the codebase.
