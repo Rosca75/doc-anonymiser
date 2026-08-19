@@ -180,7 +180,11 @@ export const CONFIGURE = {
   groupDetected: "Auto detected values",
   groupDeclared: "Your own patterns",
   groupThorough: "Only for thorough anonymisation",
-  useAIHelp: "A language model running on this machine reads the documents and suggests Values. Nothing leaves your computer, and nothing it finds is replaced until you accept it.",
+  // The route's own explanation, plus ONE sentence pointing at the Documentation
+  // window. Ollama's own settings decide how fast a scan runs and the app cannot
+  // read or change them, so the guidance lives in a page with room for it rather
+  // than in a tooltip that would then carry two subjects.
+  useAIHelp: "A language model running on this machine reads the documents and suggests Values. Nothing leaves your computer, and nothing it finds is replaced until you accept it. The Documentation window has a note on Ollama settings that affect how fast a scan runs.",
   contextSizeHelp: "Higher values let the model read longer documents at once but use more memory.",
   // The reply-format switch, in OUTCOME terms. The mechanism (a JSON schema
   // constraining which keys the reply must carry) is not what a business user is

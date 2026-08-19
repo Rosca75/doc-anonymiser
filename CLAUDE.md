@@ -643,3 +643,26 @@ doc-anonymiser/
   the parser knows that no prompt requests is a category the model is never asked
   to fill, and a category the schema omits is one the model is forbidden to fill:
   any of the three leaves the category dead and every test still passing.
+- **`OLLAMA_IGPU_ENABLE=1` is a documented user recommendation, never a code
+  constant.** Ollama ships Vulkan enabled and DETECTS an integrated GPU, then
+  drops it (`dropping integrated GPU`) unless that variable is set for the
+  SERVICE. The application cannot see or change it: it lives in the Ollama
+  process's environment and `/api/tags` does not report it. So it is documented
+  in `README.md` and in `frontend/docs/index.html` and nowhere in the code.
+
+  Measured on the owner's laptop (Intel Arc 140V iGPU, Ollama 0.32.14, the 4B at
+  `thorough` in JSON mode, through `backend/ollama/probe_live_test.go`): with the
+  variable set the server reports the Arc as inference compute
+  (`type=iGPU total="17.9 GiB"`) and `offloaded 33/33 layers to GPU`. The
+  reference deck went from 2 m 09 s / 2 m 33 s on the CPU to 1 m 55 s warm
+  (2 m 24 s cold), and the reference PDF from 53 s to 41 s / 47 s: about
+  **1.2x**, not the 2.2x an earlier throwaway harness reported. What changed
+  reliably is RECALL, not the clock: 156 values against 118 on the deck and 57
+  against 54 on the PDF, with identical `eval_count` figures across repeats.
+  Greedy decoding is deterministic per backend and not across backends, so the
+  backend changing what a model returns is expected rather than a fault.
+
+  Two consequences worth keeping: the copy must promise a modest improvement and
+  not a transformation, and **no runtime check may infer this from timings**. The
+  app cannot read the server's environment, so any such check would fire on a
+  slow document and give the user a warning they cannot act on.
