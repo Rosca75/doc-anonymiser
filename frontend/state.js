@@ -972,6 +972,30 @@ export function setUseLocalAI(on) {
   setState({ settings: { ...state.settings, useLocalAI: !!on } });
 }
 
+/**
+ * adoptProbe(status) is THE one way a probe result reaches the store: it lands
+ * in `state.ollama` and its RESOLVED MODEL is adopted into `settings.model`.
+ *
+ * Adopting the model is what makes the dropdown show the model that will
+ * actually run. Go resolves the effective model from what the probe just saw
+ * (the stored choice when it is installed, then the pinned default, then the
+ * first installed one), and a store that kept an empty or uninstalled name
+ * beside it would leave the interface naming one model while the run posted to
+ * another. An empty resolved model leaves the setting alone: there was nothing
+ * to run, so there is nothing to adopt, and a stopped server must not erase the
+ * user's choice.
+ *
+ * Detecting Ollama still never flips `useLocalAI`: sending a document to a
+ * model is a decision the user makes.
+ */
+export function adoptProbe(status) {
+  const patch = { ollama: status };
+  if (status?.model) {
+    patch.settings = { ...state.settings, model: status.model };
+  }
+  setState(patch);
+}
+
 // --- Local-AI scan scope ----------------------------------
 
 /**

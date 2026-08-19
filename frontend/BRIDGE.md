@@ -21,8 +21,30 @@ what shape it comes back in, **without opening any Go**.
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
 | `ping()` | — | `"pong"` (proves the JS↔Go bridge end to end) |
-| `probeOllama()` | — | `{available, models, detail}`. Never rejects for "Ollama missing" — that is a normal state in the object. |
+| `probeOllama()` | — | `{available, models, detail, model}`. Never rejects for "Ollama missing" — that is a normal state in the object. |
 | `listOllamaModels()` | — | installed model names `[string]` |
+
+**`model` is the model a run will actually post to, and it is never a name the
+probe did not just see.** Go answers `OllamaState {status, model}`; `api.js`
+flattens the two into one object (`flatProbe`) so the split stops there, and
+`state.js adoptProbe` is the one place a probe result reaches the store, taking
+`model` into `settings.model`.
+
+The resolution is an APP decision, not the client's, because it reads the stored
+settings: the preference order is the user's stored choice, then
+`ollama.DefaultModel`, then the first model installed. The pin is a documented
+preference and not an installed fact, so it cannot outrank a choice the user made
+and it cannot be posted to a server that does not have it. A model name that is
+not installed fails at the very END of a run the user already waited for, and it
+arrives as a per-file detection problem rather than as the configuration mistake
+it is.
+
+`model` is EMPTY only when there is nothing to run (no reachable server, or a
+server with no models installed), and a probe that FAILED changes nothing: an
+unreachable Ollama says nothing about which models exist, so it must not throw
+away a choice. The rail's `<select>` marks exactly one option selected whenever
+models exist, for the same reason: with nothing marked the browser picks the
+first by itself and the effective model is decided by the server's tag ordering.
 
 ## Documentation window
 
@@ -68,7 +90,7 @@ Local AI section sizes its From/To range inputs from it.
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
-| `applySettings(settings)` | settings object | fresh `OllamaStatus`; rejects with an actionable message on bad input |
+| `applySettings(settings)` | settings object | the fresh probe result, in the same flat `{available, models, detail, model}` shape `probeOllama()` gives; rejects with an actionable message on bad input. It re-resolves the model because a settings write can change the PORT, so which models exist afterwards is not what the last probe saw |
 
 There are TWO detection routes, and the settings say so directly.
 

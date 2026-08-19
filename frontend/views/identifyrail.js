@@ -41,6 +41,7 @@ import {
   setHeuristicDiscoveryOptions, heuristicDiscoveryOptions,
   setAIScope,
   aiScopeArg,
+  adoptProbe,
   AI_DETAIL_LEVELS,
   parsePageSpec,
   buildRunRequest, setValueTables,
@@ -900,6 +901,29 @@ function lastScanReadout(s) {
 }
 
 /**
+ * modelOptions(s) is the model dropdown's options, one per model the probe saw.
+ *
+ * Exactly ONE option is marked selected whenever there are any: the stored model
+ * when it is among them, otherwise the first. Leaving nothing marked lets the
+ * browser select the first option by itself while the store still holds
+ * something else, so the control shows one model, the store names another, and
+ * the next settings write sends whichever the server happened to list first.
+ * Which model a fresh session runs on is then decided by Ollama's tag ordering.
+ *
+ * The fallback here and Go's model resolution agree by construction: Go resolves
+ * to an installed model and the store adopts it (state.js adoptProbe), so the
+ * stored name is normally present and this fallback is the belt to that braces.
+ */
+function modelOptions(s) {
+  const models = s.ollama?.models ?? [];
+  if (models.length === 0) return "";
+  const current = models.includes(s.settings.model) ? s.settings.model : models[0];
+  return models.map((m) =>
+    `<option value="${escapeHTML(m)}"${m === current ? " selected" : ""}>` +
+    `${escapeHTML(m)}</option>`).join("");
+}
+
+/**
  * detailLevelOptions(s) is the dropdown's two options, built from the mirrored
  * AI_DETAIL_LEVELS so the rail cannot offer a level Go would refuse.
  *
@@ -941,9 +965,7 @@ function localAISection(s) {
   // those two are how a user CONNECTS, so gating them would lock someone out of
   // fixing the very connection the gate is complaining about.
   const gated = aiOn && ollamaOK ? "" : ` disabled title="${escapeHTML(llmGateTooltip(s))}"`;
-  const models = (s.ollama?.models ?? []).map((m) =>
-    `<option value="${escapeHTML(m)}"${s.settings.model === m ? " selected" : ""}>` +
-    `${escapeHTML(m)}</option>`).join("");
+  const models = modelOptions(s);
 
   // The route's own switch lives in the section header now, so the body opens
   // with what the switch cannot say: whether Ollama is actually there.
@@ -1061,7 +1083,7 @@ function wireLocalAI(container) {
   }
   container.querySelector("#btn-reprobe")?.addEventListener("click", async () => {
     await pushSettings(container);
-    setState({ ollama: await probeOllama() });
+    adoptProbe(await probeOllama());
   });
   // The scan-scope controls write straight to state (no Go round-trip: scope is
   // a per-run choice, not a saved setting). setAIScope re-renders the rail, so
@@ -1206,7 +1228,11 @@ async function pushSettings(container) {
   const settings = settingsPayload(getState(), container);
   try {
     const status = await applySettings(settings);
-    setState({ settings: { ...getState().settings, ...settings }, ollama: status });
+    // What Go accepted first, then the model IT resolved: an uninstalled name in
+    // the payload comes back as an installed one, and the store has to hold the
+    // model a run will post to rather than the one that was asked for.
+    setState({ settings: { ...getState().settings, ...settings } });
+    adoptProbe(status);
     if (status.available) {
       try {
         const models = await listOllamaModels();

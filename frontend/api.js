@@ -53,12 +53,32 @@ export async function ping() {
 }
 
 /**
+ * flatProbe(state) is THE one place the OllamaState wrapper Go answers with is
+ * unwrapped, so the rest of the frontend keeps reading one flat object.
+ *
+ * Go answers {status, model}, because the resolved model is an application
+ * decision made from the stored settings rather than something the Ollama
+ * client knows. The frontend has no use for that split: a probe result is one
+ * fact about the local server, and every consumer wants `available`, `models`,
+ * `detail` and `model` side by side. Unwrapping here is what keeps the shape
+ * change inside api.js, which is the only file allowed to know the bridge's
+ * shapes at all.
+ *
+ * `model` is the model a run will actually post to, which is not necessarily
+ * the one the settings hold: an uninstalled name is resolved to an installed
+ * one, so the dropdown shows what will run instead of what would fail.
+ */
+function flatProbe(state) {
+  return { ...(state?.status ?? {}), model: state?.model ?? "" };
+}
+
+/**
  * probeOllama() asks Go whether a local Ollama server is running.
  * Never rejects for "Ollama missing", that is a normal state inside the
- * returned {available, models, detail} object (graceful degradation).
+ * returned {available, models, detail, model} object (graceful degradation).
  */
 export async function probeOllama() {
-  return bridge().ProbeOllama();
+  return flatProbe(await bridge().ProbeOllama());
 }
 
 // --- Documentation window --------------------------------
@@ -150,10 +170,12 @@ export async function getDocumentSource(name) {
 
 // --- Settings ----------------------------------------------------------
 
-/** applySettings(settings) stores settings and resolves to the fresh
- *  OllamaStatus (rejects with an actionable message on bad input). */
+/** applySettings(settings) stores settings and resolves to the fresh probe
+ *  result, in the same flat shape probeOllama() gives (rejects with an
+ *  actionable message on bad input). It carries the resolved model too, because
+ *  a settings write can change the port and therefore which models exist. */
 export async function applySettings(settings) {
-  return bridge().ApplySettings(settings);
+  return flatProbe(await bridge().ApplySettings(settings));
 }
 
 /** listOllamaModels() resolves to the installed model names. */

@@ -18,7 +18,7 @@ import {
   WIZARD_STEPS, canGoTo, goTo, nextStep,
   goToScreen,
   applyPreset, toggleCategory, selectionPresetName, presetCategories,
-  setUseLocalAI, setSmartDetection, smartDetectionOn,
+  setUseLocalAI, setSmartDetection, smartDetectionOn, adoptProbe,
   detectionRoutesOn, llmEnabled,
   setUseBuiltInPatterns, setUseHeuristicDiscovery,
   addSuggestions, acceptSuggestion, rejectSuggestion, acceptAllShown,
@@ -469,6 +469,36 @@ test("llmEnabled requires BOTH the toggle and a reachable Ollama", () => {
   assert.equal(llmEnabled(), true);
   setState({ ollama: { available: false, models: [], detail: "" } });
   assert.equal(llmEnabled(), false, "Ollama down blocks AI even with toggle on");
+});
+
+test("adoptProbe adopts the model the probe resolved", () => {
+  // The dropdown has to show the model that will actually RUN. Go resolves an
+  // uninstalled name to an installed one, so a store that kept the asked-for
+  // name would name one model while the run posted to another.
+  resetState();
+  adoptProbe({ available: true, models: ["a:1", "b:2"], detail: "ok", model: "b:2" });
+  assert.equal(getState().settings.model, "b:2");
+  assert.equal(getState().ollama.available, true);
+  assert.deepEqual(getState().ollama.models, ["a:1", "b:2"]);
+});
+
+test("adoptProbe never flips the Local AI route on", () => {
+  // Detecting Ollama ENABLES the switch, it does not press it: handing a
+  // document to a model is the user's decision.
+  resetState();
+  adoptProbe({ available: true, models: ["a:1"], detail: "ok", model: "a:1" });
+  assert.equal(getState().settings.useLocalAI, false);
+  assert.equal(llmEnabled(), false);
+});
+
+test("adoptProbe leaves the stored model alone when nothing was resolved", () => {
+  // A stopped server says nothing about which models exist, so it must not
+  // erase a choice. Same for a reachable server with no models installed.
+  resetState();
+  adoptProbe({ available: true, models: ["a:1"], detail: "ok", model: "a:1" });
+  adoptProbe({ available: false, models: [], detail: "not detected", model: "" });
+  assert.equal(getState().settings.model, "a:1", "a failed probe must not clear the model");
+  assert.equal(getState().ollama.available, false, "the status itself still lands");
 });
 
 test("Smart detection starts on and Local AI starts off", () => {

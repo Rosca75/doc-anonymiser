@@ -16,7 +16,7 @@ import {
   openDocumentation, documentationURL, exportDocumentFormats, ping, runPipeline,
   valuePlaceholders, setValuePlaceholder, removeValue, restoreValue,
   listRemovedValues, validateValues, checkIntersections,
-  copyText,
+  copyText, probeOllama, applySettings,
 } from "./api.js";
 
 /**
@@ -221,4 +221,56 @@ test("copyText rejects rather than throws when the bridge is absent", async () =
     if (previous === undefined) delete globalThis.window;
     else globalThis.window = previous;
   }
+});
+
+test("probeOllama flattens the status and the resolved model into one object", async () => {
+  // Go answers {status, model}, because the resolved model is an application
+  // decision the Ollama client does not make. Every consumer wants one flat
+  // probe result, so api.js is where the split ends: a nested shape reaching
+  // state.js would make `ollama.available` undefined everywhere.
+  const app = {
+    ProbeOllama: async () => ({
+      status: { available: true, models: ["a:1", "b:2"], detail: "Ollama detected." },
+      model: "b:2",
+    }),
+  };
+  await withStubBridge(app, () => ({}), async () => {
+    const got = await probeOllama();
+    assert.equal(got.available, true);
+    assert.deepEqual(got.models, ["a:1", "b:2"]);
+    assert.equal(got.detail, "Ollama detected.");
+    // The model a run will post to, which is not necessarily the stored one.
+    assert.equal(got.model, "b:2");
+    assert.equal(got.status, undefined, "the nested wrapper must not survive api.js");
+  });
+});
+
+test("probeOllama survives a status-only answer without inventing a model", async () => {
+  // An unreachable server resolves nothing, and "" must not become a model
+  // name the dropdown then offers.
+  const app = { ProbeOllama: async () => ({ status: { available: false, detail: "not detected" }, model: "" }) };
+  await withStubBridge(app, () => ({}), async () => {
+    const got = await probeOllama();
+    assert.equal(got.available, false);
+    assert.equal(got.model, "");
+  });
+});
+
+test("applySettings resolves to the same flat probe shape", async () => {
+  // A settings write can change the PORT, so which models exist afterwards is
+  // not what the last probe saw: the write answers with a fresh resolution.
+  const seen = [];
+  const app = {
+    ApplySettings: async (settings) => {
+      seen.push(settings);
+      return { status: { available: true, models: ["x:1"], detail: "ok" }, model: "x:1" };
+    },
+  };
+  await withStubBridge(app, () => ({}), async () => {
+    const got = await applySettings({ model: "gone:1" });
+    assert.equal(got.available, true);
+    assert.equal(got.model, "x:1");
+    assert.equal(got.status, undefined, "the nested wrapper must not survive api.js");
+  });
+  assert.deepEqual(seen, [{ model: "gone:1" }]);
 });

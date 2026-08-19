@@ -28,7 +28,7 @@ import { ping, probeOllama, onEvent } from "./api.js";
 import {
   getState, setState, subscribe,
   WIZARD_STEPS, canGoTo, goToScreen, knownStep,
-  applyImportResult,
+  applyImportResult, adoptProbe,
 } from "./state.js";
 import { escapeHTML } from "./html.js";
 import { topnavHTML, stepbarHTML, headerActionsHTML, appFooterHTML, showDocumentation } from "./shell.js";
@@ -85,7 +85,10 @@ export function boot(root) {
        // sending the document to a model, however local, is a
        // decision the user makes, not one made for them by an installation
        // they may have done for something else entirely.
-      setState({ ollama: status });
+      //
+      // adoptProbe also takes the model the probe resolved, so a session that
+      // has never touched the dropdown still runs on a model that exists.
+      adoptProbe(status);
     })
     .catch((err) => setState({
       ollama: { available: false, models: [], detail: `Probe failed unexpectedly: ${err.message ?? err}` },

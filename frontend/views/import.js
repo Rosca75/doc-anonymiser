@@ -23,7 +23,7 @@
 // eye and a click shortcut to the dialog, not a dragover handler.
 
 import { importFiles, removeDocument, resetSession, probeOllama } from "../api.js";
-import { getState, setState, applyImportResult, resetState, goToScreen } from "../state.js";
+import { getState, setState, applyImportResult, resetState, goToScreen, adoptProbe } from "../state.js";
 import { escapeHTML, fmtSize } from "../html.js";
 import { button, card, icon, sectionLabel } from "../ui.js";
 import { stepFooterHTML, wireStepFooter } from "../nav.js";
@@ -271,7 +271,7 @@ function wire(container) {
     // fresh boot too, so the reset already leaves it in the right state.
     // Best-effort and after the notice: a probe failure must not undo the reset.
     probeOllama()
-      .then((status) => setState({ ollama: status }))
+      .then((status) => adoptProbe(status))
       .catch(() => { /* leave ollama unknown; the badge reads "not detected" */ });
   });
 

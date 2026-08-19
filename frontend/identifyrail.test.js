@@ -842,6 +842,41 @@ test("the rail reports cut-off requests beside the silent ones, never folded int
     `a scan where nothing was cut off must not mention it: ${clean}`);
 });
 
+// --- The model dropdown --------------------------------------------------
+
+test("exactly one model option is marked selected whenever models exist", () => {
+  // Marking nothing lets the browser select the first option by itself while the
+  // store holds something else, so the control shows one model and the next
+  // settings write sends whichever the server listed first. Which model a fresh
+  // session runs on is then decided by Ollama's tag ordering.
+  resetState();
+  const marked = (html) => all(one(html, "#ollama-model").outer, "option")
+    .filter((o) => "selected" in o.attrs).map((o) => o.attrs.value);
+
+  setState({ ollama: { available: true, models: ["first:1b", "second:4b"], detail: "" } });
+  assert.deepEqual(marked(railBody(getState())), ["first:1b"],
+    "with nothing stored the drawn option is the first, marked explicitly rather than by the browser");
+
+  setState({ settings: { ...getState().settings, model: "second:4b" } });
+  assert.deepEqual(marked(railBody(getState())), ["second:4b"], "a stored choice is what is drawn");
+
+  setState({ settings: { ...getState().settings, model: "a-model-nobody-has:latest" } });
+  assert.deepEqual(marked(railBody(getState())), ["first:1b"],
+    "a stored model the probe cannot see falls back to an installed one, never to nothing marked");
+});
+
+test("no models installed leaves the dropdown saying so, with nothing selected", () => {
+  // There is nothing to mark, and the placeholder option is the message: a
+  // marked option here would name a model that does not exist.
+  resetState();
+  setState({ ollama: { available: true, models: [], detail: "" } });
+  const select = one(railBody(getState()), "#ollama-model");
+  const options = all(select.outer, "option");
+  assert.equal(options.length, 1, "one placeholder option, not an invented model name");
+  assert.equal(options[0].attrs.value, "");
+  assert.ok(!("selected" in options[0].attrs));
+});
+
 // --- The detail level: the speed-versus-recall dial -----------------------
 
 test("the detail level is a select of exactly the two levels Go validates", () => {
