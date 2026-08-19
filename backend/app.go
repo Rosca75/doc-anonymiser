@@ -332,7 +332,7 @@ func (a *App) Startup(ctx context.Context) {
 		// like dialog imports, so an event carries the result instead.
 		runtime.EventsEmit(a.ctx, "documents:changed", result)
 	})
-	a.warmLocalAI()
+	a.warmLocalAI(ctx)
 }
 
 // warmLocalAI loads the local model into Ollama's memory ahead of the first
@@ -341,9 +341,13 @@ func (a *App) Startup(ctx context.Context) {
 //
 // Three properties matter, and each is deliberate.
 //
-// It runs in a GOROUTINE with its own background context: a slow or absent
-// Ollama must not delay the window appearing, and the warm-up's lifetime is not
-// the window's, so it is never handed the Wails context.
+// It runs in a GOROUTINE, so nobody waits: a slow or absent Ollama must not
+// delay the window appearing, and a settings write must return as promptly as
+// it did before. ctx is only ever a cancellation signal here, never something
+// this function blocks on. Startup passes the Wails context, which is the right
+// one to obey: the only consumer of a warmed model is the running window, so a
+// warm-up still in flight when the window closes has nothing left to serve.
+// ApplySettings has no context of its own and passes a background one.
 //
 // It only runs when Local AI is switched on. A user who never uses the route
 // never pays RAM for a model they did not ask for.
@@ -351,8 +355,9 @@ func (a *App) Startup(ctx context.Context) {
 // Its failure is SWALLOWED. ProbeOllama already owns telling the user that
 // Ollama is missing; a second, louder error path for a performance optimisation
 // would report a problem the user cannot act on, about a feature they may not
-// have asked for.
-func (a *App) warmLocalAI() {
+// have asked for. A warm-up that did not happen costs latency, never
+// correctness.
+func (a *App) warmLocalAI(ctx context.Context) {
 	a.mu.Lock()
 	on := a.settings.UseLocalAI
 	llm := a.llm
@@ -360,7 +365,12 @@ func (a *App) warmLocalAI() {
 	if !on || llm == nil {
 		return
 	}
-	go func() { _ = llm.Warm(context.Background()) }()
+	go func() {
+		if err := llm.Warm(ctx); err != nil {
+			// Nothing to do and nobody to tell: see the note above.
+			return
+		}
+	}()
 }
 
 // Ping proves the JavaScript ↔ Go bridge end to end: the shell calls it on
@@ -653,7 +663,7 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 	// on every settings write is what keeps an unrelated change (a country, a
 	// confidence slider) from re-posting a load request each time.
 	if !wasOn && s.UseLocalAI {
-		a.warmLocalAI()
+		a.warmLocalAI(context.Background())
 	}
 	return a.llm.Probe(), nil
 }
