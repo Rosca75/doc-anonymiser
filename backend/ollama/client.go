@@ -472,16 +472,16 @@ func (c *Client) postChat(ctx context.Context, httpClient *http.Client, model st
 				}
 			}
 			return out, fmt.Errorf(
-				"Ollama answered HTTP %d on /api/chat (expected 200): %s; check that the Ollama server is healthy, then re-probe in settings",
+				"the Ollama server answered HTTP %d on /api/chat (expected 200): %s; check that Ollama is healthy, then re-probe in settings",
 				resp.StatusCode, excerpt)
 		}
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return out, fmt.Errorf("Ollama's /api/chat reply could not be parsed (%v), try updating Ollama", err)
+		return out, fmt.Errorf("the Ollama server's /api/chat reply could not be parsed (%w), try updating Ollama", err)
 	}
 	if out.Error != "" {
-		return out, fmt.Errorf("Ollama reported an error: %s, the model %q may not be installed; run 'ollama pull %s'", out.Error, model, model)
+		return out, fmt.Errorf("the Ollama server reported an error: %s, the model %q may not be installed; run 'ollama pull %s'", out.Error, model, model)
 	}
 	return out, nil
 }
