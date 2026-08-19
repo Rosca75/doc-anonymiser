@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"unicode/utf8"
 
 	"doc-anonymiser/backend/engine"
 )
@@ -215,9 +214,16 @@ func TestDiscoverHappyPath(t *testing.T) {
 	text := "Alpine Trust hired Meridian Consulting for Project Borealis. Contact Marie Duval."
 	c := chatReplyServer(t, `{"entity_names":["Alpine Trust"],"project_names":["Project Borealis"],"person_names":["Marie Duval"]}`)
 
-	got, err := c.Discover(context.Background(), text)
+	out, err := c.DiscoverSlices(context.Background(), []string{text}, text, nil)
 	if err != nil {
-		t.Fatalf("Discover: %v", err)
+		t.Fatalf("DiscoverSlices: %v", err)
+	}
+	got := out.Suggestions
+	if out.Requests != 1 {
+		t.Errorf("one slice must be one request, got %d", out.Requests)
+	}
+	if out.Silent != 0 {
+		t.Errorf("a request that returned three names is not silent, got Silent=%d", out.Silent)
 	}
 	want := []engine.Suggestion{
 		{Category: "entity_names", MainText: "Alpine Trust"},
@@ -251,15 +257,15 @@ func TestDiscoverHappyPath(t *testing.T) {
 func TestDiscoverStripsCodeFences(t *testing.T) {
 	text := "Alpine Trust appears here."
 	c := chatReplyServer(t, "```json\n{\"entity_names\":[\"Alpine Trust\"],\"project_names\":[],\"person_names\":[]}\n```")
-	got, err := c.Discover(context.Background(), text)
-	if err != nil || len(got) != 1 || got[0].MainText != "Alpine Trust" {
-		t.Errorf("fenced JSON not tolerated: %+v %v", got, err)
+	out, err := c.DiscoverSlices(context.Background(), []string{text}, text, nil)
+	if err != nil || len(out.Suggestions) != 1 || out.Suggestions[0].MainText != "Alpine Trust" {
+		t.Errorf("fenced JSON not tolerated: %+v %v", out.Suggestions, err)
 	}
 }
 
 func TestDiscoverMalformedReply(t *testing.T) {
 	c := chatReplyServer(t, `the model rambles instead of emitting JSON`)
-	_, err := c.Discover(context.Background(), "any text")
+	_, err := c.DiscoverSlices(context.Background(), []string{"any text"}, "any text", nil)
 	if err == nil || !strings.Contains(err.Error(), "JSON") || !strings.Contains(err.Error(), "model") {
 		t.Errorf("malformed reply needs an actionable error, got %v", err)
 	}
@@ -275,12 +281,12 @@ func TestDiscoverHallucinationFilterAndAllowlist(t *testing.T) {
 	allow := engine.NewAllowlist() // seeds CSSF
 	c.Allow = allow.Contains
 
-	got, err := c.Discover(context.Background(), text)
+	out, err := c.DiscoverSlices(context.Background(), []string{text}, text, nil)
 	if err != nil {
-		t.Fatalf("Discover: %v", err)
+		t.Fatalf("DiscoverSlices: %v", err)
 	}
-	if len(got) != 1 || got[0].MainText != "Borealis Fund" {
-		t.Errorf("filter failed: want only Borealis Fund, got %+v", got)
+	if len(out.Suggestions) != 1 || out.Suggestions[0].MainText != "Borealis Fund" {
+		t.Errorf("filter failed: want only Borealis Fund, got %+v", out.Suggestions)
 	}
 }
 
@@ -292,9 +298,9 @@ func TestDiscoverContextCancellation(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := c.Discover(ctx, "text")
+	_, err := c.DiscoverSlices(ctx, []string{"text"}, "text", nil)
 	if err == nil {
-		t.Fatal("cancelled Discover must return an error")
+		t.Fatal("a cancelled scan must return an error")
 	}
 }
 
@@ -546,12 +552,13 @@ func TestDiscoverIgnoresAThinkingReply(t *testing.T) {
 		w.Write(resp)
 	})
 
-	got, err := c.Discover(context.Background(), "Alpine Trust appears here.")
+	const text = "Alpine Trust appears here."
+	out, err := c.DiscoverSlices(context.Background(), []string{text}, text, nil)
 	if err != nil {
-		t.Fatalf("Discover: %v", err)
+		t.Fatalf("DiscoverSlices: %v", err)
 	}
-	if len(got) != 1 || got[0].MainText != "Alpine Trust" {
-		t.Errorf("the parser must read message.content, not message.thinking; got %+v", got)
+	if len(out.Suggestions) != 1 || out.Suggestions[0].MainText != "Alpine Trust" {
+		t.Errorf("the parser must read message.content, not message.thinking; got %+v", out.Suggestions)
 	}
 }
 
@@ -587,86 +594,20 @@ func TestWarmFailureIsNotFatal(t *testing.T) {
 	}
 }
 
-// TestChunkText: table-driven chunker behaviour.
-func TestChunkText(t *testing.T) {
-	t.Run("empty text is one empty chunk", func(t *testing.T) {
-		got := chunkText("", 100, 10)
-		if len(got) != 1 || got[0] != "" {
-			t.Errorf("got %q", got)
-		}
-	})
-	t.Run("text under budget is one chunk", func(t *testing.T) {
-		got := chunkText("short text", 100, 10)
-		if len(got) != 1 || got[0] != "short text" {
-			t.Errorf("got %q", got)
-		}
-	})
-	t.Run("paragraph boundary preferred over mid-word", func(t *testing.T) {
-		text := strings.Repeat("a", 60) + "\n\n" + strings.Repeat("b", 60)
-		got := chunkText(text, 100, 8)
-		if len(got) < 2 {
-			t.Fatalf("expected a split, got %d chunk(s)", len(got))
-		}
-		if !strings.HasSuffix(got[0], "\n\n") {
-			t.Errorf("first chunk must end at the paragraph break, got %q", got[0][len(got[0])-10:])
-		}
-	})
-	t.Run("consecutive chunks overlap", func(t *testing.T) {
-		words := strings.Repeat("word ", 100) // 500 bytes of words
-		got := chunkText(words, 100, 20)
-		if len(got) < 2 {
-			t.Fatalf("expected several chunks, got %d", len(got))
-		}
-		// The tail of chunk 1 must reappear at the head of chunk 2.
-		tail := got[0][len(got[0])-10:]
-		if !strings.Contains(got[1][:30], tail[:5]) {
-			t.Errorf("no overlap between chunks: %q ... %q", got[0], got[1])
-		}
-	})
-	t.Run("rune safety on multi-byte French text", func(t *testing.T) {
-		text := strings.Repeat("éàüöè ", 200) // 7 bytes per group
-		for _, chunk := range chunkText(text, 128, 16) {
-			if !utf8.ValidString(chunk) {
-				t.Fatalf("chunk splits a UTF-8 sequence: %q", chunk)
-			}
-		}
-	})
-	t.Run("giant unbroken token still terminates", func(t *testing.T) {
-		got := chunkText(strings.Repeat("x", 1000), 100, 10)
-		if len(got) < 10 {
-			t.Errorf("expected ~11 chunks, got %d", len(got))
-		}
-	})
-}
-
-// TestChunkCap: a document beyond the chunk cap fails with the actionable
-// size message instead of running for an hour.
-func TestChunkCap(t *testing.T) {
-	c := New("")
-	c.ContextSize = 512                             // tiny budget: 512*3*3/4 = 1152 bytes per chunk
-	huge := strings.Repeat("line of text\n", 20000) // ~260 KB >> 64 chunks
-	if _, err := c.Chunks(huge); err == nil || !strings.Contains(err.Error(), "Smart detection") {
-		t.Errorf("oversize document must fail with the split/smart-detection advice, got %v", err)
-	}
-	if n := c.EstimateChunks(huge); n <= MaxChunksPerDocument {
-		t.Errorf("EstimateChunks must report the real chunk count, got %d", n)
-	}
-}
-
-// TestDiscoverAcrossChunks: a 3-chunk document merges and deduplicates
-// per-chunk proposals, and the hallucination filter runs against the FULL
-// text (an entity only present in chunk 3 survives a chunk-1 proposal
-// check).
-func TestDiscoverAcrossChunks(t *testing.T) {
+// TestDiscoverAcrossSlices: several slices merge and deduplicate their
+// proposals, and the hallucination filter runs against the WHOLE scanned text,
+// so an entity that only occurs in the last slice survives a first-slice
+// proposal.
+func TestDiscoverAcrossSlices(t *testing.T) {
 	var calls atomic.Int32
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/chat" {
 			w.Write([]byte(`{"models":[]}`))
 			return
 		}
-		// Every chunk proposes the same client (dedupe) plus one unique
-		// name; "Zephyr Capital" is proposed by chunk 1 although it only
-		// occurs later in the document (full-text filter must keep it).
+		// Every slice proposes the same client (dedupe); "Zephyr Capital" is
+		// proposed by slice 1 although it only occurs in the last one, which
+		// the whole-text filter must keep.
 		n := calls.Add(1)
 		content := `{"entity_names":["Alpine Trust","Zephyr Capital"],"project_names":[],"person_names":[]}`
 		if n > 1 {
@@ -678,29 +619,99 @@ func TestDiscoverAcrossChunks(t *testing.T) {
 		w.Write(resp)
 	})
 
-	c.ContextSize = 512 // 1152-byte chunks force several chunks
-	text := "Alpine Trust opening. " + strings.Repeat("filler words here. ", 150) +
-		" Zephyr Capital appears only at the end."
-	got, err := c.Discover(context.Background(), text)
-	if err != nil {
-		t.Fatalf("Discover: %v", err)
+	slices := []string{
+		"Alpine Trust opening.",
+		strings.Repeat("filler words here. ", 20),
+		"Zephyr Capital appears only at the end.",
 	}
-	if calls.Load() < 2 {
-		t.Fatalf("expected several chunk calls, got %d", calls.Load())
+	source := strings.Join(slices, "\n")
+	out, err := c.DiscoverSlices(context.Background(), slices, source, nil)
+	if err != nil {
+		t.Fatalf("DiscoverSlices: %v", err)
+	}
+	if out.Requests != len(slices) {
+		t.Errorf("Requests must equal the number of slices sent: got %d, want %d", out.Requests, len(slices))
+	}
+	if got := int(calls.Load()); got != len(slices) {
+		t.Errorf("the server must see one call per slice: got %d, want %d", got, len(slices))
+	}
+	if out.Silent != 0 {
+		t.Errorf("every slice returned a name it could keep, so none is silent: Silent=%d", out.Silent)
 	}
 	var names []string
-	for _, p := range got {
+	for _, p := range out.Suggestions {
 		names = append(names, p.MainText)
 	}
-	if len(got) != 2 || got[0].MainText != "Alpine Trust" || got[1].MainText != "Zephyr Capital" {
+	if len(out.Suggestions) != 2 || names[0] != "Alpine Trust" || names[1] != "Zephyr Capital" {
 		t.Errorf("merged proposals wrong: %v", names)
 	}
 }
 
-// TestDiscoverCancelBetweenChunks: chunk 2 answers normally but the user
-// cancels during it; the loop must stop BEFORE chunk 3 (the between-chunk
-// ctx check), returning the partial proposals with the context error.
-func TestDiscoverCancelBetweenChunks(t *testing.T) {
+// TestDiscoverSlicesCountsSilence: a well-formed empty reply is DATA, not a
+// failure. The counts are what let the caller tell "your model said nothing"
+// from "this document holds nothing", which one number cannot do.
+func TestDiscoverSlicesCountsSilence(t *testing.T) {
+	c := chatReplyServer(t, `{"entity_names":[],"project_names":[],"product_names":[],"brand_names":[],"person_names":[],"identifier_names":[],"other_names":[]}`)
+
+	slices := []string{"Alpine Trust opening.", "Borealis Fund replied."}
+	out, err := c.DiscoverSlices(context.Background(), slices, strings.Join(slices, "\n"), nil)
+	if err != nil {
+		t.Fatalf("an empty but well-formed reply must not be an error: %v", err)
+	}
+	if out.Requests != 2 || out.Silent != 2 {
+		t.Errorf("two empty replies must count as two silent requests: Requests=%d Silent=%d",
+			out.Requests, out.Silent)
+	}
+	if len(out.Suggestions) != 0 {
+		t.Errorf("an empty reply yields no suggestions, got %+v", out.Suggestions)
+	}
+}
+
+// TestDiscoverSlicesSilenceIsJudgedAfterFiltering: a reply full of names the
+// hallucination filter drops told the user nothing, so it counts as silence.
+// Counting before the filter would report a busy model on a document where
+// every suggestion was invented.
+func TestDiscoverSlicesSilenceIsJudgedAfterFiltering(t *testing.T) {
+	c := chatReplyServer(t, `{"entity_names":["Nowhere Corp","Invented SA"],"project_names":[],"person_names":[]}`)
+
+	const text = "This document names nobody the model returned."
+	out, err := c.DiscoverSlices(context.Background(), []string{text}, text, nil)
+	if err != nil {
+		t.Fatalf("DiscoverSlices: %v", err)
+	}
+	if out.Requests != 1 || out.Silent != 1 {
+		t.Errorf("a reply whose every name was invented is silence: Requests=%d Silent=%d",
+			out.Requests, out.Silent)
+	}
+}
+
+// TestDiscoverSlicesReportsProgressBeforeEachRequest: onSlice fires BEFORE the
+// request, which is the whole point of it: a caption that appears after the
+// reply describes a wait that has already ended.
+func TestDiscoverSlicesReportsProgressBeforeEachRequest(t *testing.T) {
+	c := chatReplyServer(t, `{"entity_names":[],"project_names":[],"person_names":[]}`)
+
+	var seen [][2]int
+	slices := []string{"one", "two", "three"}
+	if _, err := c.DiscoverSlices(context.Background(), slices, strings.Join(slices, "\n"),
+		func(index, total int) { seen = append(seen, [2]int{index, total}) }); err != nil {
+		t.Fatalf("DiscoverSlices: %v", err)
+	}
+	want := [][2]int{{0, 3}, {1, 3}, {2, 3}}
+	if len(seen) != len(want) {
+		t.Fatalf("onSlice must fire once per slice: got %v, want %v", seen, want)
+	}
+	for i := range want {
+		if seen[i] != want[i] {
+			t.Errorf("progress %d = %v, want %v", i, seen[i], want[i])
+		}
+	}
+}
+
+// TestDiscoverCancelBetweenSlices: slice 2 answers normally but the user
+// cancels during it; the loop must stop BEFORE slice 3 (the between-request ctx
+// check), returning the partial proposals with the context error.
+func TestDiscoverCancelBetweenSlices(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var calls atomic.Int32
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -709,7 +720,7 @@ func TestDiscoverCancelBetweenChunks(t *testing.T) {
 			return
 		}
 		if calls.Add(1) == 2 {
-			cancel() // the user hits Cancel while chunk 2 is in flight
+			cancel() // the user hits Cancel while slice 2 is in flight
 		}
 		resp, _ := json.Marshal(map[string]interface{}{
 			"message": map[string]string{
@@ -720,18 +731,16 @@ func TestDiscoverCancelBetweenChunks(t *testing.T) {
 		w.Write(resp)
 	})
 
-	c.ContextSize = 512
-	// Enough text for at least 3 chunks at the 1152-byte budget.
-	text := "Alpine Trust opening. " + strings.Repeat("filler words here. ", 300)
-	got, err := c.Discover(ctx, text)
+	slices := []string{"Alpine Trust opening.", "second slice", "third slice"}
+	out, err := c.DiscoverSlices(ctx, slices, strings.Join(slices, "\n"), nil)
 	if err == nil {
 		t.Fatal("cancelled discovery must return the context error")
 	}
 	if n := calls.Load(); n != 2 {
-		t.Errorf("loop must stop after the cancelled chunk, made %d calls", n)
+		t.Errorf("loop must stop after the cancelled slice, made %d calls", n)
 	}
-	if len(got) != 1 || got[0].MainText != "Alpine Trust" {
-		t.Errorf("partial proposals must survive cancellation: %+v", got)
+	if len(out.Suggestions) != 1 || out.Suggestions[0].MainText != "Alpine Trust" {
+		t.Errorf("partial proposals must survive cancellation: %+v", out.Suggestions)
 	}
 }
 

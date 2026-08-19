@@ -464,6 +464,20 @@ doc-anonymiser/
   (`App.RunDetection`), every finding is a Suggestion, and every Local AI finding
   passes a **hallucination filter** (dropped unless the exact string occurs in
   the source text) and the allowlist before the user ever sees it.
+- **The local AI reads a document in slices aligned to its OWN units, never in
+  one request.** `engine.ScanChunks` packs contiguous units (slides, pages, rows,
+  lines: the same units `Document.PageCount` addresses) up to the size the user's
+  detail level asks for, and a slice never spans a gap in a discontiguous scope.
+  The engine owns that division because the engine is what knows what a unit is;
+  the Ollama client owns only what a request costs, and its
+  `PromptBudgetBytes()` survives as an absolute CEILING for one request rather
+  than as the sizing rule. What fits the context window and what a model can
+  still extract names from are different questions: one request carrying a whole
+  document fits an 8k window comfortably and measured ZERO values on every model
+  tried, while the same document one slide per request measured dozens. A
+  document needing many requests is scanned with a warning about the time, never
+  refused, because the user asked for the scan and can cancel it; the only
+  document skipped is one with no scannable text at all.
 - **Placeholders:** stable per session, format `[CATEGORY_N]` (e.g.
   `[ENTITY_1]`, `[PERSON_3]`, `[EMAIL_2]`). The registry maps original →
   placeholder and is exportable as a re-identification key (CSV/JSON).

@@ -58,15 +58,15 @@ const ErrTooOld = "Ollama too old, please update"
 // (the option is omitted from the request).
 const DefaultContextSize = 8192
 
-// chunkOverlapBytes is how much consecutive chunks overlap so an entity
-// name sitting exactly on a chunk boundary is still seen whole by at
-// least one chunk.
-const chunkOverlapBytes = 512
-
-// MaxChunksPerDocument caps how many chunks one document may produce.
-// Beyond this the scan would take unreasonably long on a small local
-// model; the caller gets an actionable error instead.
-const MaxChunksPerDocument = 64
+// LargeScanRequests is how many requests one document's scan may need before it
+// is worth WARNING the user about the time it will take.
+//
+// It is a warning threshold and not a refusal. The user asked for the scan, the
+// progress stream reports every request and the cancel button reaches mid-scan,
+// so being slow is a cost they can see and stop; refusing to scan a document
+// they chose is worse, because the offline route's findings are then all they
+// get and nothing says why.
+const LargeScanRequests = 64
 
 // The sampling settings every request pins, rather than inheriting whatever
 // the model tag was published with.
@@ -140,10 +140,10 @@ type Client struct {
 	// again — belt and braces, because CLAUDE.md §5 says the allowlist
 	// wins in EVERY pass.
 	Allow func(string) bool
-	// ContextSize is the num_ctx option sent with every chat request
-	// Defaults to DefaultContextSize in New; 0 omits
-	// the option so the model default applies. It also drives the
-	// document chunk budget (promptBudgetBytes).
+	// ContextSize is the num_ctx option sent with every chat request.
+	// Defaults to DefaultContextSize in New; 0 omits the option so the model
+	// default applies. It also drives PromptBudgetBytes, which is the ceiling
+	// for one request rather than the size a document is sliced to.
 	ContextSize int
 
 	// probeClient carries a short timeout so a missing Ollama never hangs
@@ -505,57 +505,78 @@ Rules:
 - Copy every name VERBATIM from the document. Never invent, translate or reformat names.
 - Use [] for a category with no findings.`
 
-// Discover runs the Phase-A prompt on one document's text and returns raw
-// category → names suggestions for the review screen. Long documents are
-// CHUNKED: each chunk is scanned in sequence, ctx
-// cancellation is honoured between chunks, per-chunk suggestions merge
-// through MergeSuggestions, and the hallucination filter runs against the
-// FULL document text (an entity split across a boundary is covered by the
-// chunk overlap). The caller (app.go) merges multi-file results.
-func (c *Client) Discover(ctx context.Context, text string) ([]engine.Suggestion, error) {
-	return c.DiscoverWithProgress(ctx, text, nil)
+// DiscoveryOutcome is what one document's scan produced, and what it did NOT.
+//
+// Requests and Silent exist because a model that answers nothing, fifteen times
+// over, is indistinguishable downstream from a document that holds no names. The
+// caller needs both numbers to tell the user which of the two happened, so they
+// are counted here, where the requests are actually sent.
+type DiscoveryOutcome struct {
+	// Suggestions is everything the model returned that survived the
+	// hallucination filter and the allowlist, merged across the slices.
+	Suggestions []engine.Suggestion
+	// Requests is how many slices were sent, including the one a failure
+	// stopped on.
+	Requests int
+	// Silent counts the requests that parsed cleanly and yielded nothing. A
+	// reply of three invented names the filter dropped is silence from the
+	// user's point of view, so it is counted after filtering.
+	Silent int
 }
 
-// DiscoverWithProgress is Discover with a per-chunk callback, so a long
-// document reports progress instead of sitting frozen on one caption for
-// minutes. onChunk is called BEFORE each chunk is sent, with the
-// 0-based index and the total; nil disables it.
-func (c *Client) DiscoverWithProgress(ctx context.Context, text string, onChunk func(index, total int)) ([]engine.Suggestion, error) {
-	return c.scanChunks(ctx, text, onChunk, func(chunk string) (string, error) {
-		return c.Chat(ctx, c.Model, discoverSystemPrompt, chunk, suggestionSchema())
-	})
-}
-
-// scanChunks is the chunk loop behind Discover: chunk, chat per chunk via
-// chat(), parse, merge, then hallucination-filter against the whole document. On
-// mid-loop cancellation the Suggestions gathered so far are returned WITH the
-// context error, so callers can keep partial results.
-func (c *Client) scanChunks(ctx context.Context, text string, onChunk func(index, total int), chat func(chunk string) (string, error)) ([]engine.Suggestion, error) {
-	chunks, err := c.Chunks(text)
-	if err != nil {
-		return nil, err
-	}
+// DiscoverSlices scans slices the ENGINE decided the boundaries of, one request
+// each, and reports what came back as well as what did not.
+//
+// Boundaries are not this client's business: what a unit of a document is lives
+// in the engine (engine.ScanChunks), and what a request costs lives here. So the
+// slices arrive ready to send.
+//
+// sourceText is the WHOLE text being scanned, and the hallucination filter runs
+// against it rather than against the individual slice: a name the model reads in
+// slice 3 must not be dropped because it does not occur in slice 1.
+//
+// onSlice fires BEFORE each request with the 0-based index and the total, so a
+// long scan reports progress instead of sitting frozen on one caption; nil
+// disables it. ctx is honoured between requests, and a mid-loop cancellation or
+// failure returns the suggestions gathered so far WITH the error, so partial
+// results survive.
+func (c *Client) DiscoverSlices(ctx context.Context, slices []string, sourceText string,
+	onSlice func(index, total int),
+) (DiscoveryOutcome, error) {
+	var out DiscoveryOutcome
 	var batches [][]engine.Suggestion
-	for i, chunk := range chunks {
-		if onChunk != nil {
-			onChunk(i, len(chunks))
+	// The outcome carries whatever was gathered before an early return, so the
+	// counts and the partial suggestions are assembled in one place.
+	finish := func() DiscoveryOutcome {
+		out.Suggestions = c.filterSuggestions(mergeBatches(batches), sourceText)
+		return out
+	}
+
+	for i, slice := range slices {
+		if onSlice != nil {
+			onSlice(i, len(slices))
 		}
 		if err := ctx.Err(); err != nil {
-			return c.filterSuggestions(mergeBatches(batches), text), err
+			return finish(), err
 		}
-		reply, err := chat(chunk)
+		out.Requests++
+		reply, err := c.Chat(ctx, c.Model, discoverSystemPrompt, slice, suggestionSchema())
 		if err != nil {
-			return c.filterSuggestions(mergeBatches(batches), text), err
+			return finish(), err
 		}
 		suggestions, err := parseSuggestionJSON(reply)
 		if err != nil {
-			return c.filterSuggestions(mergeBatches(batches), text), err
+			return finish(), err
+		}
+		// Silence is judged AFTER filtering, and per request, which is why the
+		// filter runs here as well as over the merged list: a request whose
+		// every name was invented told the user nothing.
+		if len(c.filterSuggestions(suggestions, sourceText)) == 0 {
+			out.Silent++
 		}
 		batches = append(batches, suggestions)
 	}
-	// Hallucination filter (CLAUDE.md §5) against the FULL text plus the
-	// allowlist veto.
-	return c.filterSuggestions(mergeBatches(batches), text), nil
+	return finish(), nil
 }
 
 // mergeBatches is MergeSuggestions over a batch slice (a readability helper for
@@ -648,7 +669,7 @@ func (c *Client) ClassifySuggestions(ctx context.Context, suggestions []engine.S
 		valid[sugg.MainText] = true
 	}
 
-	budget := c.promptBudgetBytes()
+	budget := c.PromptBudgetBytes()
 	var batches [][]engine.Suggestion
 	batch := strings.Builder{}
 	flush := func() error {
@@ -828,94 +849,22 @@ func parseSuggestionJSON(reply string) ([]engine.Suggestion, error) {
 	return out, nil
 }
 
-// --- Document chunking ------------------------------
+// --- Request sizing -------------------------------------------------------
 
-// promptBudgetBytes derives the per-chunk byte budget from the configured
-// context size: roughly 3 bytes of typical text per token, with 25% of
-// the window reserved for the system prompt and the model's reply.
-func (c *Client) promptBudgetBytes() int {
+// PromptBudgetBytes is the ABSOLUTE CEILING for one request's text, derived from
+// the configured context size: roughly 3 bytes of typical text per token, with
+// 25% of the window reserved for the system prompt and the model's reply.
+//
+// It is not the sizing rule for a slice, and must never be used as one. What
+// fits the context window and what a model can still extract names from are
+// different questions, measured to be different by an order of magnitude: a
+// whole document sits comfortably inside this budget and returns nothing. The
+// engine sizes slices by the user's detail level (engine.ScanChunks) and takes
+// this only as the backstop for a single unit no request can carry.
+func (c *Client) PromptBudgetBytes() int {
 	ctxSize := c.ContextSize
 	if ctxSize <= 0 {
 		ctxSize = DefaultContextSize
 	}
 	return ctxSize * 3 * 3 / 4
-}
-
-// Chunks splits a document into prompt-sized chunks, enforcing the
-// MaxChunksPerDocument cap with an actionable error.
-func (c *Client) Chunks(text string) ([]string, error) {
-	budget := c.promptBudgetBytes()
-	chunks := chunkText(text, budget, chunkOverlapBytes)
-	if len(chunks) > MaxChunksPerDocument {
-		return nil, fmt.Errorf(
-			"this document is very large (%d chunks of %d KB); split it into smaller files or run Smart detection instead",
-			len(chunks), budget/1024)
-	}
-	return chunks, nil
-}
-
-// EstimateChunks reports how many chunks a document would produce, so the
-// UI can warn BEFORE starting a discovery run.
-func (c *Client) EstimateChunks(text string) int {
-	return len(chunkText(text, c.promptBudgetBytes(), chunkOverlapBytes))
-}
-
-// chunkText splits text into chunks of at most budgetBytes, preferring to
-// cut at a paragraph break, then a line break, then a space, and never
-// inside a UTF-8 sequence (rune-safe). Consecutive chunks overlap by
-// roughly overlapBytes so entities on a boundary are seen whole at least
-// once. The empty string yields a single empty chunk (callers treat the
-// document uniformly).
-func chunkText(text string, budgetBytes, overlapBytes int) []string {
-	if budgetBytes <= 0 {
-		budgetBytes = DefaultContextSize * 3 * 3 / 4
-	}
-	if len(text) <= budgetBytes {
-		return []string{text}
-	}
-	// Overlap must stay well under the budget or the loop cannot advance.
-	if overlapBytes >= budgetBytes/2 {
-		overlapBytes = budgetBytes / 4
-	}
-
-	var chunks []string
-	start := 0
-	for start < len(text) {
-		end := start + budgetBytes
-		if end >= len(text) {
-			chunks = append(chunks, text[start:])
-			break
-		}
-		// Prefer natural boundaries inside the second half of the window
-		// (searching the whole window could produce degenerate tiny
-		// chunks on paragraph-dense text).
-		windowStart := start + budgetBytes/2
-		cut := -1
-		for _, sep := range []string{"\n\n", "\n", " "} {
-			if idx := strings.LastIndex(text[windowStart:end], sep); idx >= 0 {
-				cut = windowStart + idx + len(sep)
-				break
-			}
-		}
-		if cut < 0 {
-			// No boundary at all (one enormous token): cut at a rune edge.
-			cut = end
-			for cut > start && (text[cut]&0xC0) == 0x80 {
-				cut--
-			}
-		}
-		chunks = append(chunks, text[start:cut])
-
-		// Next chunk starts overlapBytes BEFORE the cut, aligned forward
-		// to a rune boundary, and always past the previous start.
-		next := cut - overlapBytes
-		if next <= start {
-			next = cut
-		}
-		for next < len(text) && (text[next]&0xC0) == 0x80 {
-			next++
-		}
-		start = next
-	}
-	return chunks
 }

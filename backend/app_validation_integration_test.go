@@ -119,29 +119,60 @@ func TestDetectionRespectsTheAllowlist(t *testing.T) {
 	}
 }
 
-func TestDetectionSkipsAFileTooLargeForTheModel(t *testing.T) {
-	// A document beyond the context window is SKIPPED and said so, rather than
-	// failing the run: the limit is a fact about the model, not a mistake the
-	// user made, and the offline route read the file anyway.
+// TestDetectionScansALargeFileAndWarnsAboutIt: a document needing many requests
+// is SCANNED, with a warning about the time, and never dropped from the route.
+// The user asked for the scan, every request reports progress and cancel reaches
+// mid-scan, so slowness is a cost they can see and stop; refusing leaves them
+// with the offline findings and nothing saying why.
+func TestDetectionScansALargeFileAndWarnsAboutIt(t *testing.T) {
 	app := aiOnlyApp(t, func(string) string { return `{"entity_names":[],"person_names":[]}` })
-	app.llm.ContextSize = 512
 	app.docs = []engine.Document{
-		{Name: "small.txt", Format: engine.FormatTXT, Markdown: "Alpine Trust is small."},
-		{Name: "huge.txt", Format: engine.FormatTXT, Markdown: strings.Repeat("line of text\n", 20000)},
+		{Name: "small.txt", Format: engine.FormatTXT, Unit: engine.UnitLine,
+			Markdown: "Alpine Trust is small."},
+		{Name: "huge.txt", Format: engine.FormatTXT, Unit: engine.UnitLine,
+			Markdown: strings.Repeat("line of text\n", 20000)},
 	}
 
 	res, err := app.RunDetection([]string{"small.txt", "huge.txt"}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
-	if len(res.Skipped) != 1 || res.Skipped[0].Name != "huge.txt" {
-		t.Fatalf("the oversized file must be reported as skipped, got %+v", res.Skipped)
+	for _, skip := range res.Skipped {
+		if skip.Name == "huge.txt" {
+			t.Fatalf("a large document must be scanned, not skipped: %+v", skip)
+		}
+	}
+	var warned bool
+	for _, msg := range res.Errors {
+		if strings.Contains(msg, "huge.txt") && strings.Contains(msg, "requests") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Errorf("a scan needing many requests must warn about the time it takes, got %+v", res.Errors)
+	}
+}
+
+// TestDetectionSkipsOnlyADocumentWithNoTextToRead: size no longer refuses a
+// scan, so the skip has exactly one producer left, and it is a real case. Keeping
+// it meaningful is what stops the field, and the interface that renders it, from
+// becoming decoration.
+func TestDetectionSkipsOnlyADocumentWithNoTextToRead(t *testing.T) {
+	app := aiOnlyApp(t, func(string) string { return `{"entity_names":[],"person_names":[]}` })
+	app.docs = []engine.Document{
+		{Name: "blank.txt", Format: engine.FormatTXT, Unit: engine.UnitLine, Markdown: "  \n\t\n"},
+		{Name: "real.txt", Format: engine.FormatTXT, Unit: engine.UnitLine, Markdown: "Alpine Trust."},
+	}
+
+	res, err := app.RunDetection([]string{"blank.txt", "real.txt"}, nil, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].Name != "blank.txt" {
+		t.Fatalf("a whitespace-only document is the one thing left to skip, got %+v", res.Skipped)
 	}
 	if !strings.Contains(res.Skipped[0].Reason, "Smart detection") {
 		t.Errorf("the reason must say the file was still read offline, got %q", res.Skipped[0].Reason)
-	}
-	if len(res.Errors) != 0 {
-		t.Errorf("a skipped file is not an error: %+v", res.Errors)
 	}
 }
 

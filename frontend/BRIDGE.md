@@ -310,7 +310,7 @@ missing runtime is a safe no-op).
 | `documents:changed` | after a drag-drop import (drops are push, not request/reply) | `ImportResult` |
 | `pipeline:progress` | during a `runPipeline` run | progress info |
 | `pipeline:done` | when a `runPipeline` run finishes | `Results` |
-| `detection:progress` | during a `runDetection` run | `{phase, phaseIndex, phaseCount, docIndex, docCount, docName, chunkIndex, chunkCount, fraction}` |
+| `detection:progress` | during a `runDetection` run | `{phase, phaseIndex, phaseCount, docIndex, docCount, docName, chunkIndex, chunkCount, unitFrom, unitTo, unitWord, fraction}` |
 | `detection:done` | when a `runDetection` run finishes, is cancelled, or has nothing to run | `DetectionResult` (one `suggestions` list) |
 | `detection:error` | when a run stops unexpectedly | `{message}` |
 
@@ -320,6 +320,15 @@ the event rather than by the caller's `finally`. `fraction` is the whole run's
 progress, computed in Go and non-decreasing across routes: never recompute a
 percentage per route in the frontend, that is what made the bar rewind when the
 second route started with a smaller file count.
+
+On the LOCAL AI route the model reads a document in slices aligned to the
+document's own units, one request each, so `chunkIndex` and `chunkCount` are the
+request number and the request count for that document's scan. `unitFrom`,
+`unitTo` and `unitWord` say which of the document's OWN units the current request
+covers, so a caption can read "slides 4 to 6 of 15" in the same word the import
+list uses; `unitWord` is SINGULAR and the frontend pluralises, exactly as
+`DocumentInfo.unit` works. All three are zero and empty on the Smart route, which
+sends no requests.
 
 ## Rules for changing the contract
 

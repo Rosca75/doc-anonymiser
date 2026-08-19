@@ -19,6 +19,7 @@ package backend
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -409,6 +410,102 @@ func scopeChatServer(seen *[]string) *httptest.Server {
 			http.NotFound(w, r)
 		}
 	}))
+}
+
+// slideDeck builds a pptx-shaped document whose slides are each larger than one
+// request's target, so the slicing has to divide it. Its whole markdown still
+// fits a model's context window comfortably, which is exactly the situation that
+// produced the reported failure.
+func slideDeck(slides int) engine.Document {
+	var b strings.Builder
+	for i := 1; i <= slides; i++ {
+		fmt.Fprintf(&b, "## Slide %d: title %d\n", i, i)
+		fmt.Fprintf(&b, "%s\n\n", strings.Repeat(fmt.Sprintf("Alpine Trust point %d. ", i), 70))
+	}
+	return engine.Document{
+		Name: "deck.pptx", Format: engine.FormatPPTX, Unit: engine.UnitSlide,
+		Markdown: b.String(),
+	}
+}
+
+// TestAWholeDocumentIsNotOneRequest is the regression guard for the whole
+// change: a document handed to the model in ONE request returns nothing, on
+// every model measured, however comfortably it fits the context window. The
+// slices are the document's own units, so a two slide deck is at least two
+// requests.
+func TestAWholeDocumentIsNotOneRequest(t *testing.T) {
+	var seen []string
+	srv := scopeChatServer(&seen)
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{slideDeck(2)}
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = false // isolate the AI route
+	withRecorder(t, app)
+
+	if _, err := app.RunDetection([]string{"deck.pptx"}, nil, nil); err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	if len(seen) < 2 {
+		t.Fatalf("a two slide deck must be at least two requests, got %d: sizing a slice from the context window is what returned nothing", len(seen))
+	}
+	// Every slide's text has to reach the model exactly once between them.
+	for _, want := range []string{"point 1", "point 2"} {
+		hits := 0
+		for _, prompt := range seen {
+			if strings.Contains(prompt, want) {
+				hits++
+			}
+		}
+		if hits != 1 {
+			t.Errorf("%q reached the model %d time(s), want exactly 1; slices = %d", want, hits, len(seen))
+		}
+	}
+}
+
+// TestDetectionProgressCarriesUnitNumbers: the caption has to say "slides 1 to 2
+// of 15" in the word the import list already uses. A request index alone means
+// nothing to the person watching a two minute scan.
+func TestDetectionProgressCarriesUnitNumbers(t *testing.T) {
+	var seen []string
+	srv := scopeChatServer(&seen)
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{slideDeck(3)}
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = false
+	rec := withRecorder(t, app)
+
+	if _, err := app.RunDetection([]string{"deck.pptx"}, nil, nil); err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+
+	var perRequest []DetectionProgress
+	for _, p := range rec.progress() {
+		if p.Phase == PhaseLocalAI && p.ChunkCount > 0 {
+			perRequest = append(perRequest, p)
+		}
+	}
+	if len(perRequest) == 0 {
+		t.Fatal("the AI phase must report progress per request")
+	}
+	for _, p := range perRequest {
+		if p.ChunkCount != len(seen) {
+			t.Errorf("ChunkCount = %d, want the request count %d: the denominator IS the number of requests",
+				p.ChunkCount, len(seen))
+		}
+		if p.UnitWord != engine.UnitSlide {
+			t.Errorf("UnitWord = %q, want %q so the caption reads in the document's own word",
+				p.UnitWord, engine.UnitSlide)
+		}
+		if p.UnitFrom < 1 || p.UnitTo < p.UnitFrom {
+			t.Errorf("request %d covers units %d-%d, which is not a range", p.ChunkIndex, p.UnitFrom, p.UnitTo)
+		}
+	}
 }
 
 // TestDetectionAIScopeLimitsToPageRange is the whole point of the feature: with

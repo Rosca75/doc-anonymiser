@@ -68,11 +68,29 @@ func (d Document) PageRangeMarkdown(from, to int) (string, error) {
 			from, to, d.Name, count, d.pageUnitWord(), count)
 	}
 
+	return d.unitSlicer()(from, to), nil
+}
+
+// unitSlicer answers "the working-form markdown of units [from, to]" for one
+// document, and is THE one definition of what a unit of each format is.
+//
+// It returns a closure rather than doing the work directly because the unit
+// boundaries are derived from the markdown: a caller slicing many ranges out of
+// one document (the local-AI slicer in aichunks.go packs one slice per request)
+// would otherwise re-scan the whole text for every range it tries, which is
+// quadratic on a line-unit document. PageRangeMarkdown is the single-shot form
+// of the same answer, and both go through this so the two cannot disagree.
+//
+// The closure assumes its arguments are already validated: 1 <= from <= to <=
+// PageCount. PageRangeMarkdown validates before calling it.
+func (d Document) unitSlicer() func(from, to int) string {
 	if len(d.Pages) > 0 {
 		// Pre-split units join back with the format's own separator. Only
 		// PDF and DOCX populate Pages, and both read as page-per-block, so a
 		// blank line between them matches how the full markdown was built.
-		return strings.Join(d.Pages[from-1:to], "\n\n"), nil
+		return func(from, to int) string {
+			return strings.Join(d.Pages[from-1:to], "\n\n")
+		}
 	}
 
 	switch {
@@ -80,23 +98,27 @@ func (d Document) PageRangeMarkdown(from, to int) (string, error) {
 		// Re-render the selected records as their own table so the header row
 		// (column names) still gives the model the context a bare data row
 		// lacks. Grid[0] is the header; data record k is Grid[k].
-		sub := make([][]string, 0, to-from+2)
-		sub = append(sub, d.Grid[0])
-		sub = append(sub, d.Grid[from:to+1]...)
-		return GridToMarkdownTable(sub), nil
+		return func(from, to int) string {
+			sub := make([][]string, 0, to-from+2)
+			sub = append(sub, d.Grid[0])
+			sub = append(sub, d.Grid[from:to+1]...)
+			return GridToMarkdownTable(sub)
+		}
 	case d.Unit == UnitSlide:
-		offs := slideOffsets(d.Markdown)
-		if len(offs) > 0 {
-			return sliceByOffsets(d.Markdown, offs, from, to), nil
+		if offs := slideOffsets(d.Markdown); len(offs) > 0 {
+			return func(from, to int) string {
+				return sliceByOffsets(d.Markdown, offs, from, to)
+			}
 		}
 	case d.Unit == UnitLine:
-		offs := lineOffsets(d.Markdown)
-		if len(offs) > 0 {
-			return sliceByOffsets(d.Markdown, offs, from, to), nil
+		if offs := lineOffsets(d.Markdown); len(offs) > 0 {
+			return func(from, to int) string {
+				return sliceByOffsets(d.Markdown, offs, from, to)
+			}
 		}
 	}
 	// Single-unit document: the only valid range is the whole thing.
-	return d.Markdown, nil
+	return func(from, to int) string { return d.Markdown }
 }
 
 // PagesMarkdown returns the working-form markdown for an arbitrary SET of
