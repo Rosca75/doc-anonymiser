@@ -35,7 +35,15 @@ const DefaultBaseURL = "http://127.0.0.1:11434"
 // DefaultModel is the settings DEFAULT only — the effective model is a
 // user setting populated from /api/tags and must never be hardcoded
 // anywhere else (CLAUDE.md §7).
-const DefaultModel = "qwen2.5:3b-instruct"
+//
+// The pin is Apache-2.0 and ships as a Q8_0 build, both of which are
+// requirements rather than incidentals: this tool reads client documents at a
+// professional-services firm, so a research-only licence is a compliance
+// problem, and a BF16 build has no fast CPU dot-product kernel without
+// AVX512-BF16 (see the quantisation rule in CLAUDE.md §7). On the measured
+// reference page it found sixteen names in 5.3 seconds, against the 4B's
+// seventeen in 12.2.
+const DefaultModel = "qwen3.5:0.8b"
 
 // ErrTooOld is the pinned message for an Ollama old enough to miss
 // /api/chat (CLAUDE.md §7: probe succeeds but chat 404s WITHOUT a
@@ -112,7 +120,7 @@ type OllamaStatus struct {
 	// Available is true when GET /api/tags answered successfully.
 	Available bool `json:"available"`
 	// Models lists the model names installed in Ollama (e.g.
-	// "qwen2.5:3b-instruct"). Empty when Available is false.
+	// "qwen3.5:0.8b"). Empty when Available is false.
 	Models []string `json:"models"`
 	// Detail is a human-readable explanation of the status, shown in the
 	// UI tooltip. It must always be actionable (what failed, how to fix).
@@ -167,7 +175,7 @@ func New(baseURL string) *Client {
 
 // tagsResponse mirrors just the part of the GET /api/tags JSON body we need:
 //
-//	{"models": [{"name": "qwen2.5:3b-instruct", ...}, ...]}
+//	{"models": [{"name": "qwen3.5:0.8b", ...}, ...]}
 type tagsResponse struct {
 	Models []struct {
 		Name string `json:"name"`

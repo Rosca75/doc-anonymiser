@@ -32,7 +32,7 @@ import (
 // Wails bridge payload shape (matched by state.js settings):
 //
 //	{ "level": "medium", "categories": {"email": true, ...},
-//	  "ollamaPort": 11434, "model": "qwen2.5:3b-instruct" }
+//	  "ollamaPort": 11434, "model": "qwen3.5:0.8b" }
 type Settings struct {
 	Level string `json:"level"` // soft | medium | advanced (last chosen preset)
 	// Categories is the granular switch set the pipeline obeys

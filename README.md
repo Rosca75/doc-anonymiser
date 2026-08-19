@@ -112,7 +112,7 @@ model to look as well, you can optionally install
 [Ollama](https://ollama.com/download) and pull a small local model:
 
 ```
-ollama pull qwen2.5:3b-instruct
+ollama pull qwen3.5:0.8b
 ```
 
 - **With Ollama running:** the Local AI route becomes switchable on Identify. It
