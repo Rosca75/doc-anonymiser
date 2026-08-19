@@ -49,7 +49,9 @@ func TestDocxGolden(t *testing.T) {
 
 // TestPptxGolden pins slide sections, bullet indentation, the table, the
 // speaker notes (with the slide-number placeholder excluded) and the
-// untitled French slide 2.
+// untitled French slide 2. Slide 1's title is three lines joined by soft
+// breaks, so it also pins the split: line one is the heading, the other two
+// survive as body lines.
 func TestPptxGolden(t *testing.T) {
 	raw := fixture(t, "deck.pptx")
 	md, _, err := Pptx(raw)
@@ -58,6 +60,7 @@ func TestPptxGolden(t *testing.T) {
 	}
 
 	want := "## Slide 1: Quarterly Review\n\n" +
+		"Prepared by Marie Duval\nInternal draft, 12 February 2024\n\n" +
 		"- Revenue grew\n" +
 		"  - Driven by Borealis Fund\n" +
 		"\n" +

@@ -152,15 +152,21 @@ func buildDocxFixture(t *testing.T) []byte {
 
 // --- .pptx fixture -------------------------------------------------------
 
-// buildPptxFixture assembles a two-slide deck: slide 1 has a title, a body
-// with two outline levels, a table and speaker notes (resolved via rels);
-// slide 2 has an untitled French body only.
+// buildPptxFixture assembles a two-slide deck: slide 1 has a title made of
+// three lines separated by soft breaks (the shape a real deck's cover slide
+// has: title, author, date in ONE paragraph), a body with two outline levels,
+// a table and speaker notes (resolved via rels); slide 2 has an untitled
+// French body only.
 func buildPptxFixture(t *testing.T) []byte {
 	const ns = ` xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"`
 
 	slide1 := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:sld` + ns + `><p:cSld><p:spTree>` +
-		`<p:sp><p:nvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>Quarterly Review</a:t></a:r></a:p></p:txBody></p:sp>` +
+		`<p:sp><p:nvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:txBody><a:p>` +
+		`<a:r><a:t>Quarterly Review</a:t></a:r><a:br/>` +
+		`<a:r><a:t>Prepared by Marie Duval</a:t></a:r><a:br/>` +
+		`<a:r><a:t>Internal draft, 12 February 2024</a:t></a:r>` +
+		`</a:p></p:txBody></p:sp>` +
 		`<p:sp><p:nvSpPr><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr><p:txBody>` +
 		`<a:p><a:r><a:t>Revenue grew</a:t></a:r></a:p>` +
 		`<a:p><a:pPr lvl="1"/><a:r><a:t>Driven by Borealis Fund</a:t></a:r></a:p>` +
