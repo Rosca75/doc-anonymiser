@@ -110,7 +110,7 @@ func TestSessionSaveLoadEquality(t *testing.T) {
 		Values:     []Value{{Category: "entity_names", MainText: "Alpine Trust", Spellings: []string{"Alpine"}}},
 		AllowTerms: []string{"CSSF", "Luxembourg"},
 		Patterns:   []CustomPattern{{Expr: "PRJ-[0-9]+"}},
-		Settings:   SessionSettings{Level: "advanced", OllamaPort: 12345, Model: "qwen2.5:3b-instruct"},
+		Settings:   SessionSettings{Level: "advanced", OllamaPort: 12345, Model: "qwen3.5:0.8b"},
 		Registry:   reg.Export(),
 	}
 	raw, err := SaveSession(original)
@@ -281,7 +281,7 @@ func TestLoadSessionWithoutOptionalFields(t *testing.T) {
 	    "level": "medium",
 	    "categories": {"email": true, "person_names": true},
 	    "ollamaPort": 11434,
-	    "model": "qwen2.5:3b-instruct",
+	    "model": "qwen3.5:0.8b",
 	    "contextSize": 8192,
 	    "useLocalAI": true
 	  },

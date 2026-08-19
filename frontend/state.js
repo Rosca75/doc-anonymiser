@@ -1576,6 +1576,13 @@ export function addValues(items) {
       // text plus the listed spellings IS the complete set. Every Value starts
       // uncurated.
       spellingPolicy: item.spellingPolicy === "curated" ? "curated" : "automatic",
+      // HOW MUCH this Value is trusted, which is a third thing from provenance
+      // and from precedence. 0 means "not stated", which Go reads as a user
+      // declaration and scores accordingly, so it is the right default for a
+      // Value the user typed and the wrong one to leave on a Local AI finding:
+      // that is why the number has to survive the whole way from the bridge to
+      // here. Minimum confidence is the control it feeds.
+      confidence: typeof item.confidence === "number" ? item.confidence : 0,
       status: "accepted",
     });
   }
@@ -1789,6 +1796,10 @@ export function addSuggestions(items) {
       spellings: item.spellings ?? [],
       discoveryMethods: item.discoveryMethods ?? [],
       evidence: item.evidence ?? [],
+      // HOW MUCH the row is trusted, which the Minimum confidence control acts
+      // on once the row is accepted. A Local AI finding arrives at 0.8; 0 means
+      // "not stated", which Go reads as a user declaration.
+      confidence: typeof item.confidence === "number" ? item.confidence : 0,
     };
 
     const existing = at.get(key);
@@ -1811,8 +1822,9 @@ export function addSuggestions(items) {
  * mergeSuggestionRows(into, from) unions two rows for the same main text.
  *
  * It mirrors engine.MergeSuggestions: the first-seen spelling wins, counts add
- * up, and spellings, contexts, methods and evidence union with the contexts
- * bounded so a second run cannot grow one row without limit. The CATEGORY is
+ * up, spellings, contexts, methods and evidence union with the contexts
+ * bounded so a second run cannot grow one row without limit, and the strongest
+ * confidence wins because two routes agreeing is corroboration. The CATEGORY is
  * kept from the existing row, because the user may already have changed it and a
  * later detection must not silently overrule that.
  */
@@ -1824,6 +1836,10 @@ function mergeSuggestionRows(into, from) {
     spellings: mergeStrings(into.spellings, from.spellings, into.mainText),
     discoveryMethods: mergeStrings(into.discoveryMethods, from.discoveryMethods),
     evidence: mergeEvidence(into.evidence, from.evidence),
+    // The STRONGEST confidence wins, as engine.MergeSuggestions does it: two
+    // routes agreeing is corroboration, so a row heuristics also found is not
+    // demoted to the AI's number just because the AI reported it second.
+    confidence: Math.max(into.confidence ?? 0, from.confidence ?? 0),
   };
 }
 
@@ -1915,6 +1931,15 @@ export function acceptSuggestion(text) {
  * valueFromSuggestion(row) is the ONE conversion from a reviewed Suggestion to a
  * Value. Single-accept and bulk-accept both go through it, so neither can lose a
  * field the other keeps.
+ *
+ * confidence crosses with the rest. It is a CROSS-BRIDGE contract and the Go
+ * constants are its source of truth: a Local AI suggestion arrives at 0.8
+ * (engine.ConfidenceLLMDefault), and dropping it here would hand the engine a
+ * 0, which it reads as "not stated" and scores as a manual declaration at 0.95.
+ * Raising Minimum confidence would then leave the model's guesses in place,
+ * which is the opposite of what the control says it does. Where two routes
+ * found the same thing the merge already kept the higher score, so a row
+ * heuristics also found is not demoted by the AI's number.
  */
 function valueFromSuggestion(row) {
   return {
@@ -1923,6 +1948,7 @@ function valueFromSuggestion(row) {
     spellings: row.spellings ?? [],
     discoveryMethods: row.discoveryMethods ?? [],
     evidence: row.evidence ?? [],
+    confidence: row.confidence ?? 0,
   };
 }
 

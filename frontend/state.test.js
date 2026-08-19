@@ -2185,3 +2185,37 @@ test("an accepted Suggestion carries its folded spellings across", () => {
   assert.deepEqual(getState().values[0].spellings, ["Alpine Trust S.A."],
     "one Value with its spellings reaches the pipeline, not two rivals");
 });
+
+test("an accepted Local AI Suggestion keeps the AI confidence, not the manual one", () => {
+  // A CROSS-BRIDGE contract, and the Go constants are its source of truth:
+  // engine.ConfidenceLLMDefault is 0.8 and engine.ConfidenceManualDefault is
+  // 0.95. The number is asserted literally here because that is what the bridge
+  // actually carries; if the Go constant moves, this test is meant to fail and
+  // be moved with it.
+  //
+  // The failure it prevents is silent in every other test: a Value that reaches
+  // Go with confidence 0 is read as "not stated", which valueConfidence scores
+  // as a user declaration. Raising Minimum confidence past 80 would then leave
+  // the model's own guesses in place, which is the opposite of what the control
+  // promises.
+  resetState();
+  addSuggestions([{
+    discoveryMethods: ["local_ai"], mainText: "Borealis Fund",
+    category: "entity_names", confidence: 0.8,
+  }]);
+  assert.equal(acceptSuggestion("Borealis Fund"), true);
+  assert.equal(getState().values[0].confidence, 0.8,
+    "the Local AI score must survive acceptance, or the confidence floor cannot act on it");
+});
+
+test("a Value the user declared states no confidence, which Go reads as a declaration", () => {
+  // The mirror of the test above, and the reason confidence defaults to 0
+  // rather than to some number this side invents: "not stated" is a real state
+  // with a meaning the engine owns (ConfidenceManualDefault). A frontend that
+  // filled in a default here would make every manual Value filterable by
+  // accident.
+  resetState();
+  addValues([{ category: "person_names", mainText: "Marie Duval" }]);
+  assert.equal(getState().values[0].confidence, 0,
+    "a manual Value states no confidence and lets the engine's default serve it");
+});

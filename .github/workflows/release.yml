@@ -82,7 +82,7 @@ jobs:
           The app works fully offline with no AI installed. If you want the
           optional AI-assisted Value discovery on the Identify step:
             1. Install Ollama from https://ollama.com/download
-            2. In a terminal, run:  ollama pull qwen2.5:3b-instruct
+            2. In a terminal, run:  ollama pull qwen3.5:0.8b
             3. Start the app — the AI features light up automatically.
           The app only ever talks to Ollama on your own machine
           (127.0.0.1:11434). No document data leaves your computer.
@@ -149,7 +149,7 @@ jobs:
           The app works fully offline with no AI installed. If you want the
           optional AI-assisted Value discovery on the Identify step:
             1. Install Ollama from https://ollama.com/download
-            2. In a terminal, run:  ollama pull qwen2.5:3b-instruct
+            2. In a terminal, run:  ollama pull qwen3.5:0.8b
             3. Start the app — the AI features light up automatically.
           The app only ever talks to Ollama on your own machine
           (127.0.0.1:11434). No document data leaves your computer.
@@ -201,7 +201,7 @@ jobs:
           OPTIONAL: LOCAL AI (OLLAMA)
           ---------------------------
           Install Ollama from https://ollama.com/download and run:
-            ollama pull qwen2.5:3b-instruct
+            ollama pull qwen3.5:0.8b
           The app only ever talks to Ollama on your own machine
           (127.0.0.1:11434). No document data leaves your computer.
           EOF

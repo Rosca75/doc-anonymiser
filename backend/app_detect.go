@@ -22,6 +22,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"doc-anonymiser/backend/engine"
 	"doc-anonymiser/backend/ollama"
@@ -207,23 +208,34 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 		}
 	}
 
+	// Fold Value families over the unified list, BEFORE anything else looks at
+	// it. Per method would leave a heuristic "Coca-Cola" and a model "Coca-Cola
+	// company" unfolded, which is exactly the pair that has to become one Value:
+	// left apart, the shorter one fires inside the longer one, the text reads
+	// "[BRAND_1] company", and two numbers are spent on one company.
+	//
+	// Folding first also means the classification call below asks about the
+	// list every other part of the system works with, instead of paying the
+	// model to categorise "Borch" and "Johannes Borch" as two separate names.
+	res.Suggestions = engine.FoldValueFamilies(res.Suggestions, allow)
+
 	// With the Local AI route on, the model also RE-FILES what Smart detection
 	// found (only main texts and short context snippets travel, never documents).
 	// A classification failure degrades to the heuristic categories with a note:
 	// the findings are the point, the labels are polish.
 	if useLocalAI && ctx.Err() == nil && len(res.Suggestions) > 0 {
-		if err := a.refineCategories(ctx, llm, res); err != nil && ctx.Err() == nil {
+		if err := a.refineCategories(ctx, llm, docs, aiScope, res); err != nil && ctx.Err() == nil {
 			res.Errors = append(res.Errors,
 				fmt.Sprintf("the local AI could not refine the categories, the offline guesses were kept: %v", err))
 		}
+		// Re-fold, because a refined CATEGORY can create a family that did not
+		// exist a moment ago: folding only ever happens within one category, so
+		// a person "Delta" and an organisation "Delta Industries" are two rows
+		// until the model files both under organisations, and from that instant
+		// they are one Value with two spellings. Re-folding an already-folded
+		// list is a no-op, which is why this is cheap rather than a second rule.
+		res.Suggestions = engine.FoldValueFamilies(res.Suggestions, allow)
 	}
-
-	// Fold Value families ONCE, over the unified list. Per method would leave a
-	// heuristic "Coca-Cola" and a model "Coca-Cola company" unfolded, which is
-	// exactly the pair that has to become one Value: left apart, the shorter one
-	// fires inside the longer one, the text reads "[BRAND_1] company", and two
-	// numbers are spent on one company.
-	res.Suggestions = engine.FoldValueFamilies(res.Suggestions, allow)
 
 	res.Cancelled = ctx.Err() != nil
 	res.Status = detectionStatus(res, len(docs))
@@ -252,12 +264,39 @@ func (a *App) CancelDetection() {
 // Only Smart detection's own Suggestions are sent. Re-filing the model's own
 // findings would be asking it to grade its own work, and it would let one pass
 // overwrite a category the same model had just chosen.
-func (a *App) refineCategories(ctx context.Context, llm *ollama.Client, res *DetectionResult) error {
+//
+// It obeys the SAME scope as the discovery call, through the same helper. This
+// is the larger of the two model calls, so a scope that narrowed only the other
+// one left the user's "just page 1" reading the whole batch: about half a scoped
+// run's prompt tokens, spent on text the user had explicitly excluded. A
+// suggestion the scoped text does not contain simply keeps its offline
+// category, which is the same graceful outcome a classification failure already
+// produces.
+func (a *App) refineCategories(ctx context.Context, llm *ollama.Client,
+	docs []engine.Document, scope *AIScope, res *DetectionResult,
+) error {
+	// The problems are discarded here on purpose: runLocalAIPhase has already
+	// run with this same scope and reported them, and saying "page 9 is out of
+	// bounds" twice for one run reads as two separate faults.
+	var scoped string
+	if scope.active() {
+		units, _ := scopedUnits(docs, scope)
+		texts := make([]string, 0, len(units))
+		for _, u := range units {
+			texts = append(texts, u.text)
+		}
+		scoped = strings.Join(texts, "\n")
+	}
+
 	var smart []engine.Suggestion
 	for _, s := range res.Suggestions {
-		if smartDiscovered(s) {
-			smart = append(smart, s)
+		if !smartDiscovered(s) {
+			continue
 		}
+		if scope.active() && !occursInScope(scoped, s) {
+			continue
+		}
+		smart = append(smart, s)
 	}
 	if len(smart) == 0 {
 		return nil
@@ -286,6 +325,25 @@ func (a *App) refineCategories(ctx context.Context, llm *ollama.Client, res *Det
 func smartDiscovered(s engine.Suggestion) bool {
 	for _, m := range s.DiscoveryMethods {
 		if m == engine.MethodHeuristic || m == engine.MethodSignal {
+			return true
+		}
+	}
+	return false
+}
+
+// occursInScope reports whether a Suggestion is about text the scope selected.
+//
+// Any of its spellings counts, not only its main text: a folded family is ONE
+// row, so a page carrying "Johannes Borch" is asking about the row whose main
+// text is "Borch" even though the shorter form was folded from elsewhere.
+// Matching is exact, like the hallucination filter, because both discovery and
+// signal-based discovery preserve the document's own casing.
+func occursInScope(scoped string, s engine.Suggestion) bool {
+	if strings.Contains(scoped, s.MainText) {
+		return true
+	}
+	for _, spelling := range s.Spellings {
+		if strings.Contains(scoped, spelling) {
 			return true
 		}
 	}
@@ -363,25 +421,27 @@ func mergeInto(existing []engine.Suggestion, batches [][]engine.Suggestion) []en
 	return engine.MergeSuggestions(append([][]engine.Suggestion{existing}, batches...)...)
 }
 
-// runLocalAIPhase is the Local AI route. Oversized documents are SKIPPED and
-// said so, rather than failing the run: the context window is a fact about
-// the model, not a mistake the user made.
+// scanUnit pairs a document with the exact text the local AI should read for
+// it: the whole markdown normally, or the selected pages when scoped.
+type scanUnit struct {
+	name string
+	text string
+}
+
+// scopedUnits is THE ONE definition of "the text this run's scope selects".
 //
-// When scope is active the route reads ONE document. If the scope names a set
-// of pages it reads only those (CLAUDE.md §5); with no pages it reads the whole
-// selected document. Either way the point is the same: keep the text handed to
-// a small local model small. The Smart route is unaffected — it already read
-// everything.
-func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *ollama.Client,
-	scope *AIScope, res *DetectionResult, report func(DetectionProgress),
-) {
-	// scanUnit pairs a document with the exact text the AI should read for it:
-	// the whole markdown normally, or the selected pages when scoped.
-	type scanUnit struct {
-		name string
-		text string
-	}
-	var units []scanUnit
+// Both model calls read it: the discovery call, which scans the text, and the
+// classification call, which decides which suggestions the scope even makes
+// this run's business. A second implementation of the same idea is exactly the
+// bug this shape prevents, because the two would agree right up until one of
+// them was changed.
+//
+// It returns the problems rather than recording them, so the caller decides
+// whether this is the run's first look at the scope (report them) or its
+// second (stay quiet). Neither problem is a failure: an out-of-range page and
+// a scope naming a document that is not imported are both the user's request,
+// reported so the run can finish cleanly.
+func scopedUnits(docs []engine.Document, scope *AIScope) (units []scanUnit, problems []string) {
 	scopeMatched := false
 	for _, doc := range docs {
 		if scope.active() {
@@ -397,9 +457,7 @@ func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *
 			}
 			text, err := doc.PagesMarkdown(scope.Pages)
 			if err != nil {
-				// An out-of-range scope is the user's request, not a file
-				// problem: report it and let the run finish cleanly.
-				res.Errors = append(res.Errors, err.Error())
+				problems = append(problems, err.Error())
 				continue
 			}
 			units = append(units, scanUnit{name: doc.Name, text: text})
@@ -408,10 +466,27 @@ func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *
 		units = append(units, scanUnit{name: doc.Name, text: doc.Markdown})
 	}
 	if scope.active() && !scopeMatched {
-		res.Errors = append(res.Errors, fmt.Sprintf(
+		problems = append(problems, fmt.Sprintf(
 			"the local AI was scoped to %q, which is not among the imported documents; import it or clear the scope",
 			scope.DocName))
 	}
+	return units, problems
+}
+
+// runLocalAIPhase is the Local AI route. Oversized documents are SKIPPED and
+// said so, rather than failing the run: the context window is a fact about
+// the model, not a mistake the user made.
+//
+// When scope is active the route reads ONE document. If the scope names a set
+// of pages it reads only those (CLAUDE.md §5); with no pages it reads the whole
+// selected document. Either way the point is the same: keep the text handed to
+// a small local model small. The Smart route is unaffected — it already read
+// everything.
+func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *ollama.Client,
+	scope *AIScope, res *DetectionResult, report func(DetectionProgress),
+) {
+	units, problems := scopedUnits(docs, scope)
+	res.Errors = append(res.Errors, problems...)
 
 	var readable []scanUnit
 	for _, u := range units {

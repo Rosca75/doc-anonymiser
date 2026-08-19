@@ -32,7 +32,7 @@ func newTestApp(t *testing.T, replyFor func(userPrompt string) string) *App {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tags":
-			w.Write([]byte(`{"models":[{"name":"qwen2.5:3b-instruct"}]}`))
+			w.Write([]byte(`{"models":[{"name":"qwen3.5:0.8b"}]}`))
 		case "/api/chat":
 			var req struct {
 				Messages []struct {

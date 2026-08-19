@@ -277,7 +277,7 @@ panicking would take the application down on a bad file.
 Authoritative table is in the root `CLAUDE.md` §7. Key pins: Go 1.26.x,
 Wails v2.13.x (v2 API only, never v3 idioms), `xuri/excelize/v2` v2.9.x,
 `ledongthuc/pdf` (2025-05-11 commit), `go-pdf/fpdf` v0.9.0. Default Ollama
-model `qwen2.5:3b-instruct` (a setting, never hardcoded outside defaults).
+model `qwen3.5:0.8b` (a setting, never hardcoded outside defaults).
 
 ## Where to look next
 
