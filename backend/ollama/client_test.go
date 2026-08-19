@@ -647,6 +647,68 @@ func TestDiscoverAcrossSlices(t *testing.T) {
 	}
 }
 
+// TestTruncatedReplyIsReportedAsTruncation: a reply cut off at the generation
+// cap is CUT OFF, not malformed. Reported as malformed it sends the user looking
+// for a better model, when what they can actually do is send less text per
+// request, which is what the message has to name.
+func TestTruncatedReplyIsReportedAsTruncation(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			w.Write([]byte(`{"models":[]}`))
+			return
+		}
+		// What a degenerate reply that ran past num_predict actually looks like:
+		// valid JSON up to the cut, then nothing.
+		resp, _ := json.Marshal(map[string]interface{}{
+			"message":     map[string]string{"role": "assistant", "content": `{"entity_names":["Alpine Trust","Borealis`},
+			"done_reason": "length",
+			"eval_count":  512,
+		})
+		w.Write(resp)
+	})
+
+	const text = "Alpine Trust and Borealis Fund."
+	_, err := c.DiscoverSlices(context.Background(), []string{text}, text, nil)
+	if err == nil {
+		t.Fatal("a reply cut off at the generation cap must be reported, not parsed")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "JSON") {
+		t.Errorf("truncation must not be reported as malformed JSON: %v", msg)
+	}
+	for _, want := range []string{"cut off", "512", "Thorough", "fewer pages"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the truncation error must mention %q so the user knows what to change: %v", want, msg)
+		}
+	}
+}
+
+// TestNormalReplyIsNotMistakenForTruncation: Ollama sends done_reason on every
+// reply, so a "stop" must stay a clean answer.
+func TestNormalReplyIsNotMistakenForTruncation(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			w.Write([]byte(`{"models":[]}`))
+			return
+		}
+		resp, _ := json.Marshal(map[string]interface{}{
+			"message":     map[string]string{"role": "assistant", "content": `{"entity_names":["Alpine Trust"],"person_names":[]}`},
+			"done_reason": "stop",
+			"eval_count":  42,
+		})
+		w.Write(resp)
+	})
+
+	const text = "Alpine Trust signed."
+	out, err := c.DiscoverSlices(context.Background(), []string{text}, text, nil)
+	if err != nil {
+		t.Fatalf("a reply that finished normally must not be an error: %v", err)
+	}
+	if len(out.Suggestions) != 1 {
+		t.Errorf("want the one suggestion the model returned, got %+v", out.Suggestions)
+	}
+}
+
 // TestDiscoverSlicesCountsSilence: a well-formed empty reply is DATA, not a
 // failure. The counts are what let the caller tell "your model said nothing"
 // from "this document holds nothing", which one number cannot do.

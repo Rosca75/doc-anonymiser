@@ -197,6 +197,15 @@ const initialState = {
   // It is never recomputed here.
   discovery: null,
 
+  // What the LOCAL AI actually did on the last run, or null before the first
+  // one: {requests, silent, secondsPerRequest}, straight from the Go result.
+  //
+  // It is kept because "0 suggestions" means two different things and only one
+  // of them is about the document. The seconds are MEASURED on this machine and
+  // this document, which is the only way a user can judge how a scan will feel:
+  // no fixed sentence in a tooltip knows their laptop.
+  lastAIScan: null,
+
   // Unified suggestion review list: suggestions from
   // any discovery method wait HERE until explicitly accepted; nothing
   // flows into values without user confirmation. Each row:
@@ -1274,6 +1283,7 @@ export const STEP_RESETS = {
     intersections: [],
     patterns: [],
     discovery: null,
+    lastAIScan: null,
   }),
   // Anonymise owns the run itself, everything it produced, and the editing
   // surfaces that only exist once there is a result to edit.
@@ -2643,6 +2653,7 @@ export function startNewBatch() {
     intersections: [],
     patterns: [],
     discovery: null,
+    lastAIScan: null,
     running: false,
     progress: null,
     results: null,

@@ -769,6 +769,65 @@ test("the entity select-all carries the hyphenated data key so dataset reads it 
     "the entity group's button must resolve to the entity route");
 });
 
+// --- What the local AI actually did last time -----------------------------
+//
+// "0 values found" means two different things and only one of them is about the
+// document. The read-out is what separates them, and its numbers are measured on
+// the user's own machine, which is the half no tooltip can supply.
+
+test("the rail says nothing about a local AI scan that has not happened", () => {
+  resetState();
+  setUseLocalAI(true);
+  const html = railBody(getState());
+  assert.ok(!exists(html, "#last-ai-scan"),
+    "a read-out with nothing to report only teaches the reader to ignore it");
+});
+
+test("the rail reports the request count and the measured seconds of the last scan", () => {
+  resetState();
+  setUseLocalAI(true);
+  setState({ lastAIScan: { requests: 15, silent: 0, secondsPerRequest: 7.2 } });
+  const readout = one(railBody(getState()), "#last-ai-scan");
+  assert.ok(readout, "the last scan must be reported somewhere the user will read it");
+  const text = stripTags(readout.inner);
+  assert.match(text, /15 requests/,
+    `the request count is what makes "found nothing" legible: ${text}`);
+  assert.match(text, /7\.2s/, `the measured seconds must be shown: ${text}`);
+  assert.ok(!/returned nothing/.test(text),
+    `a scan where everything answered must not mention silence: ${text}`);
+});
+
+test("the rail names total silence, and mentions partial silence without alarm", () => {
+  resetState();
+  setUseLocalAI(true);
+
+  setState({ lastAIScan: { requests: 15, silent: 15, secondsPerRequest: 7 } });
+  const allSilent = stripTags(one(railBody(getState()), "#last-ai-scan").inner);
+  assert.match(allSilent, /nothing for any of them/,
+    `every request answering nothing is the case that reads as a clean document: ${allSilent}`);
+
+  setState({ lastAIScan: { requests: 15, silent: 4, secondsPerRequest: 7 } });
+  const partial = stripTags(one(railBody(getState()), "#last-ai-scan").inner);
+  assert.match(partial, /4 returned nothing/,
+    `a partly silent scan says how many, plainly: ${partial}`);
+  assert.ok(!/any of them/.test(partial),
+    `a normal scan must not be described as a silent model: ${partial}`);
+});
+
+test("the last scan read-out is a read-out, never an explanatory paragraph", () => {
+  // The rail carries no p.hint at all, and the Local AI section is in the DOM
+  // even when folded, so a read-out added as a hint turns the structural guard
+  // above red for a reason that reads as unrelated.
+  resetState();
+  setUseLocalAI(true);
+  setState({ lastAIScan: { requests: 3, silent: 0, secondsPerRequest: 2 } });
+  const html = railBody(getState());
+  assert.deepEqual(all(html, "p.hint").map((p) => stripTags(p.inner).trim()), [],
+    "a live fact is a .rail-readout; p.hint is static prose the panel does not carry");
+  assert.equal(one(html, "#last-ai-scan").attrs.class, "rail-readout",
+    "the read-out must carry the class the panel's live facts use");
+});
+
 // --- Help tooltips instead of paragraphs ---------------------------------
 //
 // The Configure panel spends no permanent vertical space on prose. Every

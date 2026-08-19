@@ -329,6 +329,14 @@ type chatMessage struct {
 type chatResponse struct {
 	Message chatMessage `json:"message"`
 	Error   string      `json:"error"`
+	// DoneReason says WHY generation stopped. "length" means the reply hit
+	// num_predict and was cut off mid-text, which is a different fault from a
+	// model that emitted malformed JSON, and the user can act on only one of
+	// them. Ollama sends it in every reply; nothing extra is requested for it.
+	DoneReason string `json:"done_reason"`
+	// EvalCount is how many tokens were generated, which is the number to quote
+	// back when the reply was cut off: it names the limit that was reached.
+	EvalCount int `json:"eval_count"`
 }
 
 // Chat sends one system+user exchange and returns the assistant's raw
@@ -482,6 +490,15 @@ func (c *Client) postChat(ctx context.Context, httpClient *http.Client, model st
 	}
 	if out.Error != "" {
 		return out, fmt.Errorf("the Ollama server reported an error: %s, the model %q may not be installed; run 'ollama pull %s'", out.Error, model, model)
+	}
+	// A reply that ran out of generation budget is CUT OFF, not malformed. It is
+	// reported here, before the parser ever sees the truncated text, because the
+	// parser can only say "that was not JSON", which sends the user looking for a
+	// better model when the real cause is too much text in one request.
+	if out.DoneReason == "length" {
+		return out, fmt.Errorf(
+			"the model %q ran out of room and its reply was cut off after %d tokens; send less text per request by choosing the Thorough detail level, or scan fewer pages at a time",
+			model, out.EvalCount)
 	}
 	return out, nil
 }

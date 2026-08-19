@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -508,6 +509,217 @@ func TestDetectionProgressCarriesUnitNumbers(t *testing.T) {
 	}
 }
 
+// countingChatServer answers /api/chat with the content the callback returns for
+// each call, counting the calls and the empty answers among them, so a test can
+// hold the run's own counts against what the server actually saw.
+func countingChatServer(reply func(call int) string) (*httptest.Server, *int32, *int32) {
+	var calls, empties int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.Write([]byte(`{"models":[{"name":"m"}]}`))
+		case "/api/chat":
+			n := int(atomic.AddInt32(&calls, 1))
+			content := reply(n)
+			if strings.Contains(content, `"entity_names":[]`) && !strings.Contains(content, `"entity_names":[""`) &&
+				!strings.Contains(content, "Alpine") && !strings.Contains(content, "Borealis") {
+				atomic.AddInt32(&empties, 1)
+			}
+			resp, _ := json.Marshal(map[string]interface{}{
+				"message": map[string]string{"role": "assistant", "content": content},
+			})
+			w.Write(resp)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return srv, &calls, &empties
+}
+
+// TestSilenceIsReportedAndDoesNotReadAsACleanDocument is the reported bug's
+// second half: fifteen empty replies said "0 suggestions", which is the same
+// sentence a document with no names produces. The user could not tell them apart
+// and had no hint that another model would answer differently.
+func TestSilenceIsReportedAndDoesNotReadAsACleanDocument(t *testing.T) {
+	const empty = `{"entity_names":[],"project_names":[],"person_names":[]}`
+	srv, calls, empties := countingChatServer(func(int) string { return empty })
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{slideDeck(3)}
+	app.llm = ollama.New(srv.URL)
+	app.llm.Model = "tiny-model"
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = false
+	rec := withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"deck.pptx"}, nil, nil)
+	if err != nil {
+		t.Fatalf("an all-silent scan must still finish: %v", err)
+	}
+	// The run FINISHES: status set, exactly one terminal event.
+	if res.Status == "" {
+		t.Error("a finished run must carry a status")
+	}
+	if got := rec.count("detection:done"); got != 1 {
+		t.Errorf("want exactly one detection:done, got %d", got)
+	}
+	if got := rec.count("detection:error"); got != 0 {
+		t.Errorf("silence is not a crash, got %d detection:error", got)
+	}
+
+	// The counts come from the server's own tally, so the assertion cannot drift
+	// from what was actually sent.
+	if want := int(atomic.LoadInt32(calls)); res.AIRequests != want {
+		t.Errorf("AIRequests = %d, want the %d call(s) the server saw", res.AIRequests, want)
+	}
+	if want := int(atomic.LoadInt32(empties)); res.AISilentRequests != want {
+		t.Errorf("AISilentRequests = %d, want the %d empty reply(s) the server sent",
+			res.AISilentRequests, want)
+	}
+	if res.AIRequests == 0 || res.AISilentRequests != res.AIRequests {
+		t.Fatalf("this scan is all silent by construction: AIRequests=%d AISilentRequests=%d",
+			res.AIRequests, res.AISilentRequests)
+	}
+
+	joined := strings.Join(res.Errors, " | ")
+	if !strings.Contains(joined, "tiny-model") {
+		t.Errorf("the message must name the MODEL, which is the actionable half: %q", joined)
+	}
+	if !strings.Contains(joined, "returned nothing") {
+		t.Errorf("the message must say the model returned nothing: %q", joined)
+	}
+	if !strings.Contains(res.Status, "request") {
+		t.Errorf("the one line summary must name the request count so it stops meaning two things: %q", res.Status)
+	}
+	if res.AISecondsPerRequest < 0 {
+		t.Errorf("the measured seconds per request must not be negative: %v", res.AISecondsPerRequest)
+	}
+}
+
+// TestPartialSilenceIsNotReportedAsTotalSilence: most requests returning nothing
+// is NORMAL, measured at 46 of 50 on one document, so only an all-silent phase
+// is worth a message. A warning on every scan is a warning nobody reads.
+func TestPartialSilenceIsNotReportedAsTotalSilence(t *testing.T) {
+	srv, calls, _ := countingChatServer(func(call int) string {
+		if call == 1 {
+			return `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`
+		}
+		return `{"entity_names":[],"project_names":[],"person_names":[]}`
+	})
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{slideDeck(3)}
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = false
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"deck.pptx"}, nil, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	if res.AISilentRequests >= res.AIRequests {
+		t.Fatalf("one request answered, so the phase is not all silent: AIRequests=%d AISilentRequests=%d",
+			res.AIRequests, res.AISilentRequests)
+	}
+	for _, msg := range res.Errors {
+		if strings.Contains(msg, "returned nothing for all") {
+			t.Errorf("a partly silent scan must not be reported as a silent model: %q", msg)
+		}
+	}
+	if got := int(atomic.LoadInt32(calls)); got < 2 {
+		t.Fatalf("this test needs several requests to be about anything, got %d", got)
+	}
+}
+
+// TestATruncatedReplyOnOneFileLeavesTheOthersIntact: the per-file contract holds
+// for the new error too. One file the model choked on must not throw away what
+// the others found.
+func TestATruncatedReplyOnOneFileLeavesTheOthersIntact(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.Write([]byte(`{"models":[{"name":"m"}]}`))
+		case "/api/chat":
+			var body struct {
+				Messages []struct {
+					Role    string `json:"role"`
+					Content string `json:"content"`
+				} `json:"messages"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			var user string
+			for _, m := range body.Messages {
+				if m.Role == "user" {
+					user = m.Content
+				}
+			}
+			payload := map[string]interface{}{
+				"message": map[string]string{"role": "assistant",
+					"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`},
+			}
+			if strings.Contains(user, "Borealis") {
+				// The dense file's reply runs out of room.
+				payload = map[string]interface{}{
+					"message":     map[string]string{"role": "assistant", "content": `{"entity_names":["Bor`},
+					"done_reason": "length",
+					"eval_count":  512,
+				}
+			}
+			resp, _ := json.Marshal(payload)
+			w.Write(resp)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{
+		{Name: "good.txt", Format: engine.FormatTXT, Unit: engine.UnitLine,
+			Markdown: "Alpine Trust signed the engagement letter.\n"},
+		{Name: "bad.txt", Format: engine.FormatTXT, Unit: engine.UnitLine,
+			Markdown: "Borealis Fund objected to the terms.\n"},
+	}
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = false
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"good.txt", "bad.txt"}, nil, nil)
+	if err != nil {
+		t.Fatalf("one truncated file must not fail the run: %v", err)
+	}
+	var found bool
+	for _, sugg := range res.Suggestions {
+		if sugg.MainText == "Alpine Trust" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the healthy file's suggestions must survive: %+v", res.Suggestions)
+	}
+	joined := strings.Join(res.Errors, " | ")
+	if !strings.Contains(joined, "bad.txt") || !strings.Contains(joined, "cut off") {
+		t.Errorf("the truncated file must be named as cut off: %q", joined)
+	}
+}
+
+// assertNoScopeProblem fails when a run reported a problem ABOUT THE SCOPE: an
+// index outside the document, or a document that is not imported. It exists
+// because a scope test's subject is the scope, and a run can legitimately carry
+// other problems (a model that answered nothing) that say nothing about it.
+func assertNoScopeProblem(t *testing.T, res *DetectionResult) {
+	t.Helper()
+	for _, msg := range res.Errors {
+		if strings.Contains(msg, "out of bounds") || strings.Contains(msg, "not among the imported") {
+			t.Fatalf("a valid scope must not report a scope problem: %q", msg)
+		}
+	}
+}
+
 // TestDetectionAIScopeLimitsToPageRange is the whole point of the feature: with
 // a scope set, the local AI must see ONLY the chosen document's chosen pages,
 // never the rest, so a small model is not handed "too much".
@@ -533,9 +745,11 @@ func TestDetectionAIScopeLimitsToPageRange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
-	if len(res.Errors) != 0 {
-		t.Fatalf("a valid scope must not error: %v", res.Errors)
-	}
+	// A VALID scope reports no scope problem. The mock answers every request
+	// with an empty object, so the run does carry the all-silent warning; that
+	// is about the model, not about the scope, and asserting "no errors at all"
+	// here would be asserting the wrong thing.
+	assertNoScopeProblem(t, res)
 
 	joined := strings.Join(seen, "\n")
 	if joined == "" {
@@ -608,9 +822,11 @@ func TestDetectionAIScopeDiscontiguousPages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
-	if len(res.Errors) != 0 {
-		t.Fatalf("a valid scope must not error: %v", res.Errors)
-	}
+	// A VALID scope reports no scope problem. The mock answers every request
+	// with an empty object, so the run does carry the all-silent warning; that
+	// is about the model, not about the scope, and asserting "no errors at all"
+	// here would be asserting the wrong thing.
+	assertNoScopeProblem(t, res)
 
 	joined := strings.Join(seen, "\n")
 	for _, want := range []string{"alpha", "charlie"} {

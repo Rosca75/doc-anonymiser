@@ -1412,6 +1412,19 @@ function wireDetection(container) {
       // Local AI route's folded spellings used to be lost in exactly such a step.
       const added = addSuggestions(result?.suggestions ?? []);
 
+      // What the local AI actually did, kept for the rail's read-out. A run
+      // that found nothing is not the same fact as a document that holds
+      // nothing, and the request count is what separates them.
+      if ((result?.aiRequests ?? 0) > 0) {
+        setState({
+          lastAIScan: {
+            requests: result.aiRequests,
+            silent: result.aiSilentRequests ?? 0,
+            secondsPerRequest: result.aiSecondsPerRequest ?? 0,
+          },
+        });
+      }
+
       // A file the AI could not read is reported, not silently dropped.
       for (const skip of result?.skipped ?? []) {
         notify(WORKSPACE.skippedNotice(skip.name, skip.reason), "warn");

@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"doc-anonymiser/backend/engine"
 	"doc-anonymiser/backend/ollama"
@@ -92,6 +93,20 @@ type DetectionResult struct {
 	Errors    []string        `json:"errors"`
 	Cancelled bool            `json:"cancelled"`
 	Status    string          `json:"status"`
+
+	// AIRequests and AISilentRequests are how many requests the Local AI route
+	// sent and how many of those came back with nothing. They exist because
+	// "0 suggestions" means two different things, and only one of them is about
+	// the document: a model that answered nothing fifteen times reads exactly
+	// like a document with no names in it, and the user gets no hint that
+	// another model or a smaller slice would change the answer.
+	AIRequests       int `json:"aiRequests"`
+	AISilentRequests int `json:"aiSilentRequests"`
+	// AISecondsPerRequest is MEASURED, not estimated: the AI phase's wall clock
+	// divided by its requests. It is what lets a user judge the speed of a scan
+	// on their OWN document and their own machine, which no fixed guidance in a
+	// tooltip can do. Zero when the route did not run.
+	AISecondsPerRequest float64 `json:"aiSecondsPerRequest"`
 }
 
 // AIScope narrows the local-AI route to one document and, within it, an
@@ -573,7 +588,26 @@ func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *
 	// deferred: a cancellation returning straight out would throw away
 	// everything the files before it had produced.
 	var batches [][]engine.Suggestion
-	defer func() { res.Suggestions = mergeInto(res.Suggestions, batches) }()
+	// The timing is measured around the requests and reported however the loop
+	// ends, so a cancelled scan still says how long its requests took.
+	started := time.Now()
+	defer func() {
+		res.Suggestions = mergeInto(res.Suggestions, batches)
+		if res.AIRequests > 0 {
+			res.AISecondsPerRequest = time.Since(started).Seconds() / float64(res.AIRequests)
+		}
+		// Every request answering nothing is the case that reads as a clean
+		// document and is not one. It names the MODEL, because "your model found
+		// nothing" is the actionable half, and it goes in Errors because the
+		// interface already renders those as problems the run finished with. A
+		// parallel notes channel would be a second thing to render and a second
+		// thing to forget.
+		if res.AIRequests > 0 && res.AISilentRequests == res.AIRequests {
+			res.Errors = append(res.Errors, fmt.Sprintf(
+				"the local AI model %q returned nothing for all %d request(s), so this run found no values through it; a larger model, or the Thorough detail level, usually changes that",
+				llm.Model, res.AIRequests))
+		}
+	}()
 
 	for i, job := range jobs {
 		if ctx.Err() != nil {
@@ -599,6 +633,11 @@ func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *
 			}
 			report(p)
 		})
+		// The counts accumulate across documents, and they accumulate even when
+		// the file failed: a request that was sent was sent, and the run's
+		// honesty about what the model did is what these numbers are for.
+		res.AIRequests += outcome.Requests
+		res.AISilentRequests += outcome.Silent
 		// Partial per-slice proposals survive a mid-file cancellation.
 		if len(outcome.Suggestions) > 0 {
 			batches = append(batches, outcome.Suggestions)
@@ -653,16 +692,34 @@ func overallFraction(phaseIndex, phaseCount, docIndex, docCount, chunkIndex, chu
 // detectionStatus is the one sentence the UI shows when a run ends. It says
 // what happened, including the two things the old code computed and then
 // dropped on the floor: that a run was cancelled, and that files were skipped.
+//
+// When the AI phase ran it also names the REQUEST count, so the summary of a
+// run that found nothing distinguishes "the model was asked fifteen times" from
+// "there was one small thing to read" without the reader opening anything else.
 func detectionStatus(res *DetectionResult, docCount int) string {
 	switch {
 	case res.Cancelled:
 		return fmt.Sprintf("cancelled: %d suggestion(s) found before it stopped",
 			len(res.Suggestions))
 	case len(res.Errors) > 0:
-		return fmt.Sprintf("finished with %d problem(s): %d suggestion(s) from %d file(s)",
-			len(res.Errors), len(res.Suggestions), docCount)
+		return fmt.Sprintf("finished with %d problem(s): %d suggestion(s) from %d file(s)%s",
+			len(res.Errors), len(res.Suggestions), docCount, aiRequestSummary(res))
 	default:
-		return fmt.Sprintf("scanned %d file(s), %d suggestion(s)",
-			docCount, len(res.Suggestions))
+		return fmt.Sprintf("scanned %d file(s), %d suggestion(s)%s",
+			docCount, len(res.Suggestions), aiRequestSummary(res))
 	}
+}
+
+// aiRequestSummary is the trailing clause naming what the local AI was asked,
+// and empty when the route did not run, so a Smart-only run's summary is
+// unchanged.
+func aiRequestSummary(res *DetectionResult) string {
+	if res.AIRequests == 0 {
+		return ""
+	}
+	if res.AISilentRequests > 0 {
+		return fmt.Sprintf(" (local AI: %d request(s), %d returned nothing)",
+			res.AIRequests, res.AISilentRequests)
+	}
+	return fmt.Sprintf(" (local AI: %d request(s))", res.AIRequests)
 }

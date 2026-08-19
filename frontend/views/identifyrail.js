@@ -877,6 +877,25 @@ function scopeBlock(s, gated) {
     `</div>`;
 }
 
+/**
+ * lastScanReadout(s) reports what the local AI actually did on the last run:
+ * how many requests it sent, how long each took on THIS machine, and how many
+ * came back with nothing.
+ *
+ * It is a `.rail-readout` and not a hint, because it is a measured fact that
+ * changes with every run rather than static prose. The seconds are the half no
+ * tooltip could supply: how a scan feels depends on the model, the machine and
+ * the document, and this is the only place the user sees all three combined.
+ * Empty before the first local AI run, because a read-out with nothing to
+ * report is a line that only ever teaches the reader to ignore it.
+ */
+function lastScanReadout(s) {
+  const scan = s.lastAIScan;
+  if (!scan || !(scan.requests > 0)) return "";
+  return `<p class="rail-readout" id="last-ai-scan">` +
+    `${escapeHTML(RAIL.lastScan(scan.requests, scan.secondsPerRequest, scan.silent))}</p>`;
+}
+
 function localAISection(s) {
   const ollamaOK = !!s.ollama?.available;
   const aiOn = !!s.settings.useLocalAI;
@@ -917,6 +936,7 @@ function localAISection(s) {
     `</label>` +
     helpTooltip(CONFIGURE.contextSizeHelp, { label: RAIL.contextSize }) +
     `</div>` +
+    lastScanReadout(s) +
     button(RAIL.reprobe, { kind: "secondary", id: "btn-reprobe", icon: "refresh" }) +
     `</div>` +
     scopeBlock(s, gated) +

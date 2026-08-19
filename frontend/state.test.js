@@ -2219,3 +2219,22 @@ test("a Value the user declared states no confidence, which Go reads as a declar
   assert.equal(getState().values[0].confidence, 0,
     "a manual Value states no confidence and lets the engine's default serve it");
 });
+
+// --- What the last local AI scan did -------------------------------------
+
+test("nothing is claimed about a local AI scan before one has run", () => {
+  resetState();
+  assert.equal(getState().lastAIScan, null,
+    "an absent scan is null, not a row of zeroes that reads as a scan that found nothing");
+});
+
+test("stepping back to Identify forgets the last scan's numbers", () => {
+  // The numbers describe a run, and the backward reset discards the run. Left
+  // behind, they would describe a scan whose suggestions are already gone, which
+  // is worse than showing nothing: the reader has no way to tell.
+  resetState();
+  setState({ lastAIScan: { requests: 9, silent: 2, secondsPerRequest: 4 } });
+  resetStep("identify");
+  assert.equal(getState().lastAIScan, null,
+    "the read-out must not survive the reset of the step it describes");
+});

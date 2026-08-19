@@ -324,6 +324,28 @@ export const RAIL = {
   noModels: "(no models found)",
   reprobe: "Check again",
 
+  /**
+   * lastScan(requests, secondsEach, silent) reports what the local AI did on the
+   * last run, measured on this machine and this document.
+   *
+   * The silent count is only mentioned when there IS one: a scan where most
+   * requests find nothing is normal, so the clause exists to explain a
+   * disappointing result rather than to worry the reader about a good one. When
+   * every request came back empty, saying so is the whole point, because
+   * "0 values found" otherwise reads as a clean document.
+   */
+  lastScan: (requests, secondsEach, silent) => {
+    const each = secondsEach >= 10
+      ? `${Math.round(secondsEach)}s`
+      : `${(Math.round(secondsEach * 10) / 10)}s`;
+    const head = `Last scan: ${requests} request${requests === 1 ? "" : "s"}, about ${each} each.`;
+    if (!(silent > 0)) return head;
+    if (silent === requests) {
+      return `${head} The model returned nothing for any of them.`;
+    }
+    return `${head} ${silent} returned nothing.`;
+  },
+
   // Local-AI SCAN SCOPE. Handing a whole document to a small local model is too
   // much, so the user can aim the scan at one document and a range of its own
   // units (pages, slides, rows or lines). This scope applies to the Local AI
