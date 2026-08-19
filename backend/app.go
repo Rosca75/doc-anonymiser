@@ -54,6 +54,33 @@ type Settings struct {
 	// It is a setting rather than a per-call argument so it survives in the
 	// session file and so Go, not the frontend, decides whether a route runs.
 	UseLocalAI bool `json:"useLocalAI"`
+	// AIStrictFormat asks the local AI's discovery call for a schema-constrained
+	// reply instead of loose JSON mode: it makes the model answer for every
+	// category rather than only the ones it thought of.
+	//
+	// It is the user's choice because the measurement has no single winner: the
+	// schema finds a little more on a short dense page and on small documents, and
+	// on a slide-heavy document it costs about twice the time for no more values,
+	// while on a small model it finds nothing at all. Default OFF, which is the
+	// fast end.
+	//
+	// A POINTER for the reason UseBuiltInPatterns is one: "absent" and "the user
+	// switched it off" must stay distinguishable across a session file. Here nil
+	// reads as off, which is the default, so nothing is lost by silence.
+	AIStrictFormat *bool `json:"aiStrictFormat"`
+	// AIDetailLevel is how much text one local AI request carries
+	// (engine.DetailThorough or engine.DetailFaster).
+	//
+	// It is a setting rather than a constant because the measurement has no
+	// single winner: small slices find the most and send the most requests, and
+	// large ones can miss a document's names entirely on a small model. Where
+	// that line falls depends on the model, which is the user's choice. The
+	// engine owns the sizes (engine.ScanTargetBytes); this field is only which of
+	// them a run asks for.
+	//
+	// An empty string is read as thorough, so a payload that says nothing lands
+	// on the safe end: a level nobody chose must not be the one that finds less.
+	AIDetailLevel string `json:"aiDetailLevel"`
 	// UseBuiltInPatterns and UseHeuristicDiscovery are two of Smart detection's
 	// three methods, controlled independently.
 	//
@@ -237,6 +264,10 @@ func defaultSettings() Settings {
 		Model:       ollama.DefaultModel,
 		ContextSize: ollama.DefaultContextSize,
 		Country:     engine.CountryLU,
+		// Thorough is the default because it is the end that FINDS things. The
+		// faster level trades recall for time, and a trade nobody asked for must
+		// not be the one a fresh session makes on their behalf.
+		AIDetailLevel: engine.DetailThorough,
 		// The stricter defaults, matching the frontend store: heuristic discovery
 		// over-detecting is the failure mode that matters.
 		HeuristicDiscovery: engine.DefaultHeuristicDiscoveryOptions(),
@@ -379,11 +410,80 @@ func (a *App) Ping() string {
 	return "pong"
 }
 
-// ProbeOllama reports whether a local Ollama server is reachable and which
-// models it offers. It never fails: "not available" is a normal state
-// carried inside the returned status (graceful degradation, CLAUDE.md §4).
-func (a *App) ProbeOllama() ollama.OllamaStatus {
-	return a.llm.Probe()
+// OllamaState is what the app answers about the local model server: the
+// client's own probe result, plus the model this session will actually post to.
+//
+// The resolved model travels BESIDE ollama.OllamaStatus rather than inside it
+// because resolving it reads the stored settings, and ollama.Client must never
+// start doing that: it is the one external boundary (CLAUDE.md §4), and the
+// preference order below is an application decision.
+type OllamaState struct {
+	Status ollama.OllamaStatus `json:"status"`
+	// Model is the name a run will post to. Empty only when there is nothing to
+	// run: no reachable server, or a server with no models installed.
+	Model string `json:"model"`
+}
+
+// resolveModel settles which model this session posts to, from what the probe
+// just saw, and stores that answer in the settings and on the client.
+//
+// The rule is that the effective model is ALWAYS one the probe listed. A name
+// that is not installed fails at the very end of a run the user has already
+// waited for, and the failure arrives as a per-file detection problem rather
+// than as the configuration mistake it is.
+//
+// The preference order is the user's stored choice, then ollama.DefaultModel,
+// then the first model installed. The stored choice comes first because it is a
+// decision someone made; the pinned default comes next because it is a
+// documented preference and not an installed fact; the first installed model is
+// the last resort, and it is a resort rather than a rule because it means the
+// effective model is decided by the server's tag ordering, which is how a
+// session ends up on a model nobody picked.
+//
+// A probe that FAILED changes nothing. An unreachable Ollama says nothing about
+// which models exist, so rewriting the setting from it would throw away the
+// user's choice the moment they stopped the server.
+func (a *App) resolveModel(status ollama.OllamaStatus) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	stored := a.settings.Model
+	if !status.Available || len(status.Models) == 0 {
+		return stored
+	}
+	installed := func(name string) bool {
+		if name == "" {
+			return false
+		}
+		for _, m := range status.Models {
+			if m == name {
+				return true
+			}
+		}
+		return false
+	}
+	resolved := status.Models[0]
+	switch {
+	case installed(stored):
+		resolved = stored
+	case installed(ollama.DefaultModel):
+		resolved = ollama.DefaultModel
+	}
+
+	a.settings.Model = resolved
+	if a.llm != nil {
+		a.llm.Model = resolved
+	}
+	return resolved
+}
+
+// ProbeOllama reports whether a local Ollama server is reachable, which models
+// it offers, and which of them this session will use. It never fails: "not
+// available" is a normal state carried inside the returned status (graceful
+// degradation, CLAUDE.md §4).
+func (a *App) ProbeOllama() OllamaState {
+	status := a.llm.Probe()
+	return OllamaState{Status: status, Model: a.resolveModel(status)}
 }
 
 // --- Documentation window -------------------------------------
@@ -587,35 +687,46 @@ func (a *App) GetSettings() Settings {
 // rebuilds the Ollama client — still loopback-only, enforced by ollama.New
 // (CLAUDE.md §8). Returns the freshly probed status so the UI can update
 // its badge in the same round-trip.
-func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
+func (a *App) ApplySettings(s Settings) (OllamaState, error) {
 	switch engine.Level(s.Level) {
 	case engine.LevelSoft, engine.LevelMedium, engine.LevelAdvanced:
 	default:
-		return ollama.OllamaStatus{}, fmt.Errorf(
+		return OllamaState{}, fmt.Errorf(
 			"unknown anonymisation level %q, expected soft, medium or advanced", s.Level)
 	}
 	if s.OllamaPort < 1 || s.OllamaPort > 65535 {
-		return ollama.OllamaStatus{}, fmt.Errorf(
+		return OllamaState{}, fmt.Errorf(
 			"invalid Ollama port %d, expected a number between 1 and 65535 (default 11434)", s.OllamaPort)
 	}
 	if s.ContextSize < 0 || s.ContextSize > 1<<20 {
-		return ollama.OllamaStatus{}, fmt.Errorf(
+		return OllamaState{}, fmt.Errorf(
 			"invalid context size %d, expected 0 (model default) or a positive number of tokens such as 8192", s.ContextSize)
 	}
 	if !engine.KnownCountry(s.Country) {
-		return ollama.OllamaStatus{}, fmt.Errorf(
+		return OllamaState{}, fmt.Errorf(
 			"unknown country %q, expected one of %v", s.Country, engine.SupportedCountries)
 	}
+	// A misspelt detail level is refused rather than stored. Stored, it would
+	// silently read as thorough for the rest of the session while the rail showed
+	// whatever the user picked: a control that appears to do something and does
+	// not. An EMPTY level is accepted, because absence is not a mistake; it is
+	// what a session file written before the setting existed carries, and it has
+	// a documented meaning.
+	if !engine.ValidDetailLevel(s.AIDetailLevel) {
+		return OllamaState{}, fmt.Errorf(
+			"unknown local AI detail level %q, expected %s or %s",
+			s.AIDetailLevel, engine.DetailThorough, engine.DetailFaster)
+	}
 	if s.MinConfidence < 0 || s.MinConfidence > 1 {
-		return ollama.OllamaStatus{}, fmt.Errorf(
+		return OllamaState{}, fmt.Errorf(
 			"invalid minimum confidence %v, expected a number between 0 (replace every detection) and 1 (replace only the most certain ones)", s.MinConfidence)
 	}
 	if s.HeuristicDiscovery.MinConfidence < 0 || s.HeuristicDiscovery.MinConfidence > 1 {
-		return ollama.OllamaStatus{}, fmt.Errorf(
+		return OllamaState{}, fmt.Errorf(
 			"invalid smart detection confidence %v, expected a number between 0 (show every suggestion) and 1 (show only the strongest)", s.HeuristicDiscovery.MinConfidence)
 	}
 	if s.HeuristicDiscovery.MinLength < 0 || s.HeuristicDiscovery.MinOccurrences < 0 {
-		return ollama.OllamaStatus{}, fmt.Errorf(
+		return OllamaState{}, fmt.Errorf(
 			"invalid heuristic discovery limits (minimum length %d, minimum occurrences %d), both must be zero or a positive number",
 			s.HeuristicDiscovery.MinLength, s.HeuristicDiscovery.MinOccurrences)
 	}
@@ -626,13 +737,13 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 	// filed under the wrong source is just as dead as an invented one.
 	for source, derivations := range s.SignalSuggestionSources {
 		if !engine.ValidSignalSource(source) {
-			return ollama.OllamaStatus{}, fmt.Errorf(
+			return OllamaState{}, fmt.Errorf(
 				"unknown signal suggestion source %q, expected one of %v",
 				source, engine.AllSignalSources)
 		}
 		for derivation := range derivations {
 			if !engine.ValidSignalDerivation(source, derivation) {
-				return ollama.OllamaStatus{}, fmt.Errorf(
+				return OllamaState{}, fmt.Errorf(
 					"unknown signal derivation %q for source %q, expected one of %v",
 					derivation, source, engine.SignalDerivations[source])
 			}
@@ -648,12 +759,21 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 	// an absent key as "off" would silently disable a reading the user never
 	// touched.
 	s.SignalSuggestionSources = engine.NormaliseSignalSources(s.SignalSuggestionSources)
+	// An absent level is filled out to the default it already means, for the same
+	// reason: what GetSettings answers is what the rail's dropdown marks as
+	// selected, and an empty string marks nothing.
+	if s.AIDetailLevel == "" {
+		s.AIDetailLevel = engine.DetailThorough
+	}
 	a.settings = s
 	a.llm = ollama.New(fmt.Sprintf("http://127.0.0.1:%d", s.OllamaPort))
 	if s.Model != "" {
 		a.llm.Model = s.Model
 	}
 	a.llm.ContextSize = s.ContextSize
+	// nil reads as off, which is the shipped default: a payload that says nothing
+	// about the reply format gets the fast one rather than the slow one.
+	a.llm.StrictFormat = s.AIStrictFormat != nil && *s.AIStrictFormat
 	a.mu.Unlock()
 
 	// Switching the route ON is the moment to pre-load the model, and the only
@@ -665,7 +785,11 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 	if !wasOn && s.UseLocalAI {
 		a.warmLocalAI(context.Background())
 	}
-	return a.llm.Probe(), nil
+	// The probe is also where the effective model is settled: the port may have
+	// changed, so the models this call can reach are not necessarily the ones the
+	// last probe saw.
+	status := a.llm.Probe()
+	return OllamaState{Status: status, Model: a.resolveModel(status)}, nil
 }
 
 // ListOllamaModels populates the model dropdown from the live server

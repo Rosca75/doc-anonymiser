@@ -180,8 +180,25 @@ export const CONFIGURE = {
   groupDetected: "Auto detected values",
   groupDeclared: "Your own patterns",
   groupThorough: "Only for thorough anonymisation",
-  useAIHelp: "A language model running on this machine reads the documents and suggests Values. Nothing leaves your computer, and nothing it finds is replaced until you accept it.",
+  // The route's own explanation, plus ONE sentence pointing at the Documentation
+  // window. Ollama's own settings decide how fast a scan runs and the app cannot
+  // read or change them, so the guidance lives in a page with room for it rather
+  // than in a tooltip that would then carry two subjects.
+  useAIHelp: "A language model running on this machine reads the documents and suggests Values. Nothing leaves your computer, and nothing it finds is replaced until you accept it. The Documentation window has a note on Ollama settings that affect how fast a scan runs.",
   contextSizeHelp: "Higher values let the model read longer documents at once but use more memory.",
+  // The reply-format switch, in OUTCOME terms. The mechanism (a JSON schema
+  // constraining which keys the reply must carry) is not what a business user is
+  // deciding about; what they are deciding about is a little more recall against
+  // roughly twice the wait.
+  strictFormatHelp: "Makes the model answer for every category instead of only the ones it thought of. Sometimes finds a little more, and usually takes about twice as long.",
+  // The detail level, in OUTCOME terms, and deliberately WITHOUT a promise of
+  // speed. Measured on both reference documents, larger slices did not reliably
+  // take less time on a model that finds anything: two runs of the same setting
+  // varied by more than the two settings varied from each other. What larger
+  // slices reliably do is send fewer requests and, on a small model, find
+  // nothing, so those are what the sentence says. The request count itself is
+  // dynamic and belongs in the read-out beside the control, not here.
+  detailLevelHelp: "The local AI reads your document in slices. Smaller slices find the most values and send more requests. Larger slices send fewer requests, and on a small model they can miss values completely. Whether fewer requests is quicker depends on your model and your machine.",
   aiOffTooltip: "Local AI is turned off. Turn it on with the switch on the Local AI section of Configure.",
   allowHint: "Terms in this list survive every pass, even when they also appear as names to replace.",
   // the group that surfaces the recognizers.
@@ -321,8 +338,65 @@ export const RAIL = {
   port: "Port",
   model: "Model",
   contextSize: "Context",
+  // Short, as every rail label is: the explanation is the tooltip beside it.
+  strictFormat: "Answer every category",
+  // The slice-size dial. The label names the QUESTION and the options name what
+  // each answer DOES, so neither has to carry the explanation the tooltip holds.
+  //
+  // The options name the slice size rather than a speed. "Faster" is the engine's
+  // identifier for the larger slices, and it would be a promise here: measured on
+  // both reference documents, larger slices were not reliably quicker, while they
+  // reliably send fewer requests. A label states what a control does.
+  detailLevel: "Detail",
+  detailLevelOptions: {
+    thorough: "Smaller slices",
+    faster: "Larger slices",
+  },
+
+  /**
+   * scanEstimate(requests) is the cost of the current scope and detail level,
+   * shown BEFORE the user pays it. It is dynamic, so it stays inline as a
+   * read-out rather than going in the tooltip.
+   *
+   * It names requests rather than a time, because how long a request takes
+   * depends on the model and the machine; what the last scan actually cost is
+   * lastScan's job, and the two read side by side.
+   */
+  scanEstimate: (requests) =>
+    `This scope needs ${requests} request${requests === 1 ? "" : "s"}.`,
   noModels: "(no models found)",
   reprobe: "Check again",
+
+  /**
+   * lastScan(requests, secondsEach, silent, truncated) reports what the local AI
+   * did on the last run, measured on this machine and this document.
+   *
+   * The silent count is only mentioned when there IS one: a scan where most
+   * requests find nothing is normal, so the clause exists to explain a
+   * disappointing result rather than to worry the reader about a good one. When
+   * every request came back empty, saying so is the whole point, because
+   * "0 values found" otherwise reads as a clean document.
+   *
+   * The truncated count sits BESIDE it and is never folded into it, because the
+   * two say opposite things: a silent request found nothing, a cut-off one
+   * found more than it was allowed to finish listing. Only the second means
+   * values may be missing from pages that did return some.
+   */
+  lastScan: (requests, secondsEach, silent, truncated = 0) => {
+    const each = secondsEach >= 10
+      ? `${Math.round(secondsEach)}s`
+      : `${(Math.round(secondsEach * 10) / 10)}s`;
+    let out = `Last scan: ${requests} request${requests === 1 ? "" : "s"}, about ${each} each.`;
+    if (silent > 0) {
+      out += silent === requests
+        ? " The model returned nothing for any of them."
+        : ` ${silent} returned nothing.`;
+    }
+    if (truncated > 0) {
+      out += ` ${truncated} ran out of room, so some values may be missing.`;
+    }
+    return out;
+  },
 
   // Local-AI SCAN SCOPE. Handing a whole document to a small local model is too
   // much, so the user can aim the scan at one document and a range of its own

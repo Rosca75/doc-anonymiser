@@ -27,7 +27,7 @@
 
 import {
   applySettings, listOllamaModels, probeOllama, loadSession, saveSession,
-  valuePlaceholders, listRemovedValues,
+  valuePlaceholders, listRemovedValues, estimateAIRequests,
 } from "../api.js";
 import {
   getState, setState,
@@ -40,6 +40,9 @@ import {
   setCategoryGroup, setMinConfidence, setDocumentCountry,
   setHeuristicDiscoveryOptions, heuristicDiscoveryOptions,
   setAIScope,
+  aiScopeArg,
+  adoptProbe,
+  AI_DETAIL_LEVELS,
   parsePageSpec,
   buildRunRequest, setValueTables,
   ALL_CATEGORIES,
@@ -877,6 +880,84 @@ function scopeBlock(s, gated) {
     `</div>`;
 }
 
+/**
+ * lastScanReadout(s) reports what the local AI actually did on the last run:
+ * how many requests it sent, how long each took on THIS machine, how many came
+ * back with nothing, and how many ran out of room before they finished
+ * answering.
+ *
+ * It is a `.rail-readout` and not a hint, because it is a measured fact that
+ * changes with every run rather than static prose. The seconds are the half no
+ * tooltip could supply: how a scan feels depends on the model, the machine and
+ * the document, and this is the only place the user sees all three combined.
+ * Empty before the first local AI run, because a read-out with nothing to
+ * report is a line that only ever teaches the reader to ignore it.
+ */
+function lastScanReadout(s) {
+  const scan = s.lastAIScan;
+  if (!scan || !(scan.requests > 0)) return "";
+  return `<p class="rail-readout" id="last-ai-scan">` +
+    `${escapeHTML(RAIL.lastScan(scan.requests, scan.secondsPerRequest, scan.silent, scan.truncated))}</p>`;
+}
+
+/**
+ * modelOptions(s) is the model dropdown's options, one per model the probe saw.
+ *
+ * Exactly ONE option is marked selected whenever there are any: the stored model
+ * when it is among them, otherwise the first. Leaving nothing marked lets the
+ * browser select the first option by itself while the store still holds
+ * something else, so the control shows one model, the store names another, and
+ * the next settings write sends whichever the server happened to list first.
+ * Which model a fresh session runs on is then decided by Ollama's tag ordering.
+ *
+ * The fallback here and Go's model resolution agree by construction: Go resolves
+ * to an installed model and the store adopts it (state.js adoptProbe), so the
+ * stored name is normally present and this fallback is the belt to that braces.
+ */
+function modelOptions(s) {
+  const models = s.ollama?.models ?? [];
+  if (models.length === 0) return "";
+  const current = models.includes(s.settings.model) ? s.settings.model : models[0];
+  return models.map((m) =>
+    `<option value="${escapeHTML(m)}"${m === current ? " selected" : ""}>` +
+    `${escapeHTML(m)}</option>`).join("");
+}
+
+/**
+ * detailLevelOptions(s) is the dropdown's two options, built from the mirrored
+ * AI_DETAIL_LEVELS so the rail cannot offer a level Go would refuse.
+ *
+ * Exactly one option is marked selected, always: an unset or unrecognised stored
+ * level falls back to the first, which is thorough. Leaving nothing marked lets
+ * the browser pick the first by itself, and a control whose value nobody wrote
+ * is a choice made by option ordering.
+ */
+function detailLevelOptions(s) {
+  const current = AI_DETAIL_LEVELS.includes(s.settings.aiDetailLevel)
+    ? s.settings.aiDetailLevel : AI_DETAIL_LEVELS[0];
+  return AI_DETAIL_LEVELS.map((level) =>
+    `<option value="${escapeHTML(level)}"${level === current ? " selected" : ""}>` +
+    `${escapeHTML(RAIL.detailLevelOptions[level] ?? level)}</option>`).join("");
+}
+
+/**
+ * scanEstimateReadout(s) is what the current scope and detail level would COST,
+ * shown before the user pays it. Go computes it with the same helper the run
+ * uses, so the number equals the number of requests the run then makes.
+ *
+ * A `<span class="hint">` inside a `.rail-status` row, exactly as the Ollama
+ * availability line is: the rail bans explanatory paragraphs, and this is a live
+ * fact rather than prose. Empty until Go has answered, because a read-out
+ * guessing while it waits is a number the run can contradict.
+ */
+function scanEstimateReadout(s) {
+  const requests = s.aiRequestEstimate;
+  if (!(requests > 0)) return "";
+  return `<div class="rail-status">` +
+    `<span class="hint" id="ai-request-estimate">${escapeHTML(RAIL.scanEstimate(requests))}</span>` +
+    `</div>`;
+}
+
 function localAISection(s) {
   const ollamaOK = !!s.ollama?.available;
   const aiOn = !!s.settings.useLocalAI;
@@ -884,9 +965,7 @@ function localAISection(s) {
   // those two are how a user CONNECTS, so gating them would lock someone out of
   // fixing the very connection the gate is complaining about.
   const gated = aiOn && ollamaOK ? "" : ` disabled title="${escapeHTML(llmGateTooltip(s))}"`;
-  const models = (s.ollama?.models ?? []).map((m) =>
-    `<option value="${escapeHTML(m)}"${s.settings.model === m ? " selected" : ""}>` +
-    `${escapeHTML(m)}</option>`).join("");
+  const models = modelOptions(s);
 
   // The route's own switch lives in the section header now, so the body opens
   // with what the switch cannot say: whether Ollama is actually there.
@@ -910,6 +989,17 @@ function localAISection(s) {
     `<span class="rail-field-label">${escapeHTML(RAIL.model)}</span>` +
     `<select id="ollama-model"${gated}>${models || `<option value="">${escapeHTML(RAIL.noModels)}</option>`}</select>` +
     `</label>` +
+    // The speed-versus-recall dial sits with the two other settings about how
+    // much the model reads, and before Context, because it is the one that
+    // decides the size of a request; Context only bounds it.
+    `<div class="rail-field-row">` +
+    `<label class="rail-field" for="ai-detail-level">` +
+    `<span class="rail-field-label">${escapeHTML(RAIL.detailLevel)}</span>` +
+    `<select id="ai-detail-level"${gated}>${detailLevelOptions(s)}</select>` +
+    `</label>` +
+    helpTooltip(CONFIGURE.detailLevelHelp, { label: RAIL.detailLevel }) +
+    `</div>` +
+    scanEstimateReadout(s) +
     `<div class="rail-field-row">` +
     `<label class="rail-field" for="context-size">` +
     `<span class="rail-field-label">${escapeHTML(RAIL.contextSize)}</span>` +
@@ -917,6 +1007,17 @@ function localAISection(s) {
     `</label>` +
     helpTooltip(CONFIGURE.contextSizeHelp, { label: RAIL.contextSize }) +
     `</div>` +
+    // The reply format, gated like the model and the context size are: it changes
+    // what a request asks the model for, so it means nothing without one running.
+    // Off by default, which is the fast end of a trade-off with no single winner.
+    `<div class="rail-toggle">` +
+    `<label class="cat-row" for="ai-strict-format">` +
+    `<input type="checkbox" id="ai-strict-format"${s.settings.aiStrictFormat ? " checked" : ""}${gated}/>` +
+    `<span class="cat-label">${escapeHTML(RAIL.strictFormat)}</span>` +
+    `</label>` +
+    helpTooltip(CONFIGURE.strictFormatHelp, { label: RAIL.strictFormat }) +
+    `</div>` +
+    lastScanReadout(s) +
     button(RAIL.reprobe, { kind: "secondary", id: "btn-reprobe", icon: "refresh" }) +
     `</div>` +
     scopeBlock(s, gated) +
@@ -934,13 +1035,55 @@ function localAISection(s) {
     `</div>`;
 }
 
+// The inputs the last estimate was computed for. The rail re-renders on every
+// state change, so without this the read-out would ask Go the same question
+// dozens of times, and answering it would setState and re-render again.
+let lastEstimateKey = null;
+
+/**
+ * refreshAIEstimate() asks Go what the current scope and detail level would
+ * cost, and stores the answer for the read-out.
+ *
+ * It is fired from the rail's wiring rather than from a list of the changes that
+ * could affect it: importing a document, changing the scope and changing the
+ * level all move the number, and enumerating them is how one gets forgotten. The
+ * key guard is what makes that safe, both against the render loop and against
+ * asking Go the same question on every repaint.
+ *
+ * A failure is silence, not a banner. The estimate is a convenience beside a
+ * control that works without it, and the run itself reports anything genuinely
+ * wrong with the scope.
+ */
+async function refreshAIEstimate() {
+  const s = getState();
+  const names = s.documents.map((d) => d.name);
+  const scope = aiScopeArg(s);
+  const key = JSON.stringify([names, scope, s.settings.aiDetailLevel]);
+  if (key === lastEstimateKey) return;
+  lastEstimateKey = key;
+  if (names.length === 0) {
+    if (getState().aiRequestEstimate !== 0) setState({ aiRequestEstimate: 0 });
+    return;
+  }
+  try {
+    const requests = await estimateAIRequests(names, scope);
+    if (getState().aiRequestEstimate !== requests) setState({ aiRequestEstimate: requests });
+  } catch {
+    // No bridge, or nothing to estimate: the read-out simply stays away.
+    lastEstimateKey = null;
+    if (getState().aiRequestEstimate !== 0) setState({ aiRequestEstimate: 0 });
+  }
+}
+
 function wireLocalAI(container) {
-  for (const id of ["#ollama-port", "#ollama-model", "#context-size"]) {
+  refreshAIEstimate();
+  for (const id of ["#ollama-port", "#ollama-model", "#context-size", "#ai-strict-format",
+    "#ai-detail-level"]) {
     container.querySelector(id)?.addEventListener("change", () => pushSettings(container));
   }
   container.querySelector("#btn-reprobe")?.addEventListener("click", async () => {
     await pushSettings(container);
-    setState({ ollama: await probeOllama() });
+    adoptProbe(await probeOllama());
   });
   // The scan-scope controls write straight to state (no Go round-trip: scope is
   // a per-run choice, not a saved setting). setAIScope re-renders the rail, so
@@ -1027,16 +1170,21 @@ function wireProfile(container) {
 // --- Shared: push settings to Go -----------------------------------------
 
 /**
- * pushSettings assembles the full settings payload from state plus the Local AI
- * tab's inputs (when that tab is rendered) and applies it in one round-trip. The
- * store mirror updates from what Go accepted; errors surface as a banner.
+ * settingsPayload(s, container) is the ONE definition of what a settings write
+ * sends to Go: the store plus whatever the Local AI tab's inputs say when that
+ * tab is on screen. Pure, so a test can read the payload a given state and DOM
+ * produce without a bridge to answer the call.
+ *
+ * A tab that is not rendered contributes nothing and its value comes from the
+ * store, so switching tabs never resets a setting.
  */
-async function pushSettings(container) {
-  const s = getState();
+export function settingsPayload(s, container) {
   const port = container.querySelector("#ollama-port");
   const model = container.querySelector("#ollama-model");
   const ctxSize = container.querySelector("#context-size");
-  const settings = {
+  const strictFormat = container.querySelector("#ai-strict-format");
+  const detailLevel = container.querySelector("#ai-detail-level");
+  return {
     level: s.settings.level,
     categories: s.settings.categories,
     country: s.settings.country ?? s.documentCountry,
@@ -1046,6 +1194,15 @@ async function pushSettings(container) {
     model: model?.value || s.settings.model,
     contextSize: ctxSize ? (parseInt(ctxSize.value, 10) || 0) : (s.settings.contextSize ?? 8192),
     useLocalAI: !!s.settings.useLocalAI,
+    // The reply format the Local AI's discovery call asks for. Sent EXPLICITLY as
+    // a boolean, never left out: Go reads an absent value as off, so an omitted
+    // key and a cleared checkbox would be the same thing on the wire and there
+    // would be no way to say "on".
+    aiStrictFormat: strictFormat ? strictFormat.checked : !!s.settings.aiStrictFormat,
+    // How much text one local AI request carries. Read from the element when the
+    // tab is on screen and from the store otherwise, exactly as the model is, so
+    // switching tabs never resets it.
+    aiDetailLevel: detailLevel?.value || s.settings.aiDetailLevel || AI_DETAIL_LEVELS[0],
     useBuiltInPatterns: s.settings.useBuiltInPatterns !== false,
     useHeuristicDiscovery: s.settings.useHeuristicDiscovery !== false,
     // Which READINGS of which built-in signals may DERIVE Suggestions. Sent as a
@@ -1061,9 +1218,21 @@ async function pushSettings(container) {
     minConfidence: s.settings.minConfidence ?? 0,
     heuristicDiscovery: heuristicDiscoveryOptions(s),
   };
+}
+
+/**
+ * pushSettings applies the payload in one round-trip. The store mirror updates
+ * from what Go accepted; errors surface as a banner.
+ */
+async function pushSettings(container) {
+  const settings = settingsPayload(getState(), container);
   try {
     const status = await applySettings(settings);
-    setState({ settings: { ...getState().settings, ...settings }, ollama: status });
+    // What Go accepted first, then the model IT resolved: an uninstalled name in
+    // the payload comes back as an installed one, and the store has to hold the
+    // model a run will post to rather than the one that was asked for.
+    setState({ settings: { ...getState().settings, ...settings } });
+    adoptProbe(status);
     if (status.available) {
       try {
         const models = await listOllamaModels();

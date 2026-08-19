@@ -21,8 +21,30 @@ what shape it comes back in, **without opening any Go**.
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
 | `ping()` | — | `"pong"` (proves the JS↔Go bridge end to end) |
-| `probeOllama()` | — | `{available, models, detail}`. Never rejects for "Ollama missing" — that is a normal state in the object. |
+| `probeOllama()` | — | `{available, models, detail, model}`. Never rejects for "Ollama missing" — that is a normal state in the object. |
 | `listOllamaModels()` | — | installed model names `[string]` |
+
+**`model` is the model a run will actually post to, and it is never a name the
+probe did not just see.** Go answers `OllamaState {status, model}`; `api.js`
+flattens the two into one object (`flatProbe`) so the split stops there, and
+`state.js adoptProbe` is the one place a probe result reaches the store, taking
+`model` into `settings.model`.
+
+The resolution is an APP decision, not the client's, because it reads the stored
+settings: the preference order is the user's stored choice, then
+`ollama.DefaultModel`, then the first model installed. The pin is a documented
+preference and not an installed fact, so it cannot outrank a choice the user made
+and it cannot be posted to a server that does not have it. A model name that is
+not installed fails at the very END of a run the user already waited for, and it
+arrives as a per-file detection problem rather than as the configuration mistake
+it is.
+
+`model` is EMPTY only when there is nothing to run (no reachable server, or a
+server with no models installed), and a probe that FAILED changes nothing: an
+unreachable Ollama says nothing about which models exist, so it must not throw
+away a choice. The rail's `<select>` marks exactly one option selected whenever
+models exist, for the same reason: with nothing marked the browser picks the
+first by itself and the effective model is decided by the server's tag ordering.
 
 ## Documentation window
 
@@ -68,13 +90,37 @@ Local AI section sizes its From/To range inputs from it.
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
-| `applySettings(settings)` | settings object | fresh `OllamaStatus`; rejects with an actionable message on bad input |
+| `applySettings(settings)` | settings object | the fresh probe result, in the same flat `{available, models, detail, model}` shape `probeOllama()` gives; rejects with an actionable message on bad input. It re-resolves the model because a settings write can change the PORT, so which models exist afterwards is not what the last probe saw |
 
 There are TWO detection routes, and the settings say so directly.
 
 **Local AI** is one switch, `useLocalAI`. Off by default and additionally gated
 on the live Ollama probe, so a stale `true` can never start a model that is not
 running.
+
+`aiStrictFormat` is the same route's reply-format choice, off by default: on, the
+DISCOVERY request asks the model to answer for every category (a JSON Schema in
+`format`); off, it asks for loose JSON mode. It changes recall and time and
+nothing else, and the two directions are both real: the schema found a little more
+on a short dense page and on very small documents, cost about twice the wall clock
+on a slide-heavy deck for no more values, and returned nothing at all on a 0.8B
+model. It is a `*bool` in Go so a session file can tell "absent" from "switched
+off"; absent reads as OFF, which is the default, so the rail sends the boolean
+EXPLICITLY rather than omitting it. It does NOT reach the CLASSIFICATION call,
+which is always schema-constrained: that call files a bounded list of names, where
+"every category present" is what makes the re-filing complete.
+
+`aiDetailLevel` is how much text one request of the same route carries. One of `engine.AllDetailLevels` (`"thorough"`, the default, or
+`"faster"`), mirrored by `state.js AI_DETAIL_LEVELS` and guarded by
+`../detection_parity_test.go`. `applySettings` REFUSES a level Go cannot size and
+names the two valid ones; the EMPTY string is accepted, because absence has a
+documented meaning (thorough) and is what a session file written before the
+setting existed carries. Go fills it out to `thorough` when storing, so
+`getSettings` always answers with a level the rail's dropdown can mark selected.
+
+There is deliberately no "whole document in one request" level: it measures zero
+values on every model tried, and a choice whose outcome is "finds nothing" is a
+broken switch rather than an option.
 
 **Smart detection** is THREE methods, each with its own setting, and no switch of
 its own:
@@ -129,13 +175,53 @@ display choice: it decides which country-specific regex categories run.
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
-| `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, pages}` (null = every document whole; restricts the LOCAL AI route only; `pages` is a 1-based `number[]` over the document's own page/slide/row/line units, and an empty array means the whole selected document) | `DetectionResult {suggestions, phases, skipped, errors, cancelled, status}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
+| `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, pages}` (null = every document whole; restricts the LOCAL AI route only; `pages` is a 1-based `number[]` over the document's own page/slide/row/line units, and an empty array means the whole selected document) | `DetectionResult {suggestions, phases, skipped, errors, cancelled, status, aiRequests, aiSilentRequests, aiTruncatedRequests, aiSecondsPerRequest}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
+| `estimateAIRequests(fileNames, aiScope)` | names, optional `AIScope` | how many model requests the current scope and DETAIL LEVEL imply, as a number. Reaches no model, probes nothing and mutates nothing, so it is safe to call on every edit. Go computes it with the SAME helper the run uses, which is what makes it equal to the request count the run then makes: a read-out predicting something else is worse than none. Rejects only when there is nothing to estimate (no matching documents); a scope naming pages that do not exist resolves to what the run would actually send, which for that document is zero |
 | `cancelDetection()` | — | aborts the in-flight run, reaching whichever route is running, including mid-file |
 | `expandSpellings(value)` | `{category, mainText, spellings, spellingPolicy}` | the forms this Value matches, longest first. `spellingPolicy: "curated"` means the list is the user's: Go derives nothing and returns the main text plus exactly the spellings it was given, so the chips on the card are what the run replaces |
 | `countTermMatches(term)` | term | `{count, documents}`, the live read-out under the manual declaration row (debounced) |
 | `checkIntersections(request)` | `{values, patterns, allowTerms, categories, suppressRegexPII}` | `{intersections: [{value, category, matchClass, winnerValue, winnerCategory, winnerMatchClass, occurrences, totalOccurrences, documents, matchedTexts}]}`. The Values another method claims in EVERY place they occur, so a card can warn BEFORE the run rather than the user finding out on the results screen. Only FULL coverage is reported, so `occurrences == totalOccurrences` always holds: a value covered in some places and free in others still gets its own placeholder where nothing covers it, which is neither a leak nor an action. `matchedTexts` is the literal text the winner actually covered, in document order, and is ABSENT when that is the value's own text; it exists because `value` is the canonical main text, and a person covered inside `pierre.dupont@coca.us` is covered as the fragments `pierre` and `dupont`, which the full name's spelling never matches there. `matchClass` is the engine-internal precedence input; the frontend turns it into the NAME of the winning method (`copy.js WORKSPACE.matchClassLabel`) and never prints a rank. Mutates nothing (no placeholder minted, registry untouched), so it is safe to call on every edit. An empty list is the normal answer, not an error |
 | `validatePattern(expr)` | regex | `""` (valid) or the error message |
 | `patternMatches(expr)` | regex | up to 20 sample matches across the loaded documents, shown live under the pattern field: a regex that compiles and matches nothing is the common mistake |
+
+### What the local AI did, and did not say
+
+`DetectionResult` carries four numbers about the LOCAL AI route, and they exist
+because **"0 suggestions" means two different things and only one of them is about
+the document**. A model that answered nothing fifteen times reads exactly like a
+document with no names in it, and the user gets no hint that another model or a
+smaller slice would change the answer.
+
+| Field | Meaning |
+|---|---|
+| `aiRequests` | how many requests the route sent, across every document it read. Zero when the route did not run |
+| `aiSilentRequests` | how many of those parsed cleanly and yielded NOTHING, counted after the hallucination filter, because a reply of three invented names told the user nothing |
+| `aiTruncatedRequests` | how many of those were still answering when the model hit its generation cap. Counted APART from the silent ones, never folded into them: a silent request found nothing, a cut-off one found more than it was allowed to finish listing, and only the second means values may be missing from a page that did return some |
+| `aiSecondsPerRequest` | MEASURED, not estimated: the phase's wall clock divided by its requests. It is what lets a user judge a scan on their own machine and their own document, which no fixed sentence in a tooltip can do |
+
+Most requests returning nothing is NORMAL, so only an ALL-silent phase adds a
+message to `errors`, and that message names the MODEL, which is the actionable
+half. `status` names the request count whenever the route ran, so the one-line
+summary distinguishes the two cases by itself. The frontend keeps the four
+numbers in `state.lastAIScan` and shows them as the Local AI section's
+`.rail-readout`; the backward reset for Identify clears them, because they
+describe a run that reset discards.
+
+A reply that Ollama cut off at the generation cap (`done_reason: "length"`) is
+reported as TRUNCATION rather than surfacing as "the model's reply was not the
+expected JSON object". The user can act on one of those and not the other.
+
+Truncation degrades ONE SLICE and ends nothing. What the model finished writing
+before the cut is salvaged, the slice is counted in `aiTruncatedRequests`, and
+the scan carries on to the next slice; the run then reports, per document, how
+many of its requests ran out of room and what to do about it. Salvage is safe
+because the hallucination filter drops anything that does not occur verbatim in
+the source, so a half-written name cannot reach the review list. Aborting the
+document instead is what made one dense page leave every page after it unread,
+while the run presented a fraction of the document as though that were all of
+it. The remedy the message names is scanning fewer pages at a time or trying
+another model: it must never name the detail level, which is already the
+default.
 
 ### The unified Suggestion
 
@@ -310,7 +396,7 @@ missing runtime is a safe no-op).
 | `documents:changed` | after a drag-drop import (drops are push, not request/reply) | `ImportResult` |
 | `pipeline:progress` | during a `runPipeline` run | progress info |
 | `pipeline:done` | when a `runPipeline` run finishes | `Results` |
-| `detection:progress` | during a `runDetection` run | `{phase, phaseIndex, phaseCount, docIndex, docCount, docName, chunkIndex, chunkCount, fraction}` |
+| `detection:progress` | during a `runDetection` run | `{phase, phaseIndex, phaseCount, docIndex, docCount, docName, chunkIndex, chunkCount, unitFrom, unitTo, unitWord, fraction}` |
 | `detection:done` | when a `runDetection` run finishes, is cancelled, or has nothing to run | `DetectionResult` (one `suggestions` list) |
 | `detection:error` | when a run stops unexpectedly | `{message}` |
 
@@ -320,6 +406,15 @@ the event rather than by the caller's `finally`. `fraction` is the whole run's
 progress, computed in Go and non-decreasing across routes: never recompute a
 percentage per route in the frontend, that is what made the bar rewind when the
 second route started with a smaller file count.
+
+On the LOCAL AI route the model reads a document in slices aligned to the
+document's own units, one request each, so `chunkIndex` and `chunkCount` are the
+request number and the request count for that document's scan. `unitFrom`,
+`unitTo` and `unitWord` say which of the document's OWN units the current request
+covers, so a caption can read "slides 4 to 6 of 15" in the same word the import
+list uses; `unitWord` is SINGULAR and the frontend pluralises, exactly as
+`DocumentInfo.unit` works. All three are zero and empty on the Smart route, which
+sends no requests.
 
 ## Rules for changing the contract
 

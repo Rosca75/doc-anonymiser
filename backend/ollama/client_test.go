@@ -7,6 +7,7 @@ package ollama
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,7 +15,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"unicode/utf8"
 
 	"doc-anonymiser/backend/engine"
 )
@@ -36,8 +36,13 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.S
 // here rather than in one dedicated test: the contract has to hold on the
 // discovery call and the classification call alike, and a helper every path
 // goes through is the only place that covers both without being remembered.
+//
+// The reply format is the one part of that contract that differs PER CALL, so
+// the handler reads it off the client it serves rather than from a constant: a
+// test that flips StrictFormat gets the assertion that goes with it.
 func chatReplyServer(t *testing.T, content string) *Client {
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	var c *Client
+	c, _ = newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tags":
 			w.Write([]byte(`{"models":[{"name":"qwen3.5:0.8b"}]}`))
@@ -46,7 +51,7 @@ func chatReplyServer(t *testing.T, content string) *Client {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Errorf("chat request not JSON: %v", err)
 			}
-			assertPinnedChatRequest(t, req)
+			assertPinnedChatRequest(t, req, c)
 			resp, _ := json.Marshal(map[string]interface{}{
 				"message": map[string]string{"role": "assistant", "content": content},
 			})
@@ -62,7 +67,10 @@ func chatReplyServer(t *testing.T, content string) *Client {
 // contract this package guarantees (CLAUDE.md §8). Each assertion names the
 // failure it prevents, because every one of them is a setting whose absence is
 // silent: the request still succeeds and the reply is simply worse.
-func assertPinnedChatRequest(t *testing.T, req map[string]interface{}) {
+//
+// c is the client that sent it, because the expected reply format depends on
+// which call this is and on that client's StrictFormat setting.
+func assertPinnedChatRequest(t *testing.T, req map[string]interface{}, c *Client) {
 	t.Helper()
 
 	if req["stream"] != false {
@@ -91,7 +99,54 @@ func assertPinnedChatRequest(t *testing.T, req map[string]interface{}) {
 		}
 	}
 
-	assertSuggestionSchemaFormat(t, req["format"])
+	assertReplyFormat(t, req, c)
+}
+
+// systemPromptOf reads the system message out of a decoded request body, which
+// is what says WHICH call it is. Comparing against the prompt constants rather
+// than against a substring means a reworded prompt cannot quietly make a
+// discovery request look like a classification one.
+func systemPromptOf(req map[string]interface{}) string {
+	messages, _ := req["messages"].([]interface{})
+	for _, raw := range messages {
+		message, _ := raw.(map[string]interface{})
+		if message["role"] == "system" {
+			text, _ := message["content"].(string)
+			return text
+		}
+	}
+	return ""
+}
+
+// assertReplyFormat holds each call to the format it is supposed to ask for.
+//
+// The rule is per call, and that is the whole point of it. Classification always
+// carries the schema, because "every category present" is what makes a re-filing
+// of a bounded name list complete and the payload is tiny. Discovery carries what
+// the user chose, because over document text the same requirement makes a small
+// model pad the categories it has nothing for. Asserting one rule for both would
+// let a later tidy-up make classification switchable too.
+func assertReplyFormat(t *testing.T, req map[string]interface{}, c *Client) {
+	t.Helper()
+
+	switch systemPromptOf(req) {
+	case classifySystemPrompt:
+		assertSuggestionSchemaFormat(t, req["format"])
+	case discoverSystemPrompt:
+		if c.StrictFormat {
+			assertSuggestionSchemaFormat(t, req["format"])
+			return
+		}
+		if req["format"] != "json" {
+			t.Errorf("discovery with StrictFormat off must ask for Ollama's loose JSON mode, got %#v", req["format"])
+		}
+	case "":
+		// A warm-up sends no messages and shapes no reply, so it has no format
+		// to be right or wrong about.
+	default:
+		t.Errorf("this helper serves the discovery and classification calls; a new call shape must say " +
+			"which reply format it asks for, or it goes unchecked")
+	}
 }
 
 // assertSuggestionSchemaFormat checks that format carries the flat suggestion
@@ -215,9 +270,16 @@ func TestDiscoverHappyPath(t *testing.T) {
 	text := "Alpine Trust hired Meridian Consulting for Project Borealis. Contact Marie Duval."
 	c := chatReplyServer(t, `{"entity_names":["Alpine Trust"],"project_names":["Project Borealis"],"person_names":["Marie Duval"]}`)
 
-	got, err := c.Discover(context.Background(), text)
+	out, err := c.DiscoverSlices(context.Background(), []string{text}, text, nil)
 	if err != nil {
-		t.Fatalf("Discover: %v", err)
+		t.Fatalf("DiscoverSlices: %v", err)
+	}
+	got := out.Suggestions
+	if out.Requests != 1 {
+		t.Errorf("one slice must be one request, got %d", out.Requests)
+	}
+	if out.Silent != 0 {
+		t.Errorf("a request that returned three names is not silent, got Silent=%d", out.Silent)
 	}
 	want := []engine.Suggestion{
 		{Category: "entity_names", MainText: "Alpine Trust"},
@@ -251,15 +313,15 @@ func TestDiscoverHappyPath(t *testing.T) {
 func TestDiscoverStripsCodeFences(t *testing.T) {
 	text := "Alpine Trust appears here."
 	c := chatReplyServer(t, "```json\n{\"entity_names\":[\"Alpine Trust\"],\"project_names\":[],\"person_names\":[]}\n```")
-	got, err := c.Discover(context.Background(), text)
-	if err != nil || len(got) != 1 || got[0].MainText != "Alpine Trust" {
-		t.Errorf("fenced JSON not tolerated: %+v %v", got, err)
+	out, err := c.DiscoverSlices(context.Background(), []string{text}, text, nil)
+	if err != nil || len(out.Suggestions) != 1 || out.Suggestions[0].MainText != "Alpine Trust" {
+		t.Errorf("fenced JSON not tolerated: %+v %v", out.Suggestions, err)
 	}
 }
 
 func TestDiscoverMalformedReply(t *testing.T) {
 	c := chatReplyServer(t, `the model rambles instead of emitting JSON`)
-	_, err := c.Discover(context.Background(), "any text")
+	_, err := c.DiscoverSlices(context.Background(), []string{"any text"}, "any text", nil)
 	if err == nil || !strings.Contains(err.Error(), "JSON") || !strings.Contains(err.Error(), "model") {
 		t.Errorf("malformed reply needs an actionable error, got %v", err)
 	}
@@ -275,12 +337,12 @@ func TestDiscoverHallucinationFilterAndAllowlist(t *testing.T) {
 	allow := engine.NewAllowlist() // seeds CSSF
 	c.Allow = allow.Contains
 
-	got, err := c.Discover(context.Background(), text)
+	out, err := c.DiscoverSlices(context.Background(), []string{text}, text, nil)
 	if err != nil {
-		t.Fatalf("Discover: %v", err)
+		t.Fatalf("DiscoverSlices: %v", err)
 	}
-	if len(got) != 1 || got[0].MainText != "Borealis Fund" {
-		t.Errorf("filter failed: want only Borealis Fund, got %+v", got)
+	if len(out.Suggestions) != 1 || out.Suggestions[0].MainText != "Borealis Fund" {
+		t.Errorf("filter failed: want only Borealis Fund, got %+v", out.Suggestions)
 	}
 }
 
@@ -292,9 +354,9 @@ func TestDiscoverContextCancellation(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := c.Discover(ctx, "text")
+	_, err := c.DiscoverSlices(ctx, []string{"text"}, "text", nil)
 	if err == nil {
-		t.Fatal("cancelled Discover must return an error")
+		t.Fatal("a cancelled scan must return an error")
 	}
 }
 
@@ -546,12 +608,13 @@ func TestDiscoverIgnoresAThinkingReply(t *testing.T) {
 		w.Write(resp)
 	})
 
-	got, err := c.Discover(context.Background(), "Alpine Trust appears here.")
+	const text = "Alpine Trust appears here."
+	out, err := c.DiscoverSlices(context.Background(), []string{text}, text, nil)
 	if err != nil {
-		t.Fatalf("Discover: %v", err)
+		t.Fatalf("DiscoverSlices: %v", err)
 	}
-	if len(got) != 1 || got[0].MainText != "Alpine Trust" {
-		t.Errorf("the parser must read message.content, not message.thinking; got %+v", got)
+	if len(out.Suggestions) != 1 || out.Suggestions[0].MainText != "Alpine Trust" {
+		t.Errorf("the parser must read message.content, not message.thinking; got %+v", out.Suggestions)
 	}
 }
 
@@ -587,86 +650,20 @@ func TestWarmFailureIsNotFatal(t *testing.T) {
 	}
 }
 
-// TestChunkText: table-driven chunker behaviour.
-func TestChunkText(t *testing.T) {
-	t.Run("empty text is one empty chunk", func(t *testing.T) {
-		got := chunkText("", 100, 10)
-		if len(got) != 1 || got[0] != "" {
-			t.Errorf("got %q", got)
-		}
-	})
-	t.Run("text under budget is one chunk", func(t *testing.T) {
-		got := chunkText("short text", 100, 10)
-		if len(got) != 1 || got[0] != "short text" {
-			t.Errorf("got %q", got)
-		}
-	})
-	t.Run("paragraph boundary preferred over mid-word", func(t *testing.T) {
-		text := strings.Repeat("a", 60) + "\n\n" + strings.Repeat("b", 60)
-		got := chunkText(text, 100, 8)
-		if len(got) < 2 {
-			t.Fatalf("expected a split, got %d chunk(s)", len(got))
-		}
-		if !strings.HasSuffix(got[0], "\n\n") {
-			t.Errorf("first chunk must end at the paragraph break, got %q", got[0][len(got[0])-10:])
-		}
-	})
-	t.Run("consecutive chunks overlap", func(t *testing.T) {
-		words := strings.Repeat("word ", 100) // 500 bytes of words
-		got := chunkText(words, 100, 20)
-		if len(got) < 2 {
-			t.Fatalf("expected several chunks, got %d", len(got))
-		}
-		// The tail of chunk 1 must reappear at the head of chunk 2.
-		tail := got[0][len(got[0])-10:]
-		if !strings.Contains(got[1][:30], tail[:5]) {
-			t.Errorf("no overlap between chunks: %q ... %q", got[0], got[1])
-		}
-	})
-	t.Run("rune safety on multi-byte French text", func(t *testing.T) {
-		text := strings.Repeat("éàüöè ", 200) // 7 bytes per group
-		for _, chunk := range chunkText(text, 128, 16) {
-			if !utf8.ValidString(chunk) {
-				t.Fatalf("chunk splits a UTF-8 sequence: %q", chunk)
-			}
-		}
-	})
-	t.Run("giant unbroken token still terminates", func(t *testing.T) {
-		got := chunkText(strings.Repeat("x", 1000), 100, 10)
-		if len(got) < 10 {
-			t.Errorf("expected ~11 chunks, got %d", len(got))
-		}
-	})
-}
-
-// TestChunkCap: a document beyond the chunk cap fails with the actionable
-// size message instead of running for an hour.
-func TestChunkCap(t *testing.T) {
-	c := New("")
-	c.ContextSize = 512                             // tiny budget: 512*3*3/4 = 1152 bytes per chunk
-	huge := strings.Repeat("line of text\n", 20000) // ~260 KB >> 64 chunks
-	if _, err := c.Chunks(huge); err == nil || !strings.Contains(err.Error(), "Smart detection") {
-		t.Errorf("oversize document must fail with the split/smart-detection advice, got %v", err)
-	}
-	if n := c.EstimateChunks(huge); n <= MaxChunksPerDocument {
-		t.Errorf("EstimateChunks must report the real chunk count, got %d", n)
-	}
-}
-
-// TestDiscoverAcrossChunks: a 3-chunk document merges and deduplicates
-// per-chunk proposals, and the hallucination filter runs against the FULL
-// text (an entity only present in chunk 3 survives a chunk-1 proposal
-// check).
-func TestDiscoverAcrossChunks(t *testing.T) {
+// TestDiscoverAcrossSlices: several slices merge and deduplicate their
+// proposals, and the hallucination filter runs against the WHOLE scanned text,
+// so an entity that only occurs in the last slice survives a first-slice
+// proposal.
+func TestDiscoverAcrossSlices(t *testing.T) {
 	var calls atomic.Int32
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/chat" {
 			w.Write([]byte(`{"models":[]}`))
 			return
 		}
-		// Every chunk proposes the same client (dedupe) plus one unique
-		// name; "Zephyr Capital" is proposed by chunk 1 although it only
-		// occurs later in the document (full-text filter must keep it).
+		// Every slice proposes the same client (dedupe); "Zephyr Capital" is
+		// proposed by slice 1 although it only occurs in the last one, which
+		// the whole-text filter must keep.
 		n := calls.Add(1)
 		content := `{"entity_names":["Alpine Trust","Zephyr Capital"],"project_names":[],"person_names":[]}`
 		if n > 1 {
@@ -678,29 +675,315 @@ func TestDiscoverAcrossChunks(t *testing.T) {
 		w.Write(resp)
 	})
 
-	c.ContextSize = 512 // 1152-byte chunks force several chunks
-	text := "Alpine Trust opening. " + strings.Repeat("filler words here. ", 150) +
-		" Zephyr Capital appears only at the end."
-	got, err := c.Discover(context.Background(), text)
-	if err != nil {
-		t.Fatalf("Discover: %v", err)
+	slices := []string{
+		"Alpine Trust opening.",
+		strings.Repeat("filler words here. ", 20),
+		"Zephyr Capital appears only at the end.",
 	}
-	if calls.Load() < 2 {
-		t.Fatalf("expected several chunk calls, got %d", calls.Load())
+	source := strings.Join(slices, "\n")
+	out, err := c.DiscoverSlices(context.Background(), slices, source, nil)
+	if err != nil {
+		t.Fatalf("DiscoverSlices: %v", err)
+	}
+	if out.Requests != len(slices) {
+		t.Errorf("Requests must equal the number of slices sent: got %d, want %d", out.Requests, len(slices))
+	}
+	if got := int(calls.Load()); got != len(slices) {
+		t.Errorf("the server must see one call per slice: got %d, want %d", got, len(slices))
+	}
+	if out.Silent != 0 {
+		t.Errorf("every slice returned a name it could keep, so none is silent: Silent=%d", out.Silent)
 	}
 	var names []string
-	for _, p := range got {
+	for _, p := range out.Suggestions {
 		names = append(names, p.MainText)
 	}
-	if len(got) != 2 || got[0].MainText != "Alpine Trust" || got[1].MainText != "Zephyr Capital" {
+	if len(out.Suggestions) != 2 || names[0] != "Alpine Trust" || names[1] != "Zephyr Capital" {
 		t.Errorf("merged proposals wrong: %v", names)
 	}
 }
 
-// TestDiscoverCancelBetweenChunks: chunk 2 answers normally but the user
-// cancels during it; the loop must stop BEFORE chunk 3 (the between-chunk
-// ctx check), returning the partial proposals with the context error.
-func TestDiscoverCancelBetweenChunks(t *testing.T) {
+// TestTruncatedReplyIsReportedAsTruncation: a reply cut off at the generation
+// cap is CUT OFF, not malformed. Reported as malformed it sends the user looking
+// for a better model, when what they can actually do is send less text per
+// request, which is what the message has to name. The message must not name the
+// detail level, which is a remedy the user is already on by default.
+func TestTruncatedReplyIsReportedAsTruncation(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			w.Write([]byte(`{"models":[]}`))
+			return
+		}
+		// What a degenerate reply that ran past num_predict actually looks like:
+		// valid JSON up to the cut, then nothing.
+		resp, _ := json.Marshal(map[string]interface{}{
+			"message":     map[string]string{"role": "assistant", "content": `{"entity_names":["Alpine Trust","Borealis`},
+			"done_reason": "length",
+			"eval_count":  1024,
+		})
+		w.Write(resp)
+	})
+
+	_, err := c.Chat(context.Background(), "m", "system", "Alpine Trust and Borealis Fund.", nil)
+	if err == nil {
+		t.Fatal("a reply cut off at the generation cap must be reported, not returned as a whole answer")
+	}
+	var cut *TruncatedReplyError
+	if !errors.As(err, &cut) {
+		t.Fatalf("truncation must be its own error type, so a caller can salvage rather than abort: %T %v", err, err)
+	}
+	if cut.Content == "" {
+		t.Error("the partial reply must travel on the error, or there is nothing to salvage")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "JSON") {
+		t.Errorf("truncation must not be reported as malformed JSON: %v", msg)
+	}
+	for _, want := range []string{"cut off", "1024", "fewer"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the truncation error must mention %q so the user knows what to change: %v", want, msg)
+		}
+	}
+	// Thorough is already the default detail level, so naming it as the fix
+	// tells the user to do what they are doing.
+	for _, banned := range []string{"Thorough", "detail level"} {
+		if strings.Contains(msg, banned) {
+			t.Errorf("the truncation message must not name %q: it is already the default, so it is not a remedy: %v", banned, msg)
+		}
+	}
+}
+
+// TestTruncationDegradesOneSliceAndTheScanContinues is the guard for the whole
+// of this behaviour: a cut-off reply must cost the user that ONE slice's tail
+// and nothing else. Aborting the document instead means one dense page in the
+// middle leaves every page after it unread, and the run reports a fraction of
+// the document as though that were all there was.
+func TestTruncationDegradesOneSliceAndTheScanContinues(t *testing.T) {
+	var calls int32
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			w.Write([]byte(`{"models":[]}`))
+			return
+		}
+		n := atomic.AddInt32(&calls, 1)
+		payload := map[string]interface{}{
+			"message": map[string]string{
+				"role":    "assistant",
+				"content": `{"entity_names":["Zephyr Capital"],"person_names":[]}`,
+			},
+			"done_reason": "stop",
+		}
+		if n == 1 {
+			// The first slice runs long: one name finished, the next cut in half.
+			payload = map[string]interface{}{
+				"message": map[string]string{
+					"role":    "assistant",
+					"content": `{"entity_names":["Alpine Trust","Borea`,
+				},
+				"done_reason": "length",
+				"eval_count":  1024,
+			}
+		}
+		resp, _ := json.Marshal(payload)
+		w.Write(resp)
+	})
+
+	const source = "Alpine Trust and Borealis Fund. Zephyr Capital countersigned."
+	out, err := c.DiscoverSlices(context.Background(),
+		[]string{"Alpine Trust and Borealis Fund.", "Zephyr Capital countersigned."}, source, nil)
+	if err != nil {
+		t.Fatalf("a cut-off reply must degrade its own slice, not end the scan: %v", err)
+	}
+	if got := int(atomic.LoadInt32(&calls)); got != 2 {
+		t.Fatalf("every slice must still be sent after a truncation, got %d request(s), want 2", got)
+	}
+	if out.Requests != 2 || out.Truncated != 1 {
+		t.Errorf("want 2 requests with 1 truncated, got requests=%d truncated=%d", out.Requests, out.Truncated)
+	}
+	// A truncated request is NOT silent: it had more to say, which is the
+	// opposite fact about the document.
+	if out.Silent != 0 {
+		t.Errorf("a truncated request must not also be counted silent, got silent=%d", out.Silent)
+	}
+	var names []string
+	for _, s := range out.Suggestions {
+		names = append(names, s.MainText)
+	}
+	slices.Sort(names)
+	if !slices.Contains(names, "Alpine Trust") {
+		t.Errorf("the names the model finished writing before the cut must be salvaged, got %v", names)
+	}
+	if !slices.Contains(names, "Zephyr Capital") {
+		t.Errorf("the slice after the truncated one must still be scanned, got %v", names)
+	}
+	if slices.Contains(names, "Borea") {
+		t.Errorf("the half-written name must not survive: the hallucination filter is what makes salvage safe, got %v", names)
+	}
+}
+
+// TestSalvageSuggestionJSON: what a cut-off reply managed to finish saying is an
+// answer. Every case here is a shape a real truncated reply took on the
+// reference documents.
+func TestSalvageSuggestionJSON(t *testing.T) {
+	cases := []struct {
+		name  string
+		reply string
+		want  []string
+	}{
+		{
+			name:  "nothing at all",
+			reply: "",
+			want:  nil,
+		},
+		{
+			name:  "cut inside a name",
+			reply: `{"entity_names":["Alpine Trust","Bore`,
+			want:  []string{"Alpine Trust"},
+		},
+		{
+			name:  "closed categories then a cut one",
+			reply: `{"entity_names":["Alpine Trust"],"person_names":["Ada Byron","Bo`,
+			want:  []string{"Ada Byron", "Alpine Trust"},
+		},
+		{
+			name:  "cut just after a comma",
+			reply: `{"person_names":["Ada Byron",`,
+			want:  []string{"Ada Byron"},
+		},
+		{
+			name:  "a fenced reply is still read",
+			reply: "```json\n{\"entity_names\":[\"Alpine Trust\",\"Bore",
+			want:  []string{"Alpine Trust"},
+		},
+		{
+			name:  "a key the engine does not know is skipped",
+			reply: `{"made_up_names":["Ignored"],"entity_names":["Alpine Trust`,
+			want:  nil,
+		},
+		{
+			name:  "a degenerate repeat loop yields its one string, over and over",
+			reply: `{"entity_names":["Alpine Trust"],"project_names":["Loop","Loop","Loop","Lo`,
+			want:  []string{"Alpine Trust", "Loop", "Loop", "Loop"},
+		},
+		{
+			name:  "a complete reply reads exactly as the full parser reads it",
+			reply: `{"entity_names":["Alpine Trust"],"person_names":["Ada Byron"]}`,
+			want:  []string{"Ada Byron", "Alpine Trust"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run("detection/"+tc.name, func(t *testing.T) {
+			var got []string
+			for _, s := range salvageSuggestionJSON(tc.reply) {
+				got = append(got, s.MainText)
+				if s.Confidence != engine.ConfidenceLLMDefault {
+					t.Errorf("a salvaged suggestion must carry the model's confidence like any other, got %v", s.Confidence)
+				}
+				if !slices.Contains(s.DiscoveryMethods, engine.MethodLocalAI) {
+					t.Errorf("a salvaged suggestion must say the model found it, got %v", s.DiscoveryMethods)
+				}
+			}
+			slices.Sort(got)
+			want := slices.Clone(tc.want)
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("salvage of %q: got %v, want %v", tc.reply, got, want)
+			}
+		})
+	}
+}
+
+// TestNormalReplyIsNotMistakenForTruncation: Ollama sends done_reason on every
+// reply, so a "stop" must stay a clean answer.
+func TestNormalReplyIsNotMistakenForTruncation(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			w.Write([]byte(`{"models":[]}`))
+			return
+		}
+		resp, _ := json.Marshal(map[string]interface{}{
+			"message":     map[string]string{"role": "assistant", "content": `{"entity_names":["Alpine Trust"],"person_names":[]}`},
+			"done_reason": "stop",
+			"eval_count":  42,
+		})
+		w.Write(resp)
+	})
+
+	const text = "Alpine Trust signed."
+	out, err := c.DiscoverSlices(context.Background(), []string{text}, text, nil)
+	if err != nil {
+		t.Fatalf("a reply that finished normally must not be an error: %v", err)
+	}
+	if len(out.Suggestions) != 1 {
+		t.Errorf("want the one suggestion the model returned, got %+v", out.Suggestions)
+	}
+}
+
+// TestDiscoverSlicesCountsSilence: a well-formed empty reply is DATA, not a
+// failure. The counts are what let the caller tell "your model said nothing"
+// from "this document holds nothing", which one number cannot do.
+func TestDiscoverSlicesCountsSilence(t *testing.T) {
+	c := chatReplyServer(t, `{"entity_names":[],"project_names":[],"product_names":[],"brand_names":[],"person_names":[],"identifier_names":[],"other_names":[]}`)
+
+	slices := []string{"Alpine Trust opening.", "Borealis Fund replied."}
+	out, err := c.DiscoverSlices(context.Background(), slices, strings.Join(slices, "\n"), nil)
+	if err != nil {
+		t.Fatalf("an empty but well-formed reply must not be an error: %v", err)
+	}
+	if out.Requests != 2 || out.Silent != 2 {
+		t.Errorf("two empty replies must count as two silent requests: Requests=%d Silent=%d",
+			out.Requests, out.Silent)
+	}
+	if len(out.Suggestions) != 0 {
+		t.Errorf("an empty reply yields no suggestions, got %+v", out.Suggestions)
+	}
+}
+
+// TestDiscoverSlicesSilenceIsJudgedAfterFiltering: a reply full of names the
+// hallucination filter drops told the user nothing, so it counts as silence.
+// Counting before the filter would report a busy model on a document where
+// every suggestion was invented.
+func TestDiscoverSlicesSilenceIsJudgedAfterFiltering(t *testing.T) {
+	c := chatReplyServer(t, `{"entity_names":["Nowhere Corp","Invented SA"],"project_names":[],"person_names":[]}`)
+
+	const text = "This document names nobody the model returned."
+	out, err := c.DiscoverSlices(context.Background(), []string{text}, text, nil)
+	if err != nil {
+		t.Fatalf("DiscoverSlices: %v", err)
+	}
+	if out.Requests != 1 || out.Silent != 1 {
+		t.Errorf("a reply whose every name was invented is silence: Requests=%d Silent=%d",
+			out.Requests, out.Silent)
+	}
+}
+
+// TestDiscoverSlicesReportsProgressBeforeEachRequest: onSlice fires BEFORE the
+// request, which is the whole point of it: a caption that appears after the
+// reply describes a wait that has already ended.
+func TestDiscoverSlicesReportsProgressBeforeEachRequest(t *testing.T) {
+	c := chatReplyServer(t, `{"entity_names":[],"project_names":[],"person_names":[]}`)
+
+	var seen [][2]int
+	slices := []string{"one", "two", "three"}
+	if _, err := c.DiscoverSlices(context.Background(), slices, strings.Join(slices, "\n"),
+		func(index, total int) { seen = append(seen, [2]int{index, total}) }); err != nil {
+		t.Fatalf("DiscoverSlices: %v", err)
+	}
+	want := [][2]int{{0, 3}, {1, 3}, {2, 3}}
+	if len(seen) != len(want) {
+		t.Fatalf("onSlice must fire once per slice: got %v, want %v", seen, want)
+	}
+	for i := range want {
+		if seen[i] != want[i] {
+			t.Errorf("progress %d = %v, want %v", i, seen[i], want[i])
+		}
+	}
+}
+
+// TestDiscoverCancelBetweenSlices: slice 2 answers normally but the user
+// cancels during it; the loop must stop BEFORE slice 3 (the between-request ctx
+// check), returning the partial proposals with the context error.
+func TestDiscoverCancelBetweenSlices(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var calls atomic.Int32
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -709,7 +992,7 @@ func TestDiscoverCancelBetweenChunks(t *testing.T) {
 			return
 		}
 		if calls.Add(1) == 2 {
-			cancel() // the user hits Cancel while chunk 2 is in flight
+			cancel() // the user hits Cancel while slice 2 is in flight
 		}
 		resp, _ := json.Marshal(map[string]interface{}{
 			"message": map[string]string{
@@ -720,18 +1003,118 @@ func TestDiscoverCancelBetweenChunks(t *testing.T) {
 		w.Write(resp)
 	})
 
-	c.ContextSize = 512
-	// Enough text for at least 3 chunks at the 1152-byte budget.
-	text := "Alpine Trust opening. " + strings.Repeat("filler words here. ", 300)
-	got, err := c.Discover(ctx, text)
+	slices := []string{"Alpine Trust opening.", "second slice", "third slice"}
+	out, err := c.DiscoverSlices(ctx, slices, strings.Join(slices, "\n"), nil)
 	if err == nil {
 		t.Fatal("cancelled discovery must return the context error")
 	}
 	if n := calls.Load(); n != 2 {
-		t.Errorf("loop must stop after the cancelled chunk, made %d calls", n)
+		t.Errorf("loop must stop after the cancelled slice, made %d calls", n)
 	}
-	if len(got) != 1 || got[0].MainText != "Alpine Trust" {
-		t.Errorf("partial proposals must survive cancellation: %+v", got)
+	if len(out.Suggestions) != 1 || out.Suggestions[0].MainText != "Alpine Trust" {
+		t.Errorf("partial proposals must survive cancellation: %+v", out.Suggestions)
+	}
+}
+
+// --- The reply format, per call ------------------------------------------
+
+// TestDiscoveryFormatFollowsTheSetting: the discovery call asks for loose JSON
+// mode by default and for the schema when the user opted in.
+//
+// The default is the measured one. Constraining the reply to a schema whose every
+// category is required costs about twice the wall clock on a slide-heavy document
+// for no more values, and on a small model it returns seven empty arrays instead
+// of the names that are there. It stays available because on a short dense page,
+// and on documents of a few hundred bytes, it finds a little more.
+func TestDiscoveryFormatFollowsTheSetting(t *testing.T) {
+	const text = "Alpine Trust appears here."
+	const reply = `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`
+
+	for _, tc := range []struct {
+		name   string
+		strict bool
+	}{
+		{"loose JSON mode by default", false},
+		{"the schema when the user asks for it", true},
+	} {
+		t.Run("config/"+tc.name, func(t *testing.T) {
+			// The mock captures what arrived; chatReplyServer's own assertions
+			// already hold it to the rule, and this reads the wire directly so
+			// the expectation is stated here too rather than only in a helper.
+			var format any
+			c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/chat" {
+					w.Write([]byte(`{"models":[]}`))
+					return
+				}
+				var req map[string]interface{}
+				json.NewDecoder(r.Body).Decode(&req)
+				format = req["format"]
+				resp, _ := json.Marshal(map[string]interface{}{
+					"message": map[string]string{"role": "assistant", "content": reply},
+				})
+				w.Write(resp)
+			})
+			c.StrictFormat = tc.strict
+
+			if _, err := c.DiscoverSlices(context.Background(), []string{text}, text, nil); err != nil {
+				t.Fatalf("DiscoverSlices: %v", err)
+			}
+			if tc.strict {
+				assertSuggestionSchemaFormat(t, format)
+				return
+			}
+			if format != "json" {
+				t.Errorf("discovery must ask for %q with StrictFormat off, got %#v", "json", format)
+			}
+		})
+	}
+}
+
+// TestClassificationAlwaysCarriesTheSchema: StrictFormat is the DISCOVERY call's
+// setting and reaches classification in neither position.
+//
+// The two calls do different work. Classification hands the model a bounded list
+// of names it only has to file, so requiring every category is what makes the
+// re-filing complete, and the payload is small enough that the cost is noise.
+// This is the assertion that stops a later tidy-up from "consistently" making
+// classification switchable too.
+func TestClassificationAlwaysCarriesTheSchema(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		name := "the discovery format is loose"
+		if strict {
+			name = "the discovery format is strict"
+		}
+		t.Run("config/"+name, func(t *testing.T) {
+			var format any
+			c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/chat" {
+					w.Write([]byte(`{"models":[]}`))
+					return
+				}
+				var req map[string]interface{}
+				json.NewDecoder(r.Body).Decode(&req)
+				format = req["format"]
+				if systemPromptOf(req) != classifySystemPrompt {
+					t.Errorf("this test must exercise the classification call, got a different system prompt")
+				}
+				resp, _ := json.Marshal(map[string]interface{}{
+					"message": map[string]string{
+						"role":    "assistant",
+						"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`,
+					},
+				})
+				w.Write(resp)
+			})
+			c.StrictFormat = strict
+
+			if _, err := c.ClassifySuggestions(context.Background(), []engine.Suggestion{
+				{MainText: "Alpine Trust", Category: "person_names"},
+			}); err != nil {
+				t.Fatalf("ClassifySuggestions: %v", err)
+			}
+			assertSuggestionSchemaFormat(t, format)
+		})
 	}
 }
 

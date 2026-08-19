@@ -277,6 +277,31 @@
       heuristic discovery, the run and every export work
       exactly the same without it.
     </p>
+    <h3>Letting Ollama use your GPU</h3>
+    <p>
+      Ollama ships with Vulkan support enabled but ignores integrated GPUs
+      unless you tell it not to, and most business laptops have exactly that.
+      It writes <code>dropping integrated GPU</code> in its own log and runs
+      the model on the processor instead.
+    </p>
+    <p>
+      On Windows the setting has to reach the Ollama service rather than a
+      terminal window, so it is set with <code>setx OLLAMA_IGPU_ENABLE 1</code>
+      and then Ollama is quit from the system tray and started again. A
+      variable typed into a shell reaches nothing, which is the mistake that
+      makes people conclude the setting does not work. To confirm it took, open
+      the Ollama server log and look for the GPU listed as inference compute
+      and a line reading <code>offloaded N/N layers to GPU</code>.
+    </p>
+    <p>
+      On the laptop this was measured on, an Intel Arc integrated GPU, a
+      15-slide deck scanned about 1.2 times faster and the model found somewhat
+      more than it had on the processor. It is free and it does no harm, but it
+      is a modest improvement rather than a transformation. Scanning fewer
+      pages at a time, or choosing a different model, changes the clock more
+      than this does. Discrete NVIDIA and AMD graphics cards are used
+      automatically and need none of this.
+    </p>
   </section>
 
   <section id="trouble">

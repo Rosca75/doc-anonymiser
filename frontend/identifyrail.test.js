@@ -13,16 +13,17 @@ import assert from "node:assert/strict";
 
 import {
   CATEGORY_GROUPS, RAIL_SECTIONS, PRESETS, confidenceEffect, llmGateTooltip,
-  llmDisabledTooltip, railBody,
+  llmDisabledTooltip, railBody, settingsPayload,
 } from "./views/identifyrail.js";
 import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
 import {
   ALL_CATEGORIES, NAME_CATEGORIES, resetState, getState, setState, setUseLocalAI,
   setAIScope, setCategoryGroup, setUseBuiltInPatterns, setUseHeuristicDiscovery,
   setSmartDetection, setSignalSource, setSignalDerivation,
-  SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
+  SIGNAL_SOURCES, SIGNAL_DERIVATIONS, AI_DETAIL_LEVELS,
 } from "./state.js";
 import { textOf, stripTags, all, one, exists } from "./testhtml.js";
+import { container } from "./testdom.js";
 
 // --- every category is reachable from some group -------------------------
 
@@ -767,6 +768,273 @@ test("the entity select-all carries the hyphenated data key so dataset reads it 
     "the bulk button must emit data-group-type, not a camelCase data-groupType");
   assert.equal(datasetOf(btn.attrs).groupType, "entity",
     "the entity group's button must resolve to the entity route");
+});
+
+// --- What the local AI actually did last time -----------------------------
+//
+// "0 values found" means two different things and only one of them is about the
+// document. The read-out is what separates them, and its numbers are measured on
+// the user's own machine, which is the half no tooltip can supply.
+
+test("the rail says nothing about a local AI scan that has not happened", () => {
+  resetState();
+  setUseLocalAI(true);
+  const html = railBody(getState());
+  assert.ok(!exists(html, "#last-ai-scan"),
+    "a read-out with nothing to report only teaches the reader to ignore it");
+});
+
+test("the rail reports the request count and the measured seconds of the last scan", () => {
+  resetState();
+  setUseLocalAI(true);
+  setState({ lastAIScan: { requests: 15, silent: 0, secondsPerRequest: 7.2 } });
+  const readout = one(railBody(getState()), "#last-ai-scan");
+  assert.ok(readout, "the last scan must be reported somewhere the user will read it");
+  const text = stripTags(readout.inner);
+  assert.match(text, /15 requests/,
+    `the request count is what makes "found nothing" legible: ${text}`);
+  assert.match(text, /7\.2s/, `the measured seconds must be shown: ${text}`);
+  assert.ok(!/returned nothing/.test(text),
+    `a scan where everything answered must not mention silence: ${text}`);
+});
+
+test("the rail names total silence, and mentions partial silence without alarm", () => {
+  resetState();
+  setUseLocalAI(true);
+
+  setState({ lastAIScan: { requests: 15, silent: 15, secondsPerRequest: 7 } });
+  const allSilent = stripTags(one(railBody(getState()), "#last-ai-scan").inner);
+  assert.match(allSilent, /nothing for any of them/,
+    `every request answering nothing is the case that reads as a clean document: ${allSilent}`);
+
+  setState({ lastAIScan: { requests: 15, silent: 4, secondsPerRequest: 7 } });
+  const partial = stripTags(one(railBody(getState()), "#last-ai-scan").inner);
+  assert.match(partial, /4 returned nothing/,
+    `a partly silent scan says how many, plainly: ${partial}`);
+  assert.ok(!/any of them/.test(partial),
+    `a normal scan must not be described as a silent model: ${partial}`);
+});
+
+test("the rail reports cut-off requests beside the silent ones, never folded into them", () => {
+  // The two counts say opposite things about the document: a silent request
+  // found nothing, a cut-off one found more than it could finish listing. Only
+  // the second means values may be missing from pages that DID return some.
+  resetState();
+  setUseLocalAI(true);
+
+  setState({ lastAIScan: { requests: 10, silent: 0, truncated: 2, secondsPerRequest: 7 } });
+  const cut = stripTags(one(railBody(getState()), "#last-ai-scan").inner);
+  assert.match(cut, /2 ran out of room/,
+    `a cut-off reply must be named as such: ${cut}`);
+  assert.match(cut, /may be missing/,
+    `the read-out must say what a cut-off reply costs the user: ${cut}`);
+  assert.ok(!/returned nothing/.test(cut),
+    `a request that ran out of room is not a silent one: ${cut}`);
+
+  setState({ lastAIScan: { requests: 10, silent: 3, truncated: 2, secondsPerRequest: 7 } });
+  const both = stripTags(one(railBody(getState()), "#last-ai-scan").inner);
+  assert.match(both, /3 returned nothing/, `both facts are reported: ${both}`);
+  assert.match(both, /2 ran out of room/, `both facts are reported: ${both}`);
+
+  setState({ lastAIScan: { requests: 10, silent: 0, truncated: 0, secondsPerRequest: 7 } });
+  const clean = stripTags(one(railBody(getState()), "#last-ai-scan").inner);
+  assert.ok(!/ran out of room/.test(clean),
+    `a scan where nothing was cut off must not mention it: ${clean}`);
+});
+
+// --- The model dropdown --------------------------------------------------
+
+test("exactly one model option is marked selected whenever models exist", () => {
+  // Marking nothing lets the browser select the first option by itself while the
+  // store holds something else, so the control shows one model and the next
+  // settings write sends whichever the server listed first. Which model a fresh
+  // session runs on is then decided by Ollama's tag ordering.
+  resetState();
+  const marked = (html) => all(one(html, "#ollama-model").outer, "option")
+    .filter((o) => "selected" in o.attrs).map((o) => o.attrs.value);
+
+  setState({ ollama: { available: true, models: ["first:1b", "second:4b"], detail: "" } });
+  assert.deepEqual(marked(railBody(getState())), ["first:1b"],
+    "with nothing stored the drawn option is the first, marked explicitly rather than by the browser");
+
+  setState({ settings: { ...getState().settings, model: "second:4b" } });
+  assert.deepEqual(marked(railBody(getState())), ["second:4b"], "a stored choice is what is drawn");
+
+  setState({ settings: { ...getState().settings, model: "a-model-nobody-has:latest" } });
+  assert.deepEqual(marked(railBody(getState())), ["first:1b"],
+    "a stored model the probe cannot see falls back to an installed one, never to nothing marked");
+});
+
+test("no models installed leaves the dropdown saying so, with nothing selected", () => {
+  // There is nothing to mark, and the placeholder option is the message: a
+  // marked option here would name a model that does not exist.
+  resetState();
+  setState({ ollama: { available: true, models: [], detail: "" } });
+  const select = one(railBody(getState()), "#ollama-model");
+  const options = all(select.outer, "option");
+  assert.equal(options.length, 1, "one placeholder option, not an invented model name");
+  assert.equal(options[0].attrs.value, "");
+  assert.ok(!("selected" in options[0].attrs));
+});
+
+// --- The detail level: the speed-versus-recall dial -----------------------
+
+test("the detail level is a select of exactly the two levels Go validates", () => {
+  resetState();
+  const rail = railBody(getState());
+  const select = one(rail, "#ai-detail-level");
+  assert.ok(select, "the dial must be in the Local AI section, or the trade-off has no control");
+  assert.deepEqual(all(select.outer, "option").map((o) => o.attrs.value), AI_DETAIL_LEVELS,
+    "the rail must offer the levels the engine sizes and no third one it would refuse");
+  assert.ok("disabled" in select.attrs,
+    "with the route off it is gated, exactly as the model field is");
+});
+
+test("exactly one detail-level option is marked selected, always", () => {
+  // Leaving nothing marked lets the browser pick the first by itself, which is
+  // how a choice gets made by option ordering instead of by the user.
+  resetState();
+  const marked = (html) => all(one(html, "#ai-detail-level").outer, "option")
+    .filter((o) => "selected" in o.attrs).map((o) => o.attrs.value);
+
+  assert.deepEqual(marked(railBody(getState())), ["thorough"],
+    "a fresh session shows the default it will actually run");
+
+  setState({ settings: { ...getState().settings, aiDetailLevel: "faster" } });
+  assert.deepEqual(marked(railBody(getState())), ["faster"], "a stored choice is what is drawn");
+
+  setState({ settings: { ...getState().settings, aiDetailLevel: "exhaustive" } });
+  assert.deepEqual(marked(railBody(getState())), ["thorough"],
+    "a level the rail does not offer falls back to thorough, never to nothing marked");
+});
+
+test("the detail level explains itself through a tooltip, in outcome terms", () => {
+  resetState();
+  const row = all(railBody(getState()), ".rail-field-row")
+    .find((r) => exists(r.outer, "#ai-detail-level"));
+  assert.ok(exists(row.outer, "span.help"),
+    "a control whose only explanation would be a paragraph must carry a tooltip");
+  assert.ok(RAIL.detailLevel.split(" ").length <= 3,
+    `a rail label stays short, got "${RAIL.detailLevel}"`);
+  const bubble = stripTags(one(row.outer, "span.help-bubble").inner);
+  assert.match(bubble, /slices/,
+    `the tooltip must say what the setting achieves, in outcome terms: ${bubble}`);
+  assert.ok(!/\d+ ?(bytes|B|requests)/.test(bubble),
+    `byte sizes and request counts are dynamic and belong in the read-out: ${bubble}`);
+});
+
+test("the detail level reaches the settings payload", () => {
+  resetState();
+  setUseLocalAI(true);
+  setState({ ollama: { available: true, models: ["m:1b"], detail: "" } });
+
+  const root = container();
+  root.innerHTML = railBody(getState());
+  assert.equal(settingsPayload(getState(), root).aiDetailLevel, "thorough",
+    "the default travels explicitly, so Go stores what the rail is showing");
+
+  root.querySelector("#ai-detail-level").value = "faster";
+  assert.equal(settingsPayload(getState(), root).aiDetailLevel, "faster",
+    "choosing a level must reach Go, or the control is decoration");
+
+  // A rail rendered without the Local AI body contributes no element, and the
+  // store's value is what travels: switching tabs must not reset the choice.
+  setState({ settings: { ...getState().settings, aiDetailLevel: "faster" } });
+  assert.equal(settingsPayload(getState(), container()).aiDetailLevel, "faster",
+    "with the control off screen the stored choice is what is sent");
+});
+
+test("the request estimate is a read-out beside the dial, never a paragraph", () => {
+  // The rail carries no p.hint at all and the Local AI section is in the DOM
+  // even when folded, so a read-out added as a hint turns the structural guard
+  // red for a reason that reads as unrelated to this control.
+  resetState();
+  setUseLocalAI(true);
+  assert.ok(!exists(railBody(getState()), "#ai-request-estimate"),
+    "before Go has answered there is no number, and a guess the run can contradict is worse than none");
+
+  setState({ aiRequestEstimate: 12 });
+  const html = railBody(getState());
+  const readout = one(html, "#ai-request-estimate");
+  assert.ok(readout, "the cost of the choice must be visible before the user pays it");
+  assert.match(stripTags(readout.inner), /12 requests/,
+    "the read-out names the request count the run will send");
+  assert.deepEqual(all(html, "p.hint").map((p) => stripTags(p.inner).trim()), [],
+    "a live fact is a span in a .rail-status row; p.hint is static prose the panel does not carry");
+});
+
+// --- The reply-format switch ---------------------------------------------
+
+test("the reply-format switch renders off, explained, and gated", () => {
+  // Off by default, because it is the slow end of a trade-off with no single
+  // winner: it finds a little more on some documents and takes about twice as
+  // long. Gated with the model and the context size, because it changes what a
+  // request asks the model for and means nothing without one running.
+  resetState();
+  const off = railBody(getState());
+  const box = one(off, "#ai-strict-format");
+  assert.ok(!("checked" in box.attrs),
+    "asking for every category is opt-in, so it must render unchecked");
+  assert.ok("disabled" in box.attrs,
+    "with the route off it is gated, exactly as the model field is");
+
+  const toggle = all(off, ".rail-toggle").find((t) => exists(t.outer, "#ai-strict-format"));
+  assert.ok(exists(toggle.outer, "span.help"),
+    "a control whose only explanation would be a paragraph must carry a tooltip");
+  assert.equal(stripTags(one(toggle.outer, "span.cat-label").inner).trim(), RAIL.strictFormat);
+  assert.ok(RAIL.strictFormat.split(" ").length <= 4,
+    `a rail label stays short, got "${RAIL.strictFormat}"`);
+  assert.ok(stripTags(one(toggle.outer, "span.help-bubble").inner).includes("every category"),
+    "the tooltip must say what the setting achieves, in outcome terms");
+});
+
+test("the reply-format switch reflects a stored on", () => {
+  resetState();
+  setUseLocalAI(true);
+  setState({ ollama: { available: true, models: ["m:1b"], detail: "" } });
+  setState({ settings: { ...getState().settings, aiStrictFormat: true } });
+  const box = one(railBody(getState()), "#ai-strict-format");
+  assert.ok("checked" in box.attrs, "a stored on must draw a ticked box");
+  assert.ok(!("disabled" in box.attrs),
+    "with the route on and Ollama there, the control is usable");
+});
+
+test("the reply-format choice reaches the settings payload", () => {
+  // The payload is what Go acts on, and this boolean must travel EXPLICITLY:
+  // Go reads an absent value as off, so an omitted key would make "on"
+  // unsayable.
+  resetState();
+  setUseLocalAI(true);
+  setState({ ollama: { available: true, models: ["m:1b"], detail: "" } });
+
+  const root = container();
+  root.innerHTML = railBody(getState());
+  assert.equal(settingsPayload(getState(), root).aiStrictFormat, false,
+    "an unticked box sends false, not nothing");
+
+  root.querySelector("#ai-strict-format").checked = true;
+  assert.equal(settingsPayload(getState(), root).aiStrictFormat, true,
+    "ticking the box must reach Go, or the control is decoration");
+
+  // A rail rendered without the Local AI body contributes no element, and the
+  // store's value is what travels: switching tabs must not reset the choice.
+  setState({ settings: { ...getState().settings, aiStrictFormat: true } });
+  assert.equal(settingsPayload(getState(), container()).aiStrictFormat, true,
+    "with the control off screen the stored choice is what is sent");
+});
+
+test("the last scan read-out is a read-out, never an explanatory paragraph", () => {
+  // The rail carries no p.hint at all, and the Local AI section is in the DOM
+  // even when folded, so a read-out added as a hint turns the structural guard
+  // above red for a reason that reads as unrelated.
+  resetState();
+  setUseLocalAI(true);
+  setState({ lastAIScan: { requests: 3, silent: 0, secondsPerRequest: 2 } });
+  const html = railBody(getState());
+  assert.deepEqual(all(html, "p.hint").map((p) => stripTags(p.inner).trim()), [],
+    "a live fact is a .rail-readout; p.hint is static prose the panel does not carry");
+  assert.equal(one(html, "#last-ai-scan").attrs.class, "rail-readout",
+    "the read-out must carry the class the panel's live facts use");
 });
 
 // --- Help tooltips instead of paragraphs ---------------------------------

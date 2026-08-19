@@ -18,11 +18,12 @@ import {
   WIZARD_STEPS, canGoTo, goTo, nextStep,
   goToScreen,
   applyPreset, toggleCategory, selectionPresetName, presetCategories,
-  setUseLocalAI, setSmartDetection, smartDetectionOn,
+  setUseLocalAI, setSmartDetection, smartDetectionOn, adoptProbe,
   detectionRoutesOn, llmEnabled,
   setUseBuiltInPatterns, setUseHeuristicDiscovery,
   addSuggestions, acceptSuggestion, rejectSuggestion, acceptAllShown,
   DISCOVERY_METHODS, MATCH_CLASSES, SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
+  AI_DETAIL_LEVELS,
   signalSourceOn, enabledSignalSources, setSignalSource,
   signalDerivationOn, enabledSignalDerivations, setSignalDerivation,
   moveSpelling, valueAutocomplete, reassignOriginal,
@@ -470,6 +471,36 @@ test("llmEnabled requires BOTH the toggle and a reachable Ollama", () => {
   assert.equal(llmEnabled(), false, "Ollama down blocks AI even with toggle on");
 });
 
+test("adoptProbe adopts the model the probe resolved", () => {
+  // The dropdown has to show the model that will actually RUN. Go resolves an
+  // uninstalled name to an installed one, so a store that kept the asked-for
+  // name would name one model while the run posted to another.
+  resetState();
+  adoptProbe({ available: true, models: ["a:1", "b:2"], detail: "ok", model: "b:2" });
+  assert.equal(getState().settings.model, "b:2");
+  assert.equal(getState().ollama.available, true);
+  assert.deepEqual(getState().ollama.models, ["a:1", "b:2"]);
+});
+
+test("adoptProbe never flips the Local AI route on", () => {
+  // Detecting Ollama ENABLES the switch, it does not press it: handing a
+  // document to a model is the user's decision.
+  resetState();
+  adoptProbe({ available: true, models: ["a:1"], detail: "ok", model: "a:1" });
+  assert.equal(getState().settings.useLocalAI, false);
+  assert.equal(llmEnabled(), false);
+});
+
+test("adoptProbe leaves the stored model alone when nothing was resolved", () => {
+  // A stopped server says nothing about which models exist, so it must not
+  // erase a choice. Same for a reachable server with no models installed.
+  resetState();
+  adoptProbe({ available: true, models: ["a:1"], detail: "ok", model: "a:1" });
+  adoptProbe({ available: false, models: [], detail: "not detected", model: "" });
+  assert.equal(getState().settings.model, "a:1", "a failed probe must not clear the model");
+  assert.equal(getState().ollama.available, false, "the status itself still lands");
+});
+
 test("Smart detection starts on and Local AI starts off", () => {
   // Every Smart detection method needs nothing installed, so all three run by
   // default. Local AI hands the document to a model, so the user turns it on
@@ -482,6 +513,42 @@ test("Smart detection starts on and Local AI starts off", () => {
   setState({ ollama: { available: true, models: [], detail: "" } });
   assert.equal(getState().settings.useLocalAI, false,
     "detecting Ollama must not switch the route on");
+});
+
+test("the local AI's reply format starts on the fast end", () => {
+  // The schema finds a little more on a short dense page and on very small
+  // documents, and on a slide-heavy one it costs about twice the time for no more
+  // values, while on a small model it finds nothing at all. So the default is off,
+  // and it is a real boolean in the store rather than an absent key: the rail draws
+  // a checkbox from it and an undefined would render as unchecked by accident
+  // rather than by decision.
+  resetState();
+  assert.equal(getState().settings.aiStrictFormat, false,
+    "asking the model for every category is the slow option, so it is opt-in");
+  assert.ok("aiStrictFormat" in getState().settings,
+    "the setting must exist in the store, not be implied by its absence");
+});
+
+test("the local AI's detail level starts on the thorough end", () => {
+  // Thorough is the end that FINDS things: the faster level trades recall for
+  // time, and a trade nobody asked for must not be the one a fresh session makes
+  // on the user's behalf. It is a real string in the store rather than an absent
+  // key, because the rail marks a dropdown option from it and an undefined would
+  // mark nothing, which is how the browser ends up choosing.
+  resetState();
+  assert.equal(getState().settings.aiDetailLevel, "thorough",
+    "the slower, more thorough level is the default");
+  assert.ok("aiDetailLevel" in getState().settings,
+    "the setting must exist in the store, not be implied by its absence");
+});
+
+test("AI_DETAIL_LEVELS is exactly the two identifiers Go validates", () => {
+  // Go refuses a level it cannot size, so a third entry here would be an option
+  // the user can pick and the engine then rejects. The list is frozen for the
+  // same reason the other mirrored vocabularies are.
+  assert.deepEqual(AI_DETAIL_LEVELS, ["thorough", "faster"]);
+  assert.ok(AI_DETAIL_LEVELS.includes(getState().settings.aiDetailLevel),
+    "the default has to be one of the levels the list offers");
 });
 
 test("the Smart detection section state is DERIVED from its methods", () => {
@@ -2218,4 +2285,23 @@ test("a Value the user declared states no confidence, which Go reads as a declar
   addValues([{ category: "person_names", mainText: "Marie Duval" }]);
   assert.equal(getState().values[0].confidence, 0,
     "a manual Value states no confidence and lets the engine's default serve it");
+});
+
+// --- What the last local AI scan did -------------------------------------
+
+test("nothing is claimed about a local AI scan before one has run", () => {
+  resetState();
+  assert.equal(getState().lastAIScan, null,
+    "an absent scan is null, not a row of zeroes that reads as a scan that found nothing");
+});
+
+test("stepping back to Identify forgets the last scan's numbers", () => {
+  // The numbers describe a run, and the backward reset discards the run. Left
+  // behind, they would describe a scan whose suggestions are already gone, which
+  // is worse than showing nothing: the reader has no way to tell.
+  resetState();
+  setState({ lastAIScan: { requests: 9, silent: 2, secondsPerRequest: 4 } });
+  resetStep("identify");
+  assert.equal(getState().lastAIScan, null,
+    "the read-out must not survive the reset of the step it describes");
 });

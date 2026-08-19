@@ -109,13 +109,21 @@ const initialState = {
   //                   Ollama ENABLES the switch, it never flips it: turning on
   //                   a route that sends the document to a model, however
   //                   local, is the user's decision to make.
+  // aiStrictFormat asks the local AI to answer for EVERY category instead of
+  //   only the ones it thought of. OFF by default: it sometimes finds a little
+  //   more, and usually takes about twice as long.
+  // aiDetailLevel is how much text one local AI request carries: "thorough"
+  //   (the default: smaller slices, the most values, the most requests) or
+  //   "faster" (larger slices, fewer requests, and nothing found at all on a
+  //   small model). Mirrors engine.AllDetailLevels; see AI_DETAIL_LEVELS below.
   // contextSize is the Ollama num_ctx setting, default 8192.
   // minConfidence is the detection-confidence floor, 0 to
   // 1 on the engine's scale. 0 is the default and keeps every detection,
   // which is exactly the behaviour before the setting existed.
   settings: {
     level: "medium", categories: null, ollamaPort: 11434, model: "", country: DEFAULT_COUNTRY,
-    contextSize: 8192, useLocalAI: false,
+    contextSize: 8192, useLocalAI: false, aiStrictFormat: false,
+    aiDetailLevel: "thorough",
     useBuiltInPatterns: true, useHeuristicDiscovery: true,
     // Which READINGS of which built-in signals may DERIVE Suggestions.
     // Data-driven, keyed by SIGNAL_SOURCES and then by SIGNAL_DERIVATIONS: a new
@@ -196,6 +204,21 @@ const initialState = {
   // bar rewound when the second pass started over with a smaller denominator.
   // It is never recomputed here.
   discovery: null,
+
+  // What the LOCAL AI actually did on the last run, or null before the first
+  // one: {requests, silent, truncated, secondsPerRequest}, straight from the Go
+  // result.
+  //
+  // It is kept because "0 suggestions" means two different things and only one
+  // of them is about the document. The seconds are MEASURED on this machine and
+  // this document, which is the only way a user can judge how a scan will feel:
+  // no fixed sentence in a tooltip knows their laptop.
+  // aiRequestEstimate is how many model requests the CURRENT scope and detail
+  // level would send, answered by Go with the same helper the run uses, so the
+  // read-out cannot promise a number the run then contradicts. Null before the
+  // first answer: a read-out that guesses while it waits is worse than none.
+  aiRequestEstimate: null,
+  lastAIScan: null,
 
   // Unified suggestion review list: suggestions from
   // any discovery method wait HERE until explicitly accepted; nothing
@@ -316,6 +339,16 @@ export const MATCH_CLASSES = [
 // a source is one constant here and one implementation in Go rather than a new
 // row, a new field and a new persisted flag.
 export const SIGNAL_SOURCES = ["email"];
+
+// AI_DETAIL_LEVELS mirrors engine.AllDetailLevels exactly, in the order the rail
+// offers them, and is checked by ../detection_parity_test.go. The dropdown is
+// built from it, so a third option invented here would be a control the user can
+// pick and the engine then refuses.
+//
+// There is deliberately no "whole document in one request" level on either side.
+// It measures zero values on every model tried, and a choice whose outcome is
+// "finds nothing" is a broken switch rather than an option.
+export const AI_DETAIL_LEVELS = ["thorough", "faster"];
 
 // SIGNAL_DERIVATIONS mirrors engine.SignalDerivations exactly and is checked by
 // the same guard. Each entry lists, per signal, the READINGS that signal supports,
@@ -939,6 +972,30 @@ export function setUseLocalAI(on) {
   setState({ settings: { ...state.settings, useLocalAI: !!on } });
 }
 
+/**
+ * adoptProbe(status) is THE one way a probe result reaches the store: it lands
+ * in `state.ollama` and its RESOLVED MODEL is adopted into `settings.model`.
+ *
+ * Adopting the model is what makes the dropdown show the model that will
+ * actually run. Go resolves the effective model from what the probe just saw
+ * (the stored choice when it is installed, then the pinned default, then the
+ * first installed one), and a store that kept an empty or uninstalled name
+ * beside it would leave the interface naming one model while the run posted to
+ * another. An empty resolved model leaves the setting alone: there was nothing
+ * to run, so there is nothing to adopt, and a stopped server must not erase the
+ * user's choice.
+ *
+ * Detecting Ollama still never flips `useLocalAI`: sending a document to a
+ * model is a decision the user makes.
+ */
+export function adoptProbe(status) {
+  const patch = { ollama: status };
+  if (status?.model) {
+    patch.settings = { ...state.settings, model: status.model };
+  }
+  setState(patch);
+}
+
 // --- Local-AI scan scope ----------------------------------
 
 /**
@@ -1274,6 +1331,7 @@ export const STEP_RESETS = {
     intersections: [],
     patterns: [],
     discovery: null,
+    lastAIScan: null,
   }),
   // Anonymise owns the run itself, everything it produced, and the editing
   // surfaces that only exist once there is a result to edit.
@@ -2643,6 +2701,7 @@ export function startNewBatch() {
     intersections: [],
     patterns: [],
     discovery: null,
+    lastAIScan: null,
     running: false,
     progress: null,
     results: null,

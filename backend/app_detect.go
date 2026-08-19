@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"doc-anonymiser/backend/engine"
 	"doc-anonymiser/backend/ollama"
@@ -49,11 +50,20 @@ type DetectionProgress struct {
 	DocIndex   int    `json:"docIndex"` // 0-based, within this phase
 	DocCount   int    `json:"docCount"`
 	DocName    string `json:"docName"`
-	// ChunkIndex/ChunkCount are the position INSIDE one document's AI scan.
-	// Zero when the phase does not chunk. Without them a single large file
-	// sits on one unchanging caption for minutes and reads as hung.
+	// ChunkIndex/ChunkCount are the position INSIDE one document's AI scan:
+	// which request is being sent, and how many the scan needs. Zero when the
+	// phase sends no requests. Without them a single large file sits on one
+	// unchanging caption for minutes and reads as hung.
 	ChunkIndex int `json:"chunkIndex"`
 	ChunkCount int `json:"chunkCount"`
+	// UnitFrom/UnitTo are the document's OWN unit numbers this request covers,
+	// and UnitWord is the singular word for them ("slide", "page", "row",
+	// "line"). Together they let the caption say "slides 4 to 6 of 15", in the
+	// words the import list already uses; a request number alone means nothing
+	// to the person watching. Zero and empty when the phase sends no requests.
+	UnitFrom int    `json:"unitFrom"`
+	UnitTo   int    `json:"unitTo"`
+	UnitWord string `json:"unitWord"`
 	// Fraction is the whole run's progress, 0 to 1.
 	Fraction float64 `json:"fraction"`
 }
@@ -83,6 +93,28 @@ type DetectionResult struct {
 	Errors    []string        `json:"errors"`
 	Cancelled bool            `json:"cancelled"`
 	Status    string          `json:"status"`
+
+	// AIRequests and AISilentRequests are how many requests the Local AI route
+	// sent and how many of those came back with nothing. They exist because
+	// "0 suggestions" means two different things, and only one of them is about
+	// the document: a model that answered nothing fifteen times reads exactly
+	// like a document with no names in it, and the user gets no hint that
+	// another model or a smaller slice would change the answer.
+	AIRequests       int `json:"aiRequests"`
+	AISilentRequests int `json:"aiSilentRequests"`
+	// AITruncatedRequests is how many requests the model was still answering
+	// when it hit its generation cap. It is reported beside the silent count
+	// and never folded into it, because the two say opposite things about the
+	// document: a silent request found nothing, a truncated one found more than
+	// it was allowed to finish listing. What it did finish is kept, so a
+	// truncated request usually still contributes values; the number is what
+	// tells the user some may be missing from those pages.
+	AITruncatedRequests int `json:"aiTruncatedRequests"`
+	// AISecondsPerRequest is MEASURED, not estimated: the AI phase's wall clock
+	// divided by its requests. It is what lets a user judge the speed of a scan
+	// on their OWN document and their own machine, which no fixed guidance in a
+	// tooltip can do. Zero when the route did not run.
+	AISecondsPerRequest float64 `json:"aiSecondsPerRequest"`
 }
 
 // AIScope narrows the local-AI route to one document and, within it, an
@@ -201,7 +233,7 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 		if phase == PhaseSmart {
 			a.runSmartPhase(ctx, docs, allow, settings, res, report)
 		} else {
-			a.runLocalAIPhase(ctx, docs, llm, aiScope, res, report)
+			a.runLocalAIPhase(ctx, docs, llm, settings.AIDetailLevel, aiScope, res, report)
 		}
 		if ctx.Err() != nil {
 			break
@@ -224,7 +256,7 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 	// A classification failure degrades to the heuristic categories with a note:
 	// the findings are the point, the labels are polish.
 	if useLocalAI && ctx.Err() == nil && len(res.Suggestions) > 0 {
-		if err := a.refineCategories(ctx, llm, docs, aiScope, res); err != nil && ctx.Err() == nil {
+		if err := a.refineCategories(ctx, llm, docs, settings.AIDetailLevel, aiScope, res); err != nil && ctx.Err() == nil {
 			res.Errors = append(res.Errors,
 				fmt.Sprintf("the local AI could not refine the categories, the offline guesses were kept: %v", err))
 		}
@@ -273,7 +305,7 @@ func (a *App) CancelDetection() {
 // category, which is the same graceful outcome a classification failure already
 // produces.
 func (a *App) refineCategories(ctx context.Context, llm *ollama.Client,
-	docs []engine.Document, scope *AIScope, res *DetectionResult,
+	docs []engine.Document, level string, scope *AIScope, res *DetectionResult,
 ) error {
 	// The problems are discarded here on purpose: runLocalAIPhase has already
 	// run with this same scope and reported them, and saying "page 9 is out of
@@ -283,7 +315,14 @@ func (a *App) refineCategories(ctx context.Context, llm *ollama.Client,
 		units, _ := scopedUnits(docs, scope)
 		texts := make([]string, 0, len(units))
 		for _, u := range units {
-			texts = append(texts, u.text)
+			// The scoped text is built from the SAME slices the discovery call
+			// sent, not re-derived: two implementations of "what the scope
+			// selects" agree right up until one of them is changed.
+			slices, err := u.slices(level, llm.PromptBudgetBytes())
+			if err != nil {
+				continue
+			}
+			texts = append(texts, sliceText(slices))
 		}
 		scoped = strings.Join(texts, "\n")
 	}
@@ -421,20 +460,39 @@ func mergeInto(existing []engine.Suggestion, batches [][]engine.Suggestion) []en
 	return engine.MergeSuggestions(append([][]engine.Suggestion{existing}, batches...)...)
 }
 
-// scanUnit pairs a document with the exact text the local AI should read for
-// it: the whole markdown normally, or the selected pages when scoped.
+// scanUnit pairs a document with the indices of its OWN units the local AI
+// should read for it: every unit normally, or the selected pages when scoped.
+//
+// It carries indices rather than joined text because the text of one request is
+// not the text of one document: the engine packs the units into request-sized
+// slices (engine.ScanChunks), and it can only do that if it still knows where
+// the unit boundaries are. Joined markdown has thrown that away.
 type scanUnit struct {
-	name string
-	text string
+	doc engine.Document
+	// units is a 1-based set of doc's own units; empty means every unit, which
+	// is also what engine.ScanChunks reads an empty list as.
+	units []int
 }
 
-// scopedUnits is THE ONE definition of "the text this run's scope selects".
+// slices turns one scanUnit into the requests the local AI actually sends, at
+// the given detail level and under the given per-request ceiling. It is the ONE
+// place a scope becomes text, so the discovery call and the classification call
+// cannot disagree about what the scope selected.
+func (u scanUnit) slices(level string, hardMaxBytes int) ([]engine.ScanChunk, error) {
+	return engine.ScanChunks(u.doc, u.units, level, hardMaxBytes)
+}
+
+// scopedUnits is THE ONE definition of "what this run's scope selects".
 //
 // Both model calls read it: the discovery call, which scans the text, and the
 // classification call, which decides which suggestions the scope even makes
 // this run's business. A second implementation of the same idea is exactly the
 // bug this shape prevents, because the two would agree right up until one of
 // them was changed.
+//
+// It answers in the document's own UNITS rather than in joined text, because the
+// slicing that follows needs the boundaries: a scope is "these slides of this
+// deck", and turning that into one string immediately loses where a slide ends.
 //
 // It returns the problems rather than recording them, so the caller decides
 // whether this is the run's first look at the scope (report them) or its
@@ -449,21 +507,24 @@ func scopedUnits(docs []engine.Document, scope *AIScope) (units []scanUnit, prob
 				continue
 			}
 			scopeMatched = true
-			// An empty page set means "the whole selected document"; a
-			// non-empty set narrows to exactly those pages.
+			// An empty page set means "the whole selected document", which is
+			// also how an empty unit list reads downstream; a non-empty set
+			// narrows to exactly those pages.
 			if len(scope.Pages) == 0 {
-				units = append(units, scanUnit{name: doc.Name, text: doc.Markdown})
+				units = append(units, scanUnit{doc: doc})
 				continue
 			}
-			text, err := doc.PagesMarkdown(scope.Pages)
-			if err != nil {
+			// Validate the indices HERE, so a stale or mistyped page is
+			// reported once, as this run's first look at the scope, rather
+			// than surfacing later as a slicing failure.
+			if _, err := doc.PagesMarkdown(scope.Pages); err != nil {
 				problems = append(problems, err.Error())
 				continue
 			}
-			units = append(units, scanUnit{name: doc.Name, text: text})
+			units = append(units, scanUnit{doc: doc, units: scope.Pages})
 			continue
 		}
-		units = append(units, scanUnit{name: doc.Name, text: doc.Markdown})
+		units = append(units, scanUnit{doc: doc})
 	}
 	if scope.active() && !scopeMatched {
 		problems = append(problems, fmt.Sprintf(
@@ -473,68 +534,238 @@ func scopedUnits(docs []engine.Document, scope *AIScope) (units []scanUnit, prob
 	return units, problems
 }
 
-// runLocalAIPhase is the Local AI route. Oversized documents are SKIPPED and
-// said so, rather than failing the run: the context window is a fact about
-// the model, not a mistake the user made.
-//
-// When scope is active the route reads ONE document. If the scope names a set
-// of pages it reads only those (CLAUDE.md §5); with no pages it reads the whole
-// selected document. Either way the point is the same: keep the text handed to
-// a small local model small. The Smart route is unaffected — it already read
-// everything.
-func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *ollama.Client,
-	scope *AIScope, res *DetectionResult, report func(DetectionProgress),
-) {
-	units, problems := scopedUnits(docs, scope)
-	res.Errors = append(res.Errors, problems...)
+// scanJob is one document's worth of local-AI work: the slices to send, the
+// word for its own units, and the text the hallucination filter reads.
+type scanJob struct {
+	name   string
+	unit   string
+	slices []engine.ScanChunk
+	source string
+}
 
-	var readable []scanUnit
+// aiScanPlan is what a scope and a detail level become before a single request
+// is sent: the jobs to run, the documents with nothing to read, and the problems
+// worth telling the user about.
+type aiScanPlan struct {
+	jobs     []scanJob
+	skipped  []DetectionSkip
+	problems []string
+}
+
+// requests is how many model requests the plan implies, which is the number the
+// rail shows before the user pays it.
+func (p aiScanPlan) requests() int {
+	total := 0
+	for _, job := range p.jobs {
+		total += len(job.slices)
+	}
+	return total
+}
+
+// planAIScan is THE ONE place a scope and a detail level become requests.
+//
+// Both the run and the estimate go through it, and that is the whole reason it
+// exists: a read-out predicting a different number from the run is worse than no
+// read-out, and two implementations of the packing rule disagree the moment
+// either one is changed.
+//
+// Slicing happens up front rather than per document as the loop reaches it, so
+// the request count is known before the first request is sent and the warning
+// about a long scan can precede the wait instead of following it.
+func planAIScan(docs []engine.Document, llm *ollama.Client, level string, scope *AIScope) aiScanPlan {
+	units, problems := scopedUnits(docs, scope)
+	plan := aiScanPlan{problems: problems}
+
 	for _, u := range units {
-		if chunks := llm.EstimateChunks(u.text); chunks > ollama.MaxChunksPerDocument {
-			res.Skipped = append(res.Skipped, DetectionSkip{
-				Name: u.name,
-				Reason: fmt.Sprintf(
-					"too large for the local AI (%d chunks, the limit is %d). Smart detection still read it; to include it here, split it into smaller files or scope the local AI to a page range.",
-					chunks, ollama.MaxChunksPerDocument),
+		slices, err := u.slices(level, llm.PromptBudgetBytes())
+		if err != nil {
+			plan.problems = append(plan.problems, err.Error())
+			continue
+		}
+		if len(slices) == 0 {
+			plan.skipped = append(plan.skipped, DetectionSkip{
+				Name:   u.doc.Name,
+				Reason: "no text for the local AI to read. Smart detection still read it.",
 			})
 			continue
 		}
-		readable = append(readable, u)
+		if len(slices) > ollama.LargeScanRequests {
+			plan.problems = append(plan.problems, fmt.Sprintf(
+				"%q needs %d local AI requests and will take a while; cancel and scope the local AI to a page range if that is longer than you want to wait",
+				u.doc.Name, len(slices)))
+		}
+		// The source text for the hallucination filter is the scanned text
+		// itself, built from the SAME slices, so a name the model read in one
+		// slice is not dropped for being absent from another.
+		plan.jobs = append(plan.jobs, scanJob{
+			name:   u.doc.Name,
+			unit:   u.doc.Unit,
+			slices: slices,
+			source: sliceText(slices),
+		})
+	}
+	return plan
+}
+
+// EstimateAIRequests reports how many model requests the current scope and
+// detail level imply, so the rail can show the cost of a choice BEFORE the user
+// pays it.
+//
+// It answers "if the Local AI route runs, this is what it would send": it does
+// not probe Ollama and it does not care whether the route is switched on,
+// because the question the rail asks is what the choice in front of the user
+// would cost. It reaches no model and mutates nothing, so it is safe to call on
+// every edit of the scope or the level.
+//
+// The count comes from planAIScan, the same helper the run itself uses. A second
+// formula here would be a number that disagrees with reality as soon as either
+// copy changes, and the user would have no way of telling which was lying.
+//
+// A problem deciding the slices (a page out of range, a scope naming a document
+// that is not imported, a scan large enough to be worth warning about) is NOT an
+// error here. The run reports those, and the run also sends exactly the requests
+// this counts in spite of them, so failing would break the one property the
+// number is for: the estimate equals what the run then does. Only having nothing
+// to estimate is an error.
+func (a *App) EstimateAIRequests(fileNames []string, aiScope *AIScope) (int, error) {
+	docs := a.docsByName(fileNames)
+	if len(docs) == 0 {
+		return 0, fmt.Errorf(
+			"no matching imported files to estimate: import documents on the Import step first")
 	}
 
+	a.mu.Lock()
+	level := a.settings.AIDetailLevel
+	llm := a.llm
+	a.mu.Unlock()
+
+	return planAIScan(docs, llm, level, aiScope).requests(), nil
+}
+
+// runLocalAIPhase is the Local AI route: one request per slice, with the slices
+// aligned to each document's OWN units by the engine.
+//
+// A large document is scanned and WARNED about, never refused. The user asked for
+// the scan, every request reports progress and the cancel button reaches
+// mid-scan, so a slow scan is a cost they can watch and stop; dropping the
+// document from the route leaves them with the offline findings and no idea why.
+//
+// The only document that is skipped is one with no scannable text at all, which
+// is a genuine "there is nothing here to read" rather than a limit.
+//
+// When scope is active the route reads ONE document. If the scope names a set
+// of pages it reads only those (CLAUDE.md §5); with no pages it reads the whole
+// selected document. The Smart route is unaffected: it already read everything.
+func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *ollama.Client,
+	level string, scope *AIScope, res *DetectionResult, report func(DetectionProgress),
+) {
+	plan := planAIScan(docs, llm, level, scope)
+	res.Errors = append(res.Errors, plan.problems...)
+	res.Skipped = append(res.Skipped, plan.skipped...)
+	jobs := plan.jobs
+
 	// Partial work is kept whatever ends the loop, which is why the merge is
-	// deferred: a cancellation used to return straight out and throw away
+	// deferred: a cancellation returning straight out would throw away
 	// everything the files before it had produced.
 	var batches [][]engine.Suggestion
-	defer func() { res.Suggestions = mergeInto(res.Suggestions, batches) }()
+	// The timing is measured around the requests and reported however the loop
+	// ends, so a cancelled scan still says how long its requests took.
+	started := time.Now()
+	defer func() {
+		res.Suggestions = mergeInto(res.Suggestions, batches)
+		if res.AIRequests > 0 {
+			res.AISecondsPerRequest = time.Since(started).Seconds() / float64(res.AIRequests)
+		}
+		// Every request answering nothing is the case that reads as a clean
+		// document and is not one. It names the MODEL, because "your model found
+		// nothing" is the actionable half, and it goes in Errors because the
+		// interface already renders those as problems the run finished with. A
+		// parallel notes channel would be a second thing to render and a second
+		// thing to forget.
+		if res.AIRequests > 0 && res.AISilentRequests == res.AIRequests {
+			res.Errors = append(res.Errors, fmt.Sprintf(
+				"the local AI model %q returned nothing for all %d request(s), so this run found no values through it; a larger model usually changes that",
+				llm.Model, res.AIRequests))
+		}
+	}()
 
-	for i, u := range readable {
+	for i, job := range jobs {
 		if ctx.Err() != nil {
 			return
 		}
-		report(DetectionProgress{DocIndex: i, DocCount: len(readable), DocName: u.name})
+		report(DetectionProgress{DocIndex: i, DocCount: len(jobs), DocName: job.name})
 
-		proposals, err := llm.DiscoverWithProgress(ctx, u.text, func(index, total int) {
-			report(DetectionProgress{
-				DocIndex: i, DocCount: len(readable), DocName: u.name,
+		texts := make([]string, 0, len(job.slices))
+		for _, s := range job.slices {
+			texts = append(texts, s.Text)
+		}
+		outcome, err := llm.DiscoverSlices(ctx, texts, job.source, func(index, total int) {
+			p := DetectionProgress{
+				DocIndex: i, DocCount: len(jobs), DocName: job.name,
 				ChunkIndex: index, ChunkCount: total,
-			})
+				UnitWord: job.unit,
+			}
+			// The unit numbers of the slice about to be sent, so the caption can
+			// say "slides 4 to 6" in the word the import list already uses.
+			if index >= 0 && index < len(job.slices) {
+				p.UnitFrom = job.slices[index].FromUnit
+				p.UnitTo = job.slices[index].ToUnit
+			}
+			report(p)
 		})
-		// Partial chunk proposals survive a mid-file cancellation.
-		if len(proposals) > 0 {
-			batches = append(batches, proposals)
+		// The counts accumulate across documents, and they accumulate even when
+		// the file failed: a request that was sent was sent, and the run's
+		// honesty about what the model did is what these numbers are for.
+		res.AIRequests += outcome.Requests
+		res.AISilentRequests += outcome.Silent
+		res.AITruncatedRequests += outcome.Truncated
+		// A cut-off reply is reported PER DOCUMENT rather than per request: the
+		// user acts on it by scoping the scan, and a scope names a document and
+		// its pages. One line per file says which file to aim at; one line per
+		// request would say the same thing ten times.
+		if outcome.Truncated > 0 {
+			word := scanUnitWord(job.unit)
+			res.Errors = append(res.Errors, fmt.Sprintf(
+				"the local AI ran out of room on %d of %d request(s) for %q, so those %ss may be missing values; what the model had already listed was kept. Scan fewer %ss at a time, or try another model",
+				outcome.Truncated, outcome.Requests, job.name, word, word))
+		}
+		// Partial per-slice proposals survive a mid-file cancellation.
+		if len(outcome.Suggestions) > 0 {
+			batches = append(batches, outcome.Suggestions)
 		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return // cancelled: keep what we have
 			}
 			// One file the model choked on must not throw away the other
-			// nine. This is the case that used to abort the whole run with an
-			// error the caller turned into a toast and nothing else.
+			// nine, so this is a recorded problem rather than a returned error.
 			res.Errors = append(res.Errors,
-				fmt.Sprintf("the local AI failed on %q: %v", u.name, err))
+				fmt.Sprintf("the local AI failed on %q: %v", job.name, err))
 		}
 	}
+}
+
+// scanUnitWord is the noun a message uses for one of a document's own units.
+// A format that reports none leaves it empty, and "unit" is the same word the
+// engine falls back to: a sentence with a hole where a noun should be reads as
+// a bug, and the general word still tells the user what to scope.
+func scanUnitWord(unit string) string {
+	if unit == "" {
+		return "unit"
+	}
+	return unit
+}
+
+// sliceText joins slices back into the text they cover, which is what the
+// hallucination filter is checked against. It exists so the filter reads exactly
+// what was sent: rebuilding the scanned text from the document instead would let
+// a name outside the scope pass a filter the scope should have vetoed.
+func sliceText(slices []engine.ScanChunk) string {
+	texts := make([]string, 0, len(slices))
+	for _, s := range slices {
+		texts = append(texts, s.Text)
+	}
+	return strings.Join(texts, "\n")
 }
 
 // overallFraction maps a position inside one phase onto the whole run.
@@ -563,16 +794,44 @@ func overallFraction(phaseIndex, phaseCount, docIndex, docCount, chunkIndex, chu
 // detectionStatus is the one sentence the UI shows when a run ends. It says
 // what happened, including the two things the old code computed and then
 // dropped on the floor: that a run was cancelled, and that files were skipped.
+//
+// When the AI phase ran it also names the REQUEST count, so the summary of a
+// run that found nothing distinguishes "the model was asked fifteen times" from
+// "there was one small thing to read" without the reader opening anything else.
 func detectionStatus(res *DetectionResult, docCount int) string {
 	switch {
 	case res.Cancelled:
 		return fmt.Sprintf("cancelled: %d suggestion(s) found before it stopped",
 			len(res.Suggestions))
 	case len(res.Errors) > 0:
-		return fmt.Sprintf("finished with %d problem(s): %d suggestion(s) from %d file(s)",
-			len(res.Errors), len(res.Suggestions), docCount)
+		return fmt.Sprintf("finished with %d problem(s): %d suggestion(s) from %d file(s)%s",
+			len(res.Errors), len(res.Suggestions), docCount, aiRequestSummary(res))
 	default:
-		return fmt.Sprintf("scanned %d file(s), %d suggestion(s)",
-			docCount, len(res.Suggestions))
+		return fmt.Sprintf("scanned %d file(s), %d suggestion(s)%s",
+			docCount, len(res.Suggestions), aiRequestSummary(res))
 	}
+}
+
+// aiRequestSummary is the trailing clause naming what the local AI was asked,
+// and empty when the route did not run, so a Smart-only run's summary is
+// unchanged.
+func aiRequestSummary(res *DetectionResult) string {
+	if res.AIRequests == 0 {
+		return ""
+	}
+	// The two clauses are separate because they are separate facts, and a run
+	// can carry both: some requests found nothing, others were still answering
+	// when they ran out of room.
+	var clauses []string
+	if res.AISilentRequests > 0 {
+		clauses = append(clauses, fmt.Sprintf("%d returned nothing", res.AISilentRequests))
+	}
+	if res.AITruncatedRequests > 0 {
+		clauses = append(clauses, fmt.Sprintf("%d ran out of room", res.AITruncatedRequests))
+	}
+	if len(clauses) == 0 {
+		return fmt.Sprintf(" (local AI: %d request(s))", res.AIRequests)
+	}
+	return fmt.Sprintf(" (local AI: %d request(s), %s)",
+		res.AIRequests, strings.Join(clauses, ", "))
 }

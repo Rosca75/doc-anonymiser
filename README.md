@@ -125,6 +125,35 @@ ollama pull qwen3.5:0.8b
 Detecting Ollama ENABLES the switch; it never flips it. Handing your documents to
 a model, however local, stays your decision.
 
+### Make it a little faster: let Ollama use your GPU
+
+Ollama ships with Vulkan support enabled but **ignores integrated GPUs unless you
+tell it not to**, and most business laptops have exactly that. It writes
+`dropping integrated GPU` in its log and runs the model on the CPU instead.
+
+On Windows the variable has to be set for the **Ollama service**, not in a
+terminal window. A variable exported in a shell reaches nothing, and that is the
+mistake that makes people conclude the setting does not work:
+
+```
+setx OLLAMA_IGPU_ENABLE 1
+```
+
+Then quit Ollama from the system tray and start it again.
+
+To confirm it took, open `%LOCALAPPDATA%\Ollama\server.log` and look for the
+GPU listed as inference compute and a line reading `offloaded N/N layers to GPU`,
+instead of `dropping integrated GPU`.
+
+What to expect: on the reference laptop (an Intel Arc 140V integrated GPU) this
+measured **about 1.2x faster** on a 15-slide deck, and the model found somewhat
+more than it did on the CPU. It is free and it does no harm, but it is a modest
+improvement rather than a transformation, and it does not turn a long scan into a
+short one. Scanning fewer pages at a time, or choosing a different model, moves
+the clock more than this does.
+
+Discrete NVIDIA and AMD GPUs are used automatically and need none of this.
+
 The app only ever talks to Ollama on `http://127.0.0.1:11434` — your own
 machine, never a remote server. There is no cloud option, and nothing in the
 application can be pointed at a remote host.

@@ -19,10 +19,12 @@ package backend
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -411,6 +413,499 @@ func scopeChatServer(seen *[]string) *httptest.Server {
 	}))
 }
 
+// slideDeck builds a pptx-shaped document whose slides are each larger than one
+// request's target, so the slicing has to divide it. Its whole markdown still
+// fits a model's context window comfortably, which is exactly the situation that
+// produced the reported failure.
+func slideDeck(slides int) engine.Document {
+	var b strings.Builder
+	for i := 1; i <= slides; i++ {
+		fmt.Fprintf(&b, "## Slide %d: title %d\n", i, i)
+		fmt.Fprintf(&b, "%s\n\n", strings.Repeat(fmt.Sprintf("Alpine Trust point %d. ", i), 70))
+	}
+	return engine.Document{
+		Name: "deck.pptx", Format: engine.FormatPPTX, Unit: engine.UnitSlide,
+		Markdown: b.String(),
+	}
+}
+
+// TestAWholeDocumentIsNotOneRequest is the regression guard for the whole
+// change: a document handed to the model in ONE request returns nothing, on
+// every model measured, however comfortably it fits the context window. The
+// slices are the document's own units, so a two slide deck is at least two
+// requests.
+func TestAWholeDocumentIsNotOneRequest(t *testing.T) {
+	var seen []string
+	srv := scopeChatServer(&seen)
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{slideDeck(2)}
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = false // isolate the AI route
+	withRecorder(t, app)
+
+	if _, err := app.RunDetection([]string{"deck.pptx"}, nil, nil); err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	if len(seen) < 2 {
+		t.Fatalf("a two slide deck must be at least two requests, got %d: sizing a slice from the context window is what returned nothing", len(seen))
+	}
+	// Every slide's text has to reach the model exactly once between them.
+	for _, want := range []string{"point 1", "point 2"} {
+		hits := 0
+		for _, prompt := range seen {
+			if strings.Contains(prompt, want) {
+				hits++
+			}
+		}
+		if hits != 1 {
+			t.Errorf("%q reached the model %d time(s), want exactly 1; slices = %d", want, hits, len(seen))
+		}
+	}
+}
+
+// TestEstimateAIRequestsEqualsWhatTheRunSends is the read-out's whole contract.
+//
+// The rail shows the request count BEFORE the user pays it, and a number that
+// disagrees with what the run then does is worse than no number at all: it
+// teaches the reader to distrust the one figure they use to decide between the
+// two detail levels. Both sides go through planAIScan for exactly this reason,
+// and this is the test that says so.
+//
+// It is checked at both levels and under a page scope, because those are the
+// three things that move the number. The mock answers nothing and the offline
+// route is off, so no classification call is sent and every request the server
+// sees is a discovery request.
+func TestEstimateAIRequestsEqualsWhatTheRunSends(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		level string
+		scope *AIScope
+	}{
+		{"thorough_over_the_whole_deck", engine.DetailThorough, nil},
+		{"faster_over_the_whole_deck", engine.DetailFaster, nil},
+		{"thorough_over_a_page_scope", engine.DetailThorough, &AIScope{DocName: "deck.pptx", Pages: []int{2, 3}}},
+	} {
+		t.Run("detection/"+tc.name, func(t *testing.T) {
+			var seen []string
+			srv := scopeChatServer(&seen)
+			defer srv.Close()
+
+			app := NewApp()
+			app.docs = []engine.Document{slideDeck(6)}
+			app.llm = ollama.New(srv.URL)
+			app.settings.UseLocalAI = true
+			app.settings.UseHeuristicDiscovery = false // isolate the AI route
+			app.settings.AIDetailLevel = tc.level
+			withRecorder(t, app)
+
+			estimate, err := app.EstimateAIRequests([]string{"deck.pptx"}, tc.scope)
+			if err != nil {
+				t.Fatalf("EstimateAIRequests: %v", err)
+			}
+			if estimate <= 0 {
+				t.Fatalf("the estimate is %d, want a positive request count for a six slide deck", estimate)
+			}
+
+			res, err := app.RunDetection([]string{"deck.pptx"}, nil, tc.scope)
+			if err != nil {
+				t.Fatalf("RunDetection: %v", err)
+			}
+			if len(seen) != estimate {
+				t.Errorf("the run sent %d request(s) and the read-out promised %d: the estimate and the run must come from the same packing rule",
+					len(seen), estimate)
+			}
+			// And the run's own count agrees, so the pre-run and post-run
+			// read-outs cannot tell the user two different stories.
+			if res.AIRequests != estimate {
+				t.Errorf("the run reports %d request(s) and the read-out promised %d", res.AIRequests, estimate)
+			}
+		})
+	}
+
+	t.Run("detection/the_level_actually_changes_the_number", func(t *testing.T) {
+		app := NewApp()
+		app.docs = []engine.Document{slideDeck(6)}
+
+		app.settings.AIDetailLevel = engine.DetailThorough
+		thorough, err := app.EstimateAIRequests([]string{"deck.pptx"}, nil)
+		if err != nil {
+			t.Fatalf("EstimateAIRequests(thorough): %v", err)
+		}
+		app.settings.AIDetailLevel = engine.DetailFaster
+		faster, err := app.EstimateAIRequests([]string{"deck.pptx"}, nil)
+		if err != nil {
+			t.Fatalf("EstimateAIRequests(faster): %v", err)
+		}
+		if !(faster < thorough) {
+			t.Errorf("faster needs %d request(s) and thorough %d: a dial that does not move the number is not wired up",
+				faster, thorough)
+		}
+	})
+
+	t.Run("errors/nothing_to_estimate_is_an_error_not_a_zero", func(t *testing.T) {
+		app := NewApp()
+		if _, err := app.EstimateAIRequests([]string{"missing.txt"}, nil); err == nil {
+			t.Error("estimating over no matching documents must say so, not answer zero as though the scan were free")
+		}
+	})
+}
+
+// TestDetectionProgressCarriesUnitNumbers: the caption has to say "slides 1 to 2
+// of 15" in the word the import list already uses. A request index alone means
+// nothing to the person watching a two minute scan.
+func TestDetectionProgressCarriesUnitNumbers(t *testing.T) {
+	var seen []string
+	srv := scopeChatServer(&seen)
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{slideDeck(3)}
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = false
+	rec := withRecorder(t, app)
+
+	if _, err := app.RunDetection([]string{"deck.pptx"}, nil, nil); err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+
+	var perRequest []DetectionProgress
+	for _, p := range rec.progress() {
+		if p.Phase == PhaseLocalAI && p.ChunkCount > 0 {
+			perRequest = append(perRequest, p)
+		}
+	}
+	if len(perRequest) == 0 {
+		t.Fatal("the AI phase must report progress per request")
+	}
+	for _, p := range perRequest {
+		if p.ChunkCount != len(seen) {
+			t.Errorf("ChunkCount = %d, want the request count %d: the denominator IS the number of requests",
+				p.ChunkCount, len(seen))
+		}
+		if p.UnitWord != engine.UnitSlide {
+			t.Errorf("UnitWord = %q, want %q so the caption reads in the document's own word",
+				p.UnitWord, engine.UnitSlide)
+		}
+		if p.UnitFrom < 1 || p.UnitTo < p.UnitFrom {
+			t.Errorf("request %d covers units %d-%d, which is not a range", p.ChunkIndex, p.UnitFrom, p.UnitTo)
+		}
+	}
+}
+
+// countingChatServer answers /api/chat with the content the callback returns for
+// each call, counting the calls and the empty answers among them, so a test can
+// hold the run's own counts against what the server actually saw.
+func countingChatServer(reply func(call int) string) (*httptest.Server, *int32, *int32) {
+	var calls, empties int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.Write([]byte(`{"models":[{"name":"m"}]}`))
+		case "/api/chat":
+			n := int(atomic.AddInt32(&calls, 1))
+			content := reply(n)
+			if strings.Contains(content, `"entity_names":[]`) && !strings.Contains(content, `"entity_names":[""`) &&
+				!strings.Contains(content, "Alpine") && !strings.Contains(content, "Borealis") {
+				atomic.AddInt32(&empties, 1)
+			}
+			resp, _ := json.Marshal(map[string]interface{}{
+				"message": map[string]string{"role": "assistant", "content": content},
+			})
+			w.Write(resp)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return srv, &calls, &empties
+}
+
+// TestSilenceIsReportedAndDoesNotReadAsACleanDocument is the reported bug's
+// second half: fifteen empty replies said "0 suggestions", which is the same
+// sentence a document with no names produces. The user could not tell them apart
+// and had no hint that another model would answer differently.
+func TestSilenceIsReportedAndDoesNotReadAsACleanDocument(t *testing.T) {
+	const empty = `{"entity_names":[],"project_names":[],"person_names":[]}`
+	srv, calls, empties := countingChatServer(func(int) string { return empty })
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{slideDeck(3)}
+	app.llm = ollama.New(srv.URL)
+	app.llm.Model = "tiny-model"
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = false
+	rec := withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"deck.pptx"}, nil, nil)
+	if err != nil {
+		t.Fatalf("an all-silent scan must still finish: %v", err)
+	}
+	// The run FINISHES: status set, exactly one terminal event.
+	if res.Status == "" {
+		t.Error("a finished run must carry a status")
+	}
+	if got := rec.count("detection:done"); got != 1 {
+		t.Errorf("want exactly one detection:done, got %d", got)
+	}
+	if got := rec.count("detection:error"); got != 0 {
+		t.Errorf("silence is not a crash, got %d detection:error", got)
+	}
+
+	// The counts come from the server's own tally, so the assertion cannot drift
+	// from what was actually sent.
+	if want := int(atomic.LoadInt32(calls)); res.AIRequests != want {
+		t.Errorf("AIRequests = %d, want the %d call(s) the server saw", res.AIRequests, want)
+	}
+	if want := int(atomic.LoadInt32(empties)); res.AISilentRequests != want {
+		t.Errorf("AISilentRequests = %d, want the %d empty reply(s) the server sent",
+			res.AISilentRequests, want)
+	}
+	if res.AIRequests == 0 || res.AISilentRequests != res.AIRequests {
+		t.Fatalf("this scan is all silent by construction: AIRequests=%d AISilentRequests=%d",
+			res.AIRequests, res.AISilentRequests)
+	}
+
+	joined := strings.Join(res.Errors, " | ")
+	if !strings.Contains(joined, "tiny-model") {
+		t.Errorf("the message must name the MODEL, which is the actionable half: %q", joined)
+	}
+	if !strings.Contains(joined, "returned nothing") {
+		t.Errorf("the message must say the model returned nothing: %q", joined)
+	}
+	if !strings.Contains(res.Status, "request") {
+		t.Errorf("the one line summary must name the request count so it stops meaning two things: %q", res.Status)
+	}
+	if res.AISecondsPerRequest < 0 {
+		t.Errorf("the measured seconds per request must not be negative: %v", res.AISecondsPerRequest)
+	}
+}
+
+// TestPartialSilenceIsNotReportedAsTotalSilence: most requests returning nothing
+// is NORMAL, measured at 46 of 50 on one document, so only an all-silent phase
+// is worth a message. A warning on every scan is a warning nobody reads.
+func TestPartialSilenceIsNotReportedAsTotalSilence(t *testing.T) {
+	srv, calls, _ := countingChatServer(func(call int) string {
+		if call == 1 {
+			return `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`
+		}
+		return `{"entity_names":[],"project_names":[],"person_names":[]}`
+	})
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{slideDeck(3)}
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = false
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"deck.pptx"}, nil, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	if res.AISilentRequests >= res.AIRequests {
+		t.Fatalf("one request answered, so the phase is not all silent: AIRequests=%d AISilentRequests=%d",
+			res.AIRequests, res.AISilentRequests)
+	}
+	for _, msg := range res.Errors {
+		if strings.Contains(msg, "returned nothing for all") {
+			t.Errorf("a partly silent scan must not be reported as a silent model: %q", msg)
+		}
+	}
+	if got := int(atomic.LoadInt32(calls)); got < 2 {
+		t.Fatalf("this test needs several requests to be about anything, got %d", got)
+	}
+}
+
+// TestATruncatedSliceDoesNotStopTheRestOfTheDocument is the guard for the
+// per-slice degradation: a reply cut off on one slide must cost that slide's
+// tail and nothing else. Ending the document's scan there instead means one
+// dense slide leaves every slide after it unread, while the run reports its
+// findings as though that were the whole document.
+func TestATruncatedSliceDoesNotStopTheRestOfTheDocument(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.Write([]byte(`{"models":[{"name":"m"}]}`))
+		case "/api/chat":
+			var body struct {
+				Messages []struct {
+					Role    string `json:"role"`
+					Content string `json:"content"`
+				} `json:"messages"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			var user string
+			for _, m := range body.Messages {
+				if m.Role == "user" {
+					user = m.Content
+					seen = append(seen, m.Content)
+				}
+			}
+			payload := map[string]interface{}{
+				"message": map[string]string{"role": "assistant",
+					"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`},
+			}
+			if strings.Contains(user, "point 1.") {
+				// The first slide's reply runs out of room after one name.
+				payload = map[string]interface{}{
+					"message": map[string]string{"role": "assistant",
+						"content": `{"entity_names":["Alpine Trust","Alp`},
+					"done_reason": "length",
+					"eval_count":  1024,
+				}
+			}
+			resp, _ := json.Marshal(payload)
+			w.Write(resp)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{slideDeck(3)}
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = false // isolate the AI route
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"deck.pptx"}, nil, nil)
+	if err != nil {
+		t.Fatalf("a cut-off slice must not fail the run: %v", err)
+	}
+	if len(seen) != 3 {
+		t.Fatalf("every slide must still be sent after a truncation, got %d request(s), want 3", len(seen))
+	}
+	if !strings.Contains(strings.Join(seen, "\n"), "point 3.") {
+		t.Error("the slides after the truncated one were never sent, so the scan stopped where the reply was cut")
+	}
+	if res.AIRequests != 3 || res.AITruncatedRequests != 1 {
+		t.Errorf("want 3 requests with 1 truncated, got aiRequests=%d aiTruncatedRequests=%d",
+			res.AIRequests, res.AITruncatedRequests)
+	}
+	// The truncated slice still contributed: what the model finished writing is
+	// salvaged, and the half-written name is dropped by the hallucination filter.
+	var found bool
+	for _, sugg := range res.Suggestions {
+		if sugg.MainText == "Alpine Trust" {
+			found = true
+		}
+		if sugg.MainText == "Alp" {
+			t.Error("a half-written name must not reach the review list")
+		}
+	}
+	if !found {
+		t.Errorf("the names finished before the cut must survive: %+v", res.Suggestions)
+	}
+	// The status line has to say it, or a run that quietly lost a slide's tail
+	// reads exactly like one that read everything.
+	if !strings.Contains(res.Status, "ran out of room") {
+		t.Errorf("the run summary must say some requests ran out of room: %q", res.Status)
+	}
+}
+
+// TestATruncatedReplyOnOneFileLeavesTheOthersIntact: the per-file contract holds
+// for the new error too. One file the model choked on must not throw away what
+// the others found.
+func TestATruncatedReplyOnOneFileLeavesTheOthersIntact(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.Write([]byte(`{"models":[{"name":"m"}]}`))
+		case "/api/chat":
+			var body struct {
+				Messages []struct {
+					Role    string `json:"role"`
+					Content string `json:"content"`
+				} `json:"messages"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			var user string
+			for _, m := range body.Messages {
+				if m.Role == "user" {
+					user = m.Content
+				}
+			}
+			payload := map[string]interface{}{
+				"message": map[string]string{"role": "assistant",
+					"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`},
+			}
+			if strings.Contains(user, "Borealis") {
+				// The dense file's reply runs out of room.
+				payload = map[string]interface{}{
+					"message":     map[string]string{"role": "assistant", "content": `{"entity_names":["Bor`},
+					"done_reason": "length",
+					"eval_count":  512,
+				}
+			}
+			resp, _ := json.Marshal(payload)
+			w.Write(resp)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{
+		{Name: "good.txt", Format: engine.FormatTXT, Unit: engine.UnitLine,
+			Markdown: "Alpine Trust signed the engagement letter.\n"},
+		{Name: "bad.txt", Format: engine.FormatTXT, Unit: engine.UnitLine,
+			Markdown: "Borealis Fund objected to the terms.\n"},
+	}
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = false
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"good.txt", "bad.txt"}, nil, nil)
+	if err != nil {
+		t.Fatalf("one truncated file must not fail the run: %v", err)
+	}
+	var found bool
+	for _, sugg := range res.Suggestions {
+		if sugg.MainText == "Alpine Trust" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the healthy file's suggestions must survive: %+v", res.Suggestions)
+	}
+	joined := strings.Join(res.Errors, " | ")
+	if !strings.Contains(joined, "bad.txt") || !strings.Contains(joined, "ran out of room") {
+		t.Errorf("the truncated file must be named as having run out of room: %q", joined)
+	}
+	// The remedy has to be one the user has. The detail level is not: Thorough
+	// is already the default, so naming it tells them to do what they are doing.
+	for _, banned := range []string{"Thorough", "detail level"} {
+		if strings.Contains(joined, banned) {
+			t.Errorf("the truncation message must not name %q as the fix, it is already the default: %q", banned, joined)
+		}
+	}
+	if res.AITruncatedRequests != 1 {
+		t.Errorf("the run must count the truncated request, got %d", res.AITruncatedRequests)
+	}
+}
+
+// assertNoScopeProblem fails when a run reported a problem ABOUT THE SCOPE: an
+// index outside the document, or a document that is not imported. It exists
+// because a scope test's subject is the scope, and a run can legitimately carry
+// other problems (a model that answered nothing) that say nothing about it.
+func assertNoScopeProblem(t *testing.T, res *DetectionResult) {
+	t.Helper()
+	for _, msg := range res.Errors {
+		if strings.Contains(msg, "out of bounds") || strings.Contains(msg, "not among the imported") {
+			t.Fatalf("a valid scope must not report a scope problem: %q", msg)
+		}
+	}
+}
+
 // TestDetectionAIScopeLimitsToPageRange is the whole point of the feature: with
 // a scope set, the local AI must see ONLY the chosen document's chosen pages,
 // never the rest, so a small model is not handed "too much".
@@ -436,9 +931,11 @@ func TestDetectionAIScopeLimitsToPageRange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
-	if len(res.Errors) != 0 {
-		t.Fatalf("a valid scope must not error: %v", res.Errors)
-	}
+	// A VALID scope reports no scope problem. The mock answers every request
+	// with an empty object, so the run does carry the all-silent warning; that
+	// is about the model, not about the scope, and asserting "no errors at all"
+	// here would be asserting the wrong thing.
+	assertNoScopeProblem(t, res)
 
 	joined := strings.Join(seen, "\n")
 	if joined == "" {
@@ -511,9 +1008,11 @@ func TestDetectionAIScopeDiscontiguousPages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
-	if len(res.Errors) != 0 {
-		t.Fatalf("a valid scope must not error: %v", res.Errors)
-	}
+	// A VALID scope reports no scope problem. The mock answers every request
+	// with an empty object, so the run does carry the all-silent warning; that
+	// is about the model, not about the scope, and asserting "no errors at all"
+	// here would be asserting the wrong thing.
+	assertNoScopeProblem(t, res)
 
 	joined := strings.Join(seen, "\n")
 	for _, want := range []string{"alpha", "charlie"} {

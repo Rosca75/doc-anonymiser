@@ -1,7 +1,7 @@
 # Taskfile.yml — the local entry point for the deterministic audit layer.
 #
 # WHY go-task AND NOT make
-#   `make` is not available on the owner's PwC-managed Windows laptop and there
+#   `make` is not available on the owner's Corporate-managed Windows laptop and there
 #   is no way to install it without admin rights. go-task is a single Go binary
 #   built from the tools/ module, so it arrives the same way every other audit
 #   tool does: `task tools` builds it, or `go -C tools run ... task` runs it.

@@ -2,7 +2,7 @@
 
 You are executing a change order against the existing **doc-anonymiser**
 repository (pattern P0, pure Go + Wails v2, no CGo, no npm). It holds **one
-self-contained implementation section per change request (CR1 to CR7)**,
+self-contained implementation section per change request (CR1 to CR8)**,
 followed by the **decisions taken**, a **conflict analysis**, the **recommended
 execution sequence** and the **acceptance criteria**.
 
@@ -19,8 +19,10 @@ CR1 fixes the slicing, CR2 turns the remaining speed-versus-recall trade-off int
 a user setting instead of a hidden constant, CR3 does the same for the reply
 format, CR4 stops a silent or truncated model reading as a clean document, CR5
 fixes the PPTX converter defect the investigation exposed, CR6 fixes a model
-default that does not exist on a machine, and CR7 documents the Ollama
-environment setting that is worth more than any code change in this order.
+default that does not exist on a machine, CR7 documents the Ollama
+environment setting that is worth more than any code change in this order, and
+CR8, added by amendment once CR1 was measured, stops a reply the model could not
+finish from costing the user every slice after it.
 
 Ground rules for this change order (unchanged from `CLAUDE.md`):
 
@@ -676,6 +678,14 @@ setting achieves, in outcome terms:
 > the most values and takes the longest. Larger slices are quicker and can miss
 > values completely.
 
+**Amended once CR2 was measured.** The second sentence's promise did not survive
+the measurement (Appendix A, post-CR3 runs): larger slices were not reliably
+quicker on the model that finds anything, while they reliably send fewer
+requests. The shipped tooltip therefore names the request count rather than a
+speed, and the option labels name the slice size rather than "Faster". The engine
+identifiers `thorough` and `faster` are unchanged, because an identifier is a
+contract and a label is not.
+
 No em dashes (`frontend/copy.test.js` and `copy_guard_test.go` both police this).
 Do not put numbers of bytes or requests in the copy: those are dynamic and belong
 in the read-out.
@@ -1102,6 +1112,115 @@ act on.
 
 ---
 
+## CR8 — A cut-off reply costs one slice, not the rest of the document
+
+Added by amendment after CR1 and CR4 landed and were measured on both reference
+documents. It comes BEFORE CR3 and CR2 because both of those change how long a
+reply is, so neither can be measured honestly while a long reply ends the scan.
+
+### What CR1 exposed
+
+CR1 fixed the slicing, and the slices are now the right size. That made
+`maxReplyTokens` (512) the binding limit instead, and it aborts both reference
+documents at the first slice dense enough to need a long answer:
+
+| document | slice | slice bytes | outcome at the 512-token cap |
+|---|---|---:|---|
+| reference deck | slide 6 (request 3 of 10) | 1,827 | `done_reason: "length"`, `eval_count` 512 |
+| reference deck | slide 10 (request 6 of 10) | 3,380 | `done_reason: "length"`, `eval_count` 512 |
+| reference PDF | page 1 (request 1 of 2) | 3,577 | `done_reason: "length"`, `eval_count` 512 |
+
+`DiscoverSlices` returns on the first error, so on the PDF **every** page after
+the first was never sent, and on the deck seven of ten slices were never sent.
+The run then reported what it had, which is a fraction of the document presented
+as though it were all of it.
+
+The two documents fail differently, and that is the whole design of this CR:
+
+- **The deck's cut replies are degenerate.** On slide 6 the model closed six of
+  the seven category arrays with twenty distinct strings between them, then filled
+  the seventh with ONE string repeated seventy-two times until the cap stopped it.
+  On slide 10 it closed three arrays and then cycled about nine strings ten times
+  over. Raising the cap does not fix a loop: measured at 1,024 tokens both slices
+  ran to the new cap as well (106 s and 109 s), and at 2,048 both exceeded the
+  request timeout and returned NOTHING, which is strictly worse than a cut-off
+  reply because there is nothing left to salvage.
+- **The PDF's cut reply is an honest answer that ran long.** Page 1 returned 73
+  strings, 56 of them distinct, no repetition beyond names the model legitimately
+  filed under two categories, and it was cut in the middle of the last array. At a
+  1,024-token cap the same page finishes cleanly at `eval_count` 563 and returns
+  77 strings that occur verbatim in the source, which is exactly the number
+  Appendix A records for that page.
+
+So the cap was genuinely too low (an honest reply needed 563), AND a bigger cap
+can never be the whole fix (a degenerate reply consumes any cap it is given).
+
+### Change
+
+**`backend/ollama/client.go`:**
+
+- `maxReplyTokens` 512 to **1024**, with the comment rewritten for unit-sized
+  slices: the densest honest reply measured on a real document finishes at about
+  560 tokens, every slide of the deck finishes under 200, so the cap is a runaway
+  guard sitting at roughly twice the densest honest answer. It is deliberately not
+  higher: the only replies that would use more are the degenerate ones, and a cap
+  the request window cannot deliver turns a salvageable cut-off reply into a
+  timeout that yields nothing.
+- The request timeout becomes a named constant, `chatTimeout`, and is raised to
+  cover the budget the cap grants. On the slowest configuration measured (CPU
+  only, no GPU offload) a reply running to the full 1,024 tokens takes just under
+  two minutes, so the window is roughly twice that. The two constants are a
+  COUPLED PAIR: a cap the window cannot deliver is a cap that produces timeouts.
+- `TruncatedReplyError` replaces the truncation error string, carrying the model,
+  the token count and the PARTIAL REPLY. A distinct type rather than a message
+  because the caller has to act on it differently from a failure.
+- `salvageSuggestionJSON` reads everything a cut-off reply finished saying, over
+  `json.Decoder`'s token stream: the decoder hands back every completed string and
+  then reports the truncation, so a half-written name is the one thing that never
+  arrives. Salvage is safe because the hallucination filter already drops anything
+  not verbatim in the source.
+- `DiscoveryOutcome` gains `Truncated`. A truncated request is counted apart from
+  a silent one and never as both: they say opposite things about the document.
+- `DiscoverSlices` salvages, counts and CONTINUES to the next slice.
+
+**`backend/app_detect.go`:**
+
+- `DetectionResult` gains `AITruncatedRequests`, reported beside the silent count
+  in the rail read-out and in the status line.
+- One message per DOCUMENT that had a cut-off reply, naming the count and the
+  document. The remedy it names must EXIST: Thorough is already the default detail
+  level, so the message names scanning fewer units at a time, or another model.
+  The all-silent message loses its "or the Thorough detail level" clause for the
+  same reason.
+
+**`frontend/`:** `state.lastAIScan` gains `truncated`, `RAIL.lastScan` gains the
+clause, `BRIDGE.md` gains the field and the per-slice rule.
+
+**No retry at a smaller size.** Salvage does not lose meaningful recall: on the
+PDF page it keeps every complete string of the 73 the model wrote, and on the deck
+it keeps the twenty distinct strings each cut reply had already closed. A retry
+would pay a second full request for the tail of a reply whose useful half is
+already in hand, and on a degenerate reply it would pay it for a repeat loop.
+
+### Tests
+
+`backend/ollama/client_test.go`: the truncation error is its own type and carries
+the partial reply; its message names a remedy that exists and never the detail
+level; a truncated slice degrades itself and the scan continues (request count,
+`Truncated`, and NOT counted as silent); `salvageSuggestionJSON` is table-driven
+over the shapes the reference documents produced, including the degenerate loop
+and a fenced reply.
+
+`backend/app_detect_integration_test.go`: a truncated slice does not stop the rest
+of the DOCUMENT (every slide still sent, salvaged names present, half-written name
+absent, status says it); the existing per-FILE test is updated, because a cut-off
+reply is no longer the file's failure.
+
+`frontend/identifyrail.test.js`: the read-out reports cut-off requests beside the
+silent ones and never folds them together.
+
+---
+
 ## Decisions taken
 
 1. **A slice is aligned to the document's own units and sized by the user's
@@ -1150,7 +1269,21 @@ act on.
     with a spot-check rather than a guess.
 13. **The GPU setting is documented, never automated**, and no timing-based
     warning is added for it.
-14. **Heuristic discovery's category quality stays out of scope.** Filing
+14. **A cut-off reply is a per-slice degradation, never the end of a scan.**
+    What the model finished writing is salvaged and the next slice is sent. The
+    hallucination filter is what makes salvage safe: nothing that is not verbatim
+    in the source can reach the user, so a fragment of a name cannot.
+15. **The generation cap is sized from the densest HONEST reply, not from the
+    longest possible one.** The densest honest reply measured on a real document
+    finishes at about 560 tokens, so the cap is 1024. Raising it further only
+    feeds the degenerate replies, which consume any cap they are given, and a cap
+    the request window cannot deliver converts a salvageable cut-off reply into a
+    timeout that yields nothing. The cap and the request timeout are a coupled
+    pair and move together.
+16. **No retry at a smaller size.** Salvage keeps every complete string the cut
+    reply had already written, so a retry pays a second full request for the tail
+    of an answer whose useful half is already in hand.
+17. **Heuristic discovery's category quality stays out of scope.** Filing
     "Impact High" as a person is a real defect with its own root cause, and folding
     it in here would make this order unreviewable.
 
@@ -1160,16 +1293,16 @@ act on.
 
 | File | CRs | Note |
 |---|---|---|
-| `backend/ollama/client.go` | CR1, CR3, CR4, CR6 | the centre of gravity. CR1 removes the chunking, CR3 adds the format switch, CR4 adds `done_reason`. Sequence them in that order inside one file pass. |
-| `backend/ollama/client_test.go` | CR1, CR3, CR4 | and specifically `chatReplyServer` (`:39`), which CR3 changes structurally. See the hotspot below. |
-| `backend/app_detect.go` | CR1, CR2 (`EstimateAIRequests`), CR4 | CR1 restructures `scopedUnits`/`runLocalAIPhase`; do CR1 before the other two touch it. |
+| `backend/ollama/client.go` | CR1, CR3, CR4, CR6, CR8 | the centre of gravity. CR1 removes the chunking, CR4 adds `done_reason`, CR8 raises the reply cap and adds the salvage path, CR3 adds the format switch. Sequence them in the recommended order inside one file pass. |
+| `backend/ollama/client_test.go` | CR1, CR3, CR4, CR8 | and specifically `chatReplyServer` (`:39`), which CR3 changes structurally. See the hotspot below. |
+| `backend/app_detect.go` | CR1, CR2 (`EstimateAIRequests`), CR4, CR8 | CR1 restructures `scopedUnits`/`runLocalAIPhase`; do CR1 before the others touch it. CR4 and CR8 both add `DetectionResult` fields and both write a message into `res.Errors`. |
 | `backend/app.go` | CR2 (settings + validation), CR3 (settings), CR6 (model resolution) | three edits to `Settings` and `ApplySettings`; make the `Settings` additions in one pass. |
 | `backend/engine/session.go` | CR2, CR3 | two fields, one comment about why neither bumps the version. Write that comment once. |
-| `backend/app_detect_integration_test.go` | CR1, CR2, CR4 | the scope tests need CR1's multi-request shape before CR2 and CR4 add to them. |
-| `frontend/state.js` | CR2, CR3, CR6 | settings defaults and the probe-result handling. |
+| `backend/app_detect_integration_test.go` | CR1, CR2, CR4, CR8 | the scope tests need CR1's multi-request shape before CR2, CR4 and CR8 add to them. CR8 also UPDATES the per-file failure test, because a cut-off reply stops being the file's failure. |
+| `frontend/state.js` | CR2, CR3, CR6, CR8 | settings defaults, `lastAIScan`, and the probe-result handling. |
 | `frontend/views/identifyrail.js` | CR2, CR3, CR6 | `localAISection` and `pushSettings` both take three small edits; do them together. |
-| `frontend/copy.js` | CR2, CR3, CR7 | three tooltips and one read-out template. |
-| `frontend/BRIDGE.md` | CR2, CR4, CR6 | one new method, three new result fields, one changed probe return. Update it once, at the end, from the code rather than from this plan. |
+| `frontend/copy.js` | CR2, CR3, CR7, CR8 | three tooltips and one read-out template, which CR8 extends with the cut-off clause. |
+| `frontend/BRIDGE.md` | CR2, CR3, CR4, CR6, CR8 | one new method, four new result fields, one new setting, one changed probe return, and CR8's per-slice truncation rule. Update it once, at the end, from the code rather than from this plan. |
 | `CLAUDE.md` | CR1 (§5), CR3 (§7 row + §8 bullet), CR7 (§8 bullet) | both CR3 and CR7 edit §8; make the §8 edits in one pass so the section is not rewritten twice. |
 
 ### Hotspots
@@ -1214,20 +1347,22 @@ act on.
 2. **CR4** second. It is small, it depends on CR1's `DiscoveryOutcome`, and having
    it early means every later measurement tells you whether the model was silent,
    which is information you will want for the rest of the order.
-3. **CR3** third, with the `chatReplyServer` rewrite in the same commit. Now that
+3. **CR8** third, before anything that changes how long a reply is. CR3 and CR2
+   both do, so neither can be measured honestly while a long reply ends the scan.
+4. **CR3** fourth, with the `chatReplyServer` rewrite in the same commit. Now that
    silence is visible, flipping the discovery format is measurable rather than a
    matter of trust.
-4. **CR2** fourth: the setting, its validation, its bound estimate and the rail
+5. **CR2** fifth: the setting, its validation, its bound estimate and the rail
    control. It comes after CR3 because both add a Local AI control and the rail
    edit is cheaper done once, with CR3's checkbox already in place.
-5. **CR6** fifth: the model resolution, which crosses the bridge and is otherwise
+6. **CR6** sixth: the model resolution, which crosses the bridge and is otherwise
    independent.
-6. **CR5** any time, including in parallel with 1 to 5: it shares no file with
+7. **CR5** any time, including in parallel with 1 to 6: it shares no file with
    them.
-7. **CR7** last, once the numbers in it have been confirmed on the owner's machine.
+8. **CR7** last, once the numbers in it have been confirmed on the owner's machine.
 
-After step 4, run the full acceptance measurement on BOTH reference documents
-before starting step 5. That is the point where the order either meets the owner's
+After step 5, run the full acceptance measurement on BOTH reference documents
+before starting step 6. That is the point where the order either meets the owner's
 latency targets or does not, and it is the one place where the plan may need to
 come back to the owner (see criterion 4 below).
 
@@ -1255,20 +1390,61 @@ come back to the owner (see criterion 4 below).
      must still hold. It is the cheapest signal that the slicing is stable.
   4. **The latency targets.** One page or slide, and a 5-page scope, inside 20
      seconds (30 absolute maximum). A whole document of the reference sizes at about
-     1 minute. On the owner's machine, with the GPU enabled and the default
-     (thorough, JSON mode), the deck measured 1 m 48 s for discovery plus the
-     classification call, so roughly 2 minutes end to end: **that is over target and
-     it is the one open point in this order.** Report the measured number and let the
-     owner decide between accepting it with honest progress, the faster detail level,
-     a different model, or a further change order. Do NOT close the gap by
-     quietly skipping units or dropping the classification pass.
+     1 minute.
+
+     **Measured, post-CR3, on the owner's machine with the GPU still DISABLED**
+     (the server log confirms `dropping integrated GPU`), the 4B, JSON mode and
+     the shipped default detail level (thorough): the reference deck is **10
+     requests and 2 m 09 s to 2 m 33 s of discovery** across two runs, plus the
+     classification call. The reference PDF is **2 requests and 53 s**. Per
+     request that is 13 s to 15 s on the deck, so a 5-slide scope lands inside
+     the 20 s target only when its slides pack into one or two requests; a
+     whole document does not, at either reference size.
+
+     **Measured again with the GPU ENABLED**, the whole point of CR7, and the
+     verdict barely moves. With `OLLAMA_IGPU_ENABLE=1` set for the service and
+     the server log confirming the Arc as inference compute and `33/33 layers`
+     offloaded, the same deck is **10 requests and 1 m 55 s warm** (2 m 24 s
+     cold, which is inside the CPU range), and the same PDF is **2 requests and
+     41 s to 47 s**. So the PDF now MEETS the whole-document target and the deck
+     still misses it by roughly a factor of two. Per request the deck is 11.5 s,
+     so the 20 s bar for a small scope is still met only when the pages pack
+     into one or two requests.
+
+     **The GPU is worth about 1.2x, not the 2.2x the diagnosis recorded**, and
+     that correction is the one substantive change to this section. What the GPU
+     changed reliably was RECALL rather than the clock: 156 values against 118 on
+     the deck and 57 against 54 on the PDF, with identical `eval_count` figures
+     across repeats. Greedy decoding is deterministic per backend and not across
+     backends, so a backend changing what a model returns is expected. Appendix A
+     carries the rows.
+
+     **The whole-document target is missed by roughly a factor of two on the
+     deck, and that is the one open point in this order.** It is the owner's
+     decision between accepting it with honest progress, a different model, or a
+     further change order; the GPU has now been tried and does not close it. Do
+     NOT close the gap by quietly skipping units or dropping the classification
+     pass.
+
+     **The faster detail level does not close it.** Measured on both reference
+     documents (Appendix A), larger slices did not reliably take less time on
+     the model that finds anything: two runs of one level differed in wall clock
+     by more than the two levels differed from each other, and one
+     byte-identical request took 37.9 s and then 76.2 s. What the level reliably
+     changes is the REQUEST COUNT, which is why the read-out reports that and
+     the copy promises no speed-up.
   5. **Silence is legible.** Switch to the 0.8B, scan the deck whole, and confirm
      the run says the model returned nothing for N requests and names the model,
      rather than reporting "0 suggestions" as though the document were clean.
-  6. **Truncation is legible.** There is no easy way to force `done_reason:
-     "length"` once slicing is fixed, so verify it at the unit level (CR4's mock
-     test) and, if you want the real thing, temporarily set the faster detail level
-     on a dense PDF page with a small `num_ctx`.
+  6. **Truncation is legible, and it costs one slice.** Truncation is EASY to
+     force, and both reference documents do it unaided: at the original 512-token
+     cap the deck was cut off on its third request and the PDF on its first. Scan
+     either whole and confirm three things: the run finishes and scans every
+     remaining slice, the read-out and the status line report how many requests ran
+     out of room, and the message names a remedy the user has. It must NOT name the
+     detail level: Thorough is already the default, so naming it tells the user to
+     do what they are doing. A cut-off request must not be reported as a silent one:
+     the two say opposite things about the document.
   7. **The detail level and the format switch both change the outcome**, visibly:
      switching the detail level changes the request count in the read-out and the
      values found; switching "ask for every category" on roughly doubles the scan
@@ -1302,6 +1478,20 @@ come back to the owner (see criterion 4 below).
   own change order, and this order's measurements should be cited there. Report the
   result either way; do not change the pin unilaterally.
 
+  **BLOCKED, and not by anything in this order.** `ollama pull qwen3.5:0.8b`
+  fails on the owner's network with `max retries exceeded: EOF`, twice; a direct
+  request to `registry.ollama.ai` resolves the host and is then cut at the TLS
+  handshake, with no system proxy configured and Ollama's own `HTTP_PROXY` and
+  `HTTPS_PROXY` empty. That is a corporate egress filter, so the library tag
+  cannot be obtained on this machine. The locally imported side of the comparison
+  IS measured, on both reference documents and on both backends (Appendix A): the
+  local 0.8B returns 2 values from 10 requests on the deck with 9 silent, and 3
+  values from 2 requests on the PDF. The comparison therefore has one complete
+  side and no second side, so the contradiction in section 0 stands unsettled and
+  section 7's pin is unchanged, which is what decision 12 requires anyway. To
+  finish it, pull the tag from a network that permits it (or configure a proxy for
+  the Ollama service) and re-run the committed probe on both documents.
+
 ## First actions for the implementation coordinator
 
 1. Read `CLAUDE.md`, `backend/CLAUDE.md`, `frontend/CLAUDE.md`,
@@ -1328,6 +1518,15 @@ All on the owner's laptop, Ollama 0.32.14, greedy sampling as CHANGE-08 pinned i
 `seed 7`), `num_ctx 8192`, `think:false`, `keep_alive 30m`. "CPU" is the machine's
 default configuration; "GPU" is the same machine with `OLLAMA_IGPU_ENABLE=1`.
 Values counted as described in section 0.
+
+**These numbers are not reproducible by the application as it ships, and the
+per-slide rows are the ones to be careful with.** The probe harness set its own
+`num_predict` rather than the application's `maxReplyTokens`, so a row here can
+report values for a slice the application would have reported as cut off. Two
+slides of the deck and page 1 of the PDF are dense enough to run past the
+application's cap; see CR8, which is where those slices are accounted for. Read
+this appendix as evidence about SLICE SIZE, model and reply format, which is what
+it was gathered for, and not as a prediction of what a run will return.
 
 ### The reference deck (15 slides, 15,152 bytes of markdown)
 
@@ -1373,6 +1572,151 @@ Values counted as described in section 0.
 | `french.md` | 183 | 2 | 2 |
 | `code_fences.md` | 142 | 2 | 1 |
 | `sample.csv` | 305 | 3 | 3 |
+
+### Post-CR3 runs of the SHIPPED code (2026-08-19)
+
+The rows above were taken with a throwaway harness that set its own
+`num_predict`. These were taken with the committed instrument,
+`backend/ollama/probe_live_test.go` (`//go:build live`), which drives the real
+`engine.ScanChunks`, `buildChatRequest` and `postChat`, so every number here is
+one the application would produce. Ollama 0.32.14, `OLLAMA_IGPU_ENABLE` NOT set
+(the server log still reports `dropping integrated GPU` for the Intel Arc 140V),
+CPU only, JSON reply format, `go test -count=1` on each run.
+
+The harness is committed rather than rebuilt because two sessions had already
+written and deleted it, which is why criterion 4 went unmeasured twice. That
+supersedes Appendix C's instruction to delete it; Appendix C's method notes still
+stand.
+
+**The reference deck** (15 slides, 15,182 B of markdown after CR5):
+
+| model | level | requests | values | silent | wall clock | per request |
+|---|---|---:|---:|---:|---|---|
+| 4B | thorough | 10 | 118 | 1 | 2 m 09 s | 12.9 s |
+| 4B | thorough (repeat) | 10 | 118 | 1 | 2 m 33 s | 15.3 s |
+| 4B | faster | 6 | 119 | 0 | 3 m 01 s | 30.2 s |
+| 4B | faster (repeat) | 6 | 119 | 0 | 2 m 07 s | 21.2 s |
+| 0.8B | thorough | 10 | 2 | 9 | 1 m 01 s | 6.1 s |
+| 0.8B | faster | 6 | 0 | 6 | 29 s | 4.9 s |
+
+**The reference PDF** (2 pages, 4,360 B):
+
+| model | level | requests | values | silent | wall clock | per request |
+|---|---|---:|---:|---:|---|---|
+| 4B | thorough | 2 | 54 | 0 | 53 s | 26.4 s |
+| 4B | faster | 2 | 54 | 0 | 1 m 31 s | 45.6 s |
+| 0.8B | thorough | 2 | 3 | 0 | 14 s | 6.9 s |
+| 0.8B | faster | 2 | 3 | 0 | 14 s | 6.9 s |
+
+No request in any of these runs was truncated, so CR8's cap of 1,024 tokens is
+comfortably above what the shipped slices ask for IN JSON MODE: the densest reply
+measured here is 331 tokens (PDF page 1) and the densest on the deck is 255. With
+the SCHEMA on it is not, and the GPU rows below record where the cap does bite.
+
+**What these rows say, and it is not what CR2 assumed.**
+
+- **The reported failure is fixed, and by more than the plan predicted.** The
+  deck returns 118 values at the default settings, against zero before CR1, and
+  against the 76 the pre-CR1 harness measured at one slide per request. Fewer
+  requests than one-per-slide (10 rather than 15) and more values.
+- **The PDF is the control, and it says the timings are noisy.** Page 1 is
+  3,577 B and is ONE unit, so it is its own slice at BOTH levels: the two PDF
+  rows sent byte-identical prompts and got byte-identical replies (eval 331 and
+  71, the same 54 values). The wall clock still differed by 72 %, 37.9 s against
+  76.2 s on that one request. That is the noise floor of this machine, and it is
+  larger than any difference the level produced on the 4B.
+- **The faster level is not measurably faster on the model that finds
+  anything.** On the deck the two levels overlap (thorough 2 m 09 s to 2 m 33 s,
+  faster 2 m 07 s to 3 m 01 s) and find the same thing (118 against 119). Per
+  request the larger slices cost proportionally MORE, so the fewer requests buy
+  back roughly what they cost. Request cost does not track prompt size the way
+  the plan assumed, and it does not track reply length either: on the deck an
+  858 B slice took 19.6 s and a 3,380 B slice took 13.0 s in the same run.
+- **Where the level does buy time, it costs everything.** On the 0.8B, faster is
+  genuinely 2x quicker on the deck (29 s against 1 m 01 s) and finds nothing at
+  all (0 against 2). That is the recall cliff, and it is a small-model effect,
+  exactly as the byte-chunk rows above located it.
+- **The 0.8B is not usable on the deck at either level.** Two values from ten
+  requests, nine of them silent. It is fine on the PDF (3 values, 14 s). This is
+  consistent with the contradiction recorded in section 0 and does not settle
+  it: the spot-check against the library tag is still outstanding.
+- **The determinism criterion holds.** Every repeat produced identical per-slice
+  `eval_count` values and identical value counts. Only the wall clock moved.
+
+The consequence for CR2's copy: the tooltip and the option labels must not
+promise a speed-up, because on the measured evidence there is not one to
+promise. They name the slice size and the request count instead, which is what
+the setting demonstrably controls. The level stays a setting, because the
+recall cliff it exists for is real on a small model.
+
+### GPU-enabled runs of the SHIPPED code (2026-08-20)
+
+Same instrument, same document state, `OLLAMA_IGPU_ENABLE=1` set for the service
+and the server log confirming `inference compute ... type=iGPU total="17.9 GiB"`,
+`offloaded 33/33 layers to GPU` and a 2,603 MiB Vulkan model buffer. No
+`dropping integrated GPU` line. Machine otherwise idle, `go test -count=1` per
+run.
+
+**The reference deck** (15 slides, 15,182 B):
+
+| model | level | format | requests | values | silent | truncated | wall clock | per request |
+|---|---|---|---:|---:|---:|---:|---|---|
+| 4B | thorough | json | 10 | 156 | 1 | 0 | 2 m 24 s (cold) | 14.4 s |
+| 4B | thorough | json | 10 | 156 | 1 | 0 | 1 m 55 s (warm) | 11.5 s |
+| 4B | faster | json | 6 | 152 | 0 | 0 | 1 m 41 s | 16.9 s |
+| 4B | thorough | schema | 10 | 361 | 1 | **2** | 4 m 31 s | 27.1 s |
+| 0.8B | thorough | json | 10 | 2 | 9 | 0 | 25 s | 2.5 s |
+
+**The reference PDF** (2 pages, 4,360 B):
+
+| model | level | format | requests | values | silent | truncated | wall clock | per request |
+|---|---|---|---:|---:|---:|---:|---|---|
+| 4B | thorough | json | 2 | 57 | 0 | 0 | 47 s | 23.4 s |
+| 4B | thorough | json | 2 | 57 | 0 | 0 | 41 s | 20.4 s |
+| 0.8B | thorough | json | 2 | 3 | 0 | 0 | 5 s | 2.3 s |
+
+**What these rows say.**
+
+- **The GPU is about 1.2x, not 2.2x.** Deck 2 m 21 s (the CPU mean) to 1 m 55 s
+  warm; PDF 53 s to 41 s and 47 s. The COLD deck run, 2 m 24 s, falls inside the
+  CPU range, so on a single-run basis the difference is barely outside this
+  machine's own noise floor. The 2.2x came from a throwaway harness that set its
+  own `num_predict`; the committed instrument does not reproduce it. CR7's copy
+  and `CLAUDE.md` section 8 carry 1.2x for that reason.
+- **What the GPU reliably changed is recall, not the clock.** 156 values against
+  118 on the deck and 57 against 54 on the PDF. Greedy decoding is deterministic
+  per BACKEND and not across backends, which Appendix A already says about the
+  schema rows, so this is expected rather than a fault. Per output token the GPU
+  is clearly faster: it produced roughly a third more output in roughly a fifth
+  less time.
+- **Determinism still holds within a backend.** Both deck repeats produced
+  identical per-slice `eval_count` figures and the identical 156; both PDF
+  repeats produced identical 340 and 71 and the identical 57. Only the wall clock
+  moved.
+- **The detail level changes the REQUEST COUNT and little else**, exactly as CR2's
+  amended copy says: 10 requests against 6, 156 values against 152. On this
+  backend faster also happened to be quicker (1 m 41 s against 1 m 55 s), which
+  the CPU rows did not show, and both differences are inside the noise band.
+- **The schema switch is the one control with a large, reproducible cost.**
+  2.4x the wall clock on the deck (4 m 31 s against 1 m 55 s), which is the
+  "about twice as long" the tooltip promises. Its 361 is NOT 361 distinct
+  findings: two slices ran to the 1,024-token cap and one of them alone
+  contributed 200, which is the degenerate repeat loop CR8 documents being
+  counted string by string. So the schema still busts the shipped cap on this
+  deck, CR8's salvage still keeps the run whole, and the raw value count is not
+  comparable across formats when truncation is in play.
+- **The 0.8B is still not usable on the deck.** Two values from ten requests,
+  nine silent, on the GPU as on the CPU, with every silent slice returning the
+  same 37-token empty object.
+
+**The model spot-check could not be completed.** `ollama pull qwen3.5:0.8b` fails
+on the owner's network with `max retries exceeded: EOF`, and a direct request to
+`registry.ollama.ai` resolves and is then cut at the TLS handshake with no proxy
+configured, which is a corporate egress filter rather than anything this order can
+work around. The locally imported side of the comparison is measured above and in
+the CPU section; the library-tag side is outstanding, so the contradiction recorded
+in section 0 stands unsettled and section 7's pin is unchanged, as decision 12
+requires.
 
 ### What each group is evidence for
 
@@ -1458,6 +1802,15 @@ document belongs to neither. Rebuilding it is about twenty minutes:
    probe at it. It shares the model blobs, so nothing is downloaded, and killing it
    afterwards leaves the user's own server untouched.
 
-Delete the probes when the measurement is done, and put the NUMBERS in the change
-order instead. A measurement harness that lingers becomes a test nobody runs and
-nobody trusts.
+**Superseded on the first point.** The probe was rebuilt and deleted twice, and
+criterion 4 went unmeasured both times, so the client half of it is now committed
+as `backend/ollama/probe_live_test.go` behind `//go:build live`. It is in no tier
+(`docs/TESTING.md` has three, and this belongs to none of them): the build tag
+keeps it out of every suite including `-tags=integration,deep`, so it is an
+instrument a human runs rather than a test that lingers. The method notes above
+still stand, and the NUMBERS still belong in this document rather than in the
+harness.
+
+The confidentiality rule the reference documents carry applies to the instrument
+too: it prints counts and shapes, never the strings a model returned, and no
+measurement taken with it may be quoted anywhere as a list of names.

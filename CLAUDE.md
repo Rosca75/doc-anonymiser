@@ -464,6 +464,20 @@ doc-anonymiser/
   (`App.RunDetection`), every finding is a Suggestion, and every Local AI finding
   passes a **hallucination filter** (dropped unless the exact string occurs in
   the source text) and the allowlist before the user ever sees it.
+- **The local AI reads a document in slices aligned to its OWN units, never in
+  one request.** `engine.ScanChunks` packs contiguous units (slides, pages, rows,
+  lines: the same units `Document.PageCount` addresses) up to the size the user's
+  detail level asks for, and a slice never spans a gap in a discontiguous scope.
+  The engine owns that division because the engine is what knows what a unit is;
+  the Ollama client owns only what a request costs, and its
+  `PromptBudgetBytes()` survives as an absolute CEILING for one request rather
+  than as the sizing rule. What fits the context window and what a model can
+  still extract names from are different questions: one request carrying a whole
+  document fits an 8k window comfortably and measured ZERO values on every model
+  tried, while the same document one slide per request measured dozens. A
+  document needing many requests is scanned with a warning about the time, never
+  refused, because the user asked for the scan and can cancel it; the only
+  document skipped is one with no scannable text at all.
 - **Placeholders:** stable per session, format `[CATEGORY_N]` (e.g.
   `[ENTITY_1]`, `[PERSON_3]`, `[EMAIL_2]`). The registry maps original →
   placeholder and is exportable as a re-identification key (CSV/JSON).
@@ -578,7 +592,7 @@ doc-anonymiser/
 | Go | 1.26.x | toolchain in go.mod (pinned to 1.26.5); CI uses the floating 1.26.x. Moved off 1.23.x (now unsupported: Go only patches the two newest majors) to adopt Wails v2.13 and the current ledongthuc/pdf, which require Go >= 1.24/1.25 |
 | Wails | v2.13.x | v2 API only — do NOT use Wails v3 idioms. v2.13.0 requires Go >= 1.25 (its go.mod says `go 1.25.0`) |
 | wails CLI (CI) | v2.13.x | pinned in ci.yml and release.yml — same row as the library: the CLI and go.mod versions are a coupled pair; CI must fail with an actionable message if they diverge |
-| Ollama HTTP API | as of 2026: `GET /api/tags`, `POST /api/chat` with a JSON **Schema** in `"format"`, `"stream":false`, `"think":false` and `"keep_alive"` | probed at startup; if `/api/tags` succeeds but `/api/chat` returns 404 without a model-not-found body, show "Ollama too old, please update". `think` and `keep_alive` are TOP-LEVEL fields, never entries in `options`: Ollama's options object is a map, so a key it does not recognise there is dropped in silence |
+| Ollama HTTP API | as of 2026: `GET /api/tags`, `POST /api/chat` with `"format"` carrying either `"json"` or a JSON **Schema** (per call, see §8), `"stream":false`, `"think":false` and `"keep_alive"` | probed at startup; if `/api/tags` succeeds but `/api/chat` returns 404 without a model-not-found body, show "Ollama too old, please update". `think` and `keep_alive` are TOP-LEVEL fields, never entries in `options`: Ollama's options object is a map, so a key it does not recognise there is dropped in silence |
 | Minimum Ollama version | 0.32.0 | `"think":false` combined with `"format"` needs ollama/ollama PR #15901 (merged 7 July 2026, first shipped in 0.32.0). On an older build the pair can return unformatted text. No runtime version gate is added for it: the existing `ErrTooOld` path already covers the "Ollama too old" class of failure, and a second version check would be a second thing to keep true |
 | Default Ollama model | `qwen3.5:0.8b` | Apache-2.0, ships as `Q8_0`. User-selectable from `/api/tags` results; the model name is a setting, never hardcoded outside settings defaults. Chosen on measurement: 5.3s and 16 names on the reference page against `qwen3.5:4b`'s 12.2s and 17, so the 4B costs 2.3x the latency for one extra name and busts the 20s target once the second model call is counted. The licence matters as much as the speed: Qwen2.5-3B, the previous pin, is under the Qwen **Research** licence rather than Apache-2.0 (it is the exception in its family), which is a compliance problem for a tool that reads client documents |
 | Model tag quantisation | K-quant or `Q8_0`, never `-bf16` / `-f16` | BF16 has no fast CPU dot-product kernel without AVX512-BF16, so ggml converts every weight to FP32 inside the dot product and the model runs several times slower on the target laptop. The plain `qwen3.5:0.8b` (`Q8_0`) and `qwen3.5:4b` (`Q4_K_M`) tags are already correct; this rule exists to stop someone "upgrading" to a BF16 build for quality |
@@ -599,15 +613,56 @@ doc-anonymiser/
   settings; host is locked to loopback — do not "improve" this into a
   configurable remote host: it would break the local-only guarantee).
 - The discovery and classification prompts must request STRICT JSON with the
-  exact category keys from §5, and the request body must carry a JSON **Schema**
-  in `"format"`, derived from that same category list rather than written out.
-  The schema is what makes every category array REQUIRED, which is a recall win
-  and not only a safety one: on one measured page it took a small model from six
-  names to sixteen. It stays FLAT, with no `$defs` and no `$ref`, because sub-4B
-  models echo a schema's own structure back in place of the extracted values.
+  exact category keys from §5. **What `"format"` carries is decided PER CALL**,
+  because the two calls do different work and the evidence points both ways.
+
+  The **classification** call always carries the JSON **Schema**. Its input is a
+  bounded list of names the model only has to file, so "every category present"
+  is exactly the property that makes a re-filing complete, and the payload is
+  small enough that the token cost is noise.
+
+  The **discovery** call carries the schema when the user asks for it
+  (`Settings.AIStrictFormat`, off by default) and `"format":"json"` otherwise
+  (`Client.discoveryFormat`). The default is the fast one on measurement: on a
+  slide-heavy deck the schema cost about twice the wall clock for recall that was
+  equal or slightly worse, and on a 0.8B model it returned nothing at all at every
+  slice size tried, because seven REQUIRED arrays make a small model pad the
+  categories it has nothing for. It stays available because it measured a real
+  recall win on a short dense page of prose and on the repository's own
+  sub-500-byte fixtures. Since loose JSON mode constrains no shape,
+  `parseSuggestionJSON`'s tolerances (a missing key, a bare string for a list, a
+  code fence) are load-bearing rather than belt-and-braces.
+
+  The schema itself is unchanged by that choice: still DERIVED from
+  `promptCategories` rather than written out, still making every category array
+  REQUIRED, and still FLAT, with no `$defs` and no `$ref`, because sub-4B models
+  echo a schema's own structure back in place of the extracted values.
   `backend/ollama/client_test.go` holds the four lists (each prompt's keys, the
   parser's keys, the schema's properties, the engine's categories) to each other,
   because a key in a prompt the parser does not know is dropped on parse, a key
   the parser knows that no prompt requests is a category the model is never asked
   to fill, and a category the schema omits is one the model is forbidden to fill:
   any of the three leaves the category dead and every test still passing.
+- **`OLLAMA_IGPU_ENABLE=1` is a documented user recommendation, never a code
+  constant.** Ollama ships Vulkan enabled and DETECTS an integrated GPU, then
+  drops it (`dropping integrated GPU`) unless that variable is set for the
+  SERVICE. The application cannot see or change it: it lives in the Ollama
+  process's environment and `/api/tags` does not report it. So it is documented
+  in `README.md` and in `frontend/docs/index.html` and nowhere in the code.
+
+  Measured on the owner's laptop (Intel Arc 140V iGPU, Ollama 0.32.14, the 4B at
+  `thorough` in JSON mode, through `backend/ollama/probe_live_test.go`): with the
+  variable set the server reports the Arc as inference compute
+  (`type=iGPU total="17.9 GiB"`) and `offloaded 33/33 layers to GPU`. The
+  reference deck went from 2 m 09 s / 2 m 33 s on the CPU to 1 m 55 s warm
+  (2 m 24 s cold), and the reference PDF from 53 s to 41 s / 47 s: about
+  **1.2x**, not the 2.2x an earlier throwaway harness reported. What changed
+  reliably is RECALL, not the clock: 156 values against 118 on the deck and 57
+  against 54 on the PDF, with identical `eval_count` figures across repeats.
+  Greedy decoding is deterministic per backend and not across backends, so the
+  backend changing what a model returns is expected rather than a fault.
+
+  Two consequences worth keeping: the copy must promise a modest improvement and
+  not a transformation, and **no runtime check may infer this from timings**. The
+  app cannot read the server's environment, so any such check would fire on a
+  slow document and give the user a warning they cannot act on.
