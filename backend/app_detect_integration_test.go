@@ -466,6 +466,93 @@ func TestAWholeDocumentIsNotOneRequest(t *testing.T) {
 	}
 }
 
+// TestEstimateAIRequestsEqualsWhatTheRunSends is the read-out's whole contract.
+//
+// The rail shows the request count BEFORE the user pays it, and a number that
+// disagrees with what the run then does is worse than no number at all: it
+// teaches the reader to distrust the one figure they use to decide between the
+// two detail levels. Both sides go through planAIScan for exactly this reason,
+// and this is the test that says so.
+//
+// It is checked at both levels and under a page scope, because those are the
+// three things that move the number. The mock answers nothing and the offline
+// route is off, so no classification call is sent and every request the server
+// sees is a discovery request.
+func TestEstimateAIRequestsEqualsWhatTheRunSends(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		level string
+		scope *AIScope
+	}{
+		{"thorough_over_the_whole_deck", engine.DetailThorough, nil},
+		{"faster_over_the_whole_deck", engine.DetailFaster, nil},
+		{"thorough_over_a_page_scope", engine.DetailThorough, &AIScope{DocName: "deck.pptx", Pages: []int{2, 3}}},
+	} {
+		t.Run("detection/"+tc.name, func(t *testing.T) {
+			var seen []string
+			srv := scopeChatServer(&seen)
+			defer srv.Close()
+
+			app := NewApp()
+			app.docs = []engine.Document{slideDeck(6)}
+			app.llm = ollama.New(srv.URL)
+			app.settings.UseLocalAI = true
+			app.settings.UseHeuristicDiscovery = false // isolate the AI route
+			app.settings.AIDetailLevel = tc.level
+			withRecorder(t, app)
+
+			estimate, err := app.EstimateAIRequests([]string{"deck.pptx"}, tc.scope)
+			if err != nil {
+				t.Fatalf("EstimateAIRequests: %v", err)
+			}
+			if estimate <= 0 {
+				t.Fatalf("the estimate is %d, want a positive request count for a six slide deck", estimate)
+			}
+
+			res, err := app.RunDetection([]string{"deck.pptx"}, nil, tc.scope)
+			if err != nil {
+				t.Fatalf("RunDetection: %v", err)
+			}
+			if len(seen) != estimate {
+				t.Errorf("the run sent %d request(s) and the read-out promised %d: the estimate and the run must come from the same packing rule",
+					len(seen), estimate)
+			}
+			// And the run's own count agrees, so the pre-run and post-run
+			// read-outs cannot tell the user two different stories.
+			if res.AIRequests != estimate {
+				t.Errorf("the run reports %d request(s) and the read-out promised %d", res.AIRequests, estimate)
+			}
+		})
+	}
+
+	t.Run("detection/the_level_actually_changes_the_number", func(t *testing.T) {
+		app := NewApp()
+		app.docs = []engine.Document{slideDeck(6)}
+
+		app.settings.AIDetailLevel = engine.DetailThorough
+		thorough, err := app.EstimateAIRequests([]string{"deck.pptx"}, nil)
+		if err != nil {
+			t.Fatalf("EstimateAIRequests(thorough): %v", err)
+		}
+		app.settings.AIDetailLevel = engine.DetailFaster
+		faster, err := app.EstimateAIRequests([]string{"deck.pptx"}, nil)
+		if err != nil {
+			t.Fatalf("EstimateAIRequests(faster): %v", err)
+		}
+		if !(faster < thorough) {
+			t.Errorf("faster needs %d request(s) and thorough %d: a dial that does not move the number is not wired up",
+				faster, thorough)
+		}
+	})
+
+	t.Run("errors/nothing_to_estimate_is_an_error_not_a_zero", func(t *testing.T) {
+		app := NewApp()
+		if _, err := app.EstimateAIRequests([]string{"missing.txt"}, nil); err == nil {
+			t.Error("estimating over no matching documents must say so, not answer zero as though the scan were free")
+		}
+	})
+}
+
 // TestDetectionProgressCarriesUnitNumbers: the caption has to say "slides 1 to 2
 // of 15" in the word the import list already uses. A request index alone means
 // nothing to the person watching a two minute scan.

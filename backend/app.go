@@ -68,6 +68,18 @@ type Settings struct {
 	// switched it off" must stay distinguishable across a session file. Here nil
 	// reads as off, which is the default, so nothing is lost by silence.
 	AIStrictFormat *bool `json:"aiStrictFormat"`
+	// AIDetailLevel is the local AI's speed-versus-recall dial: how much text
+	// one request carries (engine.DetailThorough or engine.DetailFaster).
+	//
+	// It is a setting rather than a constant because the measurement has no
+	// single winner. Small slices find the most and take the longest; large ones
+	// are quicker and can miss a document's names entirely, and where the line
+	// falls depends on the model. The engine owns the sizes
+	// (engine.ScanTargetBytes); this field is only which of them a run asks for.
+	//
+	// An empty string is read as thorough, so a payload that says nothing lands
+	// on the safe end: a level nobody chose must not be the one that finds less.
+	AIDetailLevel string `json:"aiDetailLevel"`
 	// UseBuiltInPatterns and UseHeuristicDiscovery are two of Smart detection's
 	// three methods, controlled independently.
 	//
@@ -251,6 +263,10 @@ func defaultSettings() Settings {
 		Model:       ollama.DefaultModel,
 		ContextSize: ollama.DefaultContextSize,
 		Country:     engine.CountryLU,
+		// Thorough is the default because it is the end that FINDS things. The
+		// faster level trades recall for time, and a trade nobody asked for must
+		// not be the one a fresh session makes on their behalf.
+		AIDetailLevel: engine.DetailThorough,
 		// The stricter defaults, matching the frontend store: heuristic discovery
 		// over-detecting is the failure mode that matters.
 		HeuristicDiscovery: engine.DefaultHeuristicDiscoveryOptions(),
@@ -620,6 +636,17 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 		return ollama.OllamaStatus{}, fmt.Errorf(
 			"unknown country %q, expected one of %v", s.Country, engine.SupportedCountries)
 	}
+	// A misspelt detail level is refused rather than stored. Stored, it would
+	// silently read as thorough for the rest of the session while the rail showed
+	// whatever the user picked: a control that appears to do something and does
+	// not. An EMPTY level is accepted, because absence is not a mistake; it is
+	// what a session file written before the setting existed carries, and it has
+	// a documented meaning.
+	if !engine.ValidDetailLevel(s.AIDetailLevel) {
+		return ollama.OllamaStatus{}, fmt.Errorf(
+			"unknown local AI detail level %q, expected %s or %s",
+			s.AIDetailLevel, engine.DetailThorough, engine.DetailFaster)
+	}
 	if s.MinConfidence < 0 || s.MinConfidence > 1 {
 		return ollama.OllamaStatus{}, fmt.Errorf(
 			"invalid minimum confidence %v, expected a number between 0 (replace every detection) and 1 (replace only the most certain ones)", s.MinConfidence)
@@ -662,6 +689,12 @@ func (a *App) ApplySettings(s Settings) (ollama.OllamaStatus, error) {
 	// an absent key as "off" would silently disable a reading the user never
 	// touched.
 	s.SignalSuggestionSources = engine.NormaliseSignalSources(s.SignalSuggestionSources)
+	// An absent level is filled out to the default it already means, for the same
+	// reason: what GetSettings answers is what the rail's dropdown marks as
+	// selected, and an empty string marks nothing.
+	if s.AIDetailLevel == "" {
+		s.AIDetailLevel = engine.DetailThorough
+	}
 	a.settings = s
 	a.llm = ollama.New(fmt.Sprintf("http://127.0.0.1:%d", s.OllamaPort))
 	if s.Model != "" {

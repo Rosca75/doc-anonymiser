@@ -27,7 +27,7 @@
 
 import {
   applySettings, listOllamaModels, probeOllama, loadSession, saveSession,
-  valuePlaceholders, listRemovedValues,
+  valuePlaceholders, listRemovedValues, estimateAIRequests,
 } from "../api.js";
 import {
   getState, setState,
@@ -40,6 +40,8 @@ import {
   setCategoryGroup, setMinConfidence, setDocumentCountry,
   setHeuristicDiscoveryOptions, heuristicDiscoveryOptions,
   setAIScope,
+  aiScopeArg,
+  AI_DETAIL_LEVELS,
   parsePageSpec,
   buildRunRequest, setValueTables,
   ALL_CATEGORIES,
@@ -897,6 +899,41 @@ function lastScanReadout(s) {
     `${escapeHTML(RAIL.lastScan(scan.requests, scan.secondsPerRequest, scan.silent, scan.truncated))}</p>`;
 }
 
+/**
+ * detailLevelOptions(s) is the dropdown's two options, built from the mirrored
+ * AI_DETAIL_LEVELS so the rail cannot offer a level Go would refuse.
+ *
+ * Exactly one option is marked selected, always: an unset or unrecognised stored
+ * level falls back to the first, which is thorough. Leaving nothing marked lets
+ * the browser pick the first by itself, and a control whose value nobody wrote
+ * is a choice made by option ordering.
+ */
+function detailLevelOptions(s) {
+  const current = AI_DETAIL_LEVELS.includes(s.settings.aiDetailLevel)
+    ? s.settings.aiDetailLevel : AI_DETAIL_LEVELS[0];
+  return AI_DETAIL_LEVELS.map((level) =>
+    `<option value="${escapeHTML(level)}"${level === current ? " selected" : ""}>` +
+    `${escapeHTML(RAIL.detailLevelOptions[level] ?? level)}</option>`).join("");
+}
+
+/**
+ * scanEstimateReadout(s) is what the current scope and detail level would COST,
+ * shown before the user pays it. Go computes it with the same helper the run
+ * uses, so the number equals the number of requests the run then makes.
+ *
+ * A `<span class="hint">` inside a `.rail-status` row, exactly as the Ollama
+ * availability line is: the rail bans explanatory paragraphs, and this is a live
+ * fact rather than prose. Empty until Go has answered, because a read-out
+ * guessing while it waits is a number the run can contradict.
+ */
+function scanEstimateReadout(s) {
+  const requests = s.aiRequestEstimate;
+  if (!(requests > 0)) return "";
+  return `<div class="rail-status">` +
+    `<span class="hint" id="ai-request-estimate">${escapeHTML(RAIL.scanEstimate(requests))}</span>` +
+    `</div>`;
+}
+
 function localAISection(s) {
   const ollamaOK = !!s.ollama?.available;
   const aiOn = !!s.settings.useLocalAI;
@@ -930,6 +967,17 @@ function localAISection(s) {
     `<span class="rail-field-label">${escapeHTML(RAIL.model)}</span>` +
     `<select id="ollama-model"${gated}>${models || `<option value="">${escapeHTML(RAIL.noModels)}</option>`}</select>` +
     `</label>` +
+    // The speed-versus-recall dial sits with the two other settings about how
+    // much the model reads, and before Context, because it is the one that
+    // decides the size of a request; Context only bounds it.
+    `<div class="rail-field-row">` +
+    `<label class="rail-field" for="ai-detail-level">` +
+    `<span class="rail-field-label">${escapeHTML(RAIL.detailLevel)}</span>` +
+    `<select id="ai-detail-level"${gated}>${detailLevelOptions(s)}</select>` +
+    `</label>` +
+    helpTooltip(CONFIGURE.detailLevelHelp, { label: RAIL.detailLevel }) +
+    `</div>` +
+    scanEstimateReadout(s) +
     `<div class="rail-field-row">` +
     `<label class="rail-field" for="context-size">` +
     `<span class="rail-field-label">${escapeHTML(RAIL.contextSize)}</span>` +
@@ -965,8 +1013,50 @@ function localAISection(s) {
     `</div>`;
 }
 
+// The inputs the last estimate was computed for. The rail re-renders on every
+// state change, so without this the read-out would ask Go the same question
+// dozens of times, and answering it would setState and re-render again.
+let lastEstimateKey = null;
+
+/**
+ * refreshAIEstimate() asks Go what the current scope and detail level would
+ * cost, and stores the answer for the read-out.
+ *
+ * It is fired from the rail's wiring rather than from a list of the changes that
+ * could affect it: importing a document, changing the scope and changing the
+ * level all move the number, and enumerating them is how one gets forgotten. The
+ * key guard is what makes that safe, both against the render loop and against
+ * asking Go the same question on every repaint.
+ *
+ * A failure is silence, not a banner. The estimate is a convenience beside a
+ * control that works without it, and the run itself reports anything genuinely
+ * wrong with the scope.
+ */
+async function refreshAIEstimate() {
+  const s = getState();
+  const names = s.documents.map((d) => d.name);
+  const scope = aiScopeArg(s);
+  const key = JSON.stringify([names, scope, s.settings.aiDetailLevel]);
+  if (key === lastEstimateKey) return;
+  lastEstimateKey = key;
+  if (names.length === 0) {
+    if (getState().aiRequestEstimate !== 0) setState({ aiRequestEstimate: 0 });
+    return;
+  }
+  try {
+    const requests = await estimateAIRequests(names, scope);
+    if (getState().aiRequestEstimate !== requests) setState({ aiRequestEstimate: requests });
+  } catch {
+    // No bridge, or nothing to estimate: the read-out simply stays away.
+    lastEstimateKey = null;
+    if (getState().aiRequestEstimate !== 0) setState({ aiRequestEstimate: 0 });
+  }
+}
+
 function wireLocalAI(container) {
-  for (const id of ["#ollama-port", "#ollama-model", "#context-size", "#ai-strict-format"]) {
+  refreshAIEstimate();
+  for (const id of ["#ollama-port", "#ollama-model", "#context-size", "#ai-strict-format",
+    "#ai-detail-level"]) {
     container.querySelector(id)?.addEventListener("change", () => pushSettings(container));
   }
   container.querySelector("#btn-reprobe")?.addEventListener("click", async () => {
@@ -1071,6 +1161,7 @@ export function settingsPayload(s, container) {
   const model = container.querySelector("#ollama-model");
   const ctxSize = container.querySelector("#context-size");
   const strictFormat = container.querySelector("#ai-strict-format");
+  const detailLevel = container.querySelector("#ai-detail-level");
   return {
     level: s.settings.level,
     categories: s.settings.categories,
@@ -1086,6 +1177,10 @@ export function settingsPayload(s, container) {
     // key and a cleared checkbox would be the same thing on the wire and there
     // would be no way to say "on".
     aiStrictFormat: strictFormat ? strictFormat.checked : !!s.settings.aiStrictFormat,
+    // How much text one local AI request carries. Read from the element when the
+    // tab is on screen and from the store otherwise, exactly as the model is, so
+    // switching tabs never resets it.
+    aiDetailLevel: detailLevel?.value || s.settings.aiDetailLevel || AI_DETAIL_LEVELS[0],
     useBuiltInPatterns: s.settings.useBuiltInPatterns !== false,
     useHeuristicDiscovery: s.settings.useHeuristicDiscovery !== false,
     // Which READINGS of which built-in signals may DERIVE Suggestions. Sent as a

@@ -209,6 +209,25 @@ export async function runDetection(fileNames, allowTerms, aiScope = null) {
   return bridge().RunDetection(fileNames, allowTerms, aiScope);
 }
 
+/**
+ * estimateAIRequests(fileNames, aiScope) resolves to how many model requests the
+ * current scope and detail level imply, so the rail can show the cost of a
+ * choice before the user pays it.
+ *
+ * It reaches no model, probes nothing and mutates nothing, so it is safe to call
+ * on every edit of the scope or the level. Go computes it with the same helper
+ * the run itself uses, which is what makes the number equal to the number of
+ * requests the run then makes; a read-out predicting something else would be
+ * worse than none.
+ *
+ * It rejects only when there is nothing to estimate (no matching documents). A
+ * scope naming pages that do not exist resolves to the count the run would
+ * actually send, which for that document is zero.
+ */
+export async function estimateAIRequests(fileNames, aiScope = null) {
+  return bridge().EstimateAIRequests(fileNames, aiScope);
+}
+
 /** cancelDetection() aborts the in-flight detection run (no-op if idle).
  *  It shares Go's single cancellation slot, so it reaches whichever route is
  *  running, including mid-file. */

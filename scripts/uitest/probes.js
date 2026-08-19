@@ -466,6 +466,37 @@
 
       for (const id of catGroupIds) await clickGroup(id);
 
+      // The Local AI section is folded by default, so its controls are in the DOM
+      // at zero height: a string test reads them as present and a user reads them
+      // as absent. Open it, measure the detail level (a label and a select on one
+      // line, in the narrowest column of the application), then fold it back so
+      // the probes after this one see the default rail.
+      await clickGroup("rail-local");
+      const detailLevelRow = (() => {
+        const row = [...railOf().querySelectorAll(".rail-field-row")]
+          .find((r) => r.querySelector("#ai-detail-level"));
+        const label = row?.querySelector(".rail-field-label");
+        const select = row?.querySelector("#ai-detail-level");
+        const help = row?.querySelector("span.help");
+        if (!row || !label || !select || !help) return null;
+        const l = label.getBoundingClientRect();
+        const sel = select.getBoundingClientRect();
+        return {
+          laidOut: sel.height > 0,
+          // A rail label clipped to an ellipsis is a control the user cannot read.
+          labelFullyShown: label.scrollWidth <= label.clientWidth + 1,
+          label: `${(label.textContent ?? "").trim()}: ${label.clientWidth} of ${label.scrollWidth}px`,
+          sameRow: Math.abs(l.top - sel.top) <= 2,
+          fitsTheRail: row.scrollWidth <= row.clientWidth + 1,
+          widths: `row ${Math.round(row.clientWidth)} of ${Math.round(row.scrollWidth)}px`,
+          // Exactly one option marked, or the browser chooses the level by option
+          // ordering, which is the defect that picked the wrong model.
+          optionsSelected: [...select.querySelectorAll("option")]
+            .filter((o) => o.selected).map((o) => o.value),
+        };
+      })();
+      await clickGroup("rail-local");
+
       const rail = railOf();
       const toggles = [...rail.querySelectorAll(".route-toggle")];
       const byRoute = (route) => toggles.find((t) => t.dataset.route === route);
@@ -490,6 +521,7 @@
         signalMasters: [...rail.querySelectorAll(".signal-master")]
           .map((b) => b.dataset.source),
         signalRowLine,
+        detailLevelRow,
         // The two plain Smart-detection methods share ONE row. "Side by side" is a
         // claim about geometry, so it is answered with geometry: equal tops, and
         // one to the left of the other. Markup order proves neither, since a

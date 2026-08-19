@@ -233,7 +233,7 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 		if phase == PhaseSmart {
 			a.runSmartPhase(ctx, docs, allow, settings, res, report)
 		} else {
-			a.runLocalAIPhase(ctx, docs, llm, aiScope, res, report)
+			a.runLocalAIPhase(ctx, docs, llm, settings.AIDetailLevel, aiScope, res, report)
 		}
 		if ctx.Err() != nil {
 			break
@@ -256,7 +256,7 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 	// A classification failure degrades to the heuristic categories with a note:
 	// the findings are the point, the labels are polish.
 	if useLocalAI && ctx.Err() == nil && len(res.Suggestions) > 0 {
-		if err := a.refineCategories(ctx, llm, docs, aiScope, res); err != nil && ctx.Err() == nil {
+		if err := a.refineCategories(ctx, llm, docs, settings.AIDetailLevel, aiScope, res); err != nil && ctx.Err() == nil {
 			res.Errors = append(res.Errors,
 				fmt.Sprintf("the local AI could not refine the categories, the offline guesses were kept: %v", err))
 		}
@@ -305,7 +305,7 @@ func (a *App) CancelDetection() {
 // category, which is the same graceful outcome a classification failure already
 // produces.
 func (a *App) refineCategories(ctx context.Context, llm *ollama.Client,
-	docs []engine.Document, scope *AIScope, res *DetectionResult,
+	docs []engine.Document, level string, scope *AIScope, res *DetectionResult,
 ) error {
 	// The problems are discarded here on purpose: runLocalAIPhase has already
 	// run with this same scope and reported them, and saying "page 9 is out of
@@ -318,7 +318,7 @@ func (a *App) refineCategories(ctx context.Context, llm *ollama.Client,
 			// The scoped text is built from the SAME slices the discovery call
 			// sent, not re-derived: two implementations of "what the scope
 			// selects" agree right up until one of them is changed.
-			slices, err := u.slices(engine.DetailThorough, llm.PromptBudgetBytes())
+			slices, err := u.slices(level, llm.PromptBudgetBytes())
 			if err != nil {
 				continue
 			}
@@ -534,6 +534,114 @@ func scopedUnits(docs []engine.Document, scope *AIScope) (units []scanUnit, prob
 	return units, problems
 }
 
+// scanJob is one document's worth of local-AI work: the slices to send, the
+// word for its own units, and the text the hallucination filter reads.
+type scanJob struct {
+	name   string
+	unit   string
+	slices []engine.ScanChunk
+	source string
+}
+
+// aiScanPlan is what a scope and a detail level become before a single request
+// is sent: the jobs to run, the documents with nothing to read, and the problems
+// worth telling the user about.
+type aiScanPlan struct {
+	jobs     []scanJob
+	skipped  []DetectionSkip
+	problems []string
+}
+
+// requests is how many model requests the plan implies, which is the number the
+// rail shows before the user pays it.
+func (p aiScanPlan) requests() int {
+	total := 0
+	for _, job := range p.jobs {
+		total += len(job.slices)
+	}
+	return total
+}
+
+// planAIScan is THE ONE place a scope and a detail level become requests.
+//
+// Both the run and the estimate go through it, and that is the whole reason it
+// exists: a read-out predicting a different number from the run is worse than no
+// read-out, and two implementations of the packing rule disagree the moment
+// either one is changed.
+//
+// Slicing happens up front rather than per document as the loop reaches it, so
+// the request count is known before the first request is sent and the warning
+// about a long scan can precede the wait instead of following it.
+func planAIScan(docs []engine.Document, llm *ollama.Client, level string, scope *AIScope) aiScanPlan {
+	units, problems := scopedUnits(docs, scope)
+	plan := aiScanPlan{problems: problems}
+
+	for _, u := range units {
+		slices, err := u.slices(level, llm.PromptBudgetBytes())
+		if err != nil {
+			plan.problems = append(plan.problems, err.Error())
+			continue
+		}
+		if len(slices) == 0 {
+			plan.skipped = append(plan.skipped, DetectionSkip{
+				Name:   u.doc.Name,
+				Reason: "no text for the local AI to read. Smart detection still read it.",
+			})
+			continue
+		}
+		if len(slices) > ollama.LargeScanRequests {
+			plan.problems = append(plan.problems, fmt.Sprintf(
+				"%q needs %d local AI requests and will take a while; cancel and scope the local AI to a page range if that is longer than you want to wait",
+				u.doc.Name, len(slices)))
+		}
+		// The source text for the hallucination filter is the scanned text
+		// itself, built from the SAME slices, so a name the model read in one
+		// slice is not dropped for being absent from another.
+		plan.jobs = append(plan.jobs, scanJob{
+			name:   u.doc.Name,
+			unit:   u.doc.Unit,
+			slices: slices,
+			source: sliceText(slices),
+		})
+	}
+	return plan
+}
+
+// EstimateAIRequests reports how many model requests the current scope and
+// detail level imply, so the rail can show the cost of a choice BEFORE the user
+// pays it.
+//
+// It answers "if the Local AI route runs, this is what it would send": it does
+// not probe Ollama and it does not care whether the route is switched on,
+// because the question the rail asks is what the choice in front of the user
+// would cost. It reaches no model and mutates nothing, so it is safe to call on
+// every edit of the scope or the level.
+//
+// The count comes from planAIScan, the same helper the run itself uses. A second
+// formula here would be a number that disagrees with reality as soon as either
+// copy changes, and the user would have no way of telling which was lying.
+//
+// A problem deciding the slices (a page out of range, a scope naming a document
+// that is not imported, a scan large enough to be worth warning about) is NOT an
+// error here. The run reports those, and the run also sends exactly the requests
+// this counts in spite of them, so failing would break the one property the
+// number is for: the estimate equals what the run then does. Only having nothing
+// to estimate is an error.
+func (a *App) EstimateAIRequests(fileNames []string, aiScope *AIScope) (int, error) {
+	docs := a.docsByName(fileNames)
+	if len(docs) == 0 {
+		return 0, fmt.Errorf(
+			"no matching imported files to estimate: import documents on the Import step first")
+	}
+
+	a.mu.Lock()
+	level := a.settings.AIDetailLevel
+	llm := a.llm
+	a.mu.Unlock()
+
+	return planAIScan(docs, llm, level, aiScope).requests(), nil
+}
+
 // runLocalAIPhase is the Local AI route: one request per slice, with the slices
 // aligned to each document's OWN units by the engine.
 //
@@ -549,48 +657,12 @@ func scopedUnits(docs []engine.Document, scope *AIScope) (units []scanUnit, prob
 // of pages it reads only those (CLAUDE.md §5); with no pages it reads the whole
 // selected document. The Smart route is unaffected: it already read everything.
 func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *ollama.Client,
-	scope *AIScope, res *DetectionResult, report func(DetectionProgress),
+	level string, scope *AIScope, res *DetectionResult, report func(DetectionProgress),
 ) {
-	units, problems := scopedUnits(docs, scope)
-	res.Errors = append(res.Errors, problems...)
-
-	// Slice every document up front, so the request count is known before the
-	// first request is sent and the warning can precede the wait.
-	type scanJob struct {
-		name   string
-		unit   string
-		slices []engine.ScanChunk
-		source string
-	}
-	var jobs []scanJob
-	for _, u := range units {
-		slices, err := u.slices(engine.DetailThorough, llm.PromptBudgetBytes())
-		if err != nil {
-			res.Errors = append(res.Errors, err.Error())
-			continue
-		}
-		if len(slices) == 0 {
-			res.Skipped = append(res.Skipped, DetectionSkip{
-				Name:   u.doc.Name,
-				Reason: "no text for the local AI to read. Smart detection still read it.",
-			})
-			continue
-		}
-		if len(slices) > ollama.LargeScanRequests {
-			res.Errors = append(res.Errors, fmt.Sprintf(
-				"%q needs %d local AI requests and will take a while; cancel and scope the local AI to a page range if that is longer than you want to wait",
-				u.doc.Name, len(slices)))
-		}
-		// The source text for the hallucination filter is the scanned text
-		// itself, built from the SAME slices, so a name the model read in one
-		// slice is not dropped for being absent from another.
-		jobs = append(jobs, scanJob{
-			name:   u.doc.Name,
-			unit:   u.doc.Unit,
-			slices: slices,
-			source: sliceText(slices),
-		})
-	}
+	plan := planAIScan(docs, llm, level, scope)
+	res.Errors = append(res.Errors, plan.problems...)
+	res.Skipped = append(res.Skipped, plan.skipped...)
+	jobs := plan.jobs
 
 	// Partial work is kept whatever ends the loop, which is why the merge is
 	// deferred: a cancellation returning straight out would throw away

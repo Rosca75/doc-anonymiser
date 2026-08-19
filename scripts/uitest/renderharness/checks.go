@@ -220,6 +220,15 @@ type railResult struct {
 		FitsTheRail       *bool  `json:"fitsTheRail"`
 		Widths            string `json:"widths"`
 	} `json:"signalRowLine"`
+	DetailLevelRow *struct {
+		LaidOut         *bool    `json:"laidOut"`
+		LabelFullyShown *bool    `json:"labelFullyShown"`
+		Label           string   `json:"label"`
+		SameRow         *bool    `json:"sameRow"`
+		FitsTheRail     *bool    `json:"fitsTheRail"`
+		Widths          string   `json:"widths"`
+		OptionsSelected []string `json:"optionsSelected"`
+	} `json:"detailLevelRow"`
 	MethodPairRow *struct {
 		BuiltInTop            int      `json:"builtInTop"`
 		HeuristicTop          int      `json:"heuristicTop"`
@@ -338,6 +347,48 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 			line.Widths,
 			"The rail is the narrowest column in the application and the page body never "+
 				"scrolls sideways (the fixed-height layout contract).")
+	}
+
+	// The local AI's speed-versus-recall dial. It lives in a section that is FOLDED
+	// by default, so its controls are in the DOM at zero height and no string test
+	// can tell whether the user could ever read them: only a browser that opens the
+	// section can.
+	if row := got.DetailLevelRow; row == nil {
+		r.assert("the detail level renders in the Local AI section", false,
+			"#ai-detail-level with its label and help icon in a .rail-field-row",
+			"one of them is missing",
+			"views/identifyrail.js localAISection renders the dial between the model field "+
+				"and Context, with a helpTooltip beside it.")
+	} else {
+		r.assert("the detail level is laid out once its section is opened",
+			boolIs(row.LaidOut, true),
+			"the select with a height after opening rail-local",
+			describeBool(row.LaidOut),
+			"A control that never gains a box is one the user cannot reach, however "+
+				"correct the markup is.")
+
+		r.assert("the detail level label is not clipped",
+			boolIs(row.LabelFullyShown, true),
+			"the whole label text visible",
+			fmt.Sprintf("%s (%s)", describeBool(row.LabelFullyShown), row.Label),
+			"copy.js RAIL.detailLevel stays short precisely because the rail is the "+
+				"narrowest column; an ellipsis here is a control the user cannot read.")
+
+		r.assert("the detail level and its label share one row",
+			boolIs(row.SameRow, true) && boolIs(row.FitsTheRail, true),
+			"label and select at the same y, with no horizontal overflow",
+			fmt.Sprintf("sameRow=%s, fits=%s (%s)",
+				describeBool(row.SameRow), describeBool(row.FitsTheRail), row.Widths),
+			"style.css .rail-field is one flex line, and the page body never scrolls "+
+				"sideways (the fixed-height layout contract).")
+
+		r.assert("exactly one detail level is marked selected",
+			len(row.OptionsSelected) == 1,
+			"1 selected <option>",
+			fmt.Sprintf("%d: %v", len(row.OptionsSelected), row.OptionsSelected),
+			"views/identifyrail.js detailLevelOptions always marks one. With none marked "+
+				"the browser picks the first by itself, which is how a choice gets made by "+
+				"option ordering instead of by the user.")
 	}
 
 	// "Side by side" is a claim about geometry, so geometry is what answers it.

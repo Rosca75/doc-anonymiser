@@ -88,6 +88,19 @@ EXPLICITLY rather than omitting it. It does NOT reach the CLASSIFICATION call,
 which is always schema-constrained: that call files a bounded list of names, where
 "every category present" is what makes the re-filing complete.
 
+`aiDetailLevel` is the same route's speed-versus-recall dial: how much text one
+request carries. One of `engine.AllDetailLevels` (`"thorough"`, the default, or
+`"faster"`), mirrored by `state.js AI_DETAIL_LEVELS` and guarded by
+`../detection_parity_test.go`. `applySettings` REFUSES a level Go cannot size and
+names the two valid ones; the EMPTY string is accepted, because absence has a
+documented meaning (thorough) and is what a session file written before the
+setting existed carries. Go fills it out to `thorough` when storing, so
+`getSettings` always answers with a level the rail's dropdown can mark selected.
+
+There is deliberately no "whole document in one request" level: it measures zero
+values on every model tried, and a choice whose outcome is "finds nothing" is a
+broken switch rather than an option.
+
 **Smart detection** is THREE methods, each with its own setting, and no switch of
 its own:
 
@@ -142,6 +155,7 @@ display choice: it decides which country-specific regex categories run.
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
 | `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, pages}` (null = every document whole; restricts the LOCAL AI route only; `pages` is a 1-based `number[]` over the document's own page/slide/row/line units, and an empty array means the whole selected document) | `DetectionResult {suggestions, phases, skipped, errors, cancelled, status, aiRequests, aiSilentRequests, aiTruncatedRequests, aiSecondsPerRequest}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
+| `estimateAIRequests(fileNames, aiScope)` | names, optional `AIScope` | how many model requests the current scope and DETAIL LEVEL imply, as a number. Reaches no model, probes nothing and mutates nothing, so it is safe to call on every edit. Go computes it with the SAME helper the run uses, which is what makes it equal to the request count the run then makes: a read-out predicting something else is worse than none. Rejects only when there is nothing to estimate (no matching documents); a scope naming pages that do not exist resolves to what the run would actually send, which for that document is zero |
 | `cancelDetection()` | — | aborts the in-flight run, reaching whichever route is running, including mid-file |
 | `expandSpellings(value)` | `{category, mainText, spellings, spellingPolicy}` | the forms this Value matches, longest first. `spellingPolicy: "curated"` means the list is the user's: Go derives nothing and returns the main text plus exactly the spellings it was given, so the chips on the card are what the run replaces |
 | `countTermMatches(term)` | term | `{count, documents}`, the live read-out under the manual declaration row (debounced) |

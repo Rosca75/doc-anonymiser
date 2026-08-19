@@ -187,6 +187,11 @@ export const CONFIGURE = {
   // deciding about; what they are deciding about is a little more recall against
   // roughly twice the wait.
   strictFormatHelp: "Makes the model answer for every category instead of only the ones it thought of. Sometimes finds a little more, and usually takes about twice as long.",
+  // The detail level, in OUTCOME terms. What the user is choosing between is how
+  // much they find and how long they wait, not a number of bytes: the byte size
+  // is the mechanism, and the request count it produces is dynamic and belongs in
+  // the read-out beside the control rather than in this sentence.
+  detailLevelHelp: "The local AI reads your document in slices. One page or slide at a time finds the most values and takes the longest. Larger slices are quicker and can miss values completely.",
   aiOffTooltip: "Local AI is turned off. Turn it on with the switch on the Local AI section of Configure.",
   allowHint: "Terms in this list survive every pass, even when they also appear as names to replace.",
   // the group that surfaces the recognizers.
@@ -328,6 +333,26 @@ export const RAIL = {
   contextSize: "Context",
   // Short, as every rail label is: the explanation is the tooltip beside it.
   strictFormat: "Answer every category",
+  // The speed-versus-recall dial. The label names the QUESTION and the options
+  // name the two answers, so neither has to carry the explanation the tooltip
+  // holds.
+  detailLevel: "Detail",
+  detailLevelOptions: {
+    thorough: "Thorough (slower)",
+    faster: "Faster (may miss)",
+  },
+
+  /**
+   * scanEstimate(requests) is the cost of the current scope and detail level,
+   * shown BEFORE the user pays it. It is dynamic, so it stays inline as a
+   * read-out rather than going in the tooltip.
+   *
+   * It names requests rather than a time, because how long a request takes
+   * depends on the model and the machine; what the last scan actually cost is
+   * lastScan's job, and the two read side by side.
+   */
+  scanEstimate: (requests) =>
+    `This scope needs ${requests} request${requests === 1 ? "" : "s"}.`,
   noModels: "(no models found)",
   reprobe: "Check again",
 

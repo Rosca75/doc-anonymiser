@@ -208,6 +208,116 @@ func TestStrictFormatSurvivesTheSessionFile(t *testing.T) {
 	}
 }
 
+// TestApplySettingsValidatesTheDetailLevel: the speed-versus-recall dial is a
+// named level, and the boundary is where a name nothing sizes gets refused.
+//
+// Stored, a misspelt level would read as thorough for the rest of the session
+// while the rail showed whatever the user picked, which is a control that
+// appears to do something and does not. An EMPTY level is a different fact: it
+// is what a session file written before the setting existed carries, so it is
+// accepted and filled out to the default it already means.
+func TestApplySettingsValidatesTheDetailLevel(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		level string
+		want  string
+	}{
+		{"thorough is accepted", engine.DetailThorough, engine.DetailThorough},
+		{"faster is accepted", engine.DetailFaster, engine.DetailFaster},
+		{"absent is filled out to thorough", "", engine.DetailThorough},
+	} {
+		t.Run("config/"+tc.name, func(t *testing.T) {
+			app := NewApp()
+			s := app.GetSettings()
+			s.AIDetailLevel = tc.level
+
+			if _, err := app.ApplySettings(s); err != nil {
+				t.Fatalf("ApplySettings(%q): %v", tc.level, err)
+			}
+			// The stored value is what the rail's dropdown marks as selected, so
+			// it has to be a real level rather than whatever arrived.
+			if got := app.GetSettings().AIDetailLevel; got != tc.want {
+				t.Errorf("the stored detail level is %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("errors/an_unknown_level_is_refused_and_names_the_valid_ones", func(t *testing.T) {
+		app := NewApp()
+		s := app.GetSettings()
+		s.AIDetailLevel = "exhaustive"
+
+		_, err := app.ApplySettings(s)
+		if err == nil {
+			t.Fatal("an unknown detail level must be refused, not stored as one nothing sizes")
+		}
+		for _, want := range []string{"exhaustive", engine.DetailThorough, engine.DetailFaster} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal must name %q so the user can act on it, got: %v", want, err)
+			}
+		}
+		if got := app.GetSettings().AIDetailLevel; got == "exhaustive" {
+			t.Error("a refused level must not be stored")
+		}
+	})
+}
+
+// TestDetailLevelSurvivesTheSessionFile: the level persists, and a file that
+// says nothing about it restores as THOROUGH without bumping the version.
+//
+// Thorough rather than the live setting, because a file with no level was
+// written under thorough: carrying the current choice over would let loading an
+// old session restore a scan the file never recorded.
+func TestDetailLevelSurvivesTheSessionFile(t *testing.T) {
+	data, err := engine.SaveSession(engine.Session{
+		Settings: engine.SessionSettings{
+			Level: "medium", OllamaPort: 11434, AIDetailLevel: engine.DetailFaster,
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	loaded, err := engine.LoadSession(data)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if loaded.Settings.AIDetailLevel != engine.DetailFaster {
+		t.Errorf("the detail level did not survive the file: %q", loaded.Settings.AIDetailLevel)
+	}
+	if engine.SessionVersion != 8 {
+		t.Errorf("SessionVersion is %d: an added field the loader can read as its default is not a bump",
+			engine.SessionVersion)
+	}
+
+	app := NewApp()
+	if _, err := app.applyRestoredSession(loaded); err != nil {
+		t.Fatalf("applyRestoredSession: %v", err)
+	}
+	if got := app.GetSettings().AIDetailLevel; got != engine.DetailFaster {
+		t.Errorf("the restored detail level is %q, want %q", got, engine.DetailFaster)
+	}
+
+	// A v8 file written before the setting existed says nothing about it, and
+	// must restore as thorough even when the live session is on faster.
+	silent, err := engine.SaveSession(engine.Session{
+		Settings: engine.SessionSettings{Level: "medium", OllamaPort: 11434},
+	})
+	if err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	loadedSilent, err := engine.LoadSession(silent)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if _, err := app.applyRestoredSession(loadedSilent); err != nil {
+		t.Fatalf("applyRestoredSession: %v", err)
+	}
+	if got := app.GetSettings().AIDetailLevel; got != engine.DetailThorough {
+		t.Errorf("a file that says nothing about the detail level restored %q, want %q: silence means the level the file was written under",
+			got, engine.DetailThorough)
+	}
+}
+
 // TestApplySettingsRefusesAnUnknownSignalSource: an identifier Go does not
 // implement must not reach the settings at all.
 //

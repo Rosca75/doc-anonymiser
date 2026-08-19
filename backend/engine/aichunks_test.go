@@ -16,6 +16,33 @@ import (
 	"doc-anonymiser/backend/engine"
 )
 
+// TestValidDetailLevel: the boundary refuses a level nothing sizes, and accepts
+// the empty string, because absence and a typo are different facts. A session
+// file written before the setting existed carries the first; only the second is
+// a mistake, and storing it would leave the rail showing a level no run uses.
+func TestValidDetailLevel(t *testing.T) {
+	t.Run("config/every_offered_level_is_valid", func(t *testing.T) {
+		if len(engine.AllDetailLevels) != 2 {
+			t.Fatalf("AllDetailLevels = %v, want exactly the two levels the rail offers", engine.AllDetailLevels)
+		}
+		for _, level := range engine.AllDetailLevels {
+			if !engine.ValidDetailLevel(level) {
+				t.Errorf("ValidDetailLevel(%q) = false, want true: a level the interface offers must be one the engine sizes", level)
+			}
+		}
+	})
+	t.Run("config/absence_is_valid_and_a_typo_is_not", func(t *testing.T) {
+		if !engine.ValidDetailLevel("") {
+			t.Error("ValidDetailLevel(\"\") = false, want true: an absent level means thorough, which is not a mistake")
+		}
+		for _, level := range []string{"quick", "exhaustive", "Thorough", "whole"} {
+			if engine.ValidDetailLevel(level) {
+				t.Errorf("ValidDetailLevel(%q) = true, want false: a level nothing sizes must be refused, not stored", level)
+			}
+		}
+	})
+}
+
 // slideDoc builds a pptx-shaped document with one "## Slide N" section per body,
 // which is the boundary convert.Pptx emits and pagescope reads.
 func slideDoc(bodies ...string) engine.Document {

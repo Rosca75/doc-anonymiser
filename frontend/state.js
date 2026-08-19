@@ -112,6 +112,9 @@ const initialState = {
   // aiStrictFormat asks the local AI to answer for EVERY category instead of
   //   only the ones it thought of. OFF by default: it sometimes finds a little
   //   more, and usually takes about twice as long.
+  // aiDetailLevel is how much text one local AI request carries: "thorough"
+  //   (the default, smallest slices, finds the most, slowest) or "faster".
+  //   Mirrors engine.AllDetailLevels; see AI_DETAIL_LEVELS below.
   // contextSize is the Ollama num_ctx setting, default 8192.
   // minConfidence is the detection-confidence floor, 0 to
   // 1 on the engine's scale. 0 is the default and keeps every detection,
@@ -119,6 +122,7 @@ const initialState = {
   settings: {
     level: "medium", categories: null, ollamaPort: 11434, model: "", country: DEFAULT_COUNTRY,
     contextSize: 8192, useLocalAI: false, aiStrictFormat: false,
+    aiDetailLevel: "thorough",
     useBuiltInPatterns: true, useHeuristicDiscovery: true,
     // Which READINGS of which built-in signals may DERIVE Suggestions.
     // Data-driven, keyed by SIGNAL_SOURCES and then by SIGNAL_DERIVATIONS: a new
@@ -208,6 +212,11 @@ const initialState = {
   // of them is about the document. The seconds are MEASURED on this machine and
   // this document, which is the only way a user can judge how a scan will feel:
   // no fixed sentence in a tooltip knows their laptop.
+  // aiRequestEstimate is how many model requests the CURRENT scope and detail
+  // level would send, answered by Go with the same helper the run uses, so the
+  // read-out cannot promise a number the run then contradicts. Null before the
+  // first answer: a read-out that guesses while it waits is worse than none.
+  aiRequestEstimate: null,
   lastAIScan: null,
 
   // Unified suggestion review list: suggestions from
@@ -329,6 +338,16 @@ export const MATCH_CLASSES = [
 // a source is one constant here and one implementation in Go rather than a new
 // row, a new field and a new persisted flag.
 export const SIGNAL_SOURCES = ["email"];
+
+// AI_DETAIL_LEVELS mirrors engine.AllDetailLevels exactly, in the order the rail
+// offers them, and is checked by ../detection_parity_test.go. The dropdown is
+// built from it, so a third option invented here would be a control the user can
+// pick and the engine then refuses.
+//
+// There is deliberately no "whole document in one request" level on either side.
+// It measures zero values on every model tried, and a choice whose outcome is
+// "finds nothing" is a broken switch rather than an option.
+export const AI_DETAIL_LEVELS = ["thorough", "faster"];
 
 // SIGNAL_DERIVATIONS mirrors engine.SignalDerivations exactly and is checked by
 // the same guard. Each entry lists, per signal, the READINGS that signal supports,

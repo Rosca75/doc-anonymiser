@@ -18,6 +18,9 @@
 //	                   the frontend cannot render is a control the user cannot
 //	                   reach; one Go does not implement is a control that appears
 //	                   to do something and does not.
+//	AI DETAIL LEVELS   how much text one local-AI request carries. Go REFUSES a
+//	                   level it cannot size, so a level only the frontend offers
+//	                   is an option the user picks and the engine then rejects.
 //
 // Every guard also checks that copy.js has a WORD for each identifier, because a
 // chip with no label renders the raw identifier, which is the unexplained jargon
@@ -194,6 +197,24 @@ func TestSignalSourcesAgreeAcrossTheBridge(t *testing.T) {
 			"A source only Go knows has no control the user can reach; one only the frontend\n"+
 			"knows is a control that appears to do something and does not.",
 			js, engine.AllSignalSources)
+	}
+}
+
+// TestAIDetailLevelsAgreeAcrossTheBridge: the same two levels on both sides, in
+// the same order.
+//
+// The rail's dropdown is built from the frontend list and Go REFUSES a level it
+// cannot size, so a level only the frontend knows is an option the user can pick
+// and the engine then rejects, and one only Go knows is a scan nobody can ask
+// for. Order matters because it is display order, and the first entry is what an
+// unrecognised stored value falls back to.
+func TestAIDetailLevelsAgreeAcrossTheBridge(t *testing.T) {
+	js := frontendList(t, "AI_DETAIL_LEVELS")
+	if strings.Join(js, ",") != strings.Join(engine.AllDetailLevels, ",") {
+		t.Errorf("AI_DETAIL_LEVELS in frontend/state.js is %v, engine.AllDetailLevels is %v.\n"+
+			"A level only the frontend offers is refused by ApplySettings the moment it is\n"+
+			"chosen; one only Go sizes is a scan the user cannot ask for.",
+			js, engine.AllDetailLevels)
 	}
 }
 

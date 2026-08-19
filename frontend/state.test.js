@@ -23,6 +23,7 @@ import {
   setUseBuiltInPatterns, setUseHeuristicDiscovery,
   addSuggestions, acceptSuggestion, rejectSuggestion, acceptAllShown,
   DISCOVERY_METHODS, MATCH_CLASSES, SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
+  AI_DETAIL_LEVELS,
   signalSourceOn, enabledSignalSources, setSignalSource,
   signalDerivationOn, enabledSignalDerivations, setSignalDerivation,
   moveSpelling, valueAutocomplete, reassignOriginal,
@@ -496,6 +497,28 @@ test("the local AI's reply format starts on the fast end", () => {
     "asking the model for every category is the slow option, so it is opt-in");
   assert.ok("aiStrictFormat" in getState().settings,
     "the setting must exist in the store, not be implied by its absence");
+});
+
+test("the local AI's detail level starts on the thorough end", () => {
+  // Thorough is the end that FINDS things: the faster level trades recall for
+  // time, and a trade nobody asked for must not be the one a fresh session makes
+  // on the user's behalf. It is a real string in the store rather than an absent
+  // key, because the rail marks a dropdown option from it and an undefined would
+  // mark nothing, which is how the browser ends up choosing.
+  resetState();
+  assert.equal(getState().settings.aiDetailLevel, "thorough",
+    "the slower, more thorough level is the default");
+  assert.ok("aiDetailLevel" in getState().settings,
+    "the setting must exist in the store, not be implied by its absence");
+});
+
+test("AI_DETAIL_LEVELS is exactly the two identifiers Go validates", () => {
+  // Go refuses a level it cannot size, so a third entry here would be an option
+  // the user can pick and the engine then rejects. The list is frozen for the
+  // same reason the other mirrored vocabularies are.
+  assert.deepEqual(AI_DETAIL_LEVELS, ["thorough", "faster"]);
+  assert.ok(AI_DETAIL_LEVELS.includes(getState().settings.aiDetailLevel),
+    "the default has to be one of the levels the list offers");
 });
 
 test("the Smart detection section state is DERIVED from its methods", () => {

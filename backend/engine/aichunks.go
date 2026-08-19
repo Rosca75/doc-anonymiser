@@ -50,11 +50,36 @@ const (
 // itself drew.
 const scanOverlapBytes = 512
 
+// AllDetailLevels lists the levels a caller may ask for, in the order the
+// interface offers them. It is the ONE definition of the set: the bound layer
+// validates against it, the frontend mirrors it, and neither can invent a third
+// level that nothing here sizes.
+var AllDetailLevels = []string{DetailThorough, DetailFaster}
+
+// ValidDetailLevel reports whether a level is one this file sizes. The EMPTY
+// string is valid, because absence has a documented meaning (thorough, see
+// ScanTargetBytes) and a session file written before the setting existed says
+// nothing about it. A misspelt level is not valid: it means nothing, and
+// storing it would leave a control that appears to do something and does not.
+func ValidDetailLevel(level string) bool {
+	if level == "" {
+		return true
+	}
+	for _, known := range AllDetailLevels {
+		if level == known {
+			return true
+		}
+	}
+	return false
+}
+
 // ScanTargetBytes is the target size of one request at the given level.
 //
 // An unknown or empty level reads as DetailThorough, so a payload that omits it
 // lands on the safe end rather than the fast one: a level nobody chose must not
-// be the one that silently finds less.
+// be the one that silently finds less. The bound layer refuses a misspelt level
+// outright; this fallback is what keeps an engine caller that has no setting to
+// pass from silently getting the fast one.
 func ScanTargetBytes(level string) int {
 	if level == DetailFaster {
 		return fasterTargetBytes
