@@ -237,6 +237,14 @@ func TestDiscoverHappyPath(t *testing.T) {
 		if len(got[i].Spellings) != 0 {
 			t.Errorf("proposal %d must carry no variants, got %v", i, got[i].Spellings)
 		}
+		// The Local AI score is stamped at the boundary, beside the provenance.
+		// Without it the Suggestion arrives at 0, which the engine reads as
+		// "not stated" and therefore as a user declaration at 0.95, and the
+		// Minimum confidence control silently stops distinguishing the two.
+		if got[i].Confidence != engine.ConfidenceLLMDefault {
+			t.Errorf("proposal %d confidence = %v, want engine.ConfidenceLLMDefault (%v)",
+				i, got[i].Confidence, engine.ConfidenceLLMDefault)
+		}
 	}
 }
 

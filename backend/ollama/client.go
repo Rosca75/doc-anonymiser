@@ -809,7 +809,19 @@ func parseSuggestionJSON(reply string) ([]engine.Suggestion, error) {
 		for _, n := range names {
 			n = strings.TrimSpace(n)
 			if n != "" {
-				out = append(out, engine.Suggestion{Category: cat, MainText: n, Count: 1}.WithMethod(engine.MethodLocalAI))
+				// The Local AI score is stamped HERE, beside the provenance and
+				// for the same reason: this is the one place a model finding
+				// enters the system, so neither can be forgotten by a caller.
+				// Without it the Suggestion arrives with confidence 0, which
+				// valueConfidence reads as "not stated" and therefore as a
+				// manual declaration, and the Minimum confidence control then
+				// cannot tell a model's guess from something the user typed.
+				out = append(out, engine.Suggestion{
+					Category:   cat,
+					MainText:   n,
+					Count:      1,
+					Confidence: engine.ConfidenceLLMDefault,
+				}.WithMethod(engine.MethodLocalAI))
 			}
 		}
 	}

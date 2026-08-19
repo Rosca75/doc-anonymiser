@@ -181,11 +181,22 @@ methods found it, so route membership is a property of the row.
   Accepting the row carries them across, so ONE Value with its spellings reaches
   the pipeline rather than two rivals, the shorter of which would fire inside the
   longer and leave the rest of the phrase in clear text.
+- `confidence` is a THIRD thing beside provenance and precedence, and it is what
+  the Configure rail's **Minimum confidence** acts on. A Local AI finding carries
+  `engine.ConfidenceLLMDefault` (0.8), stamped at the Ollama boundary beside the
+  `local_ai` method. `0` means NOT STATED, which the engine reads as a user
+  declaration and scores at `ConfidenceManualDefault` (0.95). The number must
+  survive the whole way across: `addSuggestions` keeps it on the row,
+  `valueFromSuggestion` carries it into the Value, and `addValues` stores it.
+  Dropped anywhere along that chain, an accepted model finding is scored as if
+  the user had typed it, and raising the floor past 80 stops doing what the
+  control says.
 - Merging is ONE rule, `engine.MergeSuggestions`, used by every producer:
-  case-insensitive dedupe of `mainText` WITHIN a category, summed counts, and
-  unioned spellings, contexts, methods and evidence. `state.js
-  addSuggestions` mirrors it, so a second run that finds a row again updates it
-  rather than being dropped as a duplicate.
+  case-insensitive dedupe of `mainText` WITHIN a category, summed counts,
+  unioned spellings, contexts, methods and evidence, and the STRONGEST
+  confidence. `state.js addSuggestions` mirrors it, so a second run that finds a
+  row again updates it rather than being dropped as a duplicate, and a row two
+  routes found is not demoted to the weaker route's score.
 
 Shared evidence makes two rows RELATED, never one Value: `state.js relatedTo`
 computes it and the row carries a note. Two organisations reached through one

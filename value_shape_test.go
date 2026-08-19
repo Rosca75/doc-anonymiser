@@ -88,12 +88,19 @@ func TestValueWireShapeCarriesEveryCurrentField(t *testing.T) {
 		SpellingPolicy:   engine.SpellingPolicyCurated,
 		DiscoveryMethods: []string{engine.MethodManual},
 		Evidence:         []engine.Evidence{{Kind: engine.EvidenceEmailDomain}},
+		Confidence:       engine.ConfidenceLLMDefault,
 	})
 	if err != nil {
 		t.Fatalf("could not marshal a Value: %v", err)
 	}
 	for _, field := range []string{
 		"category", "mainText", "spellings", "spellingPolicy", "discoveryMethods", "evidence",
+		// confidence is a THIRD thing beside provenance and precedence, and it
+		// is the field the Minimum confidence control acts on. It is omitempty,
+		// so a Value that states none simply leaves it out and Go reads that as
+		// a user declaration; what must never happen is the key going missing
+		// from a Value that DID state one.
+		"confidence",
 	} {
 		if !strings.Contains(string(raw), `"`+field+`"`) {
 			t.Errorf("engine.Value does not serialise %q, so the frontend cannot read it.\ngot: %s",
