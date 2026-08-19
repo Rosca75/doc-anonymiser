@@ -89,8 +89,7 @@ export const NAV = {
   },
   backConfirmBody(step) {
     const name = NAV.stepNames[step] ?? step;
-    return `Going back clears everything the ${name} step owns, so you start it fresh. ` +
-      `Your imported documents and your never anonymise list are kept.`;
+    return `Going back clears everything the ${name} step owns, so you start it fresh.`;
   },
   backConfirmLabel: "Go back and reset",
 };
@@ -376,7 +375,7 @@ export const RAIL = {
   profileHelp: "Reuse a saved setup: Values, the never anonymise list, patterns and the placeholder registry, so a follow-up batch reuses the same placeholders.",
   profileLoad: "Load",
   profileSave: "Save",
-  profileSaveDisabled: "Run detection once before saving a profile.",
+  profileSaveDisabled: "Run the anonymisation once before saving a profile, a profile carries the placeholder registry.",
   profileLoadDone: "Profile loaded: Values, allowlist and patterns restored.",
   profileSaveDone: "Profile saved. A follow-up batch will reuse these placeholders.",
 };
@@ -947,8 +946,25 @@ export const ANONYMISE = {
   // nothing was replaced and there is nothing to compare: the panel is the only
   // thing on the screen that says why, and how to fix it.
   blockedTitle: "The run was refused",
-  blockedIntro: "Nothing was replaced. Two values would fight over the same text, which would make the re-identification key ambiguous. Fix each conflict below on the Identify step, then run again.",
+  blockedIntro: "Nothing was replaced. Two values would fight over the same text, which would make the re-identification key ambiguous. Fix each conflict below, then run again.",
   blockedFixLabel: "How to fix it",
+  // The per-conflict actions. A screen that can CREATE a blocking conflict has to
+  // be able to clear it: the only other route to a fix is the Identify step, and
+  // going there discards the registry, which would make the wizard punish a typo.
+  /** blockedDeleteValue(v) NAMES the value it removes, because a conflict has two
+   *  sides and two identical buttons would be a coin toss. */
+  blockedDeleteValue(v) {
+    return `Delete ${v}`;
+  },
+  blockedRemoveAllowTerm: "Remove the term from Never anonymise",
+  /** blockedValueDeleted / blockedAllowTermRemoved report the outcome. Neither
+   *  re-runs: clearing a conflict and deciding to run again are two decisions. */
+  blockedValueDeleted(v) {
+    return `${v} is no longer a value to replace. Run again.`;
+  },
+  blockedAllowTermRemoved(t) {
+    return `${t} is off the never anonymise list. Run again.`;
+  },
 
   // The selected placeholder card.
   selectedTitle: "Selected placeholder",
@@ -1104,6 +1120,17 @@ export const ANONYMISE = {
   selectionBecameValue(text) {
     return `${text} is now a Value of its own, with its own placeholder.`;
   },
+  /** selectionAlreadyThere(text) explains an Apply that changed nothing: the
+   *  exact text was already declared under the chosen type. */
+  selectionAlreadyThere(text) {
+    return `${text} is already a Value under that type.`;
+  },
+  /** declaredValueNotFound(text) warns that a declared Value applied but
+   *  matched no occurrence in the imported documents, instead of the success
+   *  notice a run otherwise shows. */
+  declaredValueNotFound(text) {
+    return `"${text}" was added as a Value, but no occurrence of it was found in the imported documents.`;
+  },
 
   // The footer.
   continueNeedsRun: "Run the anonymisation first.",
@@ -1160,16 +1187,6 @@ export const EXPORT = {
   },
   reportJsonDone: "Report exported as JSON.",
   reportMdDone: "Report exported as Markdown.",
-
-  // Profile (Save only; Load lives on the Identify rail).
-  sessionTitle: "Profile",
-  sessionSummary: "reuse placeholders",
-  sessionHint: "Saves Values, allowlist, patterns and the placeholder registry, so a follow-up batch reuses the same placeholders. Contains the key.",
-  save: "Save",
-  sessionSaveTitle: "Save the profile file",
-  sessionSaveConfirm: "Save profile",
-  sessionSaveDone: "Profile saved. A follow-up batch will reuse these placeholders.",
-  sessionLoadDone: "Profile loaded: Values, allowlist and patterns restored.",
 
   // The document list.
   documentsTitle: "Documents",

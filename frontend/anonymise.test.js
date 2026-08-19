@@ -17,14 +17,16 @@ import {
   countOccurrences, valuesInCategory, formatDuration, continueHint,
   compareCard, reportCard, valuesCard, filterValues, blockedPanel, selectedCard,
   runCard, missedCard, renderAnonymise, paneWalk, paneCaption, paneSearchControls,
-  selectionPanel, applySelection,
+  selectionPanel, applySelection, wireSelectionPanel, missingDeclaredTexts,
 } from "./views/anonymise.js";
 import {
-  resetState, setState, getState, addValues, foldIntoFamily, buildRunRequest,
+  resetState, setState, getState, subscribe, addValues, foldIntoFamily, buildRunRequest,
+  NAME_CATEGORIES, addAllowTerm, valueKey,
 } from "./state.js";
 import { readFileSync } from "node:fs";
-import { ANONYMISE } from "./copy.js";
+import { ANONYMISE, WORKSPACE } from "./copy.js";
 import { textOf, all, attr, exists } from "./testhtml.js";
+import { container, fire } from "./testdom.js";
 
 // --- countOccurrences ----------------------------------------------------
 
@@ -162,6 +164,25 @@ test("the report note says the preset the run used, and nothing about an AI pass
   assert.match(note, /medium/);
   assert.doesNotMatch(note, /deep scan|AI/i,
     "Anonymise runs no discovery method, so the run note must not mention an AI pass");
+});
+
+test("the Report card renders the overlap warnings the run computes, and dismisses them", () => {
+  // Validation.Warnings is computed on every run (a declared Value losing
+  // text to a built-in pattern) and nothing was rendering it: it shows here
+  // beside Report.Warnings, and the same dismiss affordance works on it.
+  resetState();
+  const s = reportState({
+    results: {
+      ...reportState().results,
+      validation: { warnings: [{ message: "Alpine Trust lost some text to a stronger match." }] },
+    },
+  });
+  const html = reportCard(s);
+  assert.match(html, /Alpine Trust lost some text to a stronger match\./);
+
+  const dismissed = { ...s, dismissedWarnings: ["Alpine Trust lost some text to a stronger match."] };
+  assert.doesNotMatch(reportCard(dismissed), /Alpine Trust lost some text/,
+    "a dismissed validation warning must not keep rendering");
 });
 
 test("filterValues searches the value and the placeholder, because users use both", () => {
@@ -444,6 +465,145 @@ test("after a run every result card renders, and each starts collapsed", () => {
     "nothing in the result column starts open");
 });
 
+test("a refused run still shows Add missed Value, the one exit from a blocked screen", () => {
+  resetState();
+  setState({ documents: [{ name: "a.txt", markdown: "x", previewTruncated: false, isGrid: false }] });
+  setState({
+    running: false,
+    results: {
+      documents: [],
+      report: { level: "medium", totalReplacements: 0, byCategory: {} },
+      validation: { blocking: [{ kind: "ambiguity", message: "conflict", fix: "fix it" }] },
+    },
+    replacedValues: [],
+  });
+  const html = renderColumn();
+  assert.match(html, new RegExp(ANONYMISE.missedTitle),
+    "Add missed Value is the card that can clear the conflict it may have caused");
+  assert.doesNotMatch(html, new RegExp(ANONYMISE.reportTitle),
+    "the Report card stays hidden: a refused run has nothing to report");
+});
+
+// --- A refused run can be CLEARED from this screen ---------------------------
+//
+// Keeping the "Add missed Value" card visible makes the blocked screen a way back
+// in. These are the way OUT: the conflict the run refused over has no row anywhere
+// on step 3, and the only other route to a fix is Identify, which calls ResetRun on
+// the way and discards the registry, so a mistyped declaration would cost every
+// placeholder number the session had assigned.
+
+/** blockedFor(conflict) is a state carrying one refused run. */
+function blockedFor(conflict) {
+  return {
+    ...getState(),
+    results: {
+      documents: [],
+      report: { level: "medium", totalReplacements: 0, byCategory: {} },
+      validation: { blocking: [conflict] },
+    },
+  };
+}
+
+test("a blocking conflict over a declared value offers to delete it, by name", () => {
+  resetState();
+  addValues([{ category: "entity_names", mainText: "Meridian" }]);
+  const html = blockedPanel(blockedFor({
+    kind: "ambiguity", message: "conflict", fix: "fix it", value: "Meridian",
+    refs: [{ kind: "value", category: "entity_names", mainText: "meridian" }],
+  }));
+  const actions = all(html, "button.blocked-delete-value");
+  assert.equal(actions.length, 1);
+  assert.equal(textOf(actions[0].outer, "button"), ANONYMISE.blockedDeleteValue("Meridian"),
+    "named from the store, because the engine lower-cases mainText in a ref");
+  assert.equal(actions[0].attrs["data-main-text"], "meridian");
+  assert.equal(actions[0].attrs["data-category"], "entity_names");
+});
+
+test("an allowlist collision offers to take the term off the never-anonymise list", () => {
+  resetState();
+  addValues([{ category: "entity_names", mainText: "Meridian" }]);
+  addAllowTerm("Meridian");
+  const html = blockedPanel(blockedFor({
+    kind: "collision", message: "conflict", fix: "fix it", value: "Meridian",
+    refs: [
+      { kind: "value", category: "entity_names", mainText: "meridian" },
+      { kind: "allowlist", mainText: "meridian" },
+    ],
+  }));
+  assert.equal(all(html, "button.blocked-allow-remove").length, 1);
+  assert.equal(all(html, "button.blocked-delete-value").length, 0,
+    "the never-anonymise term is what has to go, not the value the user declared");
+  assert.equal(attr(html, "button.blocked-allow-remove", "data-term"), "Meridian");
+});
+
+test("a conflict naming no declared value offers nothing rather than a dead button", () => {
+  resetState();
+  const html = blockedPanel(blockedFor({
+    kind: "ambiguity", message: "conflict", fix: "fix it", value: "Ghost",
+    refs: [{ kind: "value", category: "entity_names", mainText: "ghost" }],
+  }));
+  assert.equal(all(html, "button.blocked-delete-value").length, 0);
+});
+
+test("the blocked panel's actions clear the conflict, through the real wiring", async () => {
+  resetState();
+  addValues([{ category: "entity_names", mainText: "Meridian" }]);
+  addAllowTerm("Meridian");
+  setState({
+    documents: [{ name: "a.txt", markdown: "x", previewTruncated: false, isGrid: false }],
+    running: false,
+    results: {
+      documents: [],
+      report: { level: "medium", totalReplacements: 0, byCategory: {} },
+      validation: {
+        blocking: [{
+          kind: "collision", message: "conflict", fix: "fix it", value: "Meridian",
+          refs: [
+            { kind: "value", category: "entity_names", mainText: "meridian" },
+            { kind: "allowlist", mainText: "meridian" },
+          ],
+        }],
+      },
+    },
+    replacedValues: [],
+  });
+
+  const root = container();
+  renderAnonymise(root);
+  const action = root.querySelector(".blocked-allow-remove");
+  assert.ok(action, "the refused run offers its resolve action");
+  await fire(action, "click");
+  assert.deepEqual(getState().allowlist, [], "the term is off the never-anonymise list");
+  assert.equal(getState().notice?.text, ANONYMISE.blockedAllowTermRemoved("Meridian"));
+});
+
+test("deleting the named value from the blocked panel removes exactly that value", async () => {
+  resetState();
+  addValues([{ category: "entity_names", mainText: "Meridian" }]);
+  addValues([{ category: "person_names", mainText: "Marie Duval" }]);
+  setState({
+    documents: [{ name: "a.txt", markdown: "x", previewTruncated: false, isGrid: false }],
+    running: false,
+    results: {
+      documents: [],
+      report: { level: "medium", totalReplacements: 0, byCategory: {} },
+      validation: {
+        blocking: [{
+          kind: "ambiguity", message: "conflict", fix: "fix it", value: "Meridian",
+          refs: [{ kind: "value", category: "entity_names", mainText: "meridian" }],
+        }],
+      },
+    },
+    replacedValues: [],
+  });
+
+  const root = container();
+  renderAnonymise(root);
+  await fire(root.querySelector(".blocked-delete-value"), "click");
+  assert.deepEqual(getState().values.map((v) => v.mainText), ["Marie Duval"]);
+  assert.equal(getState().notice?.text, ANONYMISE.blockedValueDeleted("Meridian"));
+});
+
 test("each result card, rendered on its own, starts collapsed", () => {
   // The collapsed set is the single source of truth for all of them, so checking
   // each helper directly guards that membership.
@@ -594,6 +754,128 @@ test("each mode's stage 3 shows its own field", () => {
   assert.ok(!exists(value, "input#selection-target"));
 });
 
+test("the spelling target's suggestions are real buttons, prefix matches first, no datalist", () => {
+  resetState();
+  addValues([{ category: "person_names", mainText: "Marie Duval" }]);
+  addValues([{ category: "entity_names", mainText: "A Marseille Corp" }]);
+
+  const html = selectionPanel(getState(), view({ stage: "replace", mode: "spelling", target: "mar" }));
+  assert.ok(!exists(html, "datalist"), "a native popup rebuilt mid-keystroke cannot be relied on");
+  const list = all(html, "div#selection-target-list")[0];
+  const picks = all(list.inner, "button.reassign-pick");
+  assert.deepEqual(picks.map((p) => p.attrs["data-main-text"]),
+    ["Marie Duval", "A Marseille Corp"], "the prefix match comes before the substring match");
+});
+
+test("typing in the spelling target patches the suggestion list in place, without repainting", async () => {
+  // The one-letter symptom, expressed as an assertion: a repaint on every
+  // keystroke destroyed and recreated the input, so the second keystroke
+  // landed on an element that no longer existed by the time it fired.
+  resetState();
+  addValues([{ category: "person_names", mainText: "Marie Duval" }]);
+
+  const c = container();
+  c.innerHTML = selectionPanel(getState(), view({ stage: "replace", mode: "spelling", target: "" }));
+  wireSelectionPanel(c);
+
+  let notified = false;
+  const unsubscribe = subscribe(() => { notified = true; });
+  try {
+    const input = c.querySelector("#selection-target");
+    input.value = "m";
+    await fire(input, "input");
+    input.value = "ma";
+    await fire(input, "input");
+  } finally {
+    unsubscribe();
+  }
+
+  assert.equal(notified, false, "a keystroke must not trigger a full repaint");
+  const list = c.querySelector("#selection-target-list");
+  const picks = list.querySelectorAll(".reassign-pick");
+  assert.equal(picks.length, 1, "both keystrokes landed, and the list reflects the final text");
+  assert.equal(picks[0].dataset.mainText, "Marie Duval");
+});
+
+test("clicking a suggestion fills the field with its main text", async () => {
+  resetState();
+  addValues([{ category: "person_names", mainText: "Marie Duval" }]);
+
+  const c = container();
+  c.innerHTML = selectionPanel(getState(), view({ stage: "replace", mode: "spelling", target: "" }));
+  wireSelectionPanel(c);
+
+  const input = c.querySelector("#selection-target");
+  input.value = "mar";
+  await fire(input, "input");
+
+  const pick = c.querySelector("#selection-target-list").querySelector(".reassign-pick");
+  await fire(pick, "click");
+  assert.equal(input.value, "Marie Duval", "clicking a pick fills the field with its main text");
+});
+
+test("Apply uses a clicked pick directly, rather than re-resolving the text", async () => {
+  // A click already named the exact Value, so this is not a second search: it
+  // is what makes the mode reachable at all when two Values share a prefix.
+  resetState();
+  addValues([{ category: "person_names", mainText: "Marie Duval" }]);
+  await applySelection(stubContainer(), view({
+    selection: { text: "M. Duval", x: 0, y: 0 },
+    stage: "replace", mode: "spelling", target: "Marie Duval",
+    picked: { category: "person_names", mainText: "Marie Duval" },
+  }));
+  const v = getState().values.find((x) => x.mainText === "Marie Duval");
+  assert.ok(v.spellings.includes("M. Duval"), "the selected text became a spelling of the picked Value");
+});
+
+test("a stale pick from before a further keystroke is not reused", async () => {
+  // selectionPicked must be cleared on every edit: otherwise a click, then more
+  // typing that no longer matches, would still apply the old pick.
+  resetState();
+  addValues([{ category: "person_names", mainText: "Marie Duval" }]);
+  await applySelection(stubContainer(), view({
+    selection: { text: "Someone Else", x: 0, y: 0 },
+    stage: "replace", mode: "spelling", target: "Nobody",
+    picked: { category: "person_names", mainText: "Marie Duval" },
+  }));
+  assert.equal(getState().values[0].spellings.length, 0,
+    "a picked Value whose text no longer matches the field must not be reused");
+});
+
+// This is the guard that kills the bug class where CATEGORIES (a list of
+// [key, label] pairs) was iterated as if it were a list of keys: every
+// option's value has to be a real engine category, and the one matching the
+// current type has to carry `selected`, or the type list quietly writes a
+// Value nothing can apply.
+test("the new-Value type list offers real categories, with the current one selected", () => {
+  const html = selectionPanel(compareState(), view({
+    stage: "replace", mode: "value", category: "entity_names",
+  }));
+  const select = all(html, "select#selection-category")[0];
+  const options = all(select.inner, "option");
+  assert.ok(options.length > 0, "the type list is not empty");
+  for (const o of options) {
+    assert.ok(NAME_CATEGORIES.includes(o.attrs.value),
+      `"${o.attrs.value}" is not a declarable category`);
+  }
+  const selected = options.filter((o) => "selected" in o.attrs);
+  assert.equal(selected.length, 1, "exactly one option is pre-selected");
+  assert.equal(selected[0].attrs.value, "entity_names");
+});
+
+test("the Add missed Value type list offers real categories, with the default one selected", () => {
+  const html = missedCard(reportState());
+  const select = all(html, "select#missed-category")[0];
+  const options = all(select.inner, "option");
+  assert.ok(options.length > 0, "the type list is not empty");
+  for (const o of options) {
+    assert.ok(NAME_CATEGORIES.includes(o.attrs.value),
+      `"${o.attrs.value}" is not a declarable category`);
+  }
+  const selected = options.filter((o) => "selected" in o.attrs);
+  assert.equal(selected.length, 1, "exactly one option is pre-selected");
+});
+
 test("stage 3 offers Apply and a Cancel that steps back rather than closing", () => {
   const html = selectionPanel(compareState(), view({ stage: "replace", mode: "value" }));
   assert.ok(exists(html, "button#btn-apply-selection"));
@@ -657,6 +939,29 @@ test("mode 2 folds into an existing family instead of creating a rival", async (
 
   assert.equal(getState().values.length, 1, "one value, not two");
   assert.ok(getState().values[0].spellings.includes("Coca-Cola company"));
+});
+
+test("mode 2 is refused AT THE DECLARATION when the name is already allowlisted", async () => {
+  // The conflict is met on the panel the user is typing into, not as a
+  // refused run they would have to leave the screen to fix.
+  resetState();
+  addAllowTerm("Meridian");
+  await applySelection(stubContainer(), view({
+    selection: { text: "Meridian", x: 0, y: 0 },
+    stage: "replace", mode: "value", category: "entity_names",
+  }));
+  assert.equal(getState().values.length, 0, "the declaration must not go through");
+});
+
+test("mode 2 is refused when the same name is already declared under another type", async () => {
+  resetState();
+  addValues([{ category: "person_names", mainText: "Meridian" }]);
+  await applySelection(stubContainer(), view({
+    selection: { text: "Meridian", x: 0, y: 0 },
+    stage: "replace", mode: "value", category: "entity_names",
+  }));
+  assert.equal(getState().values.filter((v) => v.mainText === "Meridian").length, 1,
+    "the second declaration under a rival type must not go through");
 });
 
 test("mode 1 refuses a target that is not a value, on the panel", async () => {
@@ -730,7 +1035,230 @@ test("a missed Value that belongs to an existing family folds into it", () => {
   assert.ok(getState().values[0].spellings.includes("Coca-Cola company"));
 });
 
+// --- The Add missed Value card gets the same safeguards the step 2 add row has --
+
+test("the Add missed Value card folds a longer form into an existing family, through the real wiring", async () => {
+  resetState();
+  addValues([{ category: "brand_names", mainText: "Coca-Cola" }]);
+  setState(reportState({ values: getState().values }));
+
+  const c = container();
+  renderAnonymise(c);
+
+  const category = c.querySelector("#missed-category");
+  category.value = "brand_names";
+  await fire(category, "change");
+
+  const input = c.querySelector("#missed-value");
+  input.value = "Coca-Cola company";
+  await fire(input, "input");
+
+  await fire(c.querySelector("#btn-add-missed"), "click");
+
+  assert.equal(getState().values.length, 1, "one Value, not two, through the actual card wiring");
+  assert.ok(getState().values[0].spellings.includes("Coca-Cola company"));
+});
+
+test("the Add missed Value card refuses a conflicting declaration, and keeps the draft text", async () => {
+  resetState();
+  addAllowTerm("Meridian");
+  setState(reportState({ values: [] }));
+
+  const c = container();
+  renderAnonymise(c);
+
+  const category = c.querySelector("#missed-category");
+  category.value = "entity_names";
+  await fire(category, "change");
+
+  const input = c.querySelector("#missed-value");
+  input.value = "Meridian";
+  await fire(input, "input");
+
+  await fire(c.querySelector("#btn-add-missed"), "click");
+
+  assert.equal(getState().values.length, 0, "the conflicting declaration must not go through");
+  assert.equal(input.value, "Meridian", "the draft text survives the refusal, so the fix is right there");
+});
+
+test("the missed-value match readout degrades to silence rather than a crash with no bridge", async () => {
+  resetState();
+  setState(reportState());
+
+  const c = container();
+  renderAnonymise(c);
+
+  const input = c.querySelector("#missed-value");
+  input.value = "Some Person";
+  await fire(input, "input");
+
+  // The real debounce delay: this test process has no Wails bridge, so
+  // countTermMatches rejects and the read-out must stay empty rather than
+  // show a stale or wrong count.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(c.querySelector("#missed-matches").textContent, "");
+});
+
+// --- A declared Value that matched nothing, or that could not apply, must say so --
+
+test("missingDeclaredTexts finds a declared text absent from the refreshed table", () => {
+  const replaced = [{ original: "Alpine Trust", placeholder: "[ENTITY_1]", category: "entity_names", count: 3 }];
+  assert.deepEqual(missingDeclaredTexts(replaced, ["Nonexistent Corp"]), ["Nonexistent Corp"]);
+});
+
+test("missingDeclaredTexts matches case-insensitively and reports nothing when found", () => {
+  const replaced = [{ original: "Alpine Trust", placeholder: "[ENTITY_1]", category: "entity_names", count: 1 }];
+  assert.deepEqual(missingDeclaredTexts(replaced, ["alpine trust"]), []);
+});
+
+test("missingDeclaredTexts treats an empty expectation as nothing to check", () => {
+  assert.deepEqual(missingDeclaredTexts([], []), []);
+  assert.deepEqual(missingDeclaredTexts(undefined, undefined), []);
+});
+
 // --- Nothing that bypasses the Value model remains -------------------------
+
+// --- A declared Value another route covers entirely is warned about ----------
+//
+// The full-coverage intersection, which CHANGE-06 kept because it usually means a
+// mis-declaration: the Value is never replaced under its own type, so a user who
+// declared it and then cannot find it in the report has no other explanation.
+// This screen has no value card to paint it on, so the Report card's warning list
+// is its home, and it is said ONCE.
+
+/**
+ * withBridge(app, fn) runs fn with a stubbed Wails bridge in place, the same
+ * namespace api.js reads. Only the methods a fast re-run touches need stubbing;
+ * anything else still rejects, which every caller in the view already handles.
+ */
+async function withBridge(app, fn) {
+  const previous = globalThis.window;
+  globalThis.window = { go: { backend: { App: app } } };
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) delete globalThis.window;
+    else globalThis.window = previous;
+  }
+}
+
+/** rerunBridge(placeholders, intersections) answers the calls a declaring fast
+ *  re-run makes: the re-run itself, the mapping, and the two registry tables. */
+function rerunBridge(placeholders, intersections = []) {
+  return {
+    FastRerun: async () => ({
+      documents: [{ name: "a.txt", anonymised: "[ENTITY_1].", byCategory: {} }],
+      report: { level: "medium", totalReplacements: 1, byCategory: {}, values: [], documents: [] },
+      validation: { blocking: [], warnings: [] },
+    }),
+    GetMapping: async () => ({ rows: [] }),
+    ValuePlaceholders: async () => placeholders,
+    ListRemovedValues: async () => [],
+    CheckIntersections: async () => ({ intersections }),
+  };
+}
+
+/** declaredState() is one finished run with a document to declare against. */
+function declaredState() {
+  resetState();
+  setState({
+    documents: [{ name: "a.txt", markdown: "Meridian", previewTruncated: false, isGrid: false }],
+    running: false,
+    results: {
+      documents: [{ name: "a.txt", anonymised: "[ENTITY_1]", byCategory: {} }],
+      report: {
+        level: "medium", totalReplacements: 1, byCategory: {},
+        values: [], documents: [{ name: "a.txt", values: [] }],
+      },
+      validation: { blocking: [], warnings: [] },
+    },
+  });
+}
+
+const COVERED = {
+  value: "Meridian", category: "entity_names",
+  winnerValue: "Meridian Consulting", winnerMatchClass: "built_in_pattern",
+  matchedTexts: ["Meridian"],
+};
+
+/** coveredSentence() is the wording the card must show for COVERED. */
+function coveredSentence() {
+  return [
+    WORKSPACE.intersectionAll(COVERED.value, COVERED.winnerValue,
+      WORKSPACE.matchClassLabel.built_in_pattern, COVERED.matchedTexts),
+    WORKSPACE.intersectionFix,
+  ].join(" ");
+}
+
+/** cautionLines(s) is the Report card's warning strip, as rendered text. */
+function cautionLines(s) {
+  return all(reportCard(s), "div.caution")
+    .map((c) => textOf(c.outer, "span.caution-text"));
+}
+
+test("a Value declared here that another route covers entirely is warned about, once", async () => {
+  declaredState();
+  await withBridge(
+    rerunBridge([{ placeholder: "[ENTITY_1]", original: "Meridian", category: "entity_names" }], [COVERED]),
+    async () => {
+      await applySelection(stubContainer(), view({
+        selection: { text: "Meridian", x: 0, y: 0 },
+        stage: "replace", mode: "value", category: "entity_names",
+      }));
+    });
+
+  assert.deepEqual(cautionLines(getState()), [coveredSentence()],
+    "the sentence names the winning METHOD, never the internal rank");
+});
+
+test("the intersection warning dismisses like any other, by its text", async () => {
+  declaredState();
+  await withBridge(
+    rerunBridge([{ placeholder: "[ENTITY_1]", original: "Meridian", category: "entity_names" }], [COVERED]),
+    async () => {
+      await applySelection(stubContainer(), view({
+        selection: { text: "Meridian", x: 0, y: 0 },
+        stage: "replace", mode: "value", category: "entity_names",
+      }));
+    });
+  const dismissed = { ...getState(), dismissedWarnings: [coveredSentence()] };
+  assert.deepEqual(cautionLines(dismissed), [],
+    "one dismissal is enough, however often the Value is re-declared");
+});
+
+test("a Value no other route claims produces no intersection warning", async () => {
+  declaredState();
+  await withBridge(
+    rerunBridge([{ placeholder: "[ENTITY_1]", original: "Borealis", category: "entity_names" }], []),
+    async () => {
+      await applySelection(stubContainer(), view({
+        selection: { text: "Borealis", x: 0, y: 0 },
+        stage: "replace", mode: "value", category: "entity_names",
+      }));
+    });
+  assert.deepEqual(cautionLines(getState()), []);
+});
+
+test("an intersection over a Value this screen did not declare is left to step 2", async () => {
+  // Only declarations made HERE are listed: a Value accepted on Identify already
+  // met this warning on its own card, and repeating it here would be two
+  // warnings for one fact.
+  declaredState();
+  setState({ intersections: [COVERED] });
+  addValues([{ category: "entity_names", mainText: "Meridian" }]);
+  assert.deepEqual(cautionLines(getState()), []);
+});
+
+test("no bridge leaves the warning list empty rather than throwing into the repaint", async () => {
+  // The render harness and this suite both run without a bridge. An unhandled
+  // rejection here would blank the screen.
+  declaredState();
+  await applySelection(stubContainer(), view({
+    selection: { text: "Borealis", x: 0, y: 0 },
+    stage: "replace", mode: "value", category: "entity_names",
+  }));
+  assert.deepEqual(cautionLines(getState()), []);
+});
 
 test("no Find and replace surface remains anywhere on Anonymise", () => {
   // Every retired affordance in one assertion, because the point is not that the

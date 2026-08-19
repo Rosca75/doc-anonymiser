@@ -1321,6 +1321,114 @@ func checkCompareSearch(c *cdpClient, r *reporter) {
 	}
 }
 
+// selectionPanelResult mirrors the selectionPanel probe's payload.
+type selectionPanelResult struct {
+	Error                   string   `json:"error"`
+	SelectedText            string   `json:"selectedText"`
+	InsideCompare           bool     `json:"insideCompare"`
+	InViewport              bool     `json:"inViewport"`
+	HasSize                 bool     `json:"hasSize"`
+	OptionValues            []string `json:"optionValues"`
+	SelectedValue           string   `json:"selectedValue"`
+	HasDatalist             bool     `json:"hasDatalist"`
+	SurvivedFirstKeystroke  bool     `json:"survivedFirstKeystroke"`
+	SurvivedSecondKeystroke bool     `json:"survivedSecondKeystroke"`
+	FieldValue              string   `json:"fieldValue"`
+	Picks                   []string `json:"picks"`
+	CardRect                rect     `json:"cardRect"`
+	CompareRect             rect     `json:"compareRect"`
+}
+
+// declarableCategories is the set of types a user may declare a Value under,
+// mirroring engine.AllValueCategories minus custom_patterns (which is declarative
+// and reached through the Patterns tab, not this dropdown). ../../
+// category_parity_test.go holds the engine and the store to each other; this holds
+// the rendered dropdown to the same list.
+var declarableCategories = map[string]bool{
+	"entity_names": true, "project_names": true, "identifier_names": true,
+	"person_names": true, "product_names": true, "brand_names": true,
+	"other_names": true,
+}
+
+// checkSelectionPanel asserts the Compare pane's REPLACE SELECTION panel opens
+// against a real text selection, that its type dropdown emits CATEGORY KEYS, and
+// that its spelling field survives being typed into.
+//
+// This is the only layer that renders a native <select> and the only one that can
+// open the panel the way a mouse drag does. Both defects it guards against left
+// the markup correct and the feature unusable: a dropdown whose option values were
+// "person_names,Person names" produced Values the engine dropped before
+// validation, and a field whose input handler repainted the view was destroyed
+// mid-word and accepted exactly one letter.
+func checkSelectionPanel(c *cdpClient, r *reporter) {
+	r.step("The Compare selection panel declares a Value the engine can apply")
+
+	var got selectionPanelResult
+	if err := c.eval("__uiProbes.selectionPanel()", &got); err != nil {
+		r.assert("selecting text in the anonymised pane opens the panel", false,
+			"#selection-card beside the selection", err.Error(),
+			"views/anonymise.js wireTextSelection listens for mouseup on .pane-body.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("selecting text in the anonymised pane opens the panel", false,
+			"#selection-card beside the selection", got.Error,
+			"views/anonymise.js wireTextSelection listens for mouseup on .pane-body.")
+		return
+	}
+
+	r.assert("the panel names the text that was selected", got.SelectedText != "",
+		"the selected run echoed in .selection-text", "an empty .selection-text",
+		"views/anonymise.js selectionPanel renders the selection's own text, escaped.")
+
+	r.assert("the panel is inside the Compare card", got.InsideCompare,
+		"the panel's rect within #compare-card",
+		fmt.Sprintf("panel %s, card %s", got.CardRect, got.CompareRect),
+		"wireTextSelection clamps x to the card's bounds, the same clamp the mark tooltip makes.")
+	r.assert("the panel is on screen", got.InViewport,
+		"the panel's rect within the viewport", "the panel is off screen",
+		"SELECTION_PANEL_WIDTH is the clamp's half-width; the panel is translate(-50%, -100%).")
+	r.assert("the panel is painted", got.HasSize,
+		"a panel with a width and a height", "a zero-size panel",
+		".selection-card in style.css sets its width and padding.")
+
+	// The type list: every option value is a category the engine knows.
+	bad := []string{}
+	for _, v := range got.OptionValues {
+		if !declarableCategories[v] {
+			bad = append(bad, v)
+		}
+	}
+	r.assert("the type list offers only real category keys", len(got.OptionValues) > 0 && len(bad) == 0,
+		"one option per declarable category, each value a category key",
+		fmt.Sprintf("%d option(s), not a category: %v", len(got.OptionValues), bad),
+		"views/anonymise.js selectionStageFields uses the shared categorySelect builder; a "+
+			"hand-rolled copy read the [key, label] pair list as a list of strings.")
+	r.assert("a type is pre-selected", declarableCategories[got.SelectedValue],
+		"the panel's current type selected in the list",
+		fmt.Sprintf("selected value %q", got.SelectedValue),
+		"categorySelect marks the option whose KEY equals the selected category.")
+
+	// The spelling target: the field is typeable and it suggests.
+	r.assert("no native datalist is used for the suggestions", !got.HasDatalist,
+		"real pick buttons", "a <datalist> in the page",
+		"a platform popup is destroyed by every repaint and is empty on the render the user "+
+			"starts typing into, because valueAutocomplete with an empty query returns nothing.")
+	r.assert("the field survives the first keystroke", got.SurvivedFirstKeystroke,
+		"the same input element still in the DOM", "the element was replaced",
+		"the input handler patches the suggestion list in place and never calls setState.")
+	r.assert("the field survives the second keystroke", got.SurvivedSecondKeystroke,
+		"the same input element still in the DOM", "the element was replaced",
+		"this is the one-letter symptom: a repaint destroys the element the next keystroke needs.")
+	r.assert("both keystrokes are in the field", got.FieldValue == "mar",
+		"the field holding mar", fmt.Sprintf("the field holding %q", got.FieldValue),
+		"nothing in the keystroke path resets the value.")
+	r.assert("the suggestions narrow to what was typed", len(got.Picks) > 0,
+		"at least one .selection-pick for the query",
+		fmt.Sprintf("%d pick(s): %v", len(got.Picks), got.Picks),
+		"views/anonymise.js selectionPicks renders valueAutocomplete's answer as buttons.")
+}
+
 func boolIs(p *bool, want bool) bool { return p != nil && *p == want }
 
 func describeBool(p *bool) string {

@@ -28,14 +28,16 @@
 import {
   runPipeline, cancelPipeline, fastRerun, getMapping, getDocumentSource,
   valuePlaceholders, listRemovedValues, setValuePlaceholder, removeValue,
-  restoreValue, copyText,
+  restoreValue, copyText, countTermMatches, checkIntersections,
 } from "../api.js";
 import {
   getState, setState,
   buildRunRequest, documentSource, cacheDocumentSource,
   valueAutocomplete, reassignOriginal, addValues,
-  setValueTables, dismissWarning, visibleWarnings, blockingConflicts,
-  foldIntoFamily,
+  setValueTables, dismissWarning, visibleWarnings, visibleValidationWarnings,
+  blockingConflicts, foldIntoFamily, checkValueConflict,
+  valueKey, deleteValue, removeAllowTerm,
+  setIntersections, intersectionsFor, buildIntersectionRequest,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { renderHighlighted } from "../highlight.js";
@@ -44,7 +46,7 @@ import {
   button, card, statTile, collapsibleGroup, wireGroups, icon, sectionLabel,
   searchBox, wireSearchBox,
 } from "../ui.js";
-import { CATEGORIES } from "./identifyworkspace.js";
+import { categorySelect, conflictMessage } from "./identifyworkspace.js";
 import { stepFooterHTML, wireStepFooter } from "../nav.js";
 import { notify, wireNotice } from "../toast.js";
 import { CARDS, ANONYMISE, CATEGORY_LABELS, IMPORT, WORKSPACE, VALUES } from "../copy.js";
@@ -70,7 +72,7 @@ const rowErrors = new Map();
 // The results object the value tables were loaded for, so the load happens once
 // per run rather than on every repaint.
 let tablesLoadedFor = null;
-// The clicked placeholder, or null: {placeholder, original, category}.
+// The clicked placeholder, or null: {placeholder, original}.
 let selectedMark = null;
 // The reassign autocomplete's draft text.
 let reassignDraft = "";
@@ -87,6 +89,12 @@ let selection = null;
 let selectionStage = null;    // null | "replace"
 let selectionMode = null;     // null | "spelling" | "value"
 let selectionTarget = "";     // the spelling autocomplete's draft
+// The Value a suggestion pick chose, or null when the target was typed by
+// hand without clicking one. Set alongside selectionTarget so Apply does not
+// have to re-resolve a text search for a click that already named the Value;
+// cleared on every further keystroke, because the field may no longer match
+// what was picked.
+let selectionPicked = null;    // null | {category, mainText}
 let selectionCategory = "person_names";
 // A refusal from Apply. It belongs ON the panel, next to the field the fix goes
 // into, for the same reason a refused rename lands on its own row.
@@ -115,15 +123,34 @@ let search = {
 // back on every keystroke.
 let lastScrolledTo = { original: null, anonymised: null };
 // The Add missed Value row's draft text, kept across repaints.
-const drafts = { missedCategory: "person_names", missed: "" };
+const drafts = { missedCategory: "person_names", missed: "", missedMatches: "" };
+// Texts declared from the missed-value card since the last fast re-run, so the
+// re-run can say when one of them matched nothing. Several values are usually
+// declared before the user re-runs once, so this is a list, not one string.
+let pendingMissedTexts = [];
+// A declaration refused before it ever reached addValues (an ambiguity, an
+// allowlist collision, a spelling another Value claims), shown on the card
+// next to the field the fix goes into, exactly like every other per-surface
+// error on this screen.
+let missedError = "";
+// The Values DECLARED FROM THIS SCREEN, by valueKey. A Value that a
+// higher-priority route covers ENTIRELY is the full-case intersection, which
+// usually means a mis-declaration, and this screen has no value card to paint it
+// on: the Report card's warning list is its home. Only declarations made here are
+// listed, because a Value accepted on Identify already met that warning on its
+// own card.
+const declaredHere = new Set();
 
 export function renderAnonymise(container) {
   const s = getState();
   const doc = currentDocument(s);
-  // A refused run carries empty documents and an empty report, so the value,
-  // report and "Add missed Value" cards would show a zero run beside a stale
-  // registry table: the exact mismatch a refused run produces. They are hidden
-  // until the conflict is fixed, and the run card explains why.
+  // A refused run carries empty documents and an empty report, so the Replaced
+  // values and Report cards would show a zero run beside a stale registry
+  // table: the exact mismatch a refused run produces. They stay hidden until
+  // the conflict is fixed, and the run card explains why. "Add missed Value"
+  // is the one exception: the screen that can create a blocking conflict
+  // (a mistyped declaration) must also offer a way to clear it, or the only
+  // way out is Identify, which discards the whole registry over a typo.
   const blocked = blockingConflicts(s).length > 0;
 
   container.innerHTML = `
@@ -134,7 +161,7 @@ export function renderAnonymise(container) {
           ${selectedMark ? selectedCard(s) : ""}
           ${s.results && !blocked ? valuesCard(s) : ""}
           ${s.results && !blocked ? reportCard(s) : ""}
-          ${s.results && !blocked ? missedCard(s) : ""}
+          ${s.results ? missedCard(s) : ""}
         </div>
         ${compareCard(s, doc)}
       </div>
@@ -213,7 +240,7 @@ export function blockedPanel(s) {
     const fix = c.fix
       ? `<div class="hint"><strong>${escapeHTML(ANONYMISE.blockedFixLabel)}:</strong> ${escapeHTML(c.fix)}</div>`
       : "";
-    return `<li>${escapeHTML(c.message)}${fix}</li>`;
+    return `<li>${escapeHTML(c.message)}${fix}${blockedActions(s, c)}</li>`;
   }).join("");
   return `<div class="banner error blocked-banner" role="alert">` +
     `<span class="banner-icon">${icon("warning")}</span>` +
@@ -222,6 +249,44 @@ export function blockedPanel(s) {
     `<p class="hint">${escapeHTML(ANONYMISE.blockedIntro)}</p>` +
     `<ul class="blocked-list">${items}</ul>` +
     `</div></div>`;
+}
+
+/**
+ * blockedActions(s, c) is the resolve actions for ONE blocking conflict.
+ *
+ * Keeping the "Add missed Value" card on a refused run makes the screen a way
+ * back in; this makes it a way OUT. The conflict the run refused over has no row
+ * anywhere on this screen, and the only other route to a fix is the Identify
+ * step, which calls ResetRun on the way and discards the registry: a mistyped
+ * declaration would cost every placeholder number the session had assigned.
+ *
+ * The action follows the conflict's own shape, which the engine states in its
+ * refs: an allowlist collision is cleared by taking the term off the
+ * never-anonymise list, and every other blocking conflict by deleting one of the
+ * two Values that fight over the text.
+ */
+function blockedActions(s, c) {
+  const refs = c.refs ?? [];
+  if (refs.some((r) => r.kind === "allowlist")) {
+    return `<div class="run-actions">` +
+      button(ANONYMISE.blockedRemoveAllowTerm, {
+        kind: "secondary", cls: "blocked-allow-remove", data: { term: c.value },
+      }) + `</div>`;
+  }
+
+  // Named from the store rather than from the ref, because the engine
+  // lower-cases mainText in a ref and the user typed a capital letter. A ref
+  // naming no declared Value gets no button: the fix is not here.
+  const declared = (ref) => s.values
+    .find((v) => valueKey(v.category, v.mainText) === valueKey(ref.category, ref.mainText));
+  const actions = refs
+    .filter((r) => r.kind === "value" && r.category && declared(r))
+    .map((r) => button(ANONYMISE.blockedDeleteValue(declared(r).mainText), {
+      kind: "secondary", cls: "blocked-delete-value",
+      data: { category: r.category, "main-text": r.mainText },
+    }));
+  if (actions.length === 0) return "";
+  return `<div class="run-actions">${actions.join("")}</div>`;
 }
 
 function runSubtitle(s) {
@@ -269,6 +334,21 @@ export function formatDuration(ms) {
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
+/**
+ * valuePickButton(m) is the one rendering for "here is a Value you might
+ * mean": a real button carrying the category and main text as data, not a
+ * native <option>. Both the Selected placeholder card's reassign search and
+ * the selection panel's spelling search ask the same question ("which Value
+ * is this"), so both render its answers the same way.
+ */
+function valuePickButton(m) {
+  return `<button class="btn btn-secondary reassign-pick"` +
+    ` data-category="${escapeHTML(m.category)}" data-main-text="${escapeHTML(m.mainText)}">` +
+    `${escapeHTML(m.mainText)}` +
+    `<span class="hint">${escapeHTML(CATEGORY_LABELS[m.category]?.[0] ?? m.category)}</span>` +
+    `</button>`;
+}
+
 // --- Selected placeholder card --------------------------------------------
 
 /**
@@ -289,12 +369,7 @@ export function selectedCard(s, mark = selectedMark) {
   const matches = reassignDraft.trim()
     ? valueAutocomplete(reassignDraft, s).slice(0, 6)
     : [];
-  const suggestions = matches.map((m) =>
-    `<button class="btn btn-secondary reassign-pick"` +
-    ` data-category="${escapeHTML(m.category)}" data-main-text="${escapeHTML(m.mainText)}">` +
-    `${escapeHTML(m.mainText)}` +
-    `<span class="hint">${escapeHTML(CATEGORY_LABELS[m.category]?.[0] ?? m.category)}</span>` +
-    `</button>`).join("");
+  const suggestions = matches.map(valuePickButton).join("");
 
   const body =
     `<div class="rail-field-stack">` +
@@ -357,7 +432,12 @@ export function reportCard(s) {
     .map(([category, count]) => categoryRow(s, scopeDocs, category, count))
     .join("") || `<div class="grid-empty">${escapeHTML(ANONYMISE.reportEmpty)}</div>`;
 
-  const warnings = visibleWarnings(s).map((w) =>
+  // Three sources, one rendered list: the run's own notes (Report.Warnings), the
+  // overlap warnings the engine computes on every run (Validation.Warnings, e.g.
+  // "this Value lost text to a built-in pattern"), and the full-coverage
+  // intersection for a Value declared on this screen. All dismiss the same way,
+  // keyed on the message text, so a third source needed no new mechanism.
+  const warnings = reportWarnings(s).map((w) =>
     `<div class="caution" data-warning="${escapeHTML(w)}">${icon("warning")}` +
     `<span class="caution-text">${escapeHTML(w)}</span>` +
     button("", {
@@ -376,6 +456,54 @@ export function reportCard(s) {
 
   return collapsibleCard("report", ANONYMISE.reportTitle,
     ANONYMISE.reportSummary(total, scopedValues(s).length), body);
+}
+
+/**
+ * reportWarnings(s) is every warning the card shows, deduplicated, in one list.
+ *
+ * One list because they all answer the same question, "why does the result not
+ * look like what I asked for", and because dismissWarning keys on the warning
+ * TEXT: a further source needs no new mechanism, and the same warning arriving
+ * twice cannot stack.
+ */
+function reportWarnings(s) {
+  const dismissed = new Set(s.dismissedWarnings ?? []);
+  const out = [];
+  for (const w of [
+    ...visibleWarnings(s),
+    ...visibleValidationWarnings(s),
+    ...declaredIntersectionWarnings(s),
+  ]) {
+    if (!w || dismissed.has(w) || out.includes(w)) continue;
+    out.push(w);
+  }
+  return out;
+}
+
+/**
+ * declaredIntersectionWarnings(s) is the intersection sentence for each Value
+ * declared on this screen that a higher-priority route covers entirely.
+ *
+ * CHANGE-06 kept the full-coverage case because it usually means a
+ * mis-declaration: the Value is never replaced under its own type, so a user who
+ * declared it and then cannot find it in the report has no other explanation. It
+ * names the winning METHOD and never the internal rank, exactly as the step 2
+ * value card does: the rank is an engine input, and "rank 1" teaches nobody
+ * anything.
+ */
+function declaredIntersectionWarnings(s) {
+  const overlaps = intersectionsFor(s);
+  const out = [];
+  for (const key of declaredHere) {
+    const row = overlaps.get(key);
+    if (!row) continue;
+    const route = WORKSPACE.matchClassLabel[row.winnerMatchClass] ?? row.winnerMatchClass;
+    out.push([
+      WORKSPACE.intersectionAll(row.value, row.winnerValue, route, row.matchedTexts),
+      WORKSPACE.intersectionFix,
+    ].join(" "));
+  }
+  return out;
 }
 
 /**
@@ -574,15 +702,18 @@ export function missedCard(s) {
   const body =
     `<p class="hint">${escapeHTML(ANONYMISE.missedHint)}</p>` +
     `<div class="add-row">` +
-    `<select id="missed-category" aria-label="${escapeHTML(ANONYMISE.missedCategoryLabel)}">` +
-    CATEGORIES.map(([key, label]) =>
-      `<option value="${escapeHTML(key)}"${key === drafts.missedCategory ? " selected" : ""}>` +
-      `${escapeHTML(label)}</option>`).join("") +
-    `</select>` +
+    categorySelect(drafts.missedCategory, { id: "missed-category", ariaLabel: ANONYMISE.missedCategoryLabel }) +
     `<input id="missed-value" class="grow" value="${escapeHTML(drafts.missed)}"` +
     ` placeholder="${escapeHTML(ANONYMISE.missedPlaceholder)}"` +
     ` aria-label="${escapeHTML(ANONYMISE.missedLabel)}"/>` +
     `</div>` +
+    // The live match count, the same read-out the step 2 add row shows: a
+    // value that matches nothing is almost always a typo, and saying so
+    // before the fast re-run is the cheapest correction there is.
+    `<p class="hint" id="missed-matches">${escapeHTML(drafts.missedMatches)}</p>` +
+    // A refused declaration lands here, next to the field the fix goes into,
+    // the same reasoning behind every other per-surface error on this screen.
+    (missedError ? `<p class="hint bad" id="missed-error">${escapeHTML(missedError)}</p>` : "") +
     `<div class="run-actions">` +
     button(ANONYMISE.addValue, { kind: "secondary", id: "btn-add-missed" }) +
     button(ANONYMISE.fastRerun, { kind: "secondary", id: "btn-fast-rerun", icon: "refresh" }) +
@@ -798,7 +929,7 @@ function selectionViewState() {
   return {
     selection, stage: selectionStage, mode: selectionMode,
     target: selectionTarget, category: selectionCategory,
-    error: selectionError,
+    picked: selectionPicked, error: selectionError,
   };
 }
 
@@ -845,24 +976,25 @@ function selectionStageFields(s, view) {
   let fields = "";
   if (view.mode === "spelling") {
     // The same autocomplete the Selected placeholder card uses, so "which value
-    // is this a spelling of" is answered the same way in both places.
-    const options = valueAutocomplete(view.target, s)
-      .map((e) => `<option value="${escapeHTML(e.mainText)}"></option>`).join("");
+    // is this a spelling of" is answered the same way in both places, and the
+    // same REAL buttons rather than a native <datalist>: a popup rebuilt on
+    // every repaint closes itself mid-keystroke, which is why the datalist
+    // version of this field could never be typed into.
+    const picks = view.target.trim() ? valueAutocomplete(view.target, s).slice(0, 6) : [];
     fields =
       `<label class="field-label">${escapeHTML(ANONYMISE.selectionTargetLabel)}` +
-      `<input id="selection-target" list="selection-targets"` +
+      `<input id="selection-target" autocomplete="off"` +
       ` value="${escapeHTML(view.target)}"` +
       ` placeholder="${escapeHTML(ANONYMISE.selectionTargetPlaceholder)}"` +
       ` aria-label="${escapeHTML(ANONYMISE.selectionTargetLabel)}"/></label>` +
-      `<datalist id="selection-targets">${options}</datalist>`;
+      `<div class="reassign-list" id="selection-target-list">` +
+      picks.map(valuePickButton).join("") +
+      `</div>`;
   } else {
     fields =
       `<label class="field-label">${escapeHTML(ANONYMISE.selectionTypeLabel)}` +
-      `<select id="selection-category" aria-label="${escapeHTML(ANONYMISE.selectionTypeLabel)}">` +
-      CATEGORIES.map((c) =>
-        `<option value="${escapeHTML(c)}"${c === view.category ? " selected" : ""}>` +
-        `${escapeHTML(CATEGORY_LABELS[c]?.label ?? c)}</option>`).join("") +
-      `</select></label>`;
+      categorySelect(view.category, { id: "selection-category", ariaLabel: ANONYMISE.selectionTypeLabel }) +
+      `</label>`;
   }
 
   return fields +
@@ -889,6 +1021,7 @@ export function continueHint(s) {
 
 function wire(container, s, doc) {
   wireRun(container);
+  wireBlocked(container, s);
   wireGroups(container, (id) => {
     if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
     setState({});
@@ -911,6 +1044,9 @@ function wireRun(container) {
       // beside a live progress bar reads as the new result, and it is not.
       selectedMark = null;
       selection = null;
+      // A full run applies the declarations too, so every Value on the list is a
+      // Value OF the run now rather than one this screen just added.
+      declaredHere.clear();
       setState({ running: true, progress: null, results: null, mapping: null });
       await runPipeline(buildRunRequest());
       // Results arrive via the "pipeline:done" event (see main.js boot).
@@ -920,6 +1056,34 @@ function wireRun(container) {
     }
   });
   container.querySelector("#btn-cancel")?.addEventListener("click", () => cancelPipeline());
+}
+
+/**
+ * wireBlocked(container, s) binds the refused-run panel's resolve actions.
+ *
+ * Neither re-runs. Clearing a conflict and deciding to run again are two
+ * decisions, and re-running on the first click would replace text the user has
+ * not looked at since the refusal.
+ */
+function wireBlocked(container, s) {
+  for (const btn of container.querySelectorAll(".blocked-allow-remove")) {
+    btn.addEventListener("click", () => {
+      const term = btn.dataset.term;
+      if (!term) return;
+      removeAllowTerm(term);
+      notify(ANONYMISE.blockedAllowTermRemoved(term), "ok");
+    });
+  }
+  for (const btn of container.querySelectorAll(".blocked-delete-value")) {
+    btn.addEventListener("click", () => {
+      const { category, mainText } = btn.dataset;
+      if (!category || !mainText) return;
+      const value = s.values
+        .find((v) => valueKey(v.category, v.mainText) === valueKey(category, mainText));
+      deleteValue(category, mainText);
+      notify(ANONYMISE.blockedValueDeleted(value?.mainText ?? mainText), "ok");
+    });
+  }
 }
 
 function wireSelected(container) {
@@ -968,7 +1132,11 @@ function wireSelected(container) {
     }
   });
 
-  for (const pick of container.querySelectorAll(".reassign-pick")) {
+  // Scoped to this card: the selection panel renders picks of its own with the
+  // same styling class, and they mean a different thing (which Value the
+  // selected TEXT is a spelling of, not which Value THIS mark reassigns to).
+  const selectedCardEl = container.querySelector("#selected-card");
+  for (const pick of selectedCardEl?.querySelectorAll(".reassign-pick") ?? []) {
     pick.addEventListener("click", async () => {
       const { category, mainText } = pick.dataset;
       const original = selectedMark?.original;
@@ -1102,27 +1270,94 @@ async function refreshValueTables() {
 function wireMissed(container) {
   const category = container.querySelector("#missed-category");
   const value = container.querySelector("#missed-value");
+  const matches = container.querySelector("#missed-matches");
   category?.addEventListener("change", () => { drafts.missedCategory = category.value; });
-  value?.addEventListener("input", () => { drafts.missed = value.value; });
+
+  // Debounced, the same as the step 2 add row: one bridge round-trip per
+  // keystroke over a whole batch of documents would be a count nobody waits
+  // for.
+  let matchTimer = null;
+  value?.addEventListener("input", () => {
+    drafts.missed = value.value;
+    // A further edit is the user acting on the refusal; showing the same
+    // sentence over a text that changed would be describing a fixed problem.
+    if (missedError) {
+      missedError = "";
+      const errorEl = container.querySelector("#missed-error");
+      if (errorEl) errorEl.remove();
+    }
+    if (matchTimer) clearTimeout(matchTimer);
+    const term = value.value.trim();
+    if (!term) {
+      drafts.missedMatches = "";
+      if (matches) matches.textContent = "";
+      return;
+    }
+    matchTimer = setTimeout(async () => {
+      try {
+        const info = await countTermMatches(term);
+        // The field may have moved on while the count was in flight; a stale
+        // answer under a different word is worse than no answer.
+        if (value.value.trim() !== term) return;
+        drafts.missedMatches = WORKSPACE.valueMatches(info?.count ?? 0, info?.documents ?? 0);
+      } catch {
+        drafts.missedMatches = ""; // no bridge: say nothing rather than guess
+      }
+      if (matches) matches.textContent = drafts.missedMatches;
+    }, 250);
+  });
 
   // Adding a value here adds it to the VALUE LIST, and nothing happens to the
   // text until the fast re-run applies it. The two are separate buttons because
   // they are separate decisions: several values are usually added at once.
-  const add = () => {
+  const add = async () => {
     const text = (drafts.missed ?? "").trim();
     if (!text) return;
-    if (!addValues([{ category: drafts.missedCategory, mainText: text }])) {
+    missedError = "";
+
+    // A value that is a spelling of one already listed joins it instead of
+    // becoming a rival, exactly as the step 2 add row and the selection panel
+    // already do: without this, "Coca-Cola company" beside "Coca-Cola" leaves
+    // the text reading "[BRAND_1] company". A folded spelling is not a new
+    // declaration and cannot conflict with itself, so the conflict check below
+    // only runs when this did NOT fold.
+    const family = foldIntoFamily(drafts.missedCategory, text);
+    if (family) {
+      drafts.missed = "";
+      drafts.missedMatches = "";
+      notify(WORKSPACE.foldedIntoValue(text, family.main), "info");
+      setState({});
+      return;
+    }
+
+    // Refused HERE, before addValues, so the conflict is met on the field the
+    // user is typing into rather than as a refused run on another screen: the
+    // draft text stays put so the fix is right there to make.
+    const conflicts = checkValueConflict(drafts.missedCategory, text, getState());
+    if (conflicts.length > 0) {
+      missedError = conflictMessage(conflicts[0]);
+      setState({});
+      return;
+    }
+
+    if (addValues([{ category: drafts.missedCategory, mainText: text }])) {
+      declaredHere.add(valueKey(drafts.missedCategory, text));
+    } else {
       notify(ANONYMISE.missedAlreadyThere(text), "info");
       return;
     }
+    pendingMissedTexts.push(text);
     drafts.missed = "";
+    drafts.missedMatches = "";
     setState({});
   };
   container.querySelector("#btn-add-missed")?.addEventListener("click", add);
   value?.addEventListener("keydown", (ev) => { if (ev.key === "Enter") add(); });
 
   container.querySelector("#btn-fast-rerun")?.addEventListener("click", async () => {
-    await runFastRerun(container, ANONYMISE.fastRerunDone(getState().values.length));
+    const expected = pendingMissedTexts;
+    pendingMissedTexts = [];
+    await runFastRerun(container, ANONYMISE.fastRerunDone(getState().values.length), expected);
   });
 }
 
@@ -1416,7 +1651,7 @@ function wireTextSelection(container) {
   }
 }
 
-function wireSelectionPanel(container) {
+export function wireSelectionPanel(container) {
   // Stage 1.
   container.querySelector("#btn-selection-copy")?.addEventListener("click", async () => {
     const text = selection?.text ?? "";
@@ -1454,13 +1689,24 @@ function wireSelectionPanel(container) {
     });
   }
 
-  // Stage 3.
+  // Stage 3. The target field patches its own suggestion list IN PLACE rather
+  // than going through setState: a full repaint on every keystroke destroys
+  // and recreates the input (moving the caret to the end) and the two Compare
+  // panes are re-highlighted for no reason. This is the same pattern the
+  // Replaced values filter uses (wireValues).
   const target = container.querySelector("#selection-target");
   target?.addEventListener("input", () => {
     selectionTarget = target.value;
+    selectionPicked = null;
     selectionError = "";
-    setState({});
+    const list = container.querySelector("#selection-target-list");
+    if (list) {
+      const picks = selectionTarget.trim() ? valueAutocomplete(selectionTarget, getState()).slice(0, 6) : [];
+      list.innerHTML = picks.map(valuePickButton).join("");
+      wireSelectionPicks(container);
+    }
   });
+  wireSelectionPicks(container);
   container.querySelector("#selection-category")?.addEventListener("change", (ev) => {
     selectionCategory = ev.target.value;
   });
@@ -1476,6 +1722,30 @@ function wireSelectionPanel(container) {
   container.querySelector("#btn-apply-selection")?.addEventListener("click", () => {
     applySelection(container);
   });
+}
+
+/**
+ * wireSelectionPicks(container) binds the spelling target's suggestion
+ * buttons. Separate from wireSelectionPanel because the target field's input
+ * handler rebuilds those buttons without a repaint, and the fresh elements
+ * need their own listeners each time.
+ */
+function wireSelectionPicks(container) {
+  const list = container.querySelector("#selection-target-list");
+  for (const pick of list?.querySelectorAll(".reassign-pick") ?? []) {
+    pick.addEventListener("click", () => {
+      const { category, mainText } = pick.dataset;
+      selectionTarget = mainText;
+      selectionPicked = { category, mainText };
+      selectionError = "";
+      // Filled directly rather than waiting for the setState repaint: the
+      // field is what the user is looking at, and the pick should read back
+      // immediately.
+      const input = container.querySelector("#selection-target");
+      if (input) input.value = mainText;
+      setState({});
+    });
+  }
 }
 
 /**
@@ -1500,10 +1770,16 @@ export async function applySelection(container, view = selectionViewState()) {
       setState({});
       return;
     }
+    // A clicked pick already named the Value, so Apply does not have to
+    // re-resolve it by text, provided a further keystroke has not changed the
+    // field since (selectionPicked is cleared on every edit, so a stale pick
+    // cannot outlive the text it was chosen for).
+    const picked = view.picked && view.picked.mainText.toLowerCase() === main.toLowerCase()
+      ? view.picked : null;
     // reassignOriginal refuses an unknown target, or one that IS the text. The
     // reason goes on the panel rather than into a toast: the fix is in the
     // field the user is looking at.
-    const value = valueAutocomplete(main, getState())
+    const value = picked ?? valueAutocomplete(main, getState())
       .find((v) => v.mainText.toLowerCase() === main.toLowerCase());
     if (!value || !reassignOriginal(text, value.category, value.mainText)) {
       selectionError = ANONYMISE.selectionUnknownTarget;
@@ -1523,15 +1799,41 @@ export async function applySelection(container, view = selectionViewState()) {
     // it. addValues switches the category on, which is what makes the value
     // actually apply.
     const family = foldIntoFamily(view.category, text);
-    const message = family
-      ? WORKSPACE.foldedIntoValue(text, family.main)
-      : ANONYMISE.selectionBecameValue(text);
+    // A value folded into an existing family is not a new declaration and
+    // cannot conflict with itself, so the conflict check only applies to the
+    // genuinely new branch below. Refusing HERE, before addValues, means the
+    // conflict is met on the panel the user is typing into rather than as a
+    // refused run they would have to undo from a different screen.
     if (!family) {
-      addValues([{ category: view.category, mainText: text, discoveryMethods: ["manual"] }]);
+      const conflicts = checkValueConflict(view.category, text, getState());
+      if (conflicts.length > 0) {
+        selectionError = conflictMessage(conflicts[0]);
+        setState({});
+        return;
+      }
+    }
+    let message = family ? WORKSPACE.foldedIntoValue(text, family.main) : "";
+    // The registry records a match under the Value's MAIN TEXT, never the
+    // spelling that matched (pipeline.go assigns mainText), so the "matched
+    // nothing" check below only makes sense for a genuinely new Value: text
+    // folded into an existing family would never equal that family's main
+    // text and would misreport a successful fold as "not found".
+    let expect = [];
+    if (!family) {
+      // addValues reports how many rows it actually added: a Value already
+      // declared under this exact category and text adds nothing, and the
+      // success notice must say that rather than repeat "became a Value" for
+      // a click that changed nothing.
+      const added = addValues([{ category: view.category, mainText: text, discoveryMethods: ["manual"] }]);
+      message = added > 0 ? ANONYMISE.selectionBecameValue(text) : ANONYMISE.selectionAlreadyThere(text);
+      if (added > 0) {
+        expect = [text];
+        declaredHere.add(valueKey(view.category, text));
+      }
     }
     resetSelectionPanel();
     clearSelection();
-    await runFastRerun(container, message);
+    await runFastRerun(container, message, expect);
   }
 }
 
@@ -1545,12 +1847,13 @@ function resetSelectionPanel() {
   selectionStage = null;
   selectionMode = null;
   selectionTarget = "";
+  selectionPicked = null;
   selectionError = "";
 }
 
 /**
- * runFastRerun(container, message) re-runs the DETERMINISTIC passes only and
- * refreshes the mapping.
+ * runFastRerun(container, message, expectedTexts) re-runs the DETERMINISTIC
+ * passes only and refreshes the mapping.
  *
  * "Fast" means no discovery: the Values on screen are re-applied, and
  * existing placeholders keep their numbers because the session registry is
@@ -1559,8 +1862,13 @@ function resetSelectionPanel() {
  *
  * @param {HTMLElement} container the view container, for the error strip
  * @param {string} message the notice to show on success
+ * @param {string[]} [expectedTexts] text just declared as a Value. A Value
+ *   that IS applied but matches no text in the batch earns no registry entry,
+ *   so it would otherwise show up nowhere while this notice still claimed
+ *   success. Checked case-insensitively against the refreshed Replaced values
+ *   table; when one is missing the success notice becomes a warning naming it.
  */
-async function runFastRerun(container, message) {
+async function runFastRerun(container, message, expectedTexts = []) {
   try {
     const results = await fastRerun(buildRunRequest());
     // The mapping and the value table may both have grown: new values earned
@@ -1568,10 +1876,49 @@ async function runFastRerun(container, message) {
     tablesLoadedFor = results;
     setState({ results, mapping: await getMapping() });
     await refreshValueTables();
-    notify(message, "ok");
+    // A declaration is the only thing that can create a NEW intersection, so the
+    // check runs only when one was made.
+    if (expectedTexts.length > 0) await refreshIntersections();
+    const missing = missingDeclaredTexts(getState().replacedValues, expectedTexts);
+    if (missing.length > 0) {
+      notify(ANONYMISE.declaredValueNotFound(missing.join(", ")), "warn");
+    } else {
+      notify(message, "ok");
+    }
   } catch (err) {
     showError(container, err);
   }
+}
+
+/**
+ * refreshIntersections() asks Go which Values another route also claims, so a
+ * declaration this screen just made can be told when a higher-priority match
+ * covers every occurrence of it.
+ *
+ * It uses the same request builder and the same comparator the run uses, so the
+ * warning cannot describe a decision the run did not make. Silent when there is
+ * no bridge: this is a warning the user never asked for, so its absence is not a
+ * failure, and it must never throw into a repaint.
+ */
+async function refreshIntersections() {
+  try {
+    const res = await checkIntersections(buildIntersectionRequest());
+    setIntersections(res?.intersections ?? []);
+  } catch {
+    setIntersections([]);
+  }
+}
+
+/**
+ * missingDeclaredTexts(replacedValues, expectedTexts) is the pure half of the
+ * "matched nothing" check: which of the just-declared texts have no row in
+ * the refreshed Replaced values table, matched case-insensitively because the
+ * table shows the document's own casing and the user may have typed either.
+ */
+export function missingDeclaredTexts(replacedValues, expectedTexts) {
+  const replaced = replacedValues ?? [];
+  return (expectedTexts ?? []).filter((text) =>
+    !replaced.some((r) => r.original.toLowerCase() === text.toLowerCase()));
 }
 
 function showError(container, err) {
