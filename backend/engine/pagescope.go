@@ -117,8 +117,9 @@ func (d Document) unitSlicer() func(from, to int) string {
 			}
 		}
 	}
-	// Single-unit document: the only valid range is the whole thing.
-	return func(from, to int) string { return d.Markdown }
+	// Single-unit document: the only valid range is the whole thing, so this
+	// slicer ignores the range it is handed rather than indexing with it.
+	return func(_, _ int) string { return d.Markdown }
 }
 
 // PagesMarkdown returns the working-form markdown for an arbitrary SET of
