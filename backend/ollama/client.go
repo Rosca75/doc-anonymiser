@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -92,15 +93,37 @@ const (
 	extractionSeed = 7
 )
 
-// maxReplyTokens caps how much the model may generate for one chunk. The
-// schema-constrained replies this client asks for run to roughly a hundred
-// tokens, so the cap is a runaway guard rather than a budget: it stops a
-// degenerate reply holding chatClient's timeout open for two minutes.
+// maxReplyTokens caps how much the model may generate for ONE unit-sized slice.
+// It is a runaway guard, not a budget: it exists to stop a degenerate reply
+// generating for as long as the request window allows, and it must sit well
+// above what an honest answer costs.
 //
-// It is only safe BECAUSE every request sets think:false. With thinking on the
-// reasoning trace is generated first and spends the whole budget, so the cap
+// The number is measured on the slices the engine actually produces. A dense
+// page of an email thread, whose honest answer names dozens of things, finishes
+// at roughly 560 generated tokens; every slide of a slide-heavy deck finishes
+// under 200. So an honest reply on a real document costs a few hundred tokens,
+// and this cap leaves most of a factor of two above the densest one measured.
+//
+// It is deliberately not raised further. The replies that would use more are
+// the degenerate ones, which repeat a fragment until something stops them, and
+// they generate at a rate that puts a much larger cap outside chatClient's
+// window: raising it turns a reply that arrives cut off, and can therefore be
+// salvaged, into a request that times out and yields nothing at all.
+//
+// The cap is only safe BECAUSE every request sets think:false. With thinking on
+// the reasoning trace is generated first and spends the whole budget, so the cap
 // makes matters worse: the JSON is then truncated or never begins.
-const maxReplyTokens = 512
+const maxReplyTokens = 1024
+
+// chatTimeout bounds ONE chat request. It has to be able to deliver the whole
+// generation budget maxReplyTokens grants, because a request that times out
+// yields nothing at all, while one that runs to the cap arrives cut off and can
+// still be salvaged. On the slowest configuration measured, a CPU-only machine
+// with no GPU offload, a reply running to the full cap takes just under two
+// minutes, so the window is set at roughly twice that: the margin is for slower
+// machines, and it costs a healthy request nothing, since it is a ceiling and
+// not a wait.
+const chatTimeout = 240 * time.Second
 
 // detectionKeepAlive is how long Ollama holds the model in memory after a
 // reply. Ollama's own default is five minutes, which is shorter than the time a
@@ -147,8 +170,9 @@ type Client struct {
 	ContextSize int
 
 	// probeClient carries a short timeout so a missing Ollama never hangs
-	// the UI; chatClient allows slow small-model generations (120 s,
-	// ) — both honour context cancellation on top.
+	// the UI; chatClient allows slow small-model generations. Both honour
+	// context cancellation on top, so the cancel button still reaches a
+	// request that is mid-flight.
 	probeClient *http.Client
 	chatClient  *http.Client
 }
@@ -169,7 +193,7 @@ func New(baseURL string) *Client {
 		Model:       DefaultModel,
 		ContextSize: DefaultContextSize,
 		probeClient: &http.Client{Timeout: 2 * time.Second},
-		chatClient:  &http.Client{Timeout: 120 * time.Second},
+		chatClient:  &http.Client{Timeout: chatTimeout},
 	}
 }
 
@@ -494,13 +518,41 @@ func (c *Client) postChat(ctx context.Context, httpClient *http.Client, model st
 	// A reply that ran out of generation budget is CUT OFF, not malformed. It is
 	// reported here, before the parser ever sees the truncated text, because the
 	// parser can only say "that was not JSON", which sends the user looking for a
-	// better model when the real cause is too much text in one request.
+	// better model when the real cause is a reply that ran long. The partial
+	// text travels ON the error, because everything the model finished saying
+	// before the cut is still an answer.
 	if out.DoneReason == "length" {
-		return out, fmt.Errorf(
-			"the model %q ran out of room and its reply was cut off after %d tokens; send less text per request by choosing the Thorough detail level, or scan fewer pages at a time",
-			model, out.EvalCount)
+		return out, &TruncatedReplyError{
+			Model:   model,
+			Tokens:  out.EvalCount,
+			Content: out.Message.Content,
+		}
 	}
 	return out, nil
+}
+
+// TruncatedReplyError says one reply hit the generation cap and stopped
+// mid-text. It is a distinct type rather than a message because the caller has
+// to ACT on it differently from a failure: the names the model had already
+// finished writing are kept and the scan carries on to the next slice, which a
+// plain error string could not express.
+//
+// Content is the partial reply exactly as it arrived, so the caller can salvage
+// it. Tokens is what the model generated before the cut, which is the number
+// that names the limit reached.
+type TruncatedReplyError struct {
+	Model   string
+	Tokens  int
+	Content string
+}
+
+// Error names the fix the user actually has. Sending less text per request is
+// the lever that exists at any detail level: the scan scope on the Identify
+// step aims the local AI at fewer pages at a time.
+func (e *TruncatedReplyError) Error() string {
+	return fmt.Sprintf(
+		"the model %q ran out of room and its reply was cut off after %d tokens; the values it had already listed were kept, so this request may be missing the rest. Scan fewer pages at a time, or try another model, if values look missing",
+		e.Model, e.Tokens)
 }
 
 // --- Discovery (Phase-A prompt) ------------------------------------------
@@ -539,6 +591,13 @@ type DiscoveryOutcome struct {
 	// reply of three invented names the filter dropped is silence from the
 	// user's point of view, so it is counted after filtering.
 	Silent int
+	// Truncated counts the requests whose reply was cut off at the generation
+	// cap and salvaged. They are counted apart from Silent because they are a
+	// different fact about the run: a silent request is a model with nothing to
+	// say, a truncated one is a model that had more to say than it was allowed
+	// to finish, and only the second means values may be missing from a slice
+	// that did return some.
+	Truncated int
 }
 
 // DiscoverSlices scans slices the ENGINE decided the boundaries of, one request
@@ -557,6 +616,12 @@ type DiscoveryOutcome struct {
 // disables it. ctx is honoured between requests, and a mid-loop cancellation or
 // failure returns the suggestions gathered so far WITH the error, so partial
 // results survive.
+//
+// A reply CUT OFF at the generation cap degrades that one slice and ends
+// nothing: what the model finished writing is salvaged, the slice is counted in
+// Truncated, and the scan continues. It is a per-slice degradation because the
+// slices are independent, so one dense page must not cost the user every page
+// after it.
 func (c *Client) DiscoverSlices(ctx context.Context, slices []string, sourceText string,
 	onSlice func(index, total int),
 ) (DiscoveryOutcome, error) {
@@ -578,6 +643,21 @@ func (c *Client) DiscoverSlices(ctx context.Context, slices []string, sourceText
 		}
 		out.Requests++
 		reply, err := c.Chat(ctx, c.Model, discoverSystemPrompt, slice, suggestionSchema())
+
+		// A cut-off reply degrades THIS slice and stops nothing. Returning here
+		// would leave every later slice unsent, so one dense page in the middle
+		// of a document would cost the whole rest of the scan; and the names the
+		// model finished writing before the cut are answers already paid for.
+		// They are salvaged and the loop moves on, with the slice counted so the
+		// run can say values may be missing from it.
+		var cut *TruncatedReplyError
+		if errors.As(err, &cut) {
+			out.Truncated++
+			if salvaged := salvageSuggestionJSON(cut.Content); len(salvaged) > 0 {
+				batches = append(batches, salvaged)
+			}
+			continue
+		}
 		if err != nil {
 			return finish(), err
 		}
@@ -800,6 +880,20 @@ func suggestionSchema() map[string]any {
 	}
 }
 
+// stripCodeFence removes the ```json ... ``` wrapper some models add despite
+// being asked for JSON. It is shared by the full parser and the salvage reader
+// so a fenced reply is understood the same way whether or not it was cut off.
+func stripCodeFence(reply string) string {
+	cleaned := strings.TrimSpace(reply)
+	if !strings.HasPrefix(cleaned, "```") {
+		return cleaned
+	}
+	cleaned = strings.TrimPrefix(cleaned, "```json")
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSuffix(strings.TrimSpace(cleaned), "```")
+	return strings.TrimSpace(cleaned)
+}
+
 // parseSuggestionJSON tolerantly parses the model's JSON reply into unified
 // Suggestions: accidental markdown code fences are stripped, unknown keys
 // ignored, and each known key may hold a list of strings. A reply that still
@@ -810,14 +904,7 @@ func suggestionSchema() map[string]any {
 // HERE, at the boundary, so no caller has to remember to do it and nothing the
 // model found can reach the review list without saying where it came from.
 func parseSuggestionJSON(reply string) ([]engine.Suggestion, error) {
-	cleaned := strings.TrimSpace(reply)
-	// Strip ```json ... ``` fences some models add despite format:json.
-	if strings.HasPrefix(cleaned, "```") {
-		cleaned = strings.TrimPrefix(cleaned, "```json")
-		cleaned = strings.TrimPrefix(cleaned, "```")
-		cleaned = strings.TrimSuffix(strings.TrimSpace(cleaned), "```")
-		cleaned = strings.TrimSpace(cleaned)
-	}
+	cleaned := stripCodeFence(reply)
 
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(cleaned), &raw); err != nil {
@@ -845,25 +932,104 @@ func parseSuggestionJSON(reply string) ([]engine.Suggestion, error) {
 			}
 		}
 		for _, n := range names {
-			n = strings.TrimSpace(n)
-			if n != "" {
-				// The Local AI score is stamped HERE, beside the provenance and
-				// for the same reason: this is the one place a model finding
-				// enters the system, so neither can be forgotten by a caller.
-				// Without it the Suggestion arrives with confidence 0, which
-				// valueConfidence reads as "not stated" and therefore as a
-				// manual declaration, and the Minimum confidence control then
-				// cannot tell a model's guess from something the user typed.
-				out = append(out, engine.Suggestion{
-					Category:   cat,
-					MainText:   n,
-					Count:      1,
-					Confidence: engine.ConfidenceLLMDefault,
-				}.WithMethod(engine.MethodLocalAI))
+			if s, ok := suggestionFor(cat, n); ok {
+				out = append(out, s)
 			}
 		}
 	}
 	return out, nil
+}
+
+// suggestionFor turns one name the model returned into a Suggestion, and is the
+// ONE place that happens, so a complete reply and a salvaged one cannot be
+// stamped differently.
+//
+// The Local AI score is stamped here, beside the provenance and for the same
+// reason: this is the one place a model finding enters the system, so neither
+// can be forgotten by a caller. Without it the Suggestion arrives with
+// confidence 0, which valueConfidence reads as "not stated" and therefore as a
+// manual declaration, and the Minimum confidence control then cannot tell a
+// model's guess from something the user typed.
+func suggestionFor(category, name string) (engine.Suggestion, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return engine.Suggestion{}, false
+	}
+	return engine.Suggestion{
+		Category:   category,
+		MainText:   name,
+		Count:      1,
+		Confidence: engine.ConfidenceLLMDefault,
+	}.WithMethod(engine.MethodLocalAI), true
+}
+
+// salvageSuggestionJSON reads everything a CUT-OFF reply managed to finish
+// saying. A reply stopped mid-text is not garbage: the categories it closed and
+// the names it finished writing inside the category it was still filling are all
+// complete answers, and throwing them away because the last few bytes are
+// missing loses most of a request the user already paid for.
+//
+// It reads the token stream rather than the whole document, because the token
+// stream is exactly the "what was complete before the cut" question: the decoder
+// hands back every finished string and then reports the truncation, so a name
+// half written is the one thing that never arrives. That also means the escape
+// rules and the string boundaries are the standard library's, not a second
+// hand-written scanner's.
+//
+// Salvage is safe because nothing here is trusted: the hallucination filter
+// drops any string that does not occur verbatim in the source text, so a
+// fragment invented by a reply that had started to repeat itself cannot reach
+// the user. It never returns an error, because a reply this function is asked
+// about has already failed; the answer to "nothing survived" is no suggestions.
+func salvageSuggestionJSON(reply string) []engine.Suggestion {
+	dec := json.NewDecoder(strings.NewReader(stripCodeFence(reply)))
+	// The reply is one flat object of category arrays (no $defs, no nesting),
+	// so the state needed is just "which category am I inside".
+	category := ""
+	inArray := false
+	var out []engine.Suggestion
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			// io.EOF or the truncation itself: either way, what was read is
+			// what was complete.
+			return out
+		}
+		switch t := tok.(type) {
+		case json.Delim:
+			switch t {
+			case '[':
+				inArray = true
+			case ']':
+				inArray, category = false, ""
+			}
+		case string:
+			if !inArray {
+				// Outside an array a string is the next category key.
+				category = t
+				continue
+			}
+			if !isPromptCategory(category) {
+				continue
+			}
+			if s, ok := suggestionFor(category, t); ok {
+				out = append(out, s)
+			}
+		}
+	}
+}
+
+// isPromptCategory answers whether a key the model wrote is one of the
+// categories asked for. An invented key is skipped rather than filed, exactly as
+// the full parser skips it, because a category the engine does not know has no
+// placeholder to be replaced by.
+func isPromptCategory(key string) bool {
+	for _, cat := range promptCategories {
+		if cat == key {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Request sizing -------------------------------------------------------

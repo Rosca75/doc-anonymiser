@@ -102,6 +102,14 @@ type DetectionResult struct {
 	// another model or a smaller slice would change the answer.
 	AIRequests       int `json:"aiRequests"`
 	AISilentRequests int `json:"aiSilentRequests"`
+	// AITruncatedRequests is how many requests the model was still answering
+	// when it hit its generation cap. It is reported beside the silent count
+	// and never folded into it, because the two say opposite things about the
+	// document: a silent request found nothing, a truncated one found more than
+	// it was allowed to finish listing. What it did finish is kept, so a
+	// truncated request usually still contributes values; the number is what
+	// tells the user some may be missing from those pages.
+	AITruncatedRequests int `json:"aiTruncatedRequests"`
 	// AISecondsPerRequest is MEASURED, not estimated: the AI phase's wall clock
 	// divided by its requests. It is what lets a user judge the speed of a scan
 	// on their OWN document and their own machine, which no fixed guidance in a
@@ -604,7 +612,7 @@ func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *
 		// thing to forget.
 		if res.AIRequests > 0 && res.AISilentRequests == res.AIRequests {
 			res.Errors = append(res.Errors, fmt.Sprintf(
-				"the local AI model %q returned nothing for all %d request(s), so this run found no values through it; a larger model, or the Thorough detail level, usually changes that",
+				"the local AI model %q returned nothing for all %d request(s), so this run found no values through it; a larger model usually changes that",
 				llm.Model, res.AIRequests))
 		}
 	}()
@@ -638,6 +646,17 @@ func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *
 		// honesty about what the model did is what these numbers are for.
 		res.AIRequests += outcome.Requests
 		res.AISilentRequests += outcome.Silent
+		res.AITruncatedRequests += outcome.Truncated
+		// A cut-off reply is reported PER DOCUMENT rather than per request: the
+		// user acts on it by scoping the scan, and a scope names a document and
+		// its pages. One line per file says which file to aim at; one line per
+		// request would say the same thing ten times.
+		if outcome.Truncated > 0 {
+			word := scanUnitWord(job.unit)
+			res.Errors = append(res.Errors, fmt.Sprintf(
+				"the local AI ran out of room on %d of %d request(s) for %q, so those %ss may be missing values; what the model had already listed was kept. Scan fewer %ss at a time, or try another model",
+				outcome.Truncated, outcome.Requests, job.name, word, word))
+		}
 		// Partial per-slice proposals survive a mid-file cancellation.
 		if len(outcome.Suggestions) > 0 {
 			batches = append(batches, outcome.Suggestions)
@@ -652,6 +671,17 @@ func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *
 				fmt.Sprintf("the local AI failed on %q: %v", job.name, err))
 		}
 	}
+}
+
+// scanUnitWord is the noun a message uses for one of a document's own units.
+// A format that reports none leaves it empty, and "unit" is the same word the
+// engine falls back to: a sentence with a hole where a noun should be reads as
+// a bug, and the general word still tells the user what to scope.
+func scanUnitWord(unit string) string {
+	if unit == "" {
+		return "unit"
+	}
+	return unit
 }
 
 // sliceText joins slices back into the text they cover, which is what the
@@ -717,9 +747,19 @@ func aiRequestSummary(res *DetectionResult) string {
 	if res.AIRequests == 0 {
 		return ""
 	}
+	// The two clauses are separate because they are separate facts, and a run
+	// can carry both: some requests found nothing, others were still answering
+	// when they ran out of room.
+	var clauses []string
 	if res.AISilentRequests > 0 {
-		return fmt.Sprintf(" (local AI: %d request(s), %d returned nothing)",
-			res.AIRequests, res.AISilentRequests)
+		clauses = append(clauses, fmt.Sprintf("%d returned nothing", res.AISilentRequests))
 	}
-	return fmt.Sprintf(" (local AI: %d request(s))", res.AIRequests)
+	if res.AITruncatedRequests > 0 {
+		clauses = append(clauses, fmt.Sprintf("%d ran out of room", res.AITruncatedRequests))
+	}
+	if len(clauses) == 0 {
+		return fmt.Sprintf(" (local AI: %d request(s))", res.AIRequests)
+	}
+	return fmt.Sprintf(" (local AI: %d request(s), %s)",
+		res.AIRequests, strings.Join(clauses, ", "))
 }

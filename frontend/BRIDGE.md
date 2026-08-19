@@ -129,7 +129,7 @@ display choice: it decides which country-specific regex categories run.
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
-| `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, pages}` (null = every document whole; restricts the LOCAL AI route only; `pages` is a 1-based `number[]` over the document's own page/slide/row/line units, and an empty array means the whole selected document) | `DetectionResult {suggestions, phases, skipped, errors, cancelled, status, aiRequests, aiSilentRequests, aiSecondsPerRequest}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
+| `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, pages}` (null = every document whole; restricts the LOCAL AI route only; `pages` is a 1-based `number[]` over the document's own page/slide/row/line units, and an empty array means the whole selected document) | `DetectionResult {suggestions, phases, skipped, errors, cancelled, status, aiRequests, aiSilentRequests, aiTruncatedRequests, aiSecondsPerRequest}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
 | `cancelDetection()` | — | aborts the in-flight run, reaching whichever route is running, including mid-file |
 | `expandSpellings(value)` | `{category, mainText, spellings, spellingPolicy}` | the forms this Value matches, longest first. `spellingPolicy: "curated"` means the list is the user's: Go derives nothing and returns the main text plus exactly the spellings it was given, so the chips on the card are what the run replaces |
 | `countTermMatches(term)` | term | `{count, documents}`, the live read-out under the manual declaration row (debounced) |
@@ -139,7 +139,7 @@ display choice: it decides which country-specific regex categories run.
 
 ### What the local AI did, and did not say
 
-`DetectionResult` carries three numbers about the LOCAL AI route, and they exist
+`DetectionResult` carries four numbers about the LOCAL AI route, and they exist
 because **"0 suggestions" means two different things and only one of them is about
 the document**. A model that answered nothing fifteen times reads exactly like a
 document with no names in it, and the user gets no hint that another model or a
@@ -149,20 +149,32 @@ smaller slice would change the answer.
 |---|---|
 | `aiRequests` | how many requests the route sent, across every document it read. Zero when the route did not run |
 | `aiSilentRequests` | how many of those parsed cleanly and yielded NOTHING, counted after the hallucination filter, because a reply of three invented names told the user nothing |
+| `aiTruncatedRequests` | how many of those were still answering when the model hit its generation cap. Counted APART from the silent ones, never folded into them: a silent request found nothing, a cut-off one found more than it was allowed to finish listing, and only the second means values may be missing from a page that did return some |
 | `aiSecondsPerRequest` | MEASURED, not estimated: the phase's wall clock divided by its requests. It is what lets a user judge a scan on their own machine and their own document, which no fixed sentence in a tooltip can do |
 
 Most requests returning nothing is NORMAL, so only an ALL-silent phase adds a
 message to `errors`, and that message names the MODEL, which is the actionable
 half. `status` names the request count whenever the route ran, so the one-line
-summary distinguishes the two cases by itself. The frontend keeps the three
+summary distinguishes the two cases by itself. The frontend keeps the four
 numbers in `state.lastAIScan` and shows them as the Local AI section's
 `.rail-readout`; the backward reset for Identify clears them, because they
 describe a run that reset discards.
 
 A reply that Ollama cut off at the generation cap (`done_reason: "length"`) is
-reported as TRUNCATION, naming the token count and the detail level as the fix,
-rather than surfacing as "the model's reply was not the expected JSON object".
-The user can act on one of those and not the other.
+reported as TRUNCATION rather than surfacing as "the model's reply was not the
+expected JSON object". The user can act on one of those and not the other.
+
+Truncation degrades ONE SLICE and ends nothing. What the model finished writing
+before the cut is salvaged, the slice is counted in `aiTruncatedRequests`, and
+the scan carries on to the next slice; the run then reports, per document, how
+many of its requests ran out of room and what to do about it. Salvage is safe
+because the hallucination filter drops anything that does not occur verbatim in
+the source, so a half-written name cannot reach the review list. Aborting the
+document instead is what made one dense page leave every page after it unread,
+while the run presented a fraction of the document as though that were all of
+it. The remedy the message names is scanning fewer pages at a time or trying
+another model: it must never name the detail level, which is already the
+default.
 
 ### The unified Suggestion
 

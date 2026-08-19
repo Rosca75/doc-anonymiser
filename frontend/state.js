@@ -198,7 +198,8 @@ const initialState = {
   discovery: null,
 
   // What the LOCAL AI actually did on the last run, or null before the first
-  // one: {requests, silent, secondsPerRequest}, straight from the Go result.
+  // one: {requests, silent, truncated, secondsPerRequest}, straight from the Go
+  // result.
   //
   // It is kept because "0 suggestions" means two different things and only one
   // of them is about the document. The seconds are MEASURED on this machine and

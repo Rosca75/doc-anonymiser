@@ -1420,6 +1420,7 @@ function wireDetection(container) {
           lastAIScan: {
             requests: result.aiRequests,
             silent: result.aiSilentRequests ?? 0,
+            truncated: result.aiTruncatedRequests ?? 0,
             secondsPerRequest: result.aiSecondsPerRequest ?? 0,
           },
         });

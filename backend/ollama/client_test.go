@@ -7,6 +7,7 @@ package ollama
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -650,7 +651,8 @@ func TestDiscoverAcrossSlices(t *testing.T) {
 // TestTruncatedReplyIsReportedAsTruncation: a reply cut off at the generation
 // cap is CUT OFF, not malformed. Reported as malformed it sends the user looking
 // for a better model, when what they can actually do is send less text per
-// request, which is what the message has to name.
+// request, which is what the message has to name. The message must not name the
+// detail level, which is a remedy the user is already on by default.
 func TestTruncatedReplyIsReportedAsTruncation(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/chat" {
@@ -662,24 +664,173 @@ func TestTruncatedReplyIsReportedAsTruncation(t *testing.T) {
 		resp, _ := json.Marshal(map[string]interface{}{
 			"message":     map[string]string{"role": "assistant", "content": `{"entity_names":["Alpine Trust","Borealis`},
 			"done_reason": "length",
-			"eval_count":  512,
+			"eval_count":  1024,
 		})
 		w.Write(resp)
 	})
 
-	const text = "Alpine Trust and Borealis Fund."
-	_, err := c.DiscoverSlices(context.Background(), []string{text}, text, nil)
+	_, err := c.Chat(context.Background(), "m", "system", "Alpine Trust and Borealis Fund.", nil)
 	if err == nil {
-		t.Fatal("a reply cut off at the generation cap must be reported, not parsed")
+		t.Fatal("a reply cut off at the generation cap must be reported, not returned as a whole answer")
+	}
+	var cut *TruncatedReplyError
+	if !errors.As(err, &cut) {
+		t.Fatalf("truncation must be its own error type, so a caller can salvage rather than abort: %T %v", err, err)
+	}
+	if cut.Content == "" {
+		t.Error("the partial reply must travel on the error, or there is nothing to salvage")
 	}
 	msg := err.Error()
 	if strings.Contains(msg, "JSON") {
 		t.Errorf("truncation must not be reported as malformed JSON: %v", msg)
 	}
-	for _, want := range []string{"cut off", "512", "Thorough", "fewer pages"} {
+	for _, want := range []string{"cut off", "1024", "fewer"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the truncation error must mention %q so the user knows what to change: %v", want, msg)
 		}
+	}
+	// Thorough is already the default detail level, so naming it as the fix
+	// tells the user to do what they are doing.
+	for _, banned := range []string{"Thorough", "detail level"} {
+		if strings.Contains(msg, banned) {
+			t.Errorf("the truncation message must not name %q: it is already the default, so it is not a remedy: %v", banned, msg)
+		}
+	}
+}
+
+// TestTruncationDegradesOneSliceAndTheScanContinues is the guard for the whole
+// of this behaviour: a cut-off reply must cost the user that ONE slice's tail
+// and nothing else. Aborting the document instead means one dense page in the
+// middle leaves every page after it unread, and the run reports a fraction of
+// the document as though that were all there was.
+func TestTruncationDegradesOneSliceAndTheScanContinues(t *testing.T) {
+	var calls int32
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			w.Write([]byte(`{"models":[]}`))
+			return
+		}
+		n := atomic.AddInt32(&calls, 1)
+		payload := map[string]interface{}{
+			"message": map[string]string{"role": "assistant",
+				"content": `{"entity_names":["Zephyr Capital"],"person_names":[]}`},
+			"done_reason": "stop",
+		}
+		if n == 1 {
+			// The first slice runs long: one name finished, the next cut in half.
+			payload = map[string]interface{}{
+				"message": map[string]string{"role": "assistant",
+					"content": `{"entity_names":["Alpine Trust","Borea`},
+				"done_reason": "length",
+				"eval_count":  1024,
+			}
+		}
+		resp, _ := json.Marshal(payload)
+		w.Write(resp)
+	})
+
+	const source = "Alpine Trust and Borealis Fund. Zephyr Capital countersigned."
+	out, err := c.DiscoverSlices(context.Background(),
+		[]string{"Alpine Trust and Borealis Fund.", "Zephyr Capital countersigned."}, source, nil)
+	if err != nil {
+		t.Fatalf("a cut-off reply must degrade its own slice, not end the scan: %v", err)
+	}
+	if got := int(atomic.LoadInt32(&calls)); got != 2 {
+		t.Fatalf("every slice must still be sent after a truncation, got %d request(s), want 2", got)
+	}
+	if out.Requests != 2 || out.Truncated != 1 {
+		t.Errorf("want 2 requests with 1 truncated, got requests=%d truncated=%d", out.Requests, out.Truncated)
+	}
+	// A truncated request is NOT silent: it had more to say, which is the
+	// opposite fact about the document.
+	if out.Silent != 0 {
+		t.Errorf("a truncated request must not also be counted silent, got silent=%d", out.Silent)
+	}
+	var names []string
+	for _, s := range out.Suggestions {
+		names = append(names, s.MainText)
+	}
+	slices.Sort(names)
+	if !slices.Contains(names, "Alpine Trust") {
+		t.Errorf("the names the model finished writing before the cut must be salvaged, got %v", names)
+	}
+	if !slices.Contains(names, "Zephyr Capital") {
+		t.Errorf("the slice after the truncated one must still be scanned, got %v", names)
+	}
+	if slices.Contains(names, "Borea") {
+		t.Errorf("the half-written name must not survive: the hallucination filter is what makes salvage safe, got %v", names)
+	}
+}
+
+// TestSalvageSuggestionJSON: what a cut-off reply managed to finish saying is an
+// answer. Every case here is a shape a real truncated reply took on the
+// reference documents.
+func TestSalvageSuggestionJSON(t *testing.T) {
+	cases := []struct {
+		name  string
+		reply string
+		want  []string
+	}{
+		{
+			name:  "nothing at all",
+			reply: "",
+			want:  nil,
+		},
+		{
+			name:  "cut inside a name",
+			reply: `{"entity_names":["Alpine Trust","Bore`,
+			want:  []string{"Alpine Trust"},
+		},
+		{
+			name:  "closed categories then a cut one",
+			reply: `{"entity_names":["Alpine Trust"],"person_names":["Ada Byron","Bo`,
+			want:  []string{"Ada Byron", "Alpine Trust"},
+		},
+		{
+			name:  "cut just after a comma",
+			reply: `{"person_names":["Ada Byron",`,
+			want:  []string{"Ada Byron"},
+		},
+		{
+			name:  "a fenced reply is still read",
+			reply: "```json\n{\"entity_names\":[\"Alpine Trust\",\"Bore",
+			want:  []string{"Alpine Trust"},
+		},
+		{
+			name:  "a key the engine does not know is skipped",
+			reply: `{"made_up_names":["Ignored"],"entity_names":["Alpine Trust`,
+			want:  nil,
+		},
+		{
+			name:  "a degenerate repeat loop yields its one string, over and over",
+			reply: `{"entity_names":["Alpine Trust"],"project_names":["Loop","Loop","Loop","Lo`,
+			want:  []string{"Alpine Trust", "Loop", "Loop", "Loop"},
+		},
+		{
+			name:  "a complete reply reads exactly as the full parser reads it",
+			reply: `{"entity_names":["Alpine Trust"],"person_names":["Ada Byron"]}`,
+			want:  []string{"Ada Byron", "Alpine Trust"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run("detection/"+tc.name, func(t *testing.T) {
+			var got []string
+			for _, s := range salvageSuggestionJSON(tc.reply) {
+				got = append(got, s.MainText)
+				if s.Confidence != engine.ConfidenceLLMDefault {
+					t.Errorf("a salvaged suggestion must carry the model's confidence like any other, got %v", s.Confidence)
+				}
+				if !slices.Contains(s.DiscoveryMethods, engine.MethodLocalAI) {
+					t.Errorf("a salvaged suggestion must say the model found it, got %v", s.DiscoveryMethods)
+				}
+			}
+			slices.Sort(got)
+			want := slices.Clone(tc.want)
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("salvage of %q: got %v, want %v", tc.reply, got, want)
+			}
+		})
 	}
 }
 

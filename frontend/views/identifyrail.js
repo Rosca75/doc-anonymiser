@@ -879,8 +879,9 @@ function scopeBlock(s, gated) {
 
 /**
  * lastScanReadout(s) reports what the local AI actually did on the last run:
- * how many requests it sent, how long each took on THIS machine, and how many
- * came back with nothing.
+ * how many requests it sent, how long each took on THIS machine, how many came
+ * back with nothing, and how many ran out of room before they finished
+ * answering.
  *
  * It is a `.rail-readout` and not a hint, because it is a measured fact that
  * changes with every run rather than static prose. The seconds are the half no
@@ -893,7 +894,7 @@ function lastScanReadout(s) {
   const scan = s.lastAIScan;
   if (!scan || !(scan.requests > 0)) return "";
   return `<p class="rail-readout" id="last-ai-scan">` +
-    `${escapeHTML(RAIL.lastScan(scan.requests, scan.secondsPerRequest, scan.silent))}</p>`;
+    `${escapeHTML(RAIL.lastScan(scan.requests, scan.secondsPerRequest, scan.silent, scan.truncated))}</p>`;
 }
 
 function localAISection(s) {

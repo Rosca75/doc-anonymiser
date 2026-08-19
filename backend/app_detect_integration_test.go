@@ -634,6 +634,95 @@ func TestPartialSilenceIsNotReportedAsTotalSilence(t *testing.T) {
 	}
 }
 
+// TestATruncatedSliceDoesNotStopTheRestOfTheDocument is the guard for the
+// per-slice degradation: a reply cut off on one slide must cost that slide's
+// tail and nothing else. Ending the document's scan there instead means one
+// dense slide leaves every slide after it unread, while the run reports its
+// findings as though that were the whole document.
+func TestATruncatedSliceDoesNotStopTheRestOfTheDocument(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.Write([]byte(`{"models":[{"name":"m"}]}`))
+		case "/api/chat":
+			var body struct {
+				Messages []struct {
+					Role    string `json:"role"`
+					Content string `json:"content"`
+				} `json:"messages"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			var user string
+			for _, m := range body.Messages {
+				if m.Role == "user" {
+					user = m.Content
+					seen = append(seen, m.Content)
+				}
+			}
+			payload := map[string]interface{}{
+				"message": map[string]string{"role": "assistant",
+					"content": `{"entity_names":["Alpine Trust"],"project_names":[],"person_names":[]}`},
+			}
+			if strings.Contains(user, "point 1.") {
+				// The first slide's reply runs out of room after one name.
+				payload = map[string]interface{}{
+					"message": map[string]string{"role": "assistant",
+						"content": `{"entity_names":["Alpine Trust","Alp`},
+					"done_reason": "length",
+					"eval_count":  1024,
+				}
+			}
+			resp, _ := json.Marshal(payload)
+			w.Write(resp)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	app := NewApp()
+	app.docs = []engine.Document{slideDeck(3)}
+	app.llm = ollama.New(srv.URL)
+	app.settings.UseLocalAI = true
+	app.settings.UseHeuristicDiscovery = false // isolate the AI route
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"deck.pptx"}, nil, nil)
+	if err != nil {
+		t.Fatalf("a cut-off slice must not fail the run: %v", err)
+	}
+	if len(seen) != 3 {
+		t.Fatalf("every slide must still be sent after a truncation, got %d request(s), want 3", len(seen))
+	}
+	if !strings.Contains(strings.Join(seen, "\n"), "point 3.") {
+		t.Error("the slides after the truncated one were never sent, so the scan stopped where the reply was cut")
+	}
+	if res.AIRequests != 3 || res.AITruncatedRequests != 1 {
+		t.Errorf("want 3 requests with 1 truncated, got aiRequests=%d aiTruncatedRequests=%d",
+			res.AIRequests, res.AITruncatedRequests)
+	}
+	// The truncated slice still contributed: what the model finished writing is
+	// salvaged, and the half-written name is dropped by the hallucination filter.
+	var found bool
+	for _, sugg := range res.Suggestions {
+		if sugg.MainText == "Alpine Trust" {
+			found = true
+		}
+		if sugg.MainText == "Alp" {
+			t.Error("a half-written name must not reach the review list")
+		}
+	}
+	if !found {
+		t.Errorf("the names finished before the cut must survive: %+v", res.Suggestions)
+	}
+	// The status line has to say it, or a run that quietly lost a slide's tail
+	// reads exactly like one that read everything.
+	if !strings.Contains(res.Status, "ran out of room") {
+		t.Errorf("the run summary must say some requests ran out of room: %q", res.Status)
+	}
+}
+
 // TestATruncatedReplyOnOneFileLeavesTheOthersIntact: the per-file contract holds
 // for the new error too. One file the model choked on must not throw away what
 // the others found.
@@ -702,8 +791,18 @@ func TestATruncatedReplyOnOneFileLeavesTheOthersIntact(t *testing.T) {
 		t.Errorf("the healthy file's suggestions must survive: %+v", res.Suggestions)
 	}
 	joined := strings.Join(res.Errors, " | ")
-	if !strings.Contains(joined, "bad.txt") || !strings.Contains(joined, "cut off") {
-		t.Errorf("the truncated file must be named as cut off: %q", joined)
+	if !strings.Contains(joined, "bad.txt") || !strings.Contains(joined, "ran out of room") {
+		t.Errorf("the truncated file must be named as having run out of room: %q", joined)
+	}
+	// The remedy has to be one the user has. The detail level is not: Thorough
+	// is already the default, so naming it tells them to do what they are doing.
+	for _, banned := range []string{"Thorough", "detail level"} {
+		if strings.Contains(joined, banned) {
+			t.Errorf("the truncation message must not name %q as the fix, it is already the default: %q", banned, joined)
+		}
+	}
+	if res.AITruncatedRequests != 1 {
+		t.Errorf("the run must count the truncated request, got %d", res.AITruncatedRequests)
 	}
 }
 

@@ -325,25 +325,34 @@ export const RAIL = {
   reprobe: "Check again",
 
   /**
-   * lastScan(requests, secondsEach, silent) reports what the local AI did on the
-   * last run, measured on this machine and this document.
+   * lastScan(requests, secondsEach, silent, truncated) reports what the local AI
+   * did on the last run, measured on this machine and this document.
    *
    * The silent count is only mentioned when there IS one: a scan where most
    * requests find nothing is normal, so the clause exists to explain a
    * disappointing result rather than to worry the reader about a good one. When
    * every request came back empty, saying so is the whole point, because
    * "0 values found" otherwise reads as a clean document.
+   *
+   * The truncated count sits BESIDE it and is never folded into it, because the
+   * two say opposite things: a silent request found nothing, a cut-off one
+   * found more than it was allowed to finish listing. Only the second means
+   * values may be missing from pages that did return some.
    */
-  lastScan: (requests, secondsEach, silent) => {
+  lastScan: (requests, secondsEach, silent, truncated = 0) => {
     const each = secondsEach >= 10
       ? `${Math.round(secondsEach)}s`
       : `${(Math.round(secondsEach * 10) / 10)}s`;
-    const head = `Last scan: ${requests} request${requests === 1 ? "" : "s"}, about ${each} each.`;
-    if (!(silent > 0)) return head;
-    if (silent === requests) {
-      return `${head} The model returned nothing for any of them.`;
+    let out = `Last scan: ${requests} request${requests === 1 ? "" : "s"}, about ${each} each.`;
+    if (silent > 0) {
+      out += silent === requests
+        ? " The model returned nothing for any of them."
+        : ` ${silent} returned nothing.`;
     }
-    return `${head} ${silent} returned nothing.`;
+    if (truncated > 0) {
+      out += ` ${truncated} ran out of room, so some values may be missing.`;
+    }
+    return out;
   },
 
   // Local-AI SCAN SCOPE. Handing a whole document to a small local model is too

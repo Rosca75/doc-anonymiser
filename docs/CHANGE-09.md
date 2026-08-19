@@ -2,7 +2,7 @@
 
 You are executing a change order against the existing **doc-anonymiser**
 repository (pattern P0, pure Go + Wails v2, no CGo, no npm). It holds **one
-self-contained implementation section per change request (CR1 to CR7)**,
+self-contained implementation section per change request (CR1 to CR8)**,
 followed by the **decisions taken**, a **conflict analysis**, the **recommended
 execution sequence** and the **acceptance criteria**.
 
@@ -19,8 +19,10 @@ CR1 fixes the slicing, CR2 turns the remaining speed-versus-recall trade-off int
 a user setting instead of a hidden constant, CR3 does the same for the reply
 format, CR4 stops a silent or truncated model reading as a clean document, CR5
 fixes the PPTX converter defect the investigation exposed, CR6 fixes a model
-default that does not exist on a machine, and CR7 documents the Ollama
-environment setting that is worth more than any code change in this order.
+default that does not exist on a machine, CR7 documents the Ollama
+environment setting that is worth more than any code change in this order, and
+CR8, added by amendment once CR1 was measured, stops a reply the model could not
+finish from costing the user every slice after it.
 
 Ground rules for this change order (unchanged from `CLAUDE.md`):
 
@@ -1102,6 +1104,115 @@ act on.
 
 ---
 
+## CR8 — A cut-off reply costs one slice, not the rest of the document
+
+Added by amendment after CR1 and CR4 landed and were measured on both reference
+documents. It comes BEFORE CR3 and CR2 because both of those change how long a
+reply is, so neither can be measured honestly while a long reply ends the scan.
+
+### What CR1 exposed
+
+CR1 fixed the slicing, and the slices are now the right size. That made
+`maxReplyTokens` (512) the binding limit instead, and it aborts both reference
+documents at the first slice dense enough to need a long answer:
+
+| document | slice | slice bytes | outcome at the 512-token cap |
+|---|---|---:|---|
+| reference deck | slide 6 (request 3 of 10) | 1,827 | `done_reason: "length"`, `eval_count` 512 |
+| reference deck | slide 10 (request 6 of 10) | 3,380 | `done_reason: "length"`, `eval_count` 512 |
+| reference PDF | page 1 (request 1 of 2) | 3,577 | `done_reason: "length"`, `eval_count` 512 |
+
+`DiscoverSlices` returns on the first error, so on the PDF **every** page after
+the first was never sent, and on the deck seven of ten slices were never sent.
+The run then reported what it had, which is a fraction of the document presented
+as though it were all of it.
+
+The two documents fail differently, and that is the whole design of this CR:
+
+- **The deck's cut replies are degenerate.** On slide 6 the model closed six of
+  the seven category arrays with twenty distinct strings between them, then filled
+  the seventh with ONE string repeated seventy-two times until the cap stopped it.
+  On slide 10 it closed three arrays and then cycled about nine strings ten times
+  over. Raising the cap does not fix a loop: measured at 1,024 tokens both slices
+  ran to the new cap as well (106 s and 109 s), and at 2,048 both exceeded the
+  request timeout and returned NOTHING, which is strictly worse than a cut-off
+  reply because there is nothing left to salvage.
+- **The PDF's cut reply is an honest answer that ran long.** Page 1 returned 73
+  strings, 56 of them distinct, no repetition beyond names the model legitimately
+  filed under two categories, and it was cut in the middle of the last array. At a
+  1,024-token cap the same page finishes cleanly at `eval_count` 563 and returns
+  77 strings that occur verbatim in the source, which is exactly the number
+  Appendix A records for that page.
+
+So the cap was genuinely too low (an honest reply needed 563), AND a bigger cap
+can never be the whole fix (a degenerate reply consumes any cap it is given).
+
+### Change
+
+**`backend/ollama/client.go`:**
+
+- `maxReplyTokens` 512 to **1024**, with the comment rewritten for unit-sized
+  slices: the densest honest reply measured on a real document finishes at about
+  560 tokens, every slide of the deck finishes under 200, so the cap is a runaway
+  guard sitting at roughly twice the densest honest answer. It is deliberately not
+  higher: the only replies that would use more are the degenerate ones, and a cap
+  the request window cannot deliver turns a salvageable cut-off reply into a
+  timeout that yields nothing.
+- The request timeout becomes a named constant, `chatTimeout`, and is raised to
+  cover the budget the cap grants. On the slowest configuration measured (CPU
+  only, no GPU offload) a reply running to the full 1,024 tokens takes just under
+  two minutes, so the window is roughly twice that. The two constants are a
+  COUPLED PAIR: a cap the window cannot deliver is a cap that produces timeouts.
+- `TruncatedReplyError` replaces the truncation error string, carrying the model,
+  the token count and the PARTIAL REPLY. A distinct type rather than a message
+  because the caller has to act on it differently from a failure.
+- `salvageSuggestionJSON` reads everything a cut-off reply finished saying, over
+  `json.Decoder`'s token stream: the decoder hands back every completed string and
+  then reports the truncation, so a half-written name is the one thing that never
+  arrives. Salvage is safe because the hallucination filter already drops anything
+  not verbatim in the source.
+- `DiscoveryOutcome` gains `Truncated`. A truncated request is counted apart from
+  a silent one and never as both: they say opposite things about the document.
+- `DiscoverSlices` salvages, counts and CONTINUES to the next slice.
+
+**`backend/app_detect.go`:**
+
+- `DetectionResult` gains `AITruncatedRequests`, reported beside the silent count
+  in the rail read-out and in the status line.
+- One message per DOCUMENT that had a cut-off reply, naming the count and the
+  document. The remedy it names must EXIST: Thorough is already the default detail
+  level, so the message names scanning fewer units at a time, or another model.
+  The all-silent message loses its "or the Thorough detail level" clause for the
+  same reason.
+
+**`frontend/`:** `state.lastAIScan` gains `truncated`, `RAIL.lastScan` gains the
+clause, `BRIDGE.md` gains the field and the per-slice rule.
+
+**No retry at a smaller size.** Salvage does not lose meaningful recall: on the
+PDF page it keeps every complete string of the 73 the model wrote, and on the deck
+it keeps the twenty distinct strings each cut reply had already closed. A retry
+would pay a second full request for the tail of a reply whose useful half is
+already in hand, and on a degenerate reply it would pay it for a repeat loop.
+
+### Tests
+
+`backend/ollama/client_test.go`: the truncation error is its own type and carries
+the partial reply; its message names a remedy that exists and never the detail
+level; a truncated slice degrades itself and the scan continues (request count,
+`Truncated`, and NOT counted as silent); `salvageSuggestionJSON` is table-driven
+over the shapes the reference documents produced, including the degenerate loop
+and a fenced reply.
+
+`backend/app_detect_integration_test.go`: a truncated slice does not stop the rest
+of the DOCUMENT (every slide still sent, salvaged names present, half-written name
+absent, status says it); the existing per-FILE test is updated, because a cut-off
+reply is no longer the file's failure.
+
+`frontend/identifyrail.test.js`: the read-out reports cut-off requests beside the
+silent ones and never folds them together.
+
+---
+
 ## Decisions taken
 
 1. **A slice is aligned to the document's own units and sized by the user's
@@ -1150,7 +1261,21 @@ act on.
     with a spot-check rather than a guess.
 13. **The GPU setting is documented, never automated**, and no timing-based
     warning is added for it.
-14. **Heuristic discovery's category quality stays out of scope.** Filing
+15. **A cut-off reply is a per-slice degradation, never the end of a scan.**
+    What the model finished writing is salvaged and the next slice is sent. The
+    hallucination filter is what makes salvage safe: nothing that is not verbatim
+    in the source can reach the user, so a fragment of a name cannot.
+16. **The generation cap is sized from the densest HONEST reply, not from the
+    longest possible one.** The densest honest reply measured on a real document
+    finishes at about 560 tokens, so the cap is 1024. Raising it further only
+    feeds the degenerate replies, which consume any cap they are given, and a cap
+    the request window cannot deliver converts a salvageable cut-off reply into a
+    timeout that yields nothing. The cap and the request timeout are a coupled
+    pair and move together.
+17. **No retry at a smaller size.** Salvage keeps every complete string the cut
+    reply had already written, so a retry pays a second full request for the tail
+    of an answer whose useful half is already in hand.
+18. **Heuristic discovery's category quality stays out of scope.** Filing
     "Impact High" as a person is a real defect with its own root cause, and folding
     it in here would make this order unreviewable.
 
@@ -1214,20 +1339,22 @@ act on.
 2. **CR4** second. It is small, it depends on CR1's `DiscoveryOutcome`, and having
    it early means every later measurement tells you whether the model was silent,
    which is information you will want for the rest of the order.
-3. **CR3** third, with the `chatReplyServer` rewrite in the same commit. Now that
+3. **CR8** third, before anything that changes how long a reply is. CR3 and CR2
+   both do, so neither can be measured honestly while a long reply ends the scan.
+4. **CR3** fourth, with the `chatReplyServer` rewrite in the same commit. Now that
    silence is visible, flipping the discovery format is measurable rather than a
    matter of trust.
-4. **CR2** fourth: the setting, its validation, its bound estimate and the rail
+5. **CR2** fifth: the setting, its validation, its bound estimate and the rail
    control. It comes after CR3 because both add a Local AI control and the rail
    edit is cheaper done once, with CR3's checkbox already in place.
-5. **CR6** fifth: the model resolution, which crosses the bridge and is otherwise
+6. **CR6** sixth: the model resolution, which crosses the bridge and is otherwise
    independent.
-6. **CR5** any time, including in parallel with 1 to 5: it shares no file with
+7. **CR5** any time, including in parallel with 1 to 6: it shares no file with
    them.
-7. **CR7** last, once the numbers in it have been confirmed on the owner's machine.
+8. **CR7** last, once the numbers in it have been confirmed on the owner's machine.
 
-After step 4, run the full acceptance measurement on BOTH reference documents
-before starting step 5. That is the point where the order either meets the owner's
+After step 5, run the full acceptance measurement on BOTH reference documents
+before starting step 6. That is the point where the order either meets the owner's
 latency targets or does not, and it is the one place where the plan may need to
 come back to the owner (see criterion 4 below).
 
@@ -1265,10 +1392,15 @@ come back to the owner (see criterion 4 below).
   5. **Silence is legible.** Switch to the 0.8B, scan the deck whole, and confirm
      the run says the model returned nothing for N requests and names the model,
      rather than reporting "0 suggestions" as though the document were clean.
-  6. **Truncation is legible.** There is no easy way to force `done_reason:
-     "length"` once slicing is fixed, so verify it at the unit level (CR4's mock
-     test) and, if you want the real thing, temporarily set the faster detail level
-     on a dense PDF page with a small `num_ctx`.
+  6. **Truncation is legible, and it costs one slice.** Truncation is EASY to
+     force, and both reference documents do it unaided: at the original 512-token
+     cap the deck was cut off on its third request and the PDF on its first. Scan
+     either whole and confirm three things: the run finishes and scans every
+     remaining slice, the read-out and the status line report how many requests ran
+     out of room, and the message names a remedy the user has. It must NOT name the
+     detail level: Thorough is already the default, so naming it tells the user to
+     do what they are doing. A cut-off request must not be reported as a silent one:
+     the two say opposite things about the document.
   7. **The detail level and the format switch both change the outcome**, visibly:
      switching the detail level changes the request count in the read-out and the
      values found; switching "ask for every category" on roughly doubles the scan
@@ -1328,6 +1460,15 @@ All on the owner's laptop, Ollama 0.32.14, greedy sampling as CHANGE-08 pinned i
 `seed 7`), `num_ctx 8192`, `think:false`, `keep_alive 30m`. "CPU" is the machine's
 default configuration; "GPU" is the same machine with `OLLAMA_IGPU_ENABLE=1`.
 Values counted as described in section 0.
+
+**These numbers are not reproducible by the application as it ships, and the
+per-slide rows are the ones to be careful with.** The probe harness set its own
+`num_predict` rather than the application's `maxReplyTokens`, so a row here can
+report values for a slice the application would have reported as cut off. Two
+slides of the deck and page 1 of the PDF are dense enough to run past the
+application's cap; see CR8, which is where those slices are accounted for. Read
+this appendix as evidence about SLICE SIZE, model and reply format, which is what
+it was gathered for, and not as a prediction of what a run will return.
 
 ### The reference deck (15 slides, 15,152 bytes of markdown)
 

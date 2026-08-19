@@ -814,6 +814,33 @@ test("the rail names total silence, and mentions partial silence without alarm",
     `a normal scan must not be described as a silent model: ${partial}`);
 });
 
+test("the rail reports cut-off requests beside the silent ones, never folded into them", () => {
+  // The two counts say opposite things about the document: a silent request
+  // found nothing, a cut-off one found more than it could finish listing. Only
+  // the second means values may be missing from pages that DID return some.
+  resetState();
+  setUseLocalAI(true);
+
+  setState({ lastAIScan: { requests: 10, silent: 0, truncated: 2, secondsPerRequest: 7 } });
+  const cut = stripTags(one(railBody(getState()), "#last-ai-scan").inner);
+  assert.match(cut, /2 ran out of room/,
+    `a cut-off reply must be named as such: ${cut}`);
+  assert.match(cut, /may be missing/,
+    `the read-out must say what a cut-off reply costs the user: ${cut}`);
+  assert.ok(!/returned nothing/.test(cut),
+    `a request that ran out of room is not a silent one: ${cut}`);
+
+  setState({ lastAIScan: { requests: 10, silent: 3, truncated: 2, secondsPerRequest: 7 } });
+  const both = stripTags(one(railBody(getState()), "#last-ai-scan").inner);
+  assert.match(both, /3 returned nothing/, `both facts are reported: ${both}`);
+  assert.match(both, /2 ran out of room/, `both facts are reported: ${both}`);
+
+  setState({ lastAIScan: { requests: 10, silent: 0, truncated: 0, secondsPerRequest: 7 } });
+  const clean = stripTags(one(railBody(getState()), "#last-ai-scan").inner);
+  assert.ok(!/ran out of room/.test(clean),
+    `a scan where nothing was cut off must not mention it: ${clean}`);
+});
+
 test("the last scan read-out is a read-out, never an explanatory paragraph", () => {
   // The rail carries no p.hint at all, and the Local AI section is in the DOM
   // even when folded, so a read-out added as a hint turns the structural guard
