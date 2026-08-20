@@ -470,10 +470,13 @@ function baseName(id) {
  * window it belongs to. It is NOT modal.js's confirm, because this is an editing
  * surface rather than a question, and it carries its own draft.
  *
+ * It is part of imageTabHTML's output rather than a surface of its own, so a
+ * caller (and a test) reaches it the way the screen does.
+ *
  * @param {object} [s] state
  * @returns {string} safe HTML ("" when the panel is closed)
  */
-export function treatmentPanelHTML(s = getState()) {
+function treatmentPanelHTML(s = getState()) {
   const editor = s.imageEditor;
   if (!editor) return "";
   const asset = imageAssets(s).find((a) => a.id === editor.assetId);

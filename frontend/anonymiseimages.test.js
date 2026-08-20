@@ -24,7 +24,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { resetState, setState, getState, openImageEditor } from "./state.js";
-import { imageTabHTML, treatmentPanelHTML, imageCount } from "./views/anonymiseimages.js";
+import { imageTabHTML, imageCount } from "./views/anonymiseimages.js";
 import { all, one, textOf, attr, exists } from "./testhtml.js";
 import { IMAGES } from "./copy.js";
 
@@ -356,12 +356,18 @@ test("only a data:image URL reaches an img src", () => {
 
 // --- The treatment panel ---------------------------------------------------
 
-/** panel(target, patch) opens the treatment panel on one asset and returns its
- *  markup. */
+/**
+ * panel(target, draft) opens the treatment panel on one asset and returns the
+ * screen's markup with it in.
+ *
+ * It renders the whole IMAGE half rather than the panel alone, because that is
+ * how the panel reaches the page: it is part of imageTabHTML's output, and a test
+ * that called a builder the screen does not use would be testing a second path.
+ */
 function panel(target, draft = { treatment: "box", boxText: "", blurStrength: 5 }) {
   seed(ALL_ASSETS);
   openImageEditor(DOC, target.id, draft);
-  return treatmentPanelHTML(getState());
+  return imageTabHTML(getState());
 }
 
 test("the treatment panel offers the three anonymising treatments and no keep", () => {
@@ -458,7 +464,7 @@ test("a rendered preview is an img with the data URL Go answered", () => {
       preview: "data:image/png;base64,BBBB", previewLoading: false,
     },
   });
-  const html = treatmentPanelHTML(getState());
+  const html = imageTabHTML(getState());
   assert.equal(attr(html, "#image-preview", "src"), "data:image/png;base64,BBBB");
 });
 
@@ -468,11 +474,12 @@ test("a refusal from Go lands on the panel, beside the field that caused it", ()
   setState({
     imageEditor: { ...getState().imageEditor, error: "the box text is 130 characters, the maximum is 120" },
   });
-  const html = treatmentPanelHTML(getState());
+  const html = imageTabHTML(getState());
   assert.ok(textOf(html, "#image-panel-error").includes("the maximum is 120"));
 });
 
 test("a closed panel renders nothing at all", () => {
-  const s = seed();
-  assert.equal(treatmentPanelHTML(s), "");
+  const html = imageTabHTML(seed());
+  assert.equal(exists(html, ".image-panel-layer"), false,
+    "the overlay exists only while a decision is being taken");
 });
