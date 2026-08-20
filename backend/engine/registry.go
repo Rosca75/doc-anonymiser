@@ -33,6 +33,11 @@ var placeholderLabels = map[string]string{
 	CatIdentifierNames: "ID",
 	CatOtherNames:      "OTHER",
 	CatCustomPatterns:  "CUSTOM",
+	// Context values: a country or jurisdiction, a nationality, a line of
+	// business. Reachable by manual declaration and Local AI only.
+	CatCountryNames:        "COUNTRY",
+	CatNationalityNames:    "NATIONALITY",
+	CatBusinessSectorNames: "BUSINESS_SECTOR",
 	// PII categories (pass 1).
 	CatEmail:     "EMAIL",
 	CatPhone:     "PHONE",
@@ -51,6 +56,9 @@ var placeholderLabels = map[string]string{
 	CatDatabaseURI: "DB_URI",
 	CatDESteuerID:  "DE_TAX_ID",
 	CatESNIF:       "ES_NIF",
+	CatBIC:         "BIC",
+	CatPostalCode:  "POSTAL_CODE",
+	CatAddress:     "ADDRESS",
 }
 
 // MappingEntry is one row of the exported re-identification key.

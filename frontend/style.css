@@ -656,6 +656,18 @@ button.spelling-list-text:hover { background: var(--gray-5); }
   border: none; border-radius: 50%; background: none; color: var(--muted);
 }
 .chip-tag .chip-remove:hover { background: none; color: var(--err); }
+/* The provenance note inside a chip: WHY the application is suppressing this
+   term. A suppression the user cannot see is one they cannot lift, so the reason
+   travels with the chip rather than sitting in a tooltip. */
+.chip-tag .chip-note {
+  font-size: 0.7rem; color: var(--muted); letter-spacing: 0.01em;
+}
+/* The heading over the defined-terms box. It is a SECOND block under the
+   never-anonymise chips, because the two lists are undone by different
+   gestures. */
+.defined-title {
+  margin: 1rem 0 0.25rem; font-size: 0.9rem; font-weight: 400; color: var(--text);
+}
 /* The dashed "add" chip that ends a chip row. */
 .chip-add {
   border: 1px dashed var(--gray-3); background: none; color: var(--ink-2);

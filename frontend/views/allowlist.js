@@ -25,8 +25,12 @@
 //   because the tab it lives in repaints on every keystroke elsewhere and a
 //   half-typed term must survive that.
 
-import { importAllowlistCSV, saveAllowlistTemplate } from "../api.js";
-import { getState, addAllowTerm, removeAllowTerm, clearAllowlist } from "../state.js";
+import {
+  importAllowlistCSV, saveAllowlistTemplate, forgetDefinedTerm,
+} from "../api.js";
+import {
+  getState, addAllowTerm, removeAllowTerm, clearAllowlist, setDefinedTerms,
+} from "../state.js";
 import { escapeHTML } from "../html.js";
 import { button } from "../ui.js";
 import { notify } from "../toast.js";
@@ -64,6 +68,40 @@ export function renderAllowlistChips(s, draft = "") {
     `</div>` +
     `<div class="chip-box">` +
     (chips || `<span class="hint">${escapeHTML(ALLOWLIST.empty)}</span>`) +
+    `</div>` +
+    definedTermsBlock(s);
+}
+
+/**
+ * definedTermsBlock(s) lists the phrases the imported documents define about
+ * themselves, each with the idiom that introduced it and a remove.
+ *
+ * It is a SECOND block rather than more chips in the box above, because the two
+ * lists answer different questions and are undone by different gestures: the box
+ * holds terms the user typed, and this holds a suppression the application
+ * derived. Merging them would make "delete a term I added" and "stop honouring a
+ * definition" the same button.
+ *
+ * @param {object} s current state
+ * @returns {string} safe HTML
+ */
+function definedTermsBlock(s) {
+  const terms = s.definedTerms ?? [];
+  const rows = terms.map((t) =>
+    `<span class="chip-tag" data-defined-term="${escapeHTML(t.term)}">` +
+    `${escapeHTML(t.term)}` +
+    `<span class="chip-note">${escapeHTML(ALLOWLIST.definedIdiom(t.idiom))}</span>` +
+    button("", {
+      kind: "ghost", cls: "chip-remove defined-del", icon: "close",
+      ariaLabel: `Stop suppressing ${t.term}`, title: ALLOWLIST.definedRemove,
+      data: { term: t.term },
+    }) +
+    `</span>`).join("");
+
+  return `<h4 class="defined-title">${escapeHTML(ALLOWLIST.definedTitle)}</h4>` +
+    `<p class="hint">${escapeHTML(ALLOWLIST.definedHint)}</p>` +
+    `<div class="chip-box defined-box">` +
+    (rows || `<span class="hint">${escapeHTML(ALLOWLIST.definedEmpty)}</span>`) +
     `</div>`;
 }
 
@@ -124,6 +162,22 @@ export function wireAllowlistChips(container, drafts = {}) {
       notify(String(err?.message ?? err), "warn");
     }
   });
+
+  // Removing a defined term is a Go-side change (the suppression is enforced
+  // through the allowlist the engine builds), so the store is refreshed from
+  // what Go returns rather than edited optimistically: the two must not disagree
+  // about which values are being suppressed.
+  for (const btn of container.querySelectorAll(".defined-del")) {
+    btn.addEventListener("click", async () => {
+      const term = btn.dataset.term;
+      try {
+        setDefinedTerms(await forgetDefinedTerm(term));
+        notify(ALLOWLIST.definedForgotten(term), "ok");
+      } catch (err) {
+        notify(String(err?.message ?? err), "warn");
+      }
+    });
+  }
 
   container.querySelector("#allow-clear")?.addEventListener("click", async () => {
     const n = getState().allowlist.length;

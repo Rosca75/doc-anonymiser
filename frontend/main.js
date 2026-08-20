@@ -24,11 +24,11 @@
 // question can be asked from any screen and has to survive the re-render its
 // own answer triggers.
 
-import { ping, probeOllama, onEvent } from "./api.js";
+import { ping, probeOllama, onEvent, definedTerms } from "./api.js";
 import {
   getState, setState, subscribe,
   WIZARD_STEPS, canGoTo, goToScreen, knownStep,
-  applyImportResult, adoptProbe,
+  applyImportResult, adoptProbe, setDefinedTerms,
 } from "./state.js";
 import { escapeHTML } from "./html.js";
 import { topnavHTML, stepbarHTML, headerActionsHTML, appFooterHTML, showDocumentation } from "./shell.js";
@@ -139,6 +139,13 @@ export function boot(root) {
   });
   onEvent("detection:done", () => {
     setState({ discovery: null });
+    // The run is what reads the documents' own vocabulary, so the
+    // never-anonymise tab's second list is refreshed here rather than by the
+    // caller: a suppression already in force has to be visible without the user
+    // having to go and look for it.
+    definedTerms()
+      .then(setDefinedTerms)
+      .catch(() => { /* the list is informational: a failed read shows the last one */ });
   });
   onEvent("detection:error", (ev) => {
     setState({ discovery: null });

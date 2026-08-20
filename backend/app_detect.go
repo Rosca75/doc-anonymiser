@@ -182,6 +182,13 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 		a.mu.Unlock()
 	}()
 
+	// Read what the documents DEFINE about themselves before the allowlist is
+	// built, so the suppressor is in force for this run rather than the next one.
+	// A defined term is the document's own statement that a phrase is part of its
+	// machinery, and the largest single class of false positives in the review
+	// list is exactly those phrases.
+	a.rememberDefinedTerms(docs)
+
 	// The shared builder: the detection routes must not
 	// re-propose a value the user removed, or a removal reads as undone the
 	// moment detection runs again.
@@ -274,6 +281,53 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 	emitted = true
 	a.emit("detection:done", res)
 	return res, nil
+}
+
+// rememberDefinedTerms reads every document's own vocabulary and stores it, so
+// allowlistFor can veto it and the never-anonymise list can SHOW it.
+//
+// It replaces the stored list rather than adding to it: the list describes the
+// documents currently imported, and a term from a document that has since been
+// removed would go on suppressing a value nothing defines any more.
+func (a *App) rememberDefinedTerms(docs []engine.Document) {
+	var found []engine.DefinedTerm
+	for _, doc := range docs {
+		found = append(found, engine.DiscoverDefinedTerms(doc.Name, doc.Markdown)...)
+	}
+	a.mu.Lock()
+	a.definedTerms = found
+	a.mu.Unlock()
+}
+
+// DefinedTerms is the bound method the never-anonymise list reads: the terms the
+// imported documents declare about themselves, with the idiom that introduced
+// each one.
+//
+// They are shown rather than applied in silence, and each carries a delete, for
+// the reason a session exclusion is visible and reversible: a negative rule the
+// user cannot see is a rule they cannot undo.
+func (a *App) DefinedTerms() []engine.DefinedTerm {
+	return a.definedTermsSnapshot()
+}
+
+// ForgetDefinedTerm drops ONE suppressed defined term, so the value it was
+// hiding can be suggested again. It returns the list that remains.
+//
+// Matching is case-insensitive on the term, which is how the allowlist matches
+// it, so what the user clicks is what stops being suppressed.
+func (a *App) ForgetDefinedTerm(term string) []engine.DefinedTerm {
+	want := strings.ToLower(strings.TrimSpace(term))
+	a.mu.Lock()
+	kept := make([]engine.DefinedTerm, 0, len(a.definedTerms))
+	for _, t := range a.definedTerms {
+		if strings.ToLower(strings.TrimSpace(t.Term)) == want {
+			continue
+		}
+		kept = append(kept, t)
+	}
+	a.definedTerms = kept
+	a.mu.Unlock()
+	return a.definedTermsSnapshot()
 }
 
 // CancelDetection aborts the in-flight detection run. A no-op when idle.

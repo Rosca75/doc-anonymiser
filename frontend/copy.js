@@ -527,6 +527,27 @@ export const ALLOWLIST = {
     return `${read} term${read === 1 ? "" : "s"} read, ${added} new.`;
   },
   templateSaved: "Template saved. Fill in one term per row and import it back.",
+
+  // The terms the DOCUMENTS define about themselves. They are shown here, and
+  // not merged into the list above, because they are a different kind of entry:
+  // the user typed the list above, and the application read these out of a file.
+  // Showing them is the point. A suppression the user cannot see is one they
+  // cannot lift, and this is the largest thing standing between a review list
+  // and a usable one.
+  definedTitle: "Terms your documents define",
+  definedHint: "A contract that introduces a phrase as its own vocabulary is telling you the phrase is not a client identity, so these are not suggested. Remove any entry to have it suggested again.",
+  definedEmpty: "None yet. Run detection and any phrase your documents define will be listed here.",
+  /** definedIdiom(idiom) names the drafting shape that introduced a term. */
+  definedIdiom(idiom) {
+    if (idiom === "means") return "defined with \u201cmeans\u201d";
+    if (idiom === "parenthetical") return "defined in brackets";
+    return "defined by the document";
+  },
+  definedRemove: "Stop suppressing this term",
+  /** definedForgotten(t) reports the result of removing one. */
+  definedForgotten(t) {
+    return `${t} can be suggested again.`;
+  },
 };
 
 // Identify WORKSPACE copy: the four tabs, the suggestions
@@ -1597,4 +1618,10 @@ export const CATEGORY_LABELS = {
   database_uri: ["Database connection strings", "For example postgres://user:password@host/db, which carries a password"],
   de_steuer_id: ["German tax identification numbers", "The 11 digit Steueridentifikationsnummer"],
   es_nif: ["Spanish tax numbers", "The NIF, 8 digits and a letter, for example 12345678Z"],
+  bic: ["Bank identifier codes", "The BIC or SWIFT code beside an account, for example BGLLLULL"],
+  postal_code: ["Postal codes", "The Luxembourg form, for example L-1855"],
+  address: ["Street addresses", "For example 12, rue des Tilleuls"],
+  country_names: ["Country names", "A country or jurisdiction, added by you or found by the AI review"],
+  nationality_names: ["Nationalities", "For example Française, added by you or found by the AI review"],
+  business_sector_names: ["Business sectors", "An industry or line of business, for example Transport"],
 };

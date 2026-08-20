@@ -89,6 +89,14 @@ const (
 	CatDatabaseURI = "database_uri" // postgres://, mysql://, mongodb://, redis:// with creds
 	CatDESteuerID  = "de_steuer_id" // Germany national tax ID (11 digits)
 	CatESNIF       = "es_nif"       // Spain NIF (8 digits + letter, letter validated)
+	// CatBIC is a bank identifier code (ISO 9362). It travels beside the IBAN it
+	// belongs to, so a document that names one names the other's institution.
+	CatBIC = "bic"
+	// CatPostalCode is a postal code. Country-scoped, because a postal code is a
+	// national shape and a four-digit run is otherwise an ordinary number.
+	CatPostalCode = "postal_code"
+	// CatAddress is a street address line ("1, Avenue de l'Innovation").
+	CatAddress = "address"
 )
 
 // piiPattern couples a compiled regex with its category and the index of
@@ -382,6 +390,59 @@ var piiPatterns = []piiPattern{
 		re:        regexp.MustCompile(`(?:^|[^0-9])([1-9][0-9]{10})`),
 		group:     1,
 		countries: []string{CountryDE},
+	},
+	{
+		// Bank Identifier Codes (ISO 9362, the "SWIFT code"): four institution
+		// letters, a two-letter ISO country code, a two-character location, and
+		// an optional three-character branch.
+		//
+		// TWO gates, and both are needed. The country-code check on positions 5
+		// and 6 is not enough on its own: measured over a real contract it
+		// accepted OBLIGATIONS, TERMINATION, DEFINITIONS, COOPERATION and
+		// PROPERTY, because an eight or eleven letter English word carries a real
+		// ISO country code in those positions surprisingly often ("obligATions",
+		// "propERty"). So a BIC is additionally required to sit beside its own
+		// CUE, which is how a document always writes one: a BIC has no check
+		// digits and no other structure, so without a label it is indistinguishable
+		// from an ALL-CAPS heading word, and a heading replaced as a bank code is
+		// worse than a BIC missed.
+		// Matches:      "BIC/SWIFT: BABAAXIL", "SWIFT BGLLLULL", "BIC DEUTDEFF500"
+		// Does not match: "TERMINATION" in a heading (no cue), "BABAAXIL" with no
+		//               cue in front of it, a lower-case word.
+		category: CatBIC,
+		re:       regexp.MustCompile(`\b[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b`),
+		validate: validBIC,
+		reject:   bicCueMissing,
+	},
+	{
+		// Luxembourg postal codes: "L-" plus exactly four digits. A fixed national
+		// shape, which is why the category is country-scoped: a bare four-digit
+		// run is an ordinary number everywhere else.
+		// Matches:      L-1855, L-2550
+		// Does not match: "L-185" (three digits), "L-18555" (five, the trailing
+		//               digit boundary rejects it), "1855" (no prefix).
+		category:  CatPostalCode,
+		re:        regexp.MustCompile(`\bL-[0-9]{4}\b`),
+		countries: []string{CountryLU},
+	},
+	{
+		// Street address lines in the continental form: a house number, a comma,
+		// a street type, and the street's name.
+		//
+		// The STREET TYPE is the anchor. Without it the pattern is "a number
+		// followed by capitalised words", which matches a clause number followed
+		// by a heading. The type list is the same street-type vocabulary the
+		// discovery pass uses to recognise an address context, kept in one place
+		// (addressStreetTypes) so the two cannot disagree about what a street is.
+		// Matches:      1, Avenue de l'Innovation
+		//               12, rue des Tilleuls
+		//               3, Boulevard Royal
+		// Does not match: "12, Tilleuls" (no street type), "Avenue de
+		//               l'Innovation" on its own (no house number: the number is
+		//               what makes the line an address rather than a place).
+		category:  CatAddress,
+		re:        addressLineRe,
+		countries: []string{CountryLU, CountryFR},
 	},
 	{
 		// Spain NIF (Número de Identificación Fiscal): 8 digits + a
@@ -919,3 +980,127 @@ func validIBAN(s string) bool {
 	}
 	return remainder == 1
 }
+
+// isoCountryCodes are the two-letter ISO 3166-1 alpha-2 codes, which is what a
+// BIC carries in its fifth and sixth characters.
+//
+// It is a full list rather than a short one on purpose: this table is the ONLY
+// thing separating a BIC from an ordinary eight-letter capitalised word, so a
+// missing code is a missed bank identifier left in the document, and an extra
+// one would be a word replaced as a bank code. A generated list is checkable; a
+// hand-picked subset is not.
+var isoCountryCodes = map[string]bool{
+	"AD": true, "AE": true, "AF": true, "AG": true, "AI": true, "AL": true,
+	"AM": true, "AO": true, "AQ": true, "AR": true, "AS": true, "AT": true,
+	"AU": true, "AW": true, "AX": true, "AZ": true, "BA": true, "BB": true,
+	"BD": true, "BE": true, "BF": true, "BG": true, "BH": true, "BI": true,
+	"BJ": true, "BL": true, "BM": true, "BN": true, "BO": true, "BQ": true,
+	"BR": true, "BS": true, "BT": true, "BV": true, "BW": true, "BY": true,
+	"BZ": true, "CA": true, "CC": true, "CD": true, "CF": true, "CG": true,
+	"CH": true, "CI": true, "CK": true, "CL": true, "CM": true, "CN": true,
+	"CO": true, "CR": true, "CU": true, "CV": true, "CW": true, "CX": true,
+	"CY": true, "CZ": true, "DE": true, "DJ": true, "DK": true, "DM": true,
+	"DO": true, "DZ": true, "EC": true, "EE": true, "EG": true, "EH": true,
+	"ER": true, "ES": true, "ET": true, "FI": true, "FJ": true, "FK": true,
+	"FM": true, "FO": true, "FR": true, "GA": true, "GB": true, "GD": true,
+	"GE": true, "GF": true, "GG": true, "GH": true, "GI": true, "GL": true,
+	"GM": true, "GN": true, "GP": true, "GQ": true, "GR": true, "GS": true,
+	"GT": true, "GU": true, "GW": true, "GY": true, "HK": true, "HM": true,
+	"HN": true, "HR": true, "HT": true, "HU": true, "ID": true, "IE": true,
+	"IL": true, "IM": true, "IN": true, "IO": true, "IQ": true, "IR": true,
+	"IS": true, "IT": true, "JE": true, "JM": true, "JO": true, "JP": true,
+	"KE": true, "KG": true, "KH": true, "KI": true, "KM": true, "KN": true,
+	"KP": true, "KR": true, "KW": true, "KY": true, "KZ": true, "LA": true,
+	"LB": true, "LC": true, "LI": true, "LK": true, "LR": true, "LS": true,
+	"LT": true, "LU": true, "LV": true, "LY": true, "MA": true, "MC": true,
+	"MD": true, "ME": true, "MF": true, "MG": true, "MH": true, "MK": true,
+	"ML": true, "MM": true, "MN": true, "MO": true, "MP": true, "MQ": true,
+	"MR": true, "MS": true, "MT": true, "MU": true, "MV": true, "MW": true,
+	"MX": true, "MY": true, "MZ": true, "NA": true, "NC": true, "NE": true,
+	"NF": true, "NG": true, "NI": true, "NL": true, "NO": true, "NP": true,
+	"NR": true, "NU": true, "NZ": true, "OM": true, "PA": true, "PE": true,
+	"PF": true, "PG": true, "PH": true, "PK": true, "PL": true, "PM": true,
+	"PN": true, "PR": true, "PS": true, "PT": true, "PW": true, "PY": true,
+	"QA": true, "RE": true, "RO": true, "RS": true, "RU": true, "RW": true,
+	"SA": true, "SB": true, "SC": true, "SD": true, "SE": true, "SG": true,
+	"SH": true, "SI": true, "SJ": true, "SK": true, "SL": true, "SM": true,
+	"SN": true, "SO": true, "SR": true, "SS": true, "ST": true, "SV": true,
+	"SX": true, "SY": true, "SZ": true, "TC": true, "TD": true, "TF": true,
+	"TG": true, "TH": true, "TJ": true, "TK": true, "TL": true, "TM": true,
+	"TN": true, "TO": true, "TR": true, "TT": true, "TV": true, "TW": true,
+	"TZ": true, "UA": true, "UG": true, "UM": true, "US": true, "UY": true,
+	"UZ": true, "VA": true, "VC": true, "VE": true, "VG": true, "VI": true,
+	"VN": true, "VU": true, "WF": true, "WS": true, "YE": true, "YT": true,
+	"ZA": true, "ZM": true, "ZW": true,
+}
+
+// bicCueRe matches the label a document puts in front of a BIC, at the END of
+// the stretch immediately before a candidate. The separators after the cue are
+// whatever the drafter typed (":", "/", "-", "=", or nothing).
+//
+// Matches (as the tail of the preceding text): "BIC/SWIFT: ", "SWIFT ",
+// "bic code - ", "Code BIC : "
+var bicCueRe = regexp.MustCompile(`(?i)\b(?:bic|swift)(?:[ ]?code)?[ ]*[:/=,.\-]*[ ]*$`)
+
+// bicCueMissing reports whether the candidate at [start,end) has NO BIC cue in
+// front of it, in which case the span must not be produced.
+//
+// The window is short on purpose. A generous one would let the cue in front of a
+// real BIC vouch for the next ALL-CAPS word after it too, which is the same
+// false positive the cue exists to remove.
+//
+// @param text the whole document working form
+// @param start the candidate's first byte, @param end one past its last
+// @return true when the span must be rejected
+func bicCueMissing(text string, start, end int) bool {
+	const window = 32
+	from := start - window
+	if from < 0 {
+		from = 0
+	}
+	return !bicCueRe.MatchString(text[from:start])
+}
+
+// validBIC verifies a candidate's length and that its fifth and sixth
+// characters are a real ISO country code. It is one of the BIC rule's two gates;
+// bicCueMissing above is the other, and the comment on the pattern says why one
+// is not enough.
+//
+// Both veto rather than score, unlike the IBAN checksum, because here the checks
+// ARE the recognizer: without them the pattern matches capitalised words.
+func validBIC(s string) bool {
+	if len(s) != 8 && len(s) != 11 {
+		return false
+	}
+	return isoCountryCodes[s[4:6]]
+}
+
+// addressStreetTypes are the street-type words a postal address line is built
+// on, in the continental form the owner's market writes. They are the ANCHOR of
+// the address pattern: without one, the pattern is "a number followed by
+// capitalised words", which matches a clause number followed by a heading.
+//
+// Listed with their capitalised spellings as well as their lower-case ones,
+// because both occur ("12, rue des Tilleuls" and "1, Avenue de l'Innovation")
+// and RE2 has no case-insensitive group that would not also match SHOUTING.
+var addressStreetTypes = []string{
+	"rue", "Rue", "avenue", "Avenue", "boulevard", "Boulevard",
+	"place", "Place", "impasse", "Impasse", "chemin", "Chemin",
+	"route", "Route", "quai", "Quai", "allée", "Allée", "allee", "Allee",
+	"square", "Square", "street", "Street", "road", "Road", "lane", "Lane",
+	"drive", "Drive", "esplanade", "Esplanade", "cours", "Cours",
+	"montée", "Montée", "montee", "Montee", "voie", "Voie",
+	"passage", "Passage", "rond-point", "Rond-Point", "cité", "Cité",
+	"cite", "Cite", "val", "Val", "op", "Op", "am", "Am",
+}
+
+// addressLineRe matches a house number, a comma, a street type and the street's
+// own name: the shape of a continental address line.
+//
+// The name is bounded at one to four words so the match cannot run on into the
+// rest of the sentence, and it stops at a comma, which is where an address line
+// always ends in a document ("1, Avenue de l'Innovation, L-1855 Luxembourg"
+// yields the address, the postal code and the country as three spans).
+var addressLineRe = regexp.MustCompile(
+	`\b[0-9]{1,4}(?:[ ]?[a-zA-Z])?,[ ]?(?:` + strings.Join(addressStreetTypes, "|") + `)` +
+		`(?:[ ](?:d[eu]s?|l[ae]|l'|d')?[ ]?[\pL][\pL'’\-]*){1,4}`)

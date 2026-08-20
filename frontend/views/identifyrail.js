@@ -130,12 +130,12 @@ export const PRESETS = [
 // "Auto detected values", and what is left in that group is, by construction,
 // exactly the set a detection route can emit.
 export const CATEGORY_GROUPS = [
-  [CONFIGURE.groupContact, ["email", "url", "iban", "vat", "matricule", "phone"]],
+  [CONFIGURE.groupContact, ["email", "url", "iban", "bic", "vat", "matricule", "phone"]],
   [CONFIGURE.groupTechnical, [
     "credit_card", "uk_nhs", "ip_address", "mac_address",
     "crypto", "database_uri", "de_steuer_id", "es_nif",
   ]],
-  [CONFIGURE.groupThorough, ["amount", "date"]],
+  [CONFIGURE.groupThorough, ["amount", "date", "address", "postal_code"]],
   [CONFIGURE.groupDetected, NAME_CATEGORIES],
   [CONFIGURE.groupDeclared, DECLARED_CATEGORIES],
 ];

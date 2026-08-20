@@ -412,6 +412,11 @@ var publicSuffixLabels = map[string]bool{
 	"ch": true, "at": true, "it": true, "es": true, "pt": true, "ie": true,
 	"us": true, "ca": true, "au": true, "nz": true, "se": true, "no": true,
 	"dk": true, "fi": true, "pl": true, "cz": true, "gov.uk": true,
+	// Administrative second-level labels. They sit where a name would in a real
+	// host ("statistiques.public.lu", "agence.gouv.fr") and name no organisation,
+	// so without them the seed becomes the word "public" and the search finds it
+	// in ordinary prose ("a public limited liability company").
+	"public": true, "gouv": true, "admin": true, "etat": true, "state": true,
 }
 
 // publicMailProviders are consumer and generic mail hosts. A domain that is one

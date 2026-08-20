@@ -165,6 +165,19 @@ const initialState = {
   // Allowlist terms (display spellings).
   allowlist: [],
 
+  // definedTerms is the vocabulary the IMPORTED DOCUMENTS declare about
+  // themselves: the phrases a contract introduces as `"Work Order" means ...` or
+  // `(the "Dedicated Advisors")`. Go reads them at detection time and enforces
+  // them through the allowlist, which is the one veto every producer consults.
+  //
+  // They are a SEPARATE list from `allowlist` above, mirroring the engine, for
+  // the reason the removals are separate: deleting a term the user typed is not
+  // the same gesture as telling the application to stop honouring a definition it
+  // read out of a document. They are SHOWN rather than applied in silence,
+  // because a negative rule the user cannot see is a rule they cannot undo.
+  //   definedTerms [{term, idiom, document}]
+  definedTerms: [],
+
   // Custom regex patterns: array of {expr, error} (error = compile
   // message or null).
   patterns: [],
@@ -313,7 +326,9 @@ const initialState = {
 
 // Category keys, split by preset tier. Must stay in sync with the Go side
 // (engine/pipeline.go AllPIICategories / AllEntityCategories).
-export const HARD_PII_CATEGORIES = ["email", "url", "iban", "vat", "matricule", "phone"];
+export const HARD_PII_CATEGORIES = [
+  "email", "url", "iban", "bic", "vat", "matricule", "phone",
+];
 // COUNTRIES_BY_CODE is the membership check setDocumentCountry needs: a Set
 // rather than a repeated find(), and built once at module load.
 const COUNTRIES_BY_CODE = new Set(COUNTRIES.map((c) => c.code));
@@ -327,13 +342,19 @@ export const EXTENDED_PII_CATEGORIES = [
   "credit_card", "uk_nhs", "ip_address", "mac_address",
   "crypto", "database_uri", "de_steuer_id", "es_nif",
 ];
-export const ADVANCED_PII_CATEGORIES = ["amount", "date"];
+// The advanced regex categories: amounts, dates, and the two LOCATION shapes a
+// pattern can anchor (CLAUDE.md §5 puts location names at advanced). A street
+// address and a postal code are country-scoped in engine/country.go, so outside
+// their countries the row renders DISABLED rather than hidden.
+export const ADVANCED_PII_CATEGORIES = ["amount", "date", "address", "postal_code"];
 // The categories a DETECTOR or a manual entry can produce, split by the preset
 // tier that first switches them on. Together they mirror
 // engine.AllEntityCategories, enforced by ../category_parity_test.go.
 export const SOFT_NAME_CATEGORIES = ["entity_names", "project_names", "identifier_names"];
 export const MEDIUM_NAME_CATEGORIES = ["person_names", "product_names", "brand_names"];
-export const ADVANCED_NAME_CATEGORIES = ["other_names"];
+export const ADVANCED_NAME_CATEGORIES = [
+  "other_names", "country_names", "nationality_names", "business_sector_names",
+];
 export const NAME_CATEGORIES = [
   ...SOFT_NAME_CATEGORIES, ...MEDIUM_NAME_CATEGORIES, ...ADVANCED_NAME_CATEGORIES,
 ];
@@ -2811,6 +2832,10 @@ export function startNewBatch() {
     metaReview: {},
     exportDir: state.exportDir,
     notice: null,
+    // The defined terms were read out of the documents, and a cleared batch has
+    // none: a term with no document behind it would go on suppressing a value
+    // nothing defines.
+    definedTerms: [],
     // The pictures belong to the documents, and a cleared batch has none.
     ...forgetImages(),
   });
@@ -3140,6 +3165,17 @@ export function addAllowTerm(term) {
 
 export function removeAllowTerm(term) {
   setState({ allowlist: state.allowlist.filter((x) => x.toLowerCase() !== term.toLowerCase()) });
+}
+
+/**
+ * setDefinedTerms(terms) replaces the list Go read out of the documents. It is
+ * the whole list, never a merge: the list describes the documents currently
+ * imported, so a term from a document that has since been removed must go with
+ * it.
+ * @param {Array<object>} terms rows of {term, idiom, document}
+ */
+export function setDefinedTerms(terms) {
+  setState({ definedTerms: Array.isArray(terms) ? terms : [] });
 }
 
 /** clearAllowlist() empties the never-anonymise list in one action and returns

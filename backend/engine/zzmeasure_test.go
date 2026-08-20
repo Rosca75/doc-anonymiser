@@ -55,7 +55,18 @@ func TestMeasureBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	folded := FoldValueFamilies(sugs, allow)
+	raw, err := os.ReadFile("../testdata/framework_agreement.docx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs, _ := LoadAll("framework_agreement.docx", raw)
+	sig := DiscoverFromSignals(SignalDiscoveryInput{Documents: docs, Allow: allow, Country: CountryLU})
+	fmt.Println("=== SIGNAL suggestions:", len(sig))
+	for _, x := range sig {
+		fmt.Printf("   %-16s %-22s %v\n", x.Category, x.MainText, x.Spellings)
+	}
+
+	folded := FoldValueFamilies(MergeSuggestions(sugs, sig), allow)
 	fmt.Println("=== FOLDED suggestions:", len(folded))
 	for _, s := range folded {
 		fmt.Printf("   %-22s %-18s %.2f  %v\n", s.Category, s.MainText, s.Confidence, s.Spellings)

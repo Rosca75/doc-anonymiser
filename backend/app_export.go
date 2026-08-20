@@ -608,6 +608,9 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 		// The picture decisions travel with the session, or a restored session
 		// would export the client logo the user had boxed.
 		ImageDecisions: a.imageDecisionsSnapshot(),
+		// The defined terms travel too, because the user may have deleted
+		// individual entries: re-deriving them on load would bring them back.
+		DefinedTerms: a.definedTermsSnapshot(),
 	})
 	if err != nil {
 		return err
@@ -696,6 +699,7 @@ func (a *App) applyRestoredSession(session engine.Session) ([]error, error) {
 	// The values the user removed. They restore with the session, or
 	// every one of them silently comes back on the next run.
 	a.removed = append([]engine.RemovedValue(nil), session.RemovedValues...)
+	a.definedTerms = append([]engine.DefinedTerm(nil), session.DefinedTerms...)
 	// The picture decisions, restored for the same reason: without them a
 	// reloaded session exports every picture as it came in, silently, while the
 	// screen the user saved from said they were anonymised.
