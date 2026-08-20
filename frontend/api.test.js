@@ -17,6 +17,7 @@ import {
   valuePlaceholders, setValuePlaceholder, removeValue, restoreValue,
   listRemovedValues, validateValues, checkIntersections,
   copyText, probeOllama, applySettings,
+  listDocumentImages, imageThumbnail,
 } from "./api.js";
 
 /**
@@ -273,4 +274,62 @@ test("applySettings resolves to the same flat probe shape", async () => {
     assert.equal(got.status, undefined, "the nested wrapper must not survive api.js");
   });
   assert.deepEqual(seen, [{ model: "gone:1" }]);
+});
+
+test("listDocumentImages passes the document name and returns the inventory shape", async () => {
+  // The image half of the Anonymise step reads the IMPORTED document, so the
+  // only argument is its name: no run, no result document.
+  const asked = [];
+  const app = {
+    ListDocumentImages: async (name) => {
+      asked.push(name);
+      return {
+        applicable: true,
+        assets: [{
+          id: "ppt/media/image1.png", name: "Alpine Trust logo", format: "png",
+          bytes: 266, width: 120, height: 80, linked: false,
+          occurrences: [{ part: "ppt/slides/slide1.xml", ordinal: 0, kind: "picture", location: "Slide 1" }],
+        }],
+        warnings: [],
+      };
+    },
+  };
+  await withStubBridge(app, () => ({}), async () => {
+    const inv = await listDocumentImages("deck.pptx");
+    assert.deepEqual(asked, ["deck.pptx"]);
+    assert.equal(inv.applicable, true);
+    assert.equal(inv.assets[0].id, "ppt/media/image1.png");
+    assert.equal(inv.assets[0].occurrences[0].location, "Slide 1");
+  });
+});
+
+test("listDocumentImages resolves a format with no image review, it does not reject", async () => {
+  // "This format has no image review" is an ANSWER, carried as a reason CODE
+  // the frontend maps to its own copy. A rejection would make the screen
+  // handle a normal state as a failure.
+  const app = {
+    ListDocumentImages: async () => ({ applicable: false, reason: "pdf_images_removed", assets: [] }),
+  };
+  await withStubBridge(app, () => ({}), async () => {
+    const inv = await listDocumentImages("report.pdf");
+    assert.equal(inv.applicable, false);
+    assert.equal(inv.reason, "pdf_images_removed");
+    assert.deepEqual(inv.assets, []);
+  });
+});
+
+test("imageThumbnail passes the document, the asset and the size", async () => {
+  const asked = [];
+  const app = {
+    ImageThumbnail: async (docName, assetId, maxPx) => {
+      asked.push([docName, assetId, maxPx]);
+      return { dataUrl: "data:image/png;base64,AAAA", width: 40, height: 30 };
+    },
+  };
+  await withStubBridge(app, () => ({}), async () => {
+    const thumb = await imageThumbnail("deck.pptx", "ppt/media/image1.png", 40);
+    assert.deepEqual(asked, [["deck.pptx", "ppt/media/image1.png", 40]]);
+    assert.match(thumb.dataUrl, /^data:image\/png;base64,/);
+    assert.equal(thumb.width, 40);
+  });
 });

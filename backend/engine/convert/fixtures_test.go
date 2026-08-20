@@ -16,6 +16,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
 	"os"
 	"path/filepath"
 	"sort"
@@ -49,6 +53,10 @@ func generateFixture(t *testing.T, name string) []byte {
 		return buildDocxFixture(t)
 	case "deck.pptx":
 		return buildPptxFixture(t)
+	case "images.docx":
+		return buildImagesDocxFixture(t)
+	case "images.pptx":
+		return buildImagesPptxFixture(t)
 	case "workbook.xlsx":
 		return buildXlsxFixture(t)
 	case "textlayer.pdf":
@@ -316,4 +324,202 @@ func assemblePDF(content string) []byte {
 	}
 	fmt.Fprintf(&buf, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xrefPos)
 	return buf.Bytes()
+}
+
+// --- image fixtures ------------------------------------------------------
+
+// The two image fixtures exist for engine/imaging's scan, not for the
+// converters: they are generated here because this is where the repository's
+// binary fixtures are generated, and a second generator would be a second set
+// of rules for what a fixture looks like.
+//
+// Their pictures are drawn in code with image/png and image/jpeg so the bytes
+// are reproducible, and their SVG is a literal string. Content is obviously
+// fictional and in English and French, per docs/TESTING.md.
+
+// solidPNG encodes a flat colour PNG of the given size.
+func solidPNG(t *testing.T, w, h int, c color.RGBA) string {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.Set(x, y, c)
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("could not encode the PNG fixture picture: %v", err)
+	}
+	return buf.String()
+}
+
+// solidJPEG encodes a flat colour JPEG of the given size.
+func solidJPEG(t *testing.T, w, h int, c color.RGBA) string {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.Set(x, y, c)
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatalf("could not encode the JPEG fixture picture: %v", err)
+	}
+	return buf.String()
+}
+
+// fixtureSVG is the vector picture of the two image fixtures. It states a
+// viewBox and no width or height, which is the shape an Office-exported SVG
+// usually has.
+const fixtureSVG = `<?xml version="1.0" encoding="UTF-8"?>` +
+	`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 150">` +
+	`<rect width="300" height="150" fill="#1f77b4"/>` +
+	`<text x="20" y="80" fill="#ffffff">Schéma Borealis</text></svg>`
+
+// buildImagesPptxFixture assembles a deck whose pictures exercise every rule
+// the scan has: the same picture used on two slides, a picture on the master,
+// an SVG picture (a PNG fallback plus the SVG in an extension), and a picture
+// on a HIDDEN slide.
+func buildImagesPptxFixture(t *testing.T) []byte {
+	t.Helper()
+	const ns = ` xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"` +
+		` xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"` +
+		` xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"` +
+		` xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main"`
+
+	// pic builds one picture shape: a name, a blip pointing at a relationship,
+	// and a drawn frame in EMU.
+	pic := func(name, rID, extra string) string {
+		return `<p:pic><p:nvPicPr><p:cNvPr id="4" name="` + name + `" descr="` + name + `"/></p:nvPicPr>` +
+			`<p:blipFill><a:blip r:embed="` + rID + `">` + extra + `</a:blip></p:blipFill>` +
+			`<p:spPr><a:xfrm><a:ext cx="1828800" cy="1219200"/></a:xfrm></p:spPr></p:pic>`
+	}
+	svgExt := `<a:extLst><a:ext uri="{96DAC541-7B7A-43D3-8B79-37D633B846F1}">` +
+		`<asvg:svgBlip r:embed="rId3"/></a:ext></a:extLst>`
+	text := func(body string) string {
+		return `<p:sp><p:nvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:txBody>` +
+			`<a:p><a:r><a:t>` + body + `</a:t></a:r></a:p></p:txBody></p:sp>`
+	}
+
+	slide1 := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+		`<p:sld` + ns + `><p:cSld><p:spTree>` + text("Alpine Trust review") +
+		pic("Alpine Trust logo", "rId1", "") +
+		pic("Schéma Borealis", "rId2", svgExt) +
+		`</p:spTree></p:cSld></p:sld>`
+
+	slide2 := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+		`<p:sld` + ns + `><p:cSld><p:spTree>` + text("Prochaines étapes") +
+		`</p:spTree></p:cSld></p:sld>`
+
+	// Slide 3 uses the SAME logo as slide 1: one asset, two occurrences.
+	slide3 := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+		`<p:sld` + ns + `><p:cSld><p:spTree>` + text("Governance") +
+		pic("Alpine Trust logo", "rId1", "") +
+		`</p:spTree></p:cSld></p:sld>`
+
+	// Slide 4 is hidden, and its picture is the one a reviewer most needs told
+	// about, because it is the one they cannot reach by scrolling.
+	slide4 := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+		`<p:sld` + ns + ` show="0"><p:cSld><p:spTree>` + text("Annexe retirée") +
+		pic("Photo équipe", "rId1", "") +
+		`</p:spTree></p:cSld></p:sld>`
+
+	master := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+		`<p:sldMaster` + ns + `><p:cSld><p:spTree>` +
+		pic("Watermark", "rId1", "") +
+		`</p:spTree></p:cSld></p:sldMaster>`
+
+	rels := func(pairs ...[2]string) string {
+		out := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+			`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`
+		for _, p := range pairs {
+			out += `<Relationship Id="` + p[0] + `" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="` + p[1] + `"/>`
+		}
+		return out + `</Relationships>`
+	}
+
+	return buildZip(t, map[string]string{
+		"[Content_Types].xml": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="jpeg" ContentType="image/jpeg"/><Default Extension="svg" ContentType="image/svg+xml"/></Types>`,
+		"_rels/.rels":                                  `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>`,
+		"ppt/slides/slide1.xml":                        slide1,
+		"ppt/slides/slide2.xml":                        slide2,
+		"ppt/slides/slide3.xml":                        slide3,
+		"ppt/slides/slide4.xml":                        slide4,
+		"ppt/slideMasters/slideMaster1.xml":            master,
+		"ppt/slides/_rels/slide1.xml.rels":             rels([2]string{"rId1", "../media/image1.png"}, [2]string{"rId2", "../media/image2.png"}, [2]string{"rId3", "../media/image3.svg"}),
+		"ppt/slides/_rels/slide3.xml.rels":             rels([2]string{"rId1", "../media/image1.png"}),
+		"ppt/slides/_rels/slide4.xml.rels":             rels([2]string{"rId1", "../media/image5.png"}),
+		"ppt/slideMasters/_rels/slideMaster1.xml.rels": rels([2]string{"rId1", "../media/image4.jpeg"}),
+		"ppt/media/image1.png":                         solidPNG(t, 120, 80, color.RGBA{R: 220, G: 40, B: 40, A: 255}),
+		"ppt/media/image2.png":                         solidPNG(t, 300, 150, color.RGBA{R: 31, G: 119, B: 180, A: 255}),
+		"ppt/media/image3.svg":                         fixtureSVG,
+		"ppt/media/image4.jpeg":                        solidJPEG(t, 200, 200, color.RGBA{R: 40, G: 40, B: 220, A: 255}),
+		"ppt/media/image5.png":                         solidPNG(t, 64, 64, color.RGBA{R: 40, G: 180, B: 90, A: 255}),
+	})
+}
+
+// buildImagesDocxFixture assembles a document whose pictures cover the shapes
+// Word writes: an inline picture, a floating one, the legacy VML form still
+// produced by pasted content, one after a cached page break (so it is on page
+// 2), and one in a header.
+func buildImagesDocxFixture(t *testing.T) []byte {
+	t.Helper()
+	const ns = ` xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"` +
+		` xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"` +
+		` xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"` +
+		` xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"` +
+		` xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"` +
+		` xmlns:v="urn:schemas-microsoft-com:vml"`
+
+	// drawing builds an inline or floating picture, which differ only in their
+	// wrapper element.
+	drawing := func(wrapper, name, rID string) string {
+		return `<w:p><w:r><w:drawing><wp:` + wrapper + `><wp:extent cx="2743200" cy="1828800"/>` +
+			`<wp:docPr id="1" name="` + name + `"/><a:graphic><a:graphicData>` +
+			`<pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="` + name + `"/></pic:nvPicPr>` +
+			`<pic:blipFill><a:blip r:embed="` + rID + `"/></pic:blipFill></pic:pic>` +
+			`</a:graphicData></a:graphic></wp:` + wrapper + `></w:drawing></w:r></w:p>`
+	}
+
+	documentXML := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+		`<w:document` + ns + `><w:body>` +
+		`<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Alpine Trust engagement</w:t></w:r></w:p>` +
+		drawing("inline", "Alpine Trust logo", "rId1") +
+		drawing("anchor", "Site photo", "rId2") +
+		// The legacy VML form: no DrawingML blip at all.
+		`<w:p><w:r><w:pict><v:shape id="_x0000_i1025"><v:imagedata r:id="rId3"/></v:shape></w:pict></w:r></w:p>` +
+		// Word's cached break: everything after it is on page 2.
+		`<w:p><w:r><w:lastRenderedPageBreak/><w:t>Annexe: réunion à Luxembourg</w:t></w:r></w:p>` +
+		drawing("inline", "Organigramme", "rId4") +
+		`</w:body></w:document>`
+
+	headerXML := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+		`<w:hdr` + ns + `>` + drawing("inline", "Letterhead", "rId1") + `</w:hdr>`
+
+	rels := func(pairs ...[2]string) string {
+		out := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+			`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`
+		for _, p := range pairs {
+			out += `<Relationship Id="` + p[0] + `" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="` + p[1] + `"/>`
+		}
+		return out + `</Relationships>`
+	}
+
+	return buildZip(t, map[string]string{
+		"[Content_Types].xml": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="jpeg" ContentType="image/jpeg"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`,
+		"_rels/.rels": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`,
+		"word/document.xml":            documentXML,
+		"word/header1.xml":             headerXML,
+		"word/_rels/document.xml.rels": rels([2]string{"rId1", "media/image1.png"}, [2]string{"rId2", "media/image2.jpeg"}, [2]string{"rId3", "media/image3.png"}, [2]string{"rId4", "media/image4.png"}),
+		"word/_rels/header1.xml.rels":  rels([2]string{"rId1", "media/image5.png"}),
+		"word/media/image1.png":        solidPNG(t, 120, 80, color.RGBA{R: 220, G: 40, B: 40, A: 255}),
+		"word/media/image2.jpeg":       solidJPEG(t, 200, 200, color.RGBA{R: 40, G: 40, B: 220, A: 255}),
+		"word/media/image3.png":        solidPNG(t, 48, 48, color.RGBA{R: 90, G: 90, B: 90, A: 255}),
+		"word/media/image4.png":        solidPNG(t, 300, 200, color.RGBA{R: 40, G: 180, B: 90, A: 255}),
+		"word/media/image5.png":        solidPNG(t, 600, 100, color.RGBA{R: 10, G: 10, B: 10, A: 255}),
+	})
 }

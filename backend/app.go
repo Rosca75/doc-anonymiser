@@ -21,6 +21,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"doc-anonymiser/backend/engine"
+	"doc-anonymiser/backend/engine/imaging"
 	"doc-anonymiser/backend/ollama"
 )
 
@@ -216,6 +217,15 @@ type App struct {
 	// because Allowlist.Contains is the single veto every span producer already
 	// consults and a second veto is a seventh caller somebody forgets.
 	removed []engine.RemovedValue
+	// imageScans caches one image inventory per imported document
+	// (app_images.go). The Anonymise step's IMAGE half asks on every repaint,
+	// and re-walking a sixty-slide archive per repaint is a cost the user feels.
+	//
+	// It is keyed by document NAME because that is what the frontend holds, and
+	// it is dropped by every path that can change the bytes behind it: a new
+	// import, a removal, and both resets. A cached scan that outlived its
+	// document would list the pictures of a file the user has replaced.
+	imageScans map[string]imaging.Inventory
 }
 
 // allowlistFor builds the allowlist every pass and every export must obey: the
@@ -314,6 +324,9 @@ func (a *App) ResetRun() {
 	a.results = nil
 	a.lastReq = nil
 	a.removed = nil
+	// The scans survive a run reset: they describe the IMPORTED bytes, which a
+	// run does not touch. Only a change to the documents themselves invalidates
+	// them.
 }
 
 // ResetSession returns the whole session to the state a freshly launched app is
@@ -340,6 +353,7 @@ func (a *App) ResetSession() error {
 	a.results = nil
 	a.lastReq = nil
 	a.removed = nil
+	a.forgetImageScansLocked()
 	a.settings = defaultSettings()
 	// The client is rebuilt from the default port and model so a session that
 	// changed the port does not leave the next one probing the wrong one.
@@ -570,6 +584,7 @@ func (a *App) importPaths(paths []string) ImportResult {
 // same name (re-importing a corrected file should not duplicate it).
 // Caller holds a.mu.
 func (a *App) upsertDocLocked(doc engine.Document) {
+	a.forgetImageScansLocked()
 	for i, existing := range a.docs {
 		if existing.Name == doc.Name {
 			a.docs[i] = doc
@@ -591,6 +606,7 @@ func (a *App) RemoveDocument(name string) ImportResult {
 		}
 	}
 	a.docs = kept
+	a.forgetImageScansLocked()
 	return ImportResult{Documents: a.documentInfosLocked()}
 }
 

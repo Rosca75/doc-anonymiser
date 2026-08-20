@@ -10,9 +10,9 @@ owns the backend detail.
 
 All Go business logic and the Wails bound-app layer, as **package `backend`**
 (plus the sub-packages `engine`, `engine/convert`, `engine/exportfmt`,
-`engine/ooxml`, `ollama`). Pure Go, **no CGo, ever** (pattern P0). Standard library first; no
-new dependency without adding it to the pinned-versions table in the root
-`CLAUDE.md`.
+`engine/imaging`, `engine/ooxml`, `ollama`). Pure Go, **no CGo, ever** (pattern
+P0). Standard library first; no new dependency without adding it to the
+pinned-versions table in the root `CLAUDE.md`.
 
 The one thing that is NOT here: `main.go`, the `//go:embed all:frontend`
 directive and `wails.json` stay at the repo root, because `go:embed` cannot
@@ -21,10 +21,10 @@ or above it. `main.go` imports this package and calls `backend.NewApp()`.
 
 ## The bound-app layer (`app*.go`)
 
-- `app.go`, `app_values.go`, `app_detect.go`, `app_export.go`, `app_run.go`
-  hold the `App` struct — the ONLY seam between the frontend and Go. Every method is a thin
-  adapter that delegates straight to `engine/*` or `ollama/*`. **No business
-  logic in these files.**
+- `app.go`, `app_values.go`, `app_detect.go`, `app_export.go`, `app_run.go`,
+  `app_images.go` hold the `App` struct — the ONLY seam between the frontend
+  and Go. Every method is a thin adapter that delegates straight to `engine/*`
+  or `ollama/*`. **No business logic in these files.**
 - `App` is the only place allowed to touch user-chosen filesystem paths
   (dialogs, drag-drop): it reads the bytes ONCE and hands `[]byte` + filename
   to the engine. The engine never sees a path. **Originals are immutable** —
@@ -227,6 +227,46 @@ guessing, and the guess changes what the next run suggests. A corrupt
 key (two entries claiming one value) is refused the same way, as an ERROR:
 these functions run behind bound methods on a file the user picked, so
 panicking would take the application down on a bad file.
+
+## Pictures (`engine/imaging/`)
+
+A package of its own, beside `convert/` and `exportfmt/`, because BOTH of them
+need it and neither may own it: the scan reads the bytes captured at IMPORT and
+the treatments write the bytes an EXPORT produces, and the two are deliberately
+independent packages. Its whole dependency list is the standard library
+(`archive/zip`, `encoding/xml`, `image`, `image/png`, `image/jpeg` and
+arithmetic): the owner decided against a new Go module for pictures, so what
+this package cannot do with the standard library is something the feature does
+not do.
+
+Two nouns carry the model, and keeping them apart is what makes the review one
+question per picture:
+
+- an **Asset** is one picture FILE inside the archive (`ppt/media/image3.png`).
+  It is what carries bytes and what a decision attaches to.
+- an **Occurrence** is one PLACE that asset is used. A logo on five slides is
+  one Asset with five Occurrences, and it is `Part` plus `Ordinal` that
+  identifies the element, never a byte offset: an export has to be able to
+  re-scan its own rewritten bytes and still find the same picture.
+
+`ScanDocx` and `ScanPptx` are one walker and two profiles. The formats differ
+only in which parts are walked and what a place is CALLED; a picture is a
+DrawingML blip (or the legacy VML `v:imagedata` Word still writes) in both, and
+keeping the walk shared is what lets an export find exactly the element the scan
+listed. `Format` is sniffed from the BYTES rather than the extension, and
+`Measure` reads headers only: answering "what size is this" must not cost what
+decoding a forty-megapixel screenshot costs. `Kind` (picture, fill, background)
+is what ENCLOSES the blip, a separate question from what the picture is, because
+it decides whether removing it can delete an element at all.
+
+`Inventory.Reason` and `Inventory.Warnings` are CODES, never sentences: copy
+lives in `frontend/copy.js`, and a sentence returned from Go is a user-visible
+string outside the place the interface's copy is reviewed.
+
+The bound layer (`app_images.go`) caches one inventory per document, because the
+review screen asks on every repaint, and drops the cache wherever the bytes
+behind it can change (import, re-import, removal, session reset). Previews are
+NOT cached: they are the largest thing the feature holds.
 
 ## Converters (`engine/convert/`) and same-format export (`engine/exportfmt/`)
 

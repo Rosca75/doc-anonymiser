@@ -304,6 +304,78 @@ collapsed removed list with restore.
 | `listRemovedValues()` | — | `[{mainText, category, placeholder, spellings}]` for the collapsed removed list |
 | `validateValues(request)` | `{values, patterns, allowTerms}` | `{blocking, warnings}`, each `[{kind, severity, message}]`. Blocking conflicts refuse the run, so this is what a screen calls to say so before the user presses it |
 
+## Anonymise: images
+
+The Anonymise step's IMAGE half reads these two. They answer about the
+**imported** document and need no run: the pictures live in the bytes captured
+at import, and the user reviews them before as well as after the text is
+anonymised.
+
+| `api.js` wrapper | Args | Resolves to |
+|---|---|---|
+| `listDocumentImages(name)` | imported document name | `Inventory {applicable, reason, assets, warnings}`. Rejects only for a document that is not imported, or a file that cannot be read as an archive |
+| `imageThumbnail(docName, assetId, maxPx)` | asset ID from the inventory; `maxPx` 0 asks for the default | `{dataUrl, width, height}` |
+
+An **image asset** is one picture FILE inside the document archive, and it is
+what a decision attaches to. An **image occurrence** is one PLACE that asset is
+used. A logo on five slides is ONE asset with five occurrences, so it is one
+row and one question.
+
+```json
+{
+  "applicable": true,
+  "assets": [
+    {
+      "id": "ppt/media/image1.png",
+      "name": "Alpine Trust logo",
+      "format": "png",
+      "bytes": 26144,
+      "width": 120, "height": 80,
+      "companion": "",
+      "linked": false,
+      "occurrences": [
+        { "part": "ppt/slides/slide1.xml", "ordinal": 0, "kind": "picture",
+          "location": "Slide 1", "displayCX": 1828800, "displayCY": 1219200 }
+      ]
+    }
+  ],
+  "warnings": ["unreadable_part"]
+}
+```
+
+- `id` is the archive part path, and it is what identifies an asset across
+  calls and across re-imports of the same file.
+- `format` is `"png"`, `"jpeg"`, `"svg"` or `"other"`, sniffed from the BYTES
+  rather than from the extension: a part named `.png` holding JPEG bytes is
+  common enough in real documents to matter.
+- `kind` is `"picture"`, `"fill"` or `"background"`: what ENCLOSES the picture,
+  which is a separate question from what it is.
+- `location` is ready to print, in the document's own words ("Slide 4",
+  "Page 2", "Header", "Slide master", "Hidden slide 7", "Notes on slide 2").
+  Go builds it because only the scan knows which part an occurrence came from.
+- `companion` is the SVG part of an SVG picture, whose `id` stays the PNG
+  fallback Office writes beside it, because that is what the relationship
+  points at.
+- `linked` marks a picture that lives OUTSIDE the file, so there are no bytes
+  here to change.
+
+**`applicable: false` is an ANSWER, not a failure.** `reason` is a CODE the
+frontend maps to its own copy, never a sentence: `"pdf_images_removed"` (the
+PDF export regenerates the file from text, so a source PDF's pictures are
+already absent from everything the application writes) and
+`"format_not_supported"` (xlsx, csv, txt, md). `warnings` are codes too:
+`"unreadable_part"` and `"linked_images"`.
+
+**An SVG preview is rendered through `<img src="data:image/svg+xml;base64,...">`
+and never inlined into the page as an `<svg>` element.** An `<img>` context
+executes no script and an inlined element does. Raster previews are thumbnailed
+in Go with a box filter and arrive as PNG whatever the source encoding was.
+
+The inventory is cached per document on the Go side, because the screen asks on
+every repaint. The previews are NOT: they are the largest thing this feature
+holds, and keeping every one of them for a two-hundred-picture deck is how a
+desktop application starts swapping.
+
 ## Run screen (pipeline)
 
 | `api.js` wrapper | Args | Resolves to |
