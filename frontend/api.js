@@ -353,7 +353,8 @@ export async function checkIntersections(request) {
  * document:
  *
  *   {applicable, reason, assets: [{id, name, format, bytes, width, height,
- *                                  companion, linked, occurrences: [...]}],
+ *                                  companion, linked, occurrences: [...],
+ *                                  decision: {treatment, boxText, blurStrength}}],
  *    warnings: [code]}
  *
  * It reads the imported document, so it needs no run: the pictures live in the
@@ -380,6 +381,45 @@ export async function listDocumentImages(name) {
  */
 export async function imageThumbnail(docName, assetId, maxPx) {
   return bridge().ImageThumbnail(docName, assetId, maxPx);
+}
+
+/**
+ * setImageDecision(docName, assetId, decision) records what happens to one
+ * picture on export: {treatment, boxText, blurStrength}.
+ *
+ * treatment is "keep", "box", "blur" or "remove". A KEEP is the absence of a
+ * decision, so sending one clears whatever was stored: the Go side holds only
+ * what the user changed.
+ *
+ * It REJECTS a decision the picture cannot carry (a blur on an SVG, a box on a
+ * format the application cannot redraw, a box text over 120 characters), with the
+ * reason and the way out of it. The refusal belongs beside the control that
+ * caused it, so show it there rather than at export time.
+ */
+export async function setImageDecision(docName, assetId, decision) {
+  return bridge().SetImageDecision(docName, assetId, decision);
+}
+
+/**
+ * previewImageTreatment(docName, assetId, decision, maxPx) resolves to
+ * {dataUrl, width, height}: what the export WILL produce for this picture under
+ * this decision.
+ *
+ * It runs the real treatment and the real thumbnailer on the Go side, so the
+ * preview cannot promise something the export does not do. Nothing is recorded:
+ * this is a question, not an answer, so call it while the user is still choosing.
+ */
+export async function previewImageTreatment(docName, assetId, decision, maxPx) {
+  return bridge().PreviewImageTreatment(docName, assetId, decision, maxPx);
+}
+
+/**
+ * resetImageDecisions(docName) drops every picture decision for one document:
+ * the "keep them all" bulk action. It rejects only for a document that is not
+ * imported.
+ */
+export async function resetImageDecisions(docName) {
+  return bridge().ResetImageDecisions(docName);
 }
 
 // --- Run screen -------------------------------------------------

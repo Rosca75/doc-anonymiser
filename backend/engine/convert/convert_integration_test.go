@@ -152,3 +152,21 @@ func TestPDFScannedRejected(t *testing.T) {
 		t.Errorf("error = %q, want exactly %q", err.Error(), ErrScannedPDF)
 	}
 }
+
+// TestEveryCommittedFixtureIsGeneratable materialises every fixture this package
+// knows how to build.
+//
+// It is what makes the instruction the other packages print ("run
+// `go test -tags=integration ./backend/engine/convert/` once and commit what it
+// writes") true. A fixture no test in this package asks for is never generated,
+// so a reader following that message would find nothing had appeared and no
+// error explaining why.
+func TestEveryCommittedFixtureIsGeneratable(t *testing.T) {
+	for _, name := range allFixtures {
+		t.Run("extraction/fixture_"+name, func(t *testing.T) {
+			if raw := fixture(t, name); len(raw) == 0 {
+				t.Errorf("the fixture %s is empty", name)
+			}
+		})
+	}
+}

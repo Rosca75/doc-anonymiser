@@ -101,7 +101,7 @@ func (a *App) sameFormatBytes(name, ext string) ([]byte, error) {
 
 	switch ext {
 	case "docx":
-		data, extras, _, err := exportfmt.ExportDocx(src.Raw, cfg)
+		data, extras, _, _, err := exportfmt.ExportDocx(src.Raw, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -112,7 +112,7 @@ func (a *App) sameFormatBytes(name, ext string) ([]byte, error) {
 		}
 		return data, nil
 	case "pptx":
-		data, _, err := exportfmt.ExportPptx(src.Raw, cfg)
+		data, _, _, err := exportfmt.ExportPptx(src.Raw, cfg)
 		return data, err
 	case "xlsx":
 		data, _, err := exportfmt.ExportXlsx(src.Raw, cfg)
@@ -241,6 +241,11 @@ func (a *App) sameFormatConfig(name string) (exportfmt.Config, *engine.Document,
 		Country:    settings.Country,
 		Allowlist:  allow,
 		Registry:   reg,
+		// The picture decisions come from the App and not from the request, for
+		// the same reason the removals do: this config is what BOTH export paths
+		// build from, and a decision carried in a request would be honoured by
+		// one of them and forgotten by the other.
+		Images: a.imagePlanFor(name),
 	}, src, nil
 }
 
@@ -531,6 +536,9 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 		PlaceholderOverrides: overrides,
 		RemovedValues:        removed,
 		RetiredPlaceholders:  retired,
+		// The picture decisions travel with the session, or a restored session
+		// would export the client logo the user had boxed.
+		ImageDecisions: a.imageDecisionsSnapshot(),
 	})
 	if err != nil {
 		return err
@@ -619,6 +627,10 @@ func (a *App) applyRestoredSession(session engine.Session) ([]error, error) {
 	// The values the user removed. They restore with the session, or
 	// every one of them silently comes back on the next run.
 	a.removed = append([]engine.RemovedValue(nil), session.RemovedValues...)
+	// The picture decisions, restored for the same reason: without them a
+	// reloaded session exports every picture as it came in, silently, while the
+	// screen the user saved from said they were anonymised.
+	a.imageDecisions = restoredImageDecisions(session.ImageDecisions)
 	a.mu.Unlock()
 
 	return overrideFailures, nil

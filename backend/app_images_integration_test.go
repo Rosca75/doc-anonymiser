@@ -11,8 +11,11 @@
 package backend
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/base64"
 	"image"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +25,7 @@ import (
 	_ "image/png"
 
 	"doc-anonymiser/backend/engine"
+	"doc-anonymiser/backend/engine/imaging"
 )
 
 // importFixture loads one committed fixture the way an import does, so the test
@@ -153,4 +157,90 @@ func TestExportsAreUntouchedByTheImageScan(t *testing.T) {
 				"import: they are what every export is produced from")
 		}
 	})
+}
+
+// TestSameFormatExportHonoursTheImageDecisions is the seam that matters: a
+// decision recorded through the bound layer has to reach the file the user saves.
+//
+// The store lives on the App rather than travelling in a request for exactly this
+// reason: the export builds its own config, so a decision carried only in a
+// request would be honoured by one path and forgotten by the other.
+func TestSameFormatExportHonoursTheImageDecisions(t *testing.T) {
+	t.Run("roundtrip/images_bound_export_applies_decisions", func(t *testing.T) {
+		app := importFixture(t, "images.pptx")
+		if _, err := app.FastRerun(RunRequest{
+			Values:     []engine.Value{{Category: "entity_names", MainText: "Alpine Trust"}},
+			Categories: engine.PresetSelection(engine.LevelMedium),
+		}); err != nil {
+			t.Fatalf("the run the export replays failed: %v", err)
+		}
+
+		before, err := app.sameFormatBytes("images.pptx", "pptx")
+		if err != nil {
+			t.Fatalf("the export with no decisions failed: %v", err)
+		}
+
+		const asset = "ppt/media/image1.png"
+		if err := app.SetImageDecision("images.pptx", asset,
+			imaging.Decision{Treatment: imaging.TreatmentBox, BoxText: "Client logo removed"}); err != nil {
+			t.Fatalf("SetImageDecision: %v", err)
+		}
+		after, err := app.sameFormatBytes("images.pptx", "pptx")
+		if err != nil {
+			t.Fatalf("the export with one decision failed: %v", err)
+		}
+		if bytes.Equal(before, after) {
+			t.Fatal("the decision did not reach the exported file; the store and the export " +
+				"disagree about what the user decided")
+		}
+
+		original := archiveEntry(t, app.docs[0].Raw, asset)
+		exported := archiveEntry(t, after, asset)
+		if bytes.Equal(original, exported) {
+			t.Error("the boxed picture's original bytes are still in the saved file")
+		}
+		if imaging.Sniff(exported) != imaging.FormatPNG {
+			t.Errorf("the replacement is a %s, want png: the archive declares the extension's "+
+				"type", imaging.Sniff(exported))
+		}
+
+		// And clearing the decisions puts the export back exactly where it was.
+		if err := app.ResetImageDecisions("images.pptx"); err != nil {
+			t.Fatalf("ResetImageDecisions: %v", err)
+		}
+		restored, err := app.sameFormatBytes("images.pptx", "pptx")
+		if err != nil {
+			t.Fatalf("the export after the reset failed: %v", err)
+		}
+		if !bytes.Equal(restored, before) {
+			t.Error("keeping every picture again did not restore the original export, so the " +
+				"bulk action leaves something behind")
+		}
+	})
+}
+
+// archiveEntry reads one entry out of an OOXML archive.
+func archiveEntry(t *testing.T, raw []byte, name string) []byte {
+	t.Helper()
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatalf("not a zip archive: %v", err)
+	}
+	for _, f := range zr.File {
+		if f.Name != name {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("could not open %q: %v", name, err)
+		}
+		data, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("could not read %q: %v", name, err)
+		}
+		return data
+	}
+	t.Fatalf("the archive has no entry %q", name)
+	return nil
 }

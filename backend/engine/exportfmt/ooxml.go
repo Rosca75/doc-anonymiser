@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 )
 
 // textNode is one <w:t>/<a:t> content range.
@@ -37,10 +38,42 @@ type textNode struct {
 	decStart         int    // offset in the paragraph's concatenated text
 }
 
-// splice is one raw-byte replacement to apply to the part.
+// splice is one raw-byte replacement to apply to the part. Nil content is a
+// DELETION, which is how the picture pass removes an element.
 type splice struct {
 	rawStart, rawEnd int
 	content          []byte
+}
+
+// applySplices rewrites data with every splice applied.
+//
+// One implementation for both passes over a part, because "replace these byte
+// ranges and touch nothing else" is one operation: a second copy of it is a
+// second place for an off-by-one to live, and the two passes would then disagree
+// about what "untouched" means.
+//
+// The splices are sorted and copied through front to back rather than edited in
+// place, so an earlier splice cannot shift a later one's offsets. Overlapping
+// ranges cannot occur (a text node and a picture element are rewritten in
+// separate passes) and are skipped rather than allowed to corrupt the part.
+func applySplices(data []byte, splices []splice) []byte {
+	if len(splices) == 0 {
+		return data
+	}
+	ordered := append([]splice(nil), splices...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].rawStart < ordered[j].rawStart })
+
+	out := make([]byte, 0, len(data)+256)
+	last := 0
+	for _, s := range ordered {
+		if s.rawStart < last || s.rawEnd > len(data) || s.rawEnd < s.rawStart {
+			continue
+		}
+		out = append(out, data[last:s.rawStart]...)
+		out = append(out, s.content...)
+		last = s.rawEnd
+	}
+	return append(out, data[last:]...)
 }
 
 // rewriteTextPart rewrites every paragraph's text runs in one XML part,
@@ -162,16 +195,7 @@ func rewriteTextPart(data []byte, cfg Config) ([]byte, int, error) {
 	}
 	flushGroup() // text outside any paragraph (defensive)
 
-	if len(splices) == 0 {
-		return data, total, nil
-	}
-
-	// 5. Apply the splices back-to-front so earlier offsets stay valid.
-	out := make([]byte, 0, len(data)+256)
-	out = append(out, data...)
-	for i := len(splices) - 1; i >= 0; i-- {
-		s := splices[i]
-		out = append(out[:s.rawStart], append(append([]byte{}, s.content...), out[s.rawEnd:]...)...)
-	}
-	return out, total, nil
+	// 5. Apply the splices through the shared helper, so both passes over a part
+	// rewrite bytes by exactly one rule.
+	return applySplices(data, splices), total, nil
 }

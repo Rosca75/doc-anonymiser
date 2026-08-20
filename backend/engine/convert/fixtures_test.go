@@ -30,6 +30,19 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
+// allFixtures is every file this package can generate, and therefore every
+// committed fixture in backend/testdata/.
+//
+// It exists so one command materialises them all. Other packages' tests point at
+// `go test -tags=integration ./backend/engine/convert/` when a fixture is
+// missing, and that instruction is only true if something in this package asks
+// for each of them: a fixture nothing here requests is never written, and the
+// message sends the reader in a circle.
+var allFixtures = []string{
+	"report.docx", "deck.pptx", "images.docx", "images.pptx",
+	"workbook.xlsx", "textlayer.pdf", "scanned.pdf",
+}
+
 // fixture returns the named testdata file, generating it first if missing.
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()
@@ -337,36 +350,46 @@ func assemblePDF(content string) []byte {
 // are reproducible, and their SVG is a literal string. Content is obviously
 // fictional and in English and French, per docs/TESTING.md.
 
-// solidPNG encodes a flat colour PNG of the given size.
-func solidPNG(t *testing.T, w, h int, c color.RGBA) string {
+// texturedPNG and texturedJPEG encode a picture of the given size with real
+// DETAIL in it, around the given tint.
+//
+// The detail is load-bearing rather than decorative. A flat colour blurs to
+// itself and re-encodes to the same bytes, so a fixture painted in one colour
+// cannot tell a working redaction from one that did nothing at all: the leak
+// guard in engine/exportfmt would pass on a blur that never ran. The gradient is
+// deterministic, so the fixtures stay reproducible from code.
+func texturedPNG(t *testing.T, w, h int, tint color.RGBA) string {
 	t.Helper()
-	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			img.Set(x, y, c)
-		}
-	}
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
+	if err := png.Encode(&buf, texturedImage(w, h, tint)); err != nil {
 		t.Fatalf("could not encode the PNG fixture picture: %v", err)
 	}
 	return buf.String()
 }
 
-// solidJPEG encodes a flat colour JPEG of the given size.
-func solidJPEG(t *testing.T, w, h int, c color.RGBA) string {
+func texturedJPEG(t *testing.T, w, h int, tint color.RGBA) string {
 	t.Helper()
-	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			img.Set(x, y, c)
-		}
-	}
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+	if err := jpeg.Encode(&buf, texturedImage(w, h, tint), &jpeg.Options{Quality: 90}); err != nil {
 		t.Fatalf("could not encode the JPEG fixture picture: %v", err)
 	}
 	return buf.String()
+}
+
+// texturedImage paints the gradient both helpers share.
+func texturedImage(w, h int, tint color.RGBA) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetRGBA(x, y, color.RGBA{
+				R: uint8((int(tint.R) + x*3) % 256),
+				G: uint8((int(tint.G) + y*5) % 256),
+				B: uint8((int(tint.B) + (x+y)*2) % 256),
+				A: 255,
+			})
+		}
+	}
+	return img
 }
 
 // fixtureSVG is the vector picture of the two image fixtures. It states a
@@ -452,11 +475,11 @@ func buildImagesPptxFixture(t *testing.T) []byte {
 		"ppt/slides/_rels/slide3.xml.rels":             rels([2]string{"rId1", "../media/image1.png"}),
 		"ppt/slides/_rels/slide4.xml.rels":             rels([2]string{"rId1", "../media/image5.png"}),
 		"ppt/slideMasters/_rels/slideMaster1.xml.rels": rels([2]string{"rId1", "../media/image4.jpeg"}),
-		"ppt/media/image1.png":                         solidPNG(t, 120, 80, color.RGBA{R: 220, G: 40, B: 40, A: 255}),
-		"ppt/media/image2.png":                         solidPNG(t, 300, 150, color.RGBA{R: 31, G: 119, B: 180, A: 255}),
+		"ppt/media/image1.png":                         texturedPNG(t, 120, 80, color.RGBA{R: 220, G: 40, B: 40, A: 255}),
+		"ppt/media/image2.png":                         texturedPNG(t, 300, 150, color.RGBA{R: 31, G: 119, B: 180, A: 255}),
 		"ppt/media/image3.svg":                         fixtureSVG,
-		"ppt/media/image4.jpeg":                        solidJPEG(t, 200, 200, color.RGBA{R: 40, G: 40, B: 220, A: 255}),
-		"ppt/media/image5.png":                         solidPNG(t, 64, 64, color.RGBA{R: 40, G: 180, B: 90, A: 255}),
+		"ppt/media/image4.jpeg":                        texturedJPEG(t, 200, 200, color.RGBA{R: 40, G: 40, B: 220, A: 255}),
+		"ppt/media/image5.png":                         texturedPNG(t, 64, 64, color.RGBA{R: 40, G: 180, B: 90, A: 255}),
 	})
 }
 
@@ -516,10 +539,10 @@ func buildImagesDocxFixture(t *testing.T) []byte {
 		"word/header1.xml":             headerXML,
 		"word/_rels/document.xml.rels": rels([2]string{"rId1", "media/image1.png"}, [2]string{"rId2", "media/image2.jpeg"}, [2]string{"rId3", "media/image3.png"}, [2]string{"rId4", "media/image4.png"}),
 		"word/_rels/header1.xml.rels":  rels([2]string{"rId1", "media/image5.png"}),
-		"word/media/image1.png":        solidPNG(t, 120, 80, color.RGBA{R: 220, G: 40, B: 40, A: 255}),
-		"word/media/image2.jpeg":       solidJPEG(t, 200, 200, color.RGBA{R: 40, G: 40, B: 220, A: 255}),
-		"word/media/image3.png":        solidPNG(t, 48, 48, color.RGBA{R: 90, G: 90, B: 90, A: 255}),
-		"word/media/image4.png":        solidPNG(t, 300, 200, color.RGBA{R: 40, G: 180, B: 90, A: 255}),
-		"word/media/image5.png":        solidPNG(t, 600, 100, color.RGBA{R: 10, G: 10, B: 10, A: 255}),
+		"word/media/image1.png":        texturedPNG(t, 120, 80, color.RGBA{R: 220, G: 40, B: 40, A: 255}),
+		"word/media/image2.jpeg":       texturedJPEG(t, 200, 200, color.RGBA{R: 40, G: 40, B: 220, A: 255}),
+		"word/media/image3.png":        texturedPNG(t, 48, 48, color.RGBA{R: 90, G: 90, B: 90, A: 255}),
+		"word/media/image4.png":        texturedPNG(t, 300, 200, color.RGBA{R: 40, G: 180, B: 90, A: 255}),
+		"word/media/image5.png":        texturedPNG(t, 600, 100, color.RGBA{R: 10, G: 10, B: 10, A: 255}),
 	})
 }

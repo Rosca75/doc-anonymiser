@@ -556,9 +556,10 @@ doc-anonymiser/
   `backend/engine/pii.go`, are NEVER renamed to follow a label change: a label is
   a display string, an identifier is a contract.
 - **Sensitive state stays in memory** by default. Saving a session (registry
-  + Values + settings + the removal list + the spent placeholder numbers) to
-  disk is an explicit user action with a warning that the file contains the
-  re-identification key. `SessionVersion` is **8**; a file of any other version
+  + Values + settings + the removal list + the spent placeholder numbers + the
+  image treatments) to disk is an explicit user action with a warning that the
+  file contains the re-identification key. `SessionVersion` is **9**; a file of
+  any other version
   is refused, never migrated, and the reasons for each bump are recorded beside
   the constant in `backend/engine/session.go`. There is no migration table and no
   compatibility alias anywhere in the loader: a session file holds the

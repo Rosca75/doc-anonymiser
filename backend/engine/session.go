@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+
+	"doc-anonymiser/backend/engine/imaging"
 )
 
 // SessionVersion is the session file format. A file carrying any other version
@@ -56,7 +58,15 @@ import (
 //	    v7 `{"email": true}` cannot say whether the user wanted people from local
 //	    parts, organisations from domains, or both, and a v8 reader guessing
 //	    "both" would produce Suggestions the user had switched off.
-const SessionVersion = 8
+//	v9: the session carries the image treatments. A v8 file has none, and a v8
+//	    READER silently ignores the field: it would load a session in which the
+//	    user had boxed the client logo, export the .docx, and ship the logo. The
+//	    strict-version rule exists for exactly this shape of failure, where the
+//	    file loads, nothing errors, and the output is wrong. This is the
+//	    borderline case the paragraph above describes: an added field the loader
+//	    can ignore is normally not a bump, and this one IS one, because what the
+//	    old reader ignores is a redaction.
+const SessionVersion = 9
 
 // SessionSettings mirrors the app settings worth persisting. The engine does not
 // interpret them: they round-trip for app.go.
@@ -137,6 +147,10 @@ type Session struct {
 	// RetiredPlaceholders tracks placeholders whose entries were
 	// forgotten but whose numbers were never freed.
 	RetiredPlaceholders []string `json:"retiredPlaceholders,omitempty"`
+	// ImageDecisions is document name -> asset ID -> decision. Only the
+	// decisions that CHANGE a picture are stored, because keep is recorded as the
+	// absence of a decision everywhere else too.
+	ImageDecisions map[string]map[string]imaging.Decision `json:"imageDecisions,omitempty"`
 }
 
 // SaveSession serialises a session to pretty-printed JSON (stable key
