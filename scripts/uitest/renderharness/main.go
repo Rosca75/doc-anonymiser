@@ -184,6 +184,7 @@ func run(frontendDir, probesPath, artifactDir string, keepArtifacts bool) error 
 	checkOriginLink(client, r)
 	checkCompareSearch(client, r)
 	checkSelectionPanel(client, r)
+	checkImageTab(client, r)
 	// Last, so it sees everything every other check provoked.
 	checkNoConsoleErrors(client, r)
 

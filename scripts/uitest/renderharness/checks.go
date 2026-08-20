@@ -1769,6 +1769,145 @@ func checkSelectionPanel(c *cdpClient, r *reporter) {
 		"views/anonymise.js selectionPicks renders valueAutocomplete's answer as buttons.")
 }
 
+// --- The IMAGE half of step 3 -----------------------------------------------
+
+type imageTabResult struct {
+	Error string `json:"error"`
+
+	TileCount         int    `json:"tileCount"`
+	ManyHeight        int    `json:"manyHeight"`
+	OneHeight         int    `json:"oneHeight"`
+	ManyLocation      string `json:"manyLocation"`
+	OneLocation       string `json:"oneLocation"`
+	TilesListScrolls  *bool  `json:"tilesListScrolls"`
+	PageScrollsDown   int    `json:"pageScrollsDown"`
+	PageScrollsAcross int    `json:"pageScrollsAcross"`
+
+	Details struct {
+		RowCount           int      `json:"rowCount"`
+		ManyRowHeight      int      `json:"manyRowHeight"`
+		OneRowHeight       int      `json:"oneRowHeight"`
+		Headings           []string `json:"headings"`
+		DetailsListScrolls *bool    `json:"detailsListScrolls"`
+		PageScrollsDown    int      `json:"pageScrollsDown"`
+		PageScrollsAcross  int      `json:"pageScrollsAcross"`
+	} `json:"details"`
+
+	BannerInsideList   *bool    `json:"bannerInsideList"`
+	FilterChips        []string `json:"filterChips"`
+	CardInsideViewport *bool    `json:"cardInsideViewport"`
+	Viewport           struct {
+		Width  int `json:"width"`
+		Height int `json:"height"`
+	} `json:"viewport"`
+}
+
+// checkImageTab asserts the picture review obeys the fixed-height contract.
+//
+// Two properties here cannot be observed by anything cheaper than a renderer, and
+// both are about the reader keeping their place in a long list:
+//
+//	the page must not scroll   the IMAGE half is a full-width card in the same
+//	                          fixed-height workspace as every other screen, so
+//	                          the list is the scroll owner and the window is not.
+//	a tile is a fixed-height  the card carrying five locations and the card
+//	surface                   carrying one are the same height. When one card
+//	                          grows, every card below it moves, the browser clamps
+//	                          the grid's scroll offset to the shorter content, and
+//	                          the next repaint snapshots the clamped value.
+func checkImageTab(c *cdpClient, r *reporter) {
+	r.step("The IMAGE half: the list scrolls, the page does not, and a tile keeps its height")
+
+	var got imageTabResult
+	if err := c.eval("__uiProbes.imageTabGeometry()", &got); err != nil {
+		r.assert("the image-tab probe runs", false,
+			"step 3 switched to its IMAGE half over a seeded inventory", err.Error(),
+			"views/anonymise.js dispatches on state.anonymiseTab; views/anonymiseimages.js "+
+				"renders #image-card and #image-list.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the image-tab probe runs", false,
+			"a forty-picture inventory in both views", got.Error,
+			"The probe seeds state.images directly: there is no Go bridge in this layer.")
+		return
+	}
+
+	r.assert("the tiles view rendered the whole seeded inventory",
+		got.TileCount == 40, "40 tiles", fmt.Sprintf("%d", got.TileCount),
+		"A shorter list may not scroll at all, and then the checks below measure nothing.")
+
+	r.assert("the tiles list is the element that scrolls",
+		boolIs(got.TilesListScrolls, true), "#image-list taller than its box",
+		describeBool(got.TilesListScrolls),
+		"style.css .card-body.image-list is the scroll owner, and every link from "+
+			".anonymise-view down to it carries min-height: 0.")
+
+	r.assert("the page does not scroll with the tiles view on screen",
+		got.PageScrollsDown <= 1 && got.PageScrollsAcross <= 1,
+		"0px in both directions",
+		fmt.Sprintf("%dpx down, %dpx across", got.PageScrollsDown, got.PageScrollsAcross),
+		"The fixed-height layout contract: body and #app are 100vh and scrolling happens "+
+			"inside a card body and nowhere else.")
+
+	// The pair only proves anything if the two tiles genuinely differ in what
+	// they carry, so the overflow marker is checked before the heights.
+	r.assert("the measured pair really is one shared picture beside one that is not",
+		strings.Contains(got.ManyLocation, "more") && !strings.Contains(got.OneLocation, "more"),
+		"the first tile's location carries a \"+N more\" marker and the second does not",
+		fmt.Sprintf("first %q, second %q", got.ManyLocation, got.OneLocation),
+		"views/anonymiseimages.js locationCell puts the first place in the cell and the rest "+
+			"behind the count. Without the overflow this check measures two identical tiles.")
+
+	r.assert("a tile used in five places is the same height as one used in one",
+		got.ManyHeight > 0 && got.ManyHeight == got.OneHeight,
+		fmt.Sprintf("both %dpx", got.OneHeight),
+		fmt.Sprintf("%dpx beside %dpx", got.ManyHeight, got.OneHeight),
+		"style.css .image-tile has a fixed height and its location line is one clipped line. "+
+			"A card that grows when it has more to say moves every card below it, and the reader "+
+			"loses their scroll position for good.")
+
+	r.assert("the details view renders the seven headings in order",
+		strings.Join(got.Details.Headings, "|") ==
+			"Preview|Name|Format|Dimensions|Size|Location|Status",
+		"Preview, Name, Format, Dimensions, Size, Location, Status",
+		strings.Join(got.Details.Headings, ", "),
+		"views/anonymiseimages.js builds the header and the rows from one shared column "+
+			"template, so they cannot drift apart.")
+
+	r.assert("a details row keeps its height whatever its location says",
+		got.Details.ManyRowHeight > 0 && got.Details.ManyRowHeight == got.Details.OneRowHeight,
+		fmt.Sprintf("both %dpx", got.Details.OneRowHeight),
+		fmt.Sprintf("%dpx beside %dpx", got.Details.ManyRowHeight, got.Details.OneRowHeight),
+		"style.css .image-grid .grid-row has a fixed height and every cell is one clipped line.")
+
+	r.assert("the details list is the element that scrolls",
+		boolIs(got.Details.DetailsListScrolls, true), "#image-list taller than its box",
+		describeBool(got.Details.DetailsListScrolls), "")
+
+	r.assert("the page does not scroll with the details view on screen",
+		got.Details.PageScrollsDown <= 1 && got.Details.PageScrollsAcross <= 1,
+		"0px in both directions",
+		fmt.Sprintf("%dpx down, %dpx across",
+			got.Details.PageScrollsDown, got.Details.PageScrollsAcross),
+		"A seven-column grid must scroll inside its own container, never widen the page.")
+
+	r.assert("the filter stays reachable from the bottom of the list",
+		boolIs(got.BannerInsideList, false), ".image-banner outside #image-list",
+		describeBool(got.BannerInsideList),
+		"The banner sits between the card head and the card body, so it does not scroll away.")
+
+	r.assert("the filter chips carry their counts",
+		len(got.FilterChips) == 3 && strings.Contains(got.FilterChips[0], "40"),
+		"three chips, the first counting all 40 pictures",
+		strings.Join(got.FilterChips, ", "),
+		"state.js imageStatusCounts feeds copy.js IMAGES.filterChip.")
+
+	r.assert("the card is inside the window", boolIs(got.CardInsideViewport, true),
+		"#image-card between the top and bottom of the viewport",
+		describeBool(got.CardInsideViewport), "")
+}
+
 func boolIs(p *bool, want bool) bool { return p != nil && *p == want }
 
 func describeBool(p *bool) string {

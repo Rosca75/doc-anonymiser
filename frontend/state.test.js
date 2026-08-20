@@ -28,6 +28,12 @@ import {
   signalDerivationOn, enabledSignalDerivations, setSignalDerivation,
   moveSpelling, valueAutocomplete, reassignOriginal,
   applyImportResult,
+  IMAGE_TREATMENTS, IMAGE_FORMATS, IMAGE_KINDS, IMAGE_STATUS_FILTERS,
+  imageThumbKey, imageDocName, imagesFor, imageAssets, imageStatus,
+  imageStatusCounts, filteredImages, treatmentAvailable, treatmentBlockedReason,
+  startImageScan, setImageInventory, setImageScanError, cacheImageThumb,
+  applyImageDecision, openImageEditor, updateImageEditor, closeImageEditor,
+  setAnonymiseTab, setImageFilter, setImageLayout,
   setAIScope, aiScopeArg, parsePageSpec,
   setNotice, clearNotice, NOTICE_TONES,
   setDocumentCountry,
@@ -2338,4 +2344,258 @@ test("stepping back to Identify forgets the last scan's numbers", () => {
   resetStep("identify");
   assert.equal(getState().lastAIScan, null,
     "the read-out must not survive the reset of the step it describes");
+});
+
+
+// --- Pictures: the Anonymise step's IMAGE half ---------------------------
+//
+// The rules the review renders from live here rather than in the view, so they
+// are testable without markup. Two of them are load-bearing:
+//
+//   imageStatus is THE mapping from a treatment to a status. Written out in the
+//   banner, the Status column and the tile chip, those three could disagree, and
+//   then the Anonymised filter shows a row the column calls Kept.
+//
+//   treatmentBlockedReason is the frontend half of imaging.Decision.Validate. A
+//   control the interface offers that Go refuses is a control that lies, and the
+//   refusal then arrives at export time instead of on the panel.
+
+const PICTURE_DOC = "deck.pptx";
+
+/** picture(patch) is one inventory asset. */
+function picture(patch) {
+  return {
+    id: "ppt/media/image1.png", name: "Logo", format: "png", bytes: 1024,
+    width: 120, height: 80, companion: "", linked: false,
+    occurrences: [{ part: "ppt/slides/slide1.xml", ordinal: 0, kind: "picture", location: "Slide 1" }],
+    decision: { treatment: "keep" },
+    ...patch,
+  };
+}
+
+/** seedPictures(assets) puts one imported document with a scanned inventory in
+ *  the store. */
+function seedPictures(assets) {
+  resetState();
+  setState({
+    documents: [{ name: PICTURE_DOC, format: "pptx" }],
+    resultDoc: PICTURE_DOC,
+    images: {
+      [PICTURE_DOC]: {
+        loading: false, error: null,
+        inventory: { applicable: true, assets, warnings: [] },
+      },
+    },
+  });
+}
+
+test("the picture vocabularies are the engine's, in the engine's order", () => {
+  // The Go halves are held to these by ../image_parity_test.go; this case is
+  // about the SHAPE, so a reordering here is caught in the frontend suite too.
+  assert.deepEqual(IMAGE_TREATMENTS, ["keep", "box", "blur", "remove"]);
+  assert.deepEqual(IMAGE_FORMATS, ["png", "jpeg", "svg", "other"]);
+  assert.deepEqual(IMAGE_KINDS, ["picture", "fill", "background"]);
+  assert.deepEqual(IMAGE_STATUS_FILTERS, ["all", "kept", "anonymised"]);
+});
+
+test("a preview is cached per document AND per asset", () => {
+  // The asset id is the archive part path, which is unique inside one document
+  // and not across a batch: two decks both hold ppt/media/image1.png.
+  assert.notEqual(
+    imageThumbKey("a.pptx", "ppt/media/image1.png"),
+    imageThumbKey("b.pptx", "ppt/media/image1.png"),
+    "one deck's logo must not appear in another deck's list");
+});
+
+test("the IMAGE half reads the same document selection as the Compare card", () => {
+  seedPictures([picture({})]);
+  assert.equal(imageDocName(getState()), PICTURE_DOC);
+  setState({ resultDoc: "gone.pptx" });
+  assert.equal(imageDocName(getState()), PICTURE_DOC,
+    "a selection naming a document that is no longer imported falls back to the first one");
+});
+
+test("an inventory nobody has asked for is null, and an empty one is an answer", () => {
+  resetState();
+  assert.equal(imagesFor(getState(), PICTURE_DOC), null,
+    "null is the caller's cue to fetch");
+  seedPictures([]);
+  assert.deepEqual(imageAssets(getState()), [],
+    "a document with no pictures is an answer, not a failure");
+});
+
+test("a scan in flight keeps the previous answer on screen", () => {
+  seedPictures([picture({})]);
+  startImageScan(PICTURE_DOC);
+  const record = imagesFor(getState(), PICTURE_DOC);
+  assert.equal(record.loading, true);
+  assert.equal(record.inventory.assets.length, 1,
+    "replacing the answer with nothing would blank the list the user is reading");
+});
+
+test("a refused scan replaces the answer with the reason", () => {
+  seedPictures([picture({})]);
+  setImageScanError(PICTURE_DOC, "the document is not imported");
+  const record = imagesFor(getState(), PICTURE_DOC);
+  assert.equal(record.error, "the document is not imported");
+  assert.equal(record.inventory, null);
+});
+
+test("keep is the one status that is not a treatment, and an absent decision reads as keep", () => {
+  assert.equal(imageStatus(picture({ decision: { treatment: "keep" } })), "kept");
+  assert.equal(imageStatus(picture({ decision: {} })), "kept",
+    "keep is stored as the ABSENCE of a decision, so an empty one is a kept picture");
+  assert.equal(imageStatus(picture({})), "kept");
+  for (const treatment of ["box", "blur", "remove"]) {
+    assert.equal(imageStatus(picture({ decision: { treatment } })), "anonymised",
+      `${treatment} changes the picture, so it is anonymised`);
+  }
+});
+
+test("the filter counts and the filter itself read the same mapping", () => {
+  seedPictures([
+    picture({ id: "a", decision: { treatment: "keep" } }),
+    picture({ id: "b", decision: { treatment: "box" } }),
+    picture({ id: "c", decision: { treatment: "blur" } }),
+    picture({ id: "d", decision: { treatment: "remove" } }),
+  ]);
+  assert.deepEqual(imageStatusCounts(getState()), { all: 4, kept: 1, anonymised: 3 });
+
+  setImageFilter("anonymised");
+  assert.deepEqual(filteredImages(getState()).map((a) => a.id), ["b", "c", "d"]);
+  setImageFilter("kept");
+  assert.deepEqual(filteredImages(getState()).map((a) => a.id), ["a"]);
+  setImageFilter("all");
+  assert.equal(filteredImages(getState()).length, 4);
+});
+
+test("an unknown filter shows everything rather than hiding the document", () => {
+  seedPictures([picture({ id: "a" }), picture({ id: "b", decision: { treatment: "box" } })]);
+  setImageFilter("invented");
+  assert.equal(getState().imageFilter, "all",
+    "a filter nobody can clear would hide the whole document");
+  assert.equal(filteredImages(getState()).length, 2);
+});
+
+test("the tab and the layout fall back rather than storing a token nothing renders", () => {
+  resetState();
+  setAnonymiseTab("images");
+  assert.equal(getState().anonymiseTab, "images");
+  setAnonymiseTab("invented");
+  assert.equal(getState().anonymiseTab, "text", "text is the half that is always available");
+  setImageLayout("tiles");
+  assert.equal(getState().imageLayout, "tiles");
+  setImageLayout("invented");
+  assert.equal(getState().imageLayout, "details");
+});
+
+test("a PNG or JPEG can carry every treatment", () => {
+  for (const format of ["png", "jpeg"]) {
+    for (const treatment of IMAGE_TREATMENTS) {
+      assert.equal(treatmentAvailable(picture({ format }), treatment), true,
+        `${format} must offer ${treatment}`);
+    }
+  }
+});
+
+test("an SVG cannot be blurred, and the reason is the invariant rather than a limit", () => {
+  const svg = picture({ format: "svg" });
+  assert.equal(treatmentBlockedReason(svg, "blur"), "svg_blur",
+    "a blur filter leaves every original shape and text string in the file, so a control " +
+    "that did it would be labelled anonymise while anonymising nothing");
+  assert.equal(treatmentAvailable(svg, "box"), true);
+  assert.equal(treatmentAvailable(svg, "remove"), true);
+  assert.equal(treatmentAvailable(svg, "keep"), true);
+});
+
+test("a format the application cannot redraw offers keep and remove only", () => {
+  const other = picture({ format: "other" });
+  assert.equal(treatmentBlockedReason(other, "box"), "format");
+  assert.equal(treatmentBlockedReason(other, "blur"), "format");
+  assert.equal(treatmentAvailable(other, "remove"), true);
+  assert.equal(treatmentAvailable(other, "keep"), true);
+});
+
+test("a linked picture is refused for being elsewhere, not for its format", () => {
+  // The scan reports a linked picture as FormatOther, and Go checks the link
+  // FIRST because "there are no bytes here" is the true reason: telling the user
+  // the format cannot be redrawn would send them looking for a converter that
+  // cannot help.
+  const linked = picture({ format: "other", linked: true });
+  assert.equal(treatmentBlockedReason(linked, "box"), "linked");
+  assert.equal(treatmentBlockedReason(linked, "blur"), "linked");
+  assert.equal(treatmentAvailable(linked, "remove"), true);
+});
+
+test("an accepted decision is written onto the cached inventory", () => {
+  seedPictures([picture({ id: "a" }), picture({ id: "b" })]);
+  applyImageDecision(PICTURE_DOC, "b", { treatment: "box", boxText: "Client logo" });
+  const assets = imageAssets(getState());
+  assert.deepEqual(assets[0].decision, { treatment: "keep" }, "only the named asset changes");
+  assert.deepEqual(assets[1].decision, { treatment: "box", boxText: "Client logo" });
+});
+
+test("the treatment panel keeps a draft, and closing it discards the draft only", () => {
+  seedPictures([picture({ id: "a" })]);
+  const stored = { treatment: "keep" };
+  openImageEditor(PICTURE_DOC, "a", { treatment: "box", boxText: "" });
+  updateImageEditor({ draft: { treatment: "box", boxText: "Client logo" } });
+  assert.equal(getState().imageEditor.draft.boxText, "Client logo");
+  closeImageEditor();
+  assert.equal(getState().imageEditor, null);
+  assert.deepEqual(imageAssets(getState())[0].decision, stored,
+    "cancelling leaves the recorded decision exactly as it was");
+});
+
+test("a reply arriving after the panel closed does not reopen it", () => {
+  seedPictures([picture({ id: "a" })]);
+  openImageEditor(PICTURE_DOC, "a", { treatment: "blur" });
+  closeImageEditor();
+  updateImageEditor({ preview: "data:image/png;base64,AA" });
+  assert.equal(getState().imageEditor, null,
+    "a preview must not resurrect a panel the user dismissed");
+});
+
+test("a fresh import forgets every cached inventory and preview", () => {
+  seedPictures([picture({ id: "a" })]);
+  cacheImageThumb(PICTURE_DOC, "a", "data:image/png;base64,AA");
+  openImageEditor(PICTURE_DOC, "a", { treatment: "box" });
+  applyImportResult({ documents: [{ name: PICTURE_DOC, format: "pptx" }], errors: [] });
+  assert.deepEqual(getState().images, {},
+    "a file re-imported under the same name is a DIFFERENT file");
+  assert.deepEqual(getState().imageThumbs, {});
+  assert.equal(getState().imageEditor, null);
+});
+
+test("stepping back from Anonymise keeps the picture decisions and closes the panel", () => {
+  // The decisions are about the bytes captured at IMPORT and need no run, so
+  // discarding them because the user stepped back to review a value would throw
+  // away work the run never touched. The panel is different: an editing overlay
+  // must not outlive the screen it belongs to.
+  seedPictures([picture({ id: "a", decision: { treatment: "box", boxText: "Client logo" } })]);
+  cacheImageThumb(PICTURE_DOC, "a", "data:image/png;base64,AA");
+  openImageEditor(PICTURE_DOC, "a", { treatment: "box" });
+  resetStep("anonymise");
+  assert.equal(getState().imageEditor, null);
+  assert.deepEqual(imagesFor(getState(), PICTURE_DOC).inventory.assets[0].decision,
+    { treatment: "box", boxText: "Client logo" });
+  assert.equal(getState().imageThumbs[imageThumbKey(PICTURE_DOC, "a")], "data:image/png;base64,AA");
+});
+
+test("a new batch forgets the pictures with the documents", () => {
+  seedPictures([picture({ id: "a" })]);
+  cacheImageThumb(PICTURE_DOC, "a", "data:image/png;base64,AA");
+  startNewBatch();
+  assert.deepEqual(getState().images, {});
+  assert.deepEqual(getState().imageThumbs, {});
+  assert.equal(getState().imageEditor, null);
+});
+
+test("setImageInventory stores exactly what Go answered", () => {
+  resetState();
+  setState({ documents: [{ name: PICTURE_DOC }], resultDoc: PICTURE_DOC });
+  const inventory = { applicable: false, reason: "pdf_images_removed", assets: [], warnings: [] };
+  setImageInventory(PICTURE_DOC, inventory);
+  assert.deepEqual(imagesFor(getState(), PICTURE_DOC),
+    { loading: false, error: null, inventory });
 });

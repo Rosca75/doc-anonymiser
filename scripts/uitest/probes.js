@@ -1806,6 +1806,130 @@
         picks,
       };
     },
+
+    /**
+     * imageTabGeometry() switches step 3 to its IMAGE half over a forty-picture
+     * inventory and measures the two things only a renderer can answer.
+     *
+     * THE PAGE MUST NOT SCROLL. The IMAGE half is a full-width card inside the
+     * same fixed-height workspace as everything else, so the list is the scroll
+     * owner and the window is not. A screen built to need the page scrollbar
+     * satisfies every string test ever written about it.
+     *
+     * A TILE IS A FIXED-HEIGHT SURFACE. When one card grows, every card below it
+     * moves, the browser clamps the grid's scroll offset to the shorter content,
+     * and the next repaint snapshots the clamped value: the reader's place is
+     * then lost for good. The card carrying five locations and the card carrying
+     * one must therefore be exactly the same height, which is why the seed puts
+     * both in the same list.
+     *
+     * There is no bridge here, so every preview request rejects and the cells
+     * read "No preview". That is the point rather than a limitation: a
+     * placeholder cell must reserve the same space a picture would, or the list
+     * reflows the moment a thumbnail lands.
+     */
+    async imageTabGeometry() {
+      await seed("anonymise");
+      const s = await store();
+
+      // Forty pictures, so the list genuinely has to scroll. ONE of them appears
+      // in five places and one in a single place: those two are the pair the
+      // fixed-height rule is measured on.
+      const assets = Array.from({ length: 40 }, (_, i) => ({
+        id: `ppt/media/image${i}.png`,
+        name: `Engagement picture ${i}`,
+        format: i % 5 === 0 ? "jpeg" : "png",
+        bytes: 26144 + i * 512,
+        width: 1200, height: 800,
+        companion: "", linked: false,
+        occurrences: (i === 0
+          ? ["Slide 1", "Slide 4", "Slide 9", "Slide master", "Notes on slide 2"]
+          : [`Slide ${i + 1}`]
+        ).map((location, ordinal) => ({
+          part: "ppt/slides/slide1.xml", ordinal, kind: "picture",
+          location, displayCX: 1828800, displayCY: 1219200,
+        })),
+        // A third of them carry a decision, so the filter counts are real.
+        decision: i % 3 === 0 ? { treatment: "box", boxText: "Client logo" } : { treatment: "keep" },
+      }));
+
+      s.setState({
+        anonymiseTab: "images",
+        imageLayout: "tiles",
+        imageFilter: "all",
+        images: {
+          [DOC_NAME]: {
+            loading: false, error: null,
+            inventory: { applicable: true, assets, warnings: [] },
+          },
+        },
+      });
+      await settle();
+
+      const b = document.body;
+      const d = document.documentElement;
+      const card = document.querySelector("#image-card");
+      const list = document.getElementById("image-list");
+      if (!card || !list) {
+        return { error: "the IMAGE half did not render (#image-card / #image-list missing)" };
+      }
+
+      const tiles = [...list.querySelectorAll(".image-tile")];
+      if (tiles.length < 2) {
+        return { error: `the tiles view rendered ${tiles.length} tiles, so there is no pair to compare` };
+      }
+      // The seeded pair: the first asset is the one used in five places.
+      const many = tiles[0];
+      const one = tiles[1];
+      const locationText = (tile) =>
+        (tile.querySelector(".image-tile-value[title]")?.innerText ?? "").trim();
+
+      const tilesGeometry = {
+        tileCount: tiles.length,
+        // Rounded, because a fractional layout pixel is not a design failure.
+        manyHeight: Math.round(many.getBoundingClientRect().height),
+        oneHeight: Math.round(one.getBoundingClientRect().height),
+        manyLocation: locationText(many),
+        oneLocation: locationText(one),
+        tilesListScrolls: list.scrollHeight - list.clientHeight > 1,
+        pageScrollsDown: Math.max(b.scrollHeight - b.clientHeight, d.scrollHeight - d.clientHeight),
+        pageScrollsAcross: Math.max(b.scrollWidth - b.clientWidth, d.scrollWidth - d.clientWidth),
+      };
+
+      // The details view answers the same question about its own rows: they are
+      // one line each, so a shared location does not make a taller row.
+      s.setState({ imageLayout: "details" });
+      await settle();
+      const rows = [...document.querySelectorAll("#image-list .grid-row")];
+      const detailsList = document.getElementById("image-list");
+      const details = {
+        rowCount: rows.length,
+        manyRowHeight: rows.length ? Math.round(rows[0].getBoundingClientRect().height) : 0,
+        oneRowHeight: rows.length > 1 ? Math.round(rows[1].getBoundingClientRect().height) : 0,
+        headings: [...document.querySelectorAll("#image-list .col-head")].map((h) => h.innerText.trim()),
+        detailsListScrolls: detailsList
+          ? detailsList.scrollHeight - detailsList.clientHeight > 1 : false,
+        pageScrollsDown: Math.max(b.scrollHeight - b.clientHeight, d.scrollHeight - d.clientHeight),
+        pageScrollsAcross: Math.max(b.scrollWidth - b.clientWidth, d.scrollWidth - d.clientWidth),
+      };
+
+      // The banner has to stay reachable from the bottom of the list, so it must
+      // sit OUTSIDE the scrolling element.
+      const banner = card.querySelector(".image-banner");
+      const bannerInsideList = !!(banner && list.contains(banner));
+
+      return {
+        ...tilesGeometry,
+        details,
+        bannerInsideList,
+        filterChips: [...card.querySelectorAll("[data-imgfilter]")].map((c) => c.innerText.trim()),
+        cardInsideViewport: (() => {
+          const t = rect(card);
+          return t.top >= -1 && t.bottom <= innerHeight + 1;
+        })(),
+        viewport: { width: innerWidth, height: innerHeight },
+      };
+    },
   };
 
   return "installed";

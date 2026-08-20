@@ -1924,3 +1924,200 @@ mark[data-original]:focus-visible { outline: 2px solid var(--accent); outline-of
    information rather than as a warning about a mistake. */
 .related-note { display: block; margin-top: 0.15rem; font-size: 0.75rem; }
 .sugg-spellings { font-size: 0.75rem; }
+
+/* --- Anonymise: the IMAGE half ------------------------------------------ */
+/* The picture review. Two rules carry the weight here and both are behaviour
+   rather than decoration:
+
+   the min-height: 0 chain the card body is the ONLY scroller on this screen,
+                        so every link from .anonymise-view down to it has to be
+                        allowed to shrink below its content;
+   the fixed row and    a row or tile whose height depended on how many places
+   tile heights         a picture appears in would move every row below it when
+                        one changed, the browser would clamp the list's scroll
+                        offset to the shorter content, and the next repaint
+                        would snapshot the clamped value. The reader's place is
+                        then lost for good, which is the same failure the value
+                        cards are built to avoid. */
+
+/* The tab bar is a fixed strip above both halves, not a flexible one: it must
+   not grow when the workspace beside it is short. */
+.anonymise-view > .tabbar { flex: none; padding: 0 0.25rem; }
+
+/* One full-width column. The details view has seven columns and a preview, so
+   half a workspace would make it a horizontal scroller. */
+.workspace-images { grid-template-columns: minmax(0, 1fr); }
+
+/* The banner sits between the head and the body, so it does not scroll with
+   the list: a filter that scrolled away would be unreachable from the bottom
+   of a two-hundred-picture deck. */
+.image-banner {
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 0.55rem 1.5rem;
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--gray-5);
+}
+.image-banner-left, .image-banner-right {
+  display: flex; align-items: center; gap: 0.6rem; min-width: 0;
+}
+.image-banner .section-label { margin: 0; white-space: nowrap; }
+/* The document selector sits in the banner beside the filter, because it is the
+   same kind of choice: which pictures am I looking at. It renders even when the
+   document has no image review, so the reader is never stranded on the one file
+   with nothing to show. */
+.image-banner .compare-select { max-width: 14rem; margin-right: 0.75rem; }
+.image-warning { flex: none; margin: 0; border-radius: 0; }
+
+/* The list is the scroll owner. It scrolls in BOTH directions, because the
+   details grid has a minimum width and a narrow window must scroll the list
+   rather than the page. */
+.card-body.image-list { padding: 0; overflow: auto; }
+.image-message { padding: 2rem 1.5rem; text-align: center; }
+
+/* The details grid keeps a minimum width so its columns stay readable; the
+   list's own overflow is what makes that safe. */
+.image-grid { min-width: 46rem; }
+/* The header stays put while the rows move under it: a seven-column row is
+   unreadable once the headings have scrolled away. */
+.image-grid .grid-head { position: sticky; top: 0; z-index: 1; }
+.image-grid .grid-row { height: 3.25rem; }
+/* Every cell is one line, clipped. The full value is in the cell's title. */
+.image-row > span {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.image-row .col-actions {
+  display: flex; align-items: center; justify-content: flex-end; gap: 0.35rem;
+  overflow: visible;
+}
+.image-action { padding: 0.25rem 0.55rem; font-size: 0.72rem; }
+
+/* The preview. A pending cell is a box of the right shape rather than empty
+   space, so a row does not change height when its picture arrives. */
+.image-thumb {
+  display: block; width: 3rem; height: 2.25rem;
+  object-fit: contain; object-position: left center;
+}
+.image-thumb-pending {
+  background: var(--surface-subtle); border: 1px solid var(--gray-5);
+  border-radius: 3px;
+}
+.image-thumb-empty {
+  display: flex; align-items: center;
+  width: auto; height: 2.25rem;
+  font-size: 0.65rem; color: var(--muted);
+}
+
+/* The status chip. Kept is quiet and anonymised is the noticeable one, because
+   the changed pictures are what a reviewer is looking for. */
+.image-status {
+  display: inline-block; padding: 0.1rem 0.5rem;
+  border-radius: 999px; font-size: 0.7rem; white-space: nowrap;
+}
+.image-status.kept { background: var(--surface-subtle); color: var(--ink-3); }
+.image-status.anonymised {
+  background: var(--notice-ok-bg); color: var(--notice-ok-fg);
+  border: 1px solid var(--notice-ok-edge);
+}
+
+/* The tiles. Each card is a FIXED height: the preview box, the name, three
+   metadata lines and the foot are each a fixed number of lines, so a picture
+   used in five places is the same height as one used in one. */
+.image-tiles {
+  display: grid; gap: 1rem; padding: 1.25rem 1.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+}
+.image-tile {
+  height: 16.5rem;
+  display: flex; flex-direction: column; gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--gray-5); border-radius: var(--card-radius);
+  overflow: hidden;
+}
+.image-tile-preview {
+  flex: none; height: 7rem;
+  display: grid; place-items: center;
+  background: var(--surface-subtle); border-radius: 3px; overflow: hidden;
+}
+/* Fit inside the box, never stretched: a logo distorted to fill a square is a
+   picture the reviewer cannot recognise. */
+.image-tile-preview .image-thumb {
+  width: auto; height: auto; max-width: 100%; max-height: 100%;
+  object-position: center;
+}
+.image-tile-name {
+  flex: none; font-size: 0.85rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.image-tile-meta {
+  flex: none; margin: 0;
+  display: flex; flex-direction: column; gap: 0.1rem;
+  font-size: 0.75rem; color: var(--muted);
+}
+.image-tile-meta > div { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); }
+.image-tile-meta dt { letter-spacing: 0.04em; text-transform: uppercase; font-size: 0.65rem; }
+.image-tile-meta dd {
+  margin: 0; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.image-tile-foot {
+  margin-top: auto; flex: none;
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+}
+.image-tile-actions { display: flex; gap: 0.35rem; }
+
+/* The treatment panel. Fixed rather than absolute so it covers the chrome as
+   well: a decision being taken should not leave the step bar clickable behind
+   it. It is the confirm's mechanism and not the confirm itself, because this is
+   an editing surface with a draft rather than a question. */
+.image-panel-layer {
+  position: fixed; inset: 0; z-index: 60;
+  display: grid; place-items: center;
+  background: rgba(0, 0, 0, 0.28);
+  padding: 2.5rem;
+}
+.image-panel {
+  width: 42rem; max-width: 100%; max-height: 100%;
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--bg);
+  border: 1px solid var(--gray-4); border-radius: var(--card-radius);
+  overflow: hidden;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
+}
+.image-panel-head {
+  flex: none; display: flex; flex-direction: column; gap: 0.15rem;
+  padding: 0.85rem 1.15rem;
+  border-bottom: 1px solid var(--gray-5);
+}
+.image-panel-head h2 { margin: 0; font-size: 1rem; }
+.image-panel-sub {
+  font-size: 0.8rem; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.image-panel-body {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1.25rem; padding: 1.15rem;
+}
+.image-panel-preview, .image-panel-controls {
+  display: flex; flex-direction: column; gap: 0.5rem; min-width: 0;
+}
+.image-panel .hint { margin: 0; }
+.image-panel .rail-readout { margin: 0; }
+.image-preview-box {
+  height: 12rem;
+  display: grid; place-items: center;
+  background: var(--surface-subtle);
+  border: 1px solid var(--gray-5); border-radius: 3px;
+  overflow: hidden;
+}
+.image-preview { max-width: 100%; max-height: 100%; }
+.image-field {
+  display: flex; flex-direction: column; gap: 0.3rem;
+  font-size: 0.8rem; min-width: 0;
+}
+.image-panel-foot {
+  flex: none; display: flex; justify-content: flex-end; gap: 0.5rem;
+  padding: 0.85rem 1.15rem;
+  border-top: 1px solid var(--gray-5);
+}
