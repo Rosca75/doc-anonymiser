@@ -118,6 +118,29 @@ be enforced anywhere else:
   replacement instead of an error. `ResolveOverlaps` compares the class FIRST.
   Mirrored by `frontend/state.js DISCOVERY_METHODS` and `MATCH_CLASSES`, guarded
   by `../detection_parity_test.go`.
+- `engine/conflicts.go`'s `ConflictResolution` — the action that CLEARS a
+  blocking conflict, stated by the engine rather than inferred by each screen
+  from the conflict's refs. The refusal reaches the user on two screens (the
+  value's own card on Identify, the refused-run panel on Anonymise) and both have
+  to offer the same way out; each inferring it is two places deciding one thing,
+  and two answers can disagree. `Fix` stays the sentence a human reads, and a
+  conflict with NO resolution is one no single gesture clears, which is honest:
+  an ambiguity needs the user to say which of two Values to drop. Mirrored by
+  `frontend/state.js CONFLICT_RESOLUTIONS`, guarded by
+  `../detection_parity_test.go`.
+- `engine/allowlist.go`'s DEFINED TERMS — `DiscoverDefinedTerms` and
+  `ApplyDefinedTerms`. A contract declares its own vocabulary, and a phrase
+  introduced as `"Work Order" means ...` or `(the "Dedicated Advisors")` is the
+  document saying the phrase is part of its machinery. Two idioms and no more:
+  the dictionary form alone caught six of nineteen on the measured fixture, and
+  adding the parenthetical form caught all nineteen, while a looser shape would
+  start suppressing the party names a document introduces with `referred to as
+  "..."`. Enforced through the allowlist for the reason removals are, stored as
+  its OWN list on the App and in the session file for the reason removals are,
+  and SHOWN on the never-anonymise tab because a suppression the user cannot see
+  is one they cannot lift. Two bounds are load-bearing: whole-term matching (a
+  prefix rule removed "Services NStar") and the required article in the
+  parenthetical idiom.
 - `engine/signals.go` — `AllSignalSources`, `SignalDerivations` and
   `SignalSourceSelection`: which READINGS of which built-in signals may DERIVE
   Suggestions. The selection is `map[source]map[derivation]bool`, because the two
@@ -135,10 +158,16 @@ be enforced anywhere else:
   `frontend/state.js SIGNAL_SOURCES` and `SIGNAL_DERIVATIONS`, guarded by
   `../detection_parity_test.go`.
 - `engine/signaldiscovery.go` — signal-based discovery: an email's local part
-  seeds a person and its domain seeds an organisation, each gated on its OWN
-  derivation so clearing one leaves the other producing its rows, and each seed is
-  searched for across the WHOLE BATCH, because the address is in one file and the
-  text it points at is usually in another. Three rules shape every decision: whole
+  seeds a person and its domain seeds an organisation, and a WEBSITE's
+  registrable domain label seeds an organisation too, each gated on its OWN
+  derivation so clearing one leaves the others producing their rows, and each
+  seed is searched for across the WHOLE BATCH, because the evidence is in one
+  file and the text it points at is usually in another. The website source exists
+  because a document need contain no address at all and still name its parties: a
+  measured framework agreement carried none, while `www.nstar.lu` sat in it as
+  evidence for an organisation whose spelling no derivation rule can produce from
+  its own long form. Its URL shape deliberately mirrors `pii.go`'s, so a URL that
+  is anonymised is a URL that can be read as evidence. Three rules shape every decision: whole
   batch; nothing suggested from text found only INSIDE the source signal; and
   the DOCUMENT's own casing and accents are what gets suggested. A domain seed
   extends over the capitalised name built on it, and the bare stem is then
@@ -181,6 +210,14 @@ to free.
 
 1. Deterministic PII regex pass (`engine/pii.go`). Regexes are compiled once
    at package init and documented with match / deliberately-no-match examples.
+   A pattern has three optional gates and the field name says which is which:
+   `validate` VETOES on the matched text (a shape check, or a checksum that IS
+   the recognizer, as Luhn is over a bare digit run); `checksum` only SCORES
+   (`ConfidenceChecksumFailed`), because a mistyped or synthetic bank identifier
+   is exactly what must still be anonymised; and `reject` vetoes on the
+   SURROUNDINGS, since RE2 has no lookarounds and some rules are about what sits
+   in front of a match (a BIC needs its own cue, an IBAN's interior is not a
+   payment card).
 2. Value pass (`engine/values.go`): the accepted Values, expanded into their
    spellings, longest-match-first. Derivation stops the moment the spelling
    policy goes `curated`: from then on main text plus `Spellings` IS the list,
@@ -220,11 +257,16 @@ an override took. The renames a user made are recorded rather than inferred
 (`Registry.Overrides`) and persist in the session file; **session files are read
 only by the version that wrote them**, so a file whose `SessionVersion` this
 build does not know is refused with an actionable message instead of
-half-migrated. The current version is **9**, and version 8 is refused like any
-other: a v8 file carries no image treatments, and a v8 READER ignores the field,
-so either way round the file loads, nothing errors, and the exported document
-ships a picture the user had redacted. Version 7 is refused for the same shape of
-reason: its `signalSuggestionSources` holds one boolean per source, which cannot
+half-migrated. The current version is **10**, and every older one is refused. The
+reason for the move to 10 runs BACKWARDS from the usual one: `Registry.Assign`
+PANICS on a category with no `placeholderLabels` row, so a v9 file written by this
+build carrying a `country_names` Value would be accepted by an older v9 binary and
+crash it on the next run, and the bump turns that crash into the clear
+"written by a different version" refusal. The move to 9 was for the shape of
+failure the rule exists for: a v8 file carries no image treatments and a v8 READER
+ignores the field, so either way round the file loads, nothing errors, and the
+exported document ships a picture the user had redacted. Version 7 is refused
+because its `signalSuggestionSources` holds one boolean per source, which cannot
 say which READING of a signal the user wanted, so reading it would mean guessing,
 and the guess changes what the next run suggests. A corrupt
 key (two entries claiming one value) is refused the same way, as an ERROR:

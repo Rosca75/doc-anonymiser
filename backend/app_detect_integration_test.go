@@ -137,10 +137,7 @@ func TestDetectionAlwaysEndsWithATerminalEvent(t *testing.T) {
 func TestBuiltInPatternsAloneRunsNoSmartPhase(t *testing.T) {
 	app := detectionApp()
 	app.settings.UseHeuristicDiscovery = false
-	app.settings.SignalSuggestionSources = engine.SignalSourceSelection{engine.SignalSourceEmail: {
-		engine.DerivationEmailPerson:       false,
-		engine.DerivationEmailOrganisation: false,
-	}}
+	app.settings.SignalSuggestionSources = allSignalReadingsOff()
 	app.settings.UseBuiltInPatterns = true // on, and still not a discovery method
 	app.settings.UseLocalAI = false
 	withRecorder(t, app)
@@ -165,10 +162,7 @@ func TestBuiltInPatternsAloneRunsNoSmartPhase(t *testing.T) {
 func TestDetectionWithNoRouteOnStillEnds(t *testing.T) {
 	app := detectionApp()
 	app.settings.UseHeuristicDiscovery = false
-	app.settings.SignalSuggestionSources = engine.SignalSourceSelection{engine.SignalSourceEmail: {
-		engine.DerivationEmailPerson:       false,
-		engine.DerivationEmailOrganisation: false,
-	}}
+	app.settings.SignalSuggestionSources = allSignalReadingsOff()
 	app.settings.UseLocalAI = false
 	rec := withRecorder(t, app)
 
@@ -1321,12 +1315,7 @@ func TestSignalFindingsAreSuggestionsNeverValues(t *testing.T) {
 // through the bound app: the setting stops the Suggestions and nothing else.
 func TestDisablingTheEmailSourceKeepsEmailAnonymisation(t *testing.T) {
 	app := signalApp()
-	app.settings.SignalSuggestionSources = engine.SignalSourceSelection{
-		engine.SignalSourceEmail: {
-			engine.DerivationEmailPerson:       false,
-			engine.DerivationEmailOrganisation: false,
-		},
-	}
+	app.settings.SignalSuggestionSources = allSignalReadingsOff()
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"mail.md", "engagement.md"}, nil, nil)
@@ -1385,4 +1374,22 @@ func TestAcceptedSignalSuggestionKeepsItsEvidence(t *testing.T) {
 	if got := engine.MatchClassForMethods(accepted.DiscoveryMethods); got != engine.MatchClassSmartDiscovered {
 		t.Errorf("a signal-derived Value must rank as smart_discovered, got %q", got)
 	}
+}
+
+// allSignalReadingsOff clears EVERY reading of EVERY signal source, built from
+// the engine's own lists rather than written out.
+//
+// Written out, a test meaning "no discovery method is on" is left behind the
+// moment a second signal source is added: the new source stays on by default, the
+// smart phase runs, and the test fails describing a state it no longer creates.
+// Deriving the set is what makes "every reading off" keep meaning that.
+func allSignalReadingsOff() engine.SignalSourceSelection {
+	out := engine.SignalSourceSelection{}
+	for _, source := range engine.AllSignalSources {
+		out[source] = map[string]bool{}
+		for _, derivation := range engine.SignalDerivations[source] {
+			out[source][derivation] = false
+		}
+	}
+	return out
 }

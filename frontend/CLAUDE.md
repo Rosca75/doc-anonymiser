@@ -172,16 +172,31 @@ Windows it steals focus from the window it belongs to.
   per-screen footer (markup plus wiring).
 - `api.js` — THE ONLY bridge caller (see above and `BRIDGE.md`).
 - `state.js` — the store; single source of truth for frontend state. It also
-  holds the four vocabularies the two sides SHARE, each mirroring an engine
+  holds the five vocabularies the two sides SHARE, each mirroring an engine
   list and each guarded by `../detection_parity_test.go`:
   `DISCOVERY_METHODS` (provenance: which methods found a Value, a SET),
   `MATCH_CLASSES` (precedence, in order; read only to NAME the winning method in
   an intersection warning, never written onto a Value), `SIGNAL_SOURCES`
-  (which built-in signals may derive Suggestions) and `SIGNAL_DERIVATIONS`
-  (per signal, the READINGS it supports, in display order). A signal's own state
+  (which built-in signals may derive Suggestions), `SIGNAL_DERIVATIONS`
+  (per signal, the READINGS it supports, in display order) and
+  `CONFLICT_RESOLUTIONS` (the actions an interface can PERFORM, in one gesture, to
+  clear a blocking conflict). A signal's own state
   is DERIVED from its readings by `signalSourceOn`, never stored, for the same
   reason `smartDetectionOn` is derived; `setSignalSource` is the MASTER that
   writes them all, and `setSignalDerivation` writes one.
+
+  A conflict's resolution is STATED by the engine and read here, never inferred
+  from the conflict's refs: the refusal reaches the user on two screens (the
+  value's own card on Identify, the refused-run panel on Anonymise) and each
+  inferring the fix is two places deciding one thing.
+
+  `state.definedTerms` is the vocabulary the imported DOCUMENTS declare about
+  themselves, read by Go at detection time and enforced through the allowlist. It
+  is a separate list from `state.allowlist` for the reason the removals are
+  separate: deleting a term the user typed is not the same gesture as dropping a
+  definition the application read out of a file. It is SHOWN on the
+  never-anonymise tab, with the idiom that introduced each term and a per-entry
+  remove, because a suppression the user cannot see is one they cannot lift.
 - `copy.js` — all user-visible strings + `CATEGORY_LABELS`.
 - `ui.js` — shared UI toolkit: the card kit (`card` with its optional `bodyId`,
   `tabbar`, `countBadge`,
@@ -242,6 +257,16 @@ Windows it steals focus from the window it belongs to.
   Three states are distinct and must stay distinct: `derivedSpellings` null means
   an expansion is in flight, `[]` means it finished and found none, an error
   means it failed.
+
+  It owns BOTH halves of the sentinel invariant, which is what makes the
+  invariant checkable: `pendingExpansions` reads it and `repend` writes it. A
+  CURATED row's amended sentinel is `[]`, never `null`. `pendingExpansions`
+  deliberately skips curated rows (a curated row's chips ARE its list, so there
+  is nothing to derive), so writing `null` onto one means no expansion is ever
+  requested and nothing ever clears it: the card claims to be working forever
+  over chips that are already correct. Every writer that changes what a Value
+  MATCHES goes through `repend`; the fix is never to derive for a curated row,
+  because that would let a deleted spelling come straight back.
 - `suggestionmodel.js` — pure Suggestions filter/sort view-model (search,
   category, discovery method, count sort).
 - `countries.js` — the document-country table, MIRRORING the engine's
@@ -345,13 +370,14 @@ The frontend uses the same words as the engine, and the words are the contract.
 | **Main text** | `mainText` | the primary form naming a Value. Never duplicated in `spellings`. |
 | **Spelling** | `spellings` | an alternative form of the same Value. `derivedSpellings` is the separate cache of what Go derived. |
 | **Spelling policy** | `spellingPolicy` | `"automatic"` or `"curated"`. Curated means the chips ARE the list. |
+| **Defined term** | `state.definedTerms` | a phrase the imported DOCUMENTS declare as their own vocabulary, suppressed through the allowlist and listed with its provenance. |
 | **Discovery method** | `discoveryMethods` | provenance, a set. |
 | **Evidence** | `evidence` | structured, bounded reasons a method produced a row. The SENTENCE is built in `copy.js`, never returned as prose by the engine. |
 
 Retired names must not come back, and two guards say so mechanically:
 `../value_shape_test.go` sweeps this folder for `excludedVariants`,
 `manualVariants`, `autoExpand`, `canonical` and `origin` as object keys, and
-`../detection_parity_test.go` holds the three shared lists to the engine's.
+`../detection_parity_test.go` holds the five shared lists to the engine's.
 
 ## Where to look next
 

@@ -106,6 +106,9 @@ doc-anonymiser/
 │   ├── app_values.go / app_detect.go / app_export.go / app_run.go  # method groups
 │   ├── app_images.go          # method group: the picture inventory and previews
 │   ├── engine/                # UI-agnostic anonymisation engine
+│   │   ├── framework_agreement_test.go # the fixture pair as a regression suite:
+│   │   │                      #   reproduction against the reference, plus the
+│   │   │                      #   precision and recall numbers
 │   │   ├── document.go        # Document model, txt/csv/md ingestion
 │   │   ├── csvmd.go           # CSV ⇄ markdown-table conversion (round-trip)
 │   │   ├── convert/           # binary-format → markdown converters (pure Go, one-way)
@@ -135,7 +138,12 @@ doc-anonymiser/
 │   │   └── exportfmt/         # same-format export: rewrite of original bytes (docx/pptx/xlsx, pdf experimental)
 │   ├── ollama/
 │   │   └── client.go          # THE ONLY FILE that talks to Ollama (net/http)
-│   └── testdata/              # fixture documents for unit tests (lives with the engine that uses it)
+│   └── testdata/              # fixture documents for unit tests (lives with the engine that uses it).
+│                              #   framework_agreement.docx + _anon.docx are a real
+│                              #   contract and the same document as a human
+│                              #   anonymiser produced it; their ground truth is
+│                              #   framework_agreement_expected.json, as DATA rather
+│                              #   than a golden blob (docs/TESTING.md)
 ├── Taskfile.yml               # local entry point for the audit layer (no make: `task audit`)
 ├── .golangci.yml              # the machine-readable half of §6's coding rules
 ├── tools/                     # SEPARATE Go module holding the audit tool deps.
@@ -224,7 +232,16 @@ doc-anonymiser/
   - `.csv` → Grid model + markdown-table preview; round-trips to CSV on export.
   - `.docx` → headings (paragraph styles Heading 1–6 → #..######), bold/italic
     runs, ordered/unordered lists (numPr), tables → markdown tables,
-    hyperlinks → markdown links. Images dropped with an inline placeholder
+    hyperlinks → markdown links. **Adjacent runs sharing one formatting state are
+    coalesced and wrapped ONCE**, so the working form is the faithful markdown of
+    the document's FORMATTING and not of Word's run bookkeeping: Word splits a
+    paragraph into runs for proofing state, language tagging, revision ids and
+    simply which editing session typed which characters, and a wrap per `<w:r>`
+    turned a bold date into `**0****1****.01.20****01**`, which is intact in the
+    document and unmatchable by any multi-token pattern. It is fixed in the
+    converter rather than in a pre-detection pass so every consumer (pass 1,
+    discovery, preview, the local-AI slices, export) benefits and none has to
+    know. Images dropped with an inline placeholder
     `*[image omitted]*`. Headers/footers/footnotes dropped (pagination noise).
   - `.pptx` → one `## Slide N: <title>` section per slide; body text with
     bullet indentation; tables → markdown tables; speaker notes under a
@@ -356,6 +373,21 @@ doc-anonymiser/
   asking something the engine can answer. So each reading is gated on its own
   derivation in `discoverFromEmails`, and the invariant above holds PER READING.
 
+  A WEBSITE is the second source (`SignalSourceWebsite`, derivation
+  `url.organisation`, `discoverFromWebsites`). It exists because a document need
+  contain no email address at all and still name its own parties: a measured
+  framework agreement between two companies carried no address anywhere, so email
+  evidence contributed nothing, while `www.nstar.lu` sat in it as deterministic
+  evidence for the organisation NStar, whose spelling no derivation rule can
+  produce from "Northstar". It has ONE reading, because a domain names an
+  organisation and a URL path is a page rather than somebody, and it is filtered
+  by exactly what an email domain is filtered by.
+
+  A source identifier IS a built-in pattern category, which is why the website
+  source's value is `CatURL` rather than the word "website": the rail renders a
+  signal's readings on the row of the pattern that produces the evidence, so an
+  identifier with no category row would be a control with nowhere to render.
+
   A source has no boolean of its own. `SignalSourceEnabled` DERIVES the signal's
   state from its readings (on when any is on), for the reason `smartRouteOn`
   already states: a stored flag beside the set it summarises can disagree with it.
@@ -464,6 +496,20 @@ doc-anonymiser/
     preset.
 - **Pipeline passes (fixed order):**
   1. Built-in pattern matching (`backend/engine/pii.go`).
+
+     **A checksum failure lowers confidence; it never vetoes a span.** Where a
+     checksum IS the recognizer (Luhn over a bare digit run) it must veto, or
+     every long digit run becomes a card, and that is `piiPattern.validate`.
+     Where the pattern already stands on its own shape (an IBAN's country code,
+     check digits and grouped BBAN) a failure only scores the span
+     (`piiPattern.checksum`, `ConfidenceChecksumFailed`), because "the checksum
+     failed" is not evidence that the string is not an account number, only that
+     it might be a bad one, and a mistyped, partly-redacted or synthetic bank
+     identifier is exactly what a template document contains. Failing closed left
+     the IBAN's country and check digits in clear text and let the credit-card
+     recognizer claim its 16-digit interior, so the mapping asserted the document
+     held a card that never existed. `MinConfidence` is the user's lever over it,
+     and the default keeps it.
   2. Value pass: the accepted Values, expanded into their spellings (initials,
      surname-only, first-name-only, hyphen/space), longest-match-first
      (`backend/engine/values.go`). Derivation stops the moment the spelling
@@ -554,6 +600,29 @@ doc-anonymiser/
 - **Allowlist wins:** an allowlisted term is never replaced, by any pass. It is
   also the single veto the session exclusions are enforced through, so there is
   exactly one place a producer has to consult.
+
+  **A DEFINED TERM is enforced the same way, and it is visible.** A contract
+  declares its own vocabulary: a phrase introduced as `"Work Order" means ...` or
+  `(the "Dedicated Advisors")` is the document telling you the phrase is part of
+  its machinery and definitionally not a client identity. That is the strongest
+  "do not anonymise" signal a document can offer, and on the measured fixture
+  nineteen such phrases were the largest single class of false positives in the
+  review list. `engine.DiscoverDefinedTerms` reads them at detection time,
+  `ApplyDefinedTerms` folds them into the allowlist, and they LIVE IN THEIR OWN
+  LIST on the App and in the session file, deliberately separate from the user's
+  terms, exactly as the session exclusions are: deleting a term the user typed is
+  not the same gesture as dropping a definition the application read out of a
+  file. They are SHOWN on the never-anonymise tab with the idiom that introduced
+  each one and a per-entry remove, because a suppression the user cannot see is
+  one they cannot lift.
+
+  Two bounds are load-bearing. The suppression matches a WHOLE term, because a
+  prefix rule removed "Services NStar" (`Services` is a defined term and
+  `Services NStar` contains a real entity). And the parenthetical idiom REQUIRES
+  an article, because that is what separates a definition from an ordinary aside:
+  without it a document writing `("Contoso")` would suppress its own party name.
+  A term's plural and possessive are suppressed with it, since a document that
+  defines "Work Order" writes "Work Orders" in the same breath.
 - **The Identify to Anonymise gate:** the wizard cannot reach
   Anonymise while a detection suggestion is still unreviewed. Detection
   produces suggestions, not decisions, and walking past one silently answers
@@ -561,7 +630,7 @@ doc-anonymiser/
   the step bar and all four footers inherit it, and the Identify footer's hint
   is the refusal itself, naming the bulk "Reject all shown" so the gate is
   never a dead end.
-- **Value categories:** eight, listed in `engine.AllValueCategories` and
+- **Value categories:** eleven, listed in `engine.AllValueCategories` and
   mirrored by `frontend/state.js`. Every one is reachable by manual declaration
   and by the local AI; several are additionally reachable OFFLINE, by heuristic
   or signal-based discovery, and the frontend label of the rest says where they
@@ -569,12 +638,15 @@ doc-anonymiser/
 
   | Identifier | Placeholder | Also found offline by |
   |---|---|---|
-  | `entity_names` | `ENTITY` | legal-suffix runs, country-scoped org keywords, email domains (signal-based discovery) |
+  | `entity_names` | `ENTITY` | legal-suffix runs, the name half of a comma-separated legal name, country-scoped org keywords, email domains and website domains (signal-based discovery) |
   | `project_names` | `PROJECT` | codes beside a project cue |
   | `product_names` | `PRODUCT` | a trademark mark, or a product head noun |
   | `brand_names` | `BRAND` | nothing: a brand is world knowledge |
   | `person_names` | `PERSON` | title cues, multi-word runs, email local parts (signal-based discovery) |
   | `identifier_names` | `ID` | reference and contract codes |
+  | `country_names` | `COUNTRY` | nothing: a gazetteer would fire in running prose |
+  | `nationality_names` | `NATIONALITY` | nothing: it is an ordinary adjective |
+  | `business_sector_names` | `BUSINESS_SECTOR` | nothing: it is an ordinary noun |
   | `other_names` | `OTHER` | nothing: it is defined by exclusion |
   | `custom_patterns` | `CUSTOM` | the user's own regexes |
 
@@ -582,10 +654,43 @@ doc-anonymiser/
   systems. A human being is always `person_names`, which is why `entity_names`
   gets organisation-style spelling derivation and NOT the person-style one
   (initials, surname-only): deriving "Industries" from "Delta Industries" would
-  replace an ordinary noun everywhere. `identifier_names` and `other_names` are
-  LITERAL (`engine.literalOnlyCategories`): a code has no name structure, and
-  stripping a token that resembles a legal suffix off one would invent a spelling
-  matching a different code.
+  replace an ordinary noun everywhere. `identifier_names`, `other_names` and the
+  three CONTEXT categories are LITERAL (`engine.literalOnlyCategories`): a code
+  has no name structure, and stripping a token that resembles a legal suffix off
+  one would invent a spelling matching a different code.
+
+  The three context categories exist because a missing category is worse than an
+  empty one. In a two-party contract between two entities of one country the
+  JURISDICTION is part of the identity, and a nationality or a line of business
+  identifies in combination with the rest; without their own categories the user
+  files them under `other_names` and the mapping CSV loses the distinction. None
+  of the three earns a pattern or a gazetteer: "Française" and "Transport" are
+  ordinary French words that happen to sit inside a legal name, and a rule for
+  them would fire on running prose constantly.
+
+  **A legal name separated by a comma is found from both sides.** `Name, Société
+  anonyme` / `Name, S.A.` / `Name, Sàrl` is the standard continental legal-name
+  form and the dominant one in French and Luxembourg drafting: the owner's
+  market. A comma always terminates a capitalised run, so what survived was
+  either the legal form with no name in front of it (worthless: the name is the
+  only part worth replacing) or nothing at all, which made both parties of a
+  measured contract invisible offline. `discover.go` reaches back over ONE comma
+  when the run after it is a legal-form phrase, and forward over one when a
+  dotted form follows (a single dotted letter never joins a run, so there is no
+  run to reach back from). It then emits the NAME HALF as its own Suggestion
+  beside the full legal name, because the short form is what recurs through the
+  document; family folding makes the short one the main text and the full legal
+  name its spelling, which is the one-value-one-placeholder rule.
+
+  **A job title is not the person beside it, and a heading is not a name.** A
+  closed list of role words terminates a person run rather than joining it
+  (`engine.smartRoleTerminators`, deliberately DISJOINT from the organisation
+  keywords: "Partners" names a firm, "Partner" names a job), a run of three or
+  more underscores is a signature rule and not a sentence boundary, a name run
+  never begins with a conjunction, and ALL-CAPS text carrying a function word is
+  heading furniture. All caps ALONE is never the rule: a signature block writes
+  real people in capitals, and those are the values the review list exists to
+  surface.
   The code detector (`backend/engine/codes.go`) requires a separator between
   the letters and the digits. That is what keeps it out of pass 1's territory,
   which owns tax and VAT numbers, and `TestCodeDetectorDoesNotOverlapPassOne`
@@ -621,9 +726,10 @@ doc-anonymiser/
   `backend/engine/pii.go`, are NEVER renamed to follow a label change: a label is
   a display string, an identifier is a contract.
 - **Sensitive state stays in memory** by default. Saving a session (registry
-  + Values + settings + the removal list + the spent placeholder numbers + the
+  + Values + settings + the removal list + the defined terms + the spent
+  placeholder numbers + the
   image treatments) to disk is an explicit user action with a warning that the
-  file contains the re-identification key. `SessionVersion` is **9**; a file of
+  file contains the re-identification key. `SessionVersion` is **10**; a file of
   any other version
   is refused, never migrated, and the reasons for each bump are recorded beside
   the constant in `backend/engine/session.go`. There is no migration table and no
