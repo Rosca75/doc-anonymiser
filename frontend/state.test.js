@@ -607,7 +607,7 @@ test("the Smart detection section state is DERIVED from its methods", () => {
 
   setSmartDetection(true);
   assert.equal(smartDetectionOn(), true);
-  assert.deepEqual(enabledSignalSources(getState()), ["email"]);
+  assert.deepEqual(enabledSignalSources(getState()), SIGNAL_SOURCES);
 });
 
 test("the section reads ON while any single method is still on", () => {
@@ -2007,17 +2007,18 @@ test("the three shared vocabularies are the ones Go knows", () => {
   assert.deepEqual(DISCOVERY_METHODS, ["manual", "signal", "heuristic", "local_ai"]);
   assert.deepEqual(MATCH_CLASSES,
     ["built_in_pattern", "user_defined", "smart_discovered", "local_ai_discovered"]);
-  assert.deepEqual(SIGNAL_SOURCES, ["email"]);
+  assert.deepEqual(SIGNAL_SOURCES, ["email", "url"]);
 });
 
 test("email-derived Suggestions are on by default, and switchable", () => {
   resetState();
   assert.equal(signalSourceOn(getState(), "email"), true);
-  assert.deepEqual(enabledSignalSources(getState()), ["email"]);
+  assert.deepEqual(enabledSignalSources(getState()), SIGNAL_SOURCES);
 
   assert.equal(setSignalSource("email", false), true);
   assert.equal(signalSourceOn(getState(), "email"), false);
-  assert.deepEqual(enabledSignalSources(getState()), []);
+  assert.deepEqual(enabledSignalSources(getState()), ["url"],
+    "and the other signal is untouched: each source is switched on its own");
 });
 
 test("switching a signal source off leaves the category switch alone", () => {
@@ -2087,12 +2088,12 @@ test("the signal's own state is DERIVED from its readings, never stored", () => 
   setSignalDerivation("email", "email.person", false);
   assert.equal(signalSourceOn(getState(), "email"), true,
     "one reading left on still derives something");
-  assert.deepEqual(enabledSignalSources(getState()), ["email"]);
+  assert.deepEqual(enabledSignalSources(getState()), SIGNAL_SOURCES);
 
   setSignalDerivation("email", "email.organisation", false);
   assert.equal(signalSourceOn(getState(), "email"), false,
     "every reading off is the only thing that reads as off");
-  assert.deepEqual(enabledSignalSources(getState()), []);
+  assert.deepEqual(enabledSignalSources(getState()), ["url"]);
 });
 
 test("setSignalSource is the MASTER: it writes every reading of that signal", () => {

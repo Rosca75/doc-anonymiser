@@ -269,6 +269,7 @@ export const RAIL = {
   // render as a checkbox named after a JSON key.
   signalSourceLabel: {
     email: "Email addresses",
+    url: "Web addresses",
   },
   // One label, one "where it reads it from" and one explanation per engine
   // DERIVATION, enforced by the same guard. The label says WHAT is suggested and
@@ -277,14 +278,17 @@ export const RAIL = {
   signalDerivationLabel: {
     "email.person": "Person names",
     "email.organisation": "Organisation names",
+    "url.organisation": "Organisation names",
   },
   signalDerivationFinds: {
     "email.person": "from the part before the @",
     "email.organisation": "from the domain",
+    "url.organisation": "from the website domain",
   },
   signalDerivationHelp: {
     "email.person": "Reads the part before the @ as a person's name, and suggests that name where it appears in prose elsewhere in the batch. Role mailboxes such as info@ and single-token handles derive nothing. Switching this off stops those suggestions and does not stop the address itself being anonymised.",
     "email.organisation": "Reads the domain as an organisation's name, and suggests that name where it appears in prose elsewhere in the batch. Public mail providers and public-suffix labels derive nothing. Switching this off stops those suggestions and does not stop the address itself being anonymised.",
+    "url.organisation": "Reads a website's domain as an organisation's name, and suggests that name where it appears in prose elsewhere in the batch. A document that carries no email address often still prints its parties' websites, and the domain is frequently the short form of the name. The page path derives nothing. Switching this off stops those suggestions and does not stop the website itself being anonymised.",
   },
   signalSourcesOff: "Off",
   /**
@@ -666,6 +670,7 @@ export const WORKSPACE = {
   evidenceKindLabel: {
     email_local_part: "an email address naming this person",
     email_domain: "an email domain naming this organisation",
+    website_domain: "a website domain naming this organisation",
   },
   evidenceTitle: "Why this was suggested",
   /**

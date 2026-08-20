@@ -400,7 +400,14 @@ function signalCategoryRow(s, source, headHTML, tailHTML) {
     label: RAIL.signalSuggestions,
     headHTML,
     tailHTML,
-    helpHTML: helpTooltip(RAIL.signalSuggestionsHelp, { label: RAIL.signalSuggestions }),
+    // The bubble's id is scoped by SOURCE. helpTooltip derives an id from the
+    // text, and every signal row carries the same explanation, so two sources
+    // would render two bubbles with one id and aria-describedby would point at
+    // whichever the browser saw first.
+    helpHTML: helpTooltip(RAIL.signalSuggestionsHelp, {
+      id: `help-signal-${source}`,
+      label: RAIL.signalSuggestions,
+    }),
     title: RAIL.signalDerivedFrom(RAIL.signalSourceLabel[source] ?? source),
     summary: RAIL.signalDerivationCount(enabledSignalDerivations(s, source).length),
     checked: signalSourceOn(s, source),

@@ -31,6 +31,21 @@ const (
 	// SignalSourceEmail derives person and organisation Suggestions from a
 	// matched email address's local part and domain.
 	SignalSourceEmail = "email"
+	// SignalSourceWebsite derives organisation Suggestions from a matched
+	// website's registrable domain label.
+	//
+	// It exists because a document need contain no email address at all and still
+	// name its own parties: a measured framework agreement between two companies
+	// carried no address anywhere, so email evidence contributed nothing, while
+	// "www.nstar.lu" sat in it as deterministic evidence for the organisation
+	// NStar, whose spelling no derivation rule can produce from "Northstar".
+	//
+	// Its VALUE is the URL pattern category, as SignalSourceEmail's is the email
+	// one: a signal source identifier IS a built-in pattern category, because the
+	// rail renders a signal's readings on the row of the pattern that produces
+	// the evidence. An identifier with no category row would be a control with
+	// nowhere to render.
+	SignalSourceWebsite = CatURL
 )
 
 // SignalDerivation identifiers: WHAT a signal derives, and by which mechanism.
@@ -44,18 +59,26 @@ const (
 	// DerivationEmailOrganisation reads the domain as an organisation's name
 	// ("...@tpps.com" is evidence for Tpps).
 	DerivationEmailOrganisation = "email.organisation"
+	// DerivationWebsiteOrganisation reads a website's registrable domain label as
+	// an organisation's name ("www.nstar.lu" is evidence for NStar).
+	//
+	// A website has no person reading: a domain names an organisation, and a URL
+	// path is a page rather than somebody. So this source has exactly one
+	// derivation, which is what the nested selection shape is for.
+	DerivationWebsiteOrganisation = "url.organisation"
 )
 
 // AllSignalSources lists the sources the user can switch, mirrored by frontend
 // state.js SIGNAL_SOURCES and checked by ../../detection_parity_test.go.
-var AllSignalSources = []string{SignalSourceEmail}
+var AllSignalSources = []string{SignalSourceEmail, SignalSourceWebsite}
 
 // SignalDerivations lists, per signal source, the derivations it supports, in
 // display order. It is the ONE definition of the tree the rail renders, mirrored
 // by frontend/state.js SIGNAL_DERIVATIONS and guarded by
 // ../../detection_parity_test.go.
 var SignalDerivations = map[string][]string{
-	SignalSourceEmail: {DerivationEmailPerson, DerivationEmailOrganisation},
+	SignalSourceEmail:   {DerivationEmailPerson, DerivationEmailOrganisation},
+	SignalSourceWebsite: {DerivationWebsiteOrganisation},
 }
 
 // SignalSourceSelection is which DERIVATIONS may produce Suggestions, keyed by

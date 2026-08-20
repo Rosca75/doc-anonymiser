@@ -9,8 +9,12 @@
 //   - Every regex is compiled once at package init (performance budget:
 //     per-call compilation is the classic budget killer) and documented
 //     with examples of what it matches and deliberately does NOT match.
-//   - IBAN suggestions additionally pass a mod-97 checksum in Go, killing
-//     the false positives a regex alone would produce.
+//   - A checksum is one of two things, and the field name says which
+//     (piiPattern.validate vs piiPattern.checksum). Where the checksum IS the
+//     recognizer (Luhn over a bare digit run) a failure VETOES the span; where
+//     the pattern already stands on its own shape (an IBAN's country code,
+//     check digits and grouped BBAN) a failure only LOWERS the confidence, so
+//     a mistyped or synthetic bank identifier is still anonymised.
 package engine
 
 import (
@@ -97,9 +101,29 @@ type piiPattern struct {
 	re        *regexp.Regexp
 	group     int
 	countries []string
-	// validate, when set, gets the matched text and may veto the span
-	// (used for the IBAN checksum).
+	// validate, when set, gets the matched text and may VETO the span. It is
+	// for SHAPE gates and for the checksums that ARE the recognizer: strip the
+	// Luhn check off the credit-card rule and every 16-digit run in the document
+	// becomes a card, so there the checksum is the only thing separating the
+	// pattern from ordinary text and it has to veto.
 	validate func(string) bool
+	// checksum, when set, is a CORROBORATING check over a pattern that already
+	// stands on its own shape. A failure LOWERS the span's confidence to
+	// ConfidenceChecksumFailed and never vetoes it.
+	//
+	// A failed checksum is the wrong reason to leave a bank identifier in a
+	// document. "The checksum failed" is not evidence that the string is not an
+	// account number, only that it might be a bad one, and a mistyped,
+	// partly-redacted or synthetic identifier is exactly what a template or test
+	// document contains. Failing closed leaves the country code and check digits
+	// in clear text; producing the span at a reduced score leaves MinConfidence
+	// as the user's lever over it.
+	checksum func(string) bool
+	// reject, when set, gets the WHOLE text and the match bounds and may veto
+	// the span on its SURROUNDINGS rather than on its own characters. RE2 has no
+	// lookarounds, so a rule about what sits immediately before a match cannot
+	// live in the pattern.
+	reject func(text string, start, end int) bool
 }
 
 // Which categories fire at which preset level lives in ONE place since
@@ -120,20 +144,43 @@ var piiPatterns = []piiPattern{
 	{
 		// URLs (including any that embed credentials — the whole URL is
 		// replaced, so credentials never survive).
-		// Matches:      https://example.com/a?b=c, http://user:pw@host.tld/x
-		// Does not match: "example.com" (no scheme — too many false hits
-		// on ordinary "word.word" text), "ftp://host" (not http/https).
+		//
+		// Two alternatives, because a scheme is not the only unambiguous marker.
+		// A bare "word.word" is left alone deliberately (too many false hits on
+		// ordinary prose), but a "www." label is a host name and nothing else,
+		// and a document's own website is one of the strongest identifiers it
+		// carries. The www. form needs at least two more dot-separated labels
+		// after it, so "www." on its own or "www.txt" never matches.
+		// A path may not END on sentence punctuation, so "see www.nstar.lu/privacy."
+		// yields the URL and leaves the full stop in the sentence.
+		// Matches:      https://example.com/a?b=c, http://user:pw@host.tld/x,
+		//               www.nstar.lu, www.nstar.lu/privacy,
+		//               www.statistiques.public.lu
+		// Does not match: "example.com" (no scheme and no www. label),
+		//               "ftp://host" (not http/https).
+		//
+		// Longest-match-first in ResolveOverlaps is what keeps
+		// "www.nstar.lu/privacy" one span rather than letting "www.nstar.lu"
+		// fire inside it.
 		category: CatURL,
-		re:       regexp.MustCompile(`https?://[^\s<>"')\]]+`),
+		re: regexp.MustCompile(`https?://[^\s<>"')\]]+` +
+			`|\bwww\.[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+(?:/(?:[^\s<>"')\],]*[^\s<>"')\],.;:!?])?)?`),
 	},
 	{
-		// IBAN suggestions; the mod-97 checksum below is the real filter.
-		// Matches:      LU28 0019 4006 4475 0000, DE89370400440532013000
-		// Does not match: LU28 0019 4006 4475 0001 (checksum fails, vetoed
-		// by validate), "LUXEMBOURG" (needs 2 check digits after country).
+		// IBANs. The country code, the two check digits and the grouped BBAN
+		// are already a specific enough shape to recognise on their own, so the
+		// mod-97 check is CORROBORATION and not the recognizer: it scores the
+		// span rather than vetoing it.
+		// Matches:      LU28 0019 4006 4475 0000, DE89370400440532013000, and
+		//               LU88 0055 6600 4321 6501 at ConfidenceChecksumFailed
+		//               (mod-97 remainder 74: a synthetic test IBAN, which is
+		//               what a template document contains and precisely what
+		//               must still be anonymised).
+		// Does not match: "LUXEMBOURG" (needs 2 check digits after the country
+		//               code), a bare 16-digit run (needs the letter prefix).
 		category: CatIBAN,
 		re:       regexp.MustCompile(`\b[A-Z]{2}[0-9]{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b`),
-		validate: validIBAN,
+		checksum: validIBAN,
 	},
 	{
 		// EU VAT numbers — the formats relevant to the owner's market
@@ -177,13 +224,22 @@ var piiPatterns = []piiPattern{
 		countries: []string{CountryLU},
 	},
 	{
-		// Phone numbers: international (+352 621 000 111, 0033 6 12 34 56 78)
-		// and LU/FR/BE/DE national formats (06 12 34 56 78, 0621 456 789).
-		// Matches:      +352 621 000 111, +33 6 12 34 56 78, 06 12 34 56 78
-		// Does not match: 1893120105732 (no leading +/0 prefix shape),
-		// plain years like 2026 (too short).
+		// Luxembourg phone numbers, in their INTERNATIONAL form only.
+		//
+		// A Luxembourg subscriber number carries no trunk prefix, so written
+		// nationally it is a bare run of eight digits in pairs, which is the same
+		// shape as an ISO date ("2026-01-15"), as the interior of an IBAN
+		// ("... 4475 0001 0000") and as an ordinary reference number. This
+		// repository's own tests measure both collisions, so the national form is
+		// deliberately not matched: a rule that turns a date into a phone number
+		// costs more than the numbers it finds. A national rule needs a phone cue
+		// beside the digits, and that is a change with its own evidence behind it.
+		// Matches:      +352 621 000 111, +352 29 19 19 5, +352 29 19 19 2100,
+		//               00352 26 12 34 56
+		// Does not match: 1893120105732 (no international prefix), "2026" (too
+		//               short), a bare "26 12 34 56".
 		category:  CatPhone,
-		re:        regexp.MustCompile(`(?:\+352|00352)(?:[ .\-/]?[0-9]{2,4}){2,4}|\b(?:2[0-9]|4[0-9]|5[0-9]|6[0-9]|7[0-9]|8[0-9]|9[0-9])(?:[ .\-/]?[0-9]{2}){3}\b`),
+		re:        regexp.MustCompile(`(?:\+352|00352)(?:[ .\-/]?[0-9]{1,4}){2,5}`),
 		countries: []string{CountryLU},
 		validate:  validLUPhone,
 	},
@@ -259,6 +315,12 @@ var piiPatterns = []piiPattern{
 		// vetoes the vast majority of accidental matches.
 		re:       regexp.MustCompile(`\b[0-9]{13,19}\b|\b[0-9]{4}(?:[ \-][0-9]{4,6}){2,3}[0-9]?\b`),
 		validate: validLuhn,
+		// A 16-digit BBAN passes Luhn about one time in ten, so an IBAN's
+		// interior is a recurring credit-card false positive, and the harm is
+		// worse than a miss: the mapping CSV then asserts the document held a
+		// card that does not exist. The guard is independent of the checksum
+		// policy above, so it stands whether or not the IBAN span was produced.
+		reject: precededByIBANPrefix,
 	},
 	{
 		// UK NHS number: 10 digits, spaces allowed as "NNN NNN NNNN".
@@ -383,12 +445,21 @@ func DetectPIISelected(text string, sel CategorySelection, country string) []Spa
 			if p.validate != nil && !p.validate(original) {
 				continue
 			}
+			if p.reject != nil && p.reject(text, start, end) {
+				continue
+			}
+			// A corroborating checksum scores the span; only a `validate` gate
+			// above can remove one.
+			confidence := ConfidenceDeterministic
+			if p.checksum != nil && !p.checksum(original) {
+				confidence = ConfidenceChecksumFailed
+			}
 			spans = append(spans, Span{
 				Start:      start,
 				End:        end,
 				Category:   p.category,
 				Original:   original,
-				Confidence: ConfidenceDeterministic,
+				Confidence: confidence,
 				MatchClass: MatchClassBuiltInPattern,
 			})
 		}
@@ -427,12 +498,31 @@ func digitsOnly(s string) string {
 	return b.String()
 }
 
+// luPhoneMinDigits / luPhoneMaxDigits bound a Luxembourg number by the
+// national significant digits its numbering plan allocates (4 to 11).
+//
+// Luxembourg numbers are NOT fixed length, which an exactly-nine rule got wrong
+// for the owner's primary market: a six-digit base can carry a PBX extension, so
+// "+352 29 19 19 5" (7 national digits) and "+352 29 19 19 2100" (10) are both
+// real numbers and both were left in the document. A length check still has to
+// exist, because the regex shape alone would accept a bare year or an article
+// number, so the bound moves rather than going away.
+const (
+	luPhoneMinDigits = 4
+	luPhoneMaxDigits = 11
+)
+
 func validLUPhone(s string) bool {
 	digits := digitsOnly(s)
-	if strings.HasPrefix(digits, "352") {
-		digits = digits[3:]
+	// The pattern only matches the international form, so the country code is
+	// always there to remove; what is left is the national significant number.
+	switch {
+	case strings.HasPrefix(digits, "00352"):
+		digits = digits[len("00352"):]
+	case strings.HasPrefix(digits, "352"):
+		digits = digits[len("352"):]
 	}
-	return len(digits) == 9
+	return len(digits) >= luPhoneMinDigits && len(digits) <= luPhoneMaxDigits
 }
 
 func validFRPhone(s string) bool {
@@ -485,6 +575,14 @@ const (
 	// ConfidenceLLMDefault is the fallback score for a Local AI finding that
 	// carried no explicit confidence.
 	ConfidenceLLMDefault float32 = 0.8
+	// ConfidenceChecksumFailed is the score for a built-in pattern match whose
+	// CORROBORATING checksum did not verify (piiPattern.checksum): the shape is
+	// right and the digits do not add up. It sits below every other producer,
+	// because the span is the least certain thing pass 1 emits, and above zero,
+	// because the span still exists and a failed checksum is not a reason to
+	// leave a bank identifier in a document. MinConfidence is the user's lever
+	// over it, and the default (0) keeps it.
+	ConfidenceChecksumFailed float32 = 0.7
 )
 
 // FilterByMinConfidence drops every span scoring below one global minimum,
@@ -759,6 +857,37 @@ func validNIF(s string) bool {
 		got -= 'a' - 'A'
 	}
 	return got == expected
+}
+
+// ibanPrefixRe matches the country-and-check-digits head of an IBAN sitting
+// immediately before a candidate: two capitals, two digits, then optional
+// whitespace. It exists because RE2 has no lookbehind, so the credit-card rule
+// cannot express "not preceded by this" inside its own pattern.
+//
+// The `$` anchors it to the END of the text handed in, which is the stretch
+// immediately before the match.
+var ibanPrefixRe = regexp.MustCompile(`\b[A-Z]{2}[0-9]{2}[ ]?$`)
+
+// precededByIBANPrefix reports whether the match at [start,end) is the interior
+// of an IBAN: an "LU88 " style head sits directly in front of it.
+//
+// A 16-digit BBAN passes Luhn roughly one time in ten, so without this guard an
+// IBAN's interior is a recurring credit-card false positive, and the mapping CSV
+// then states the document contained a card that never existed while the IBAN's
+// country code and check digits survive in clear text beside the placeholder.
+//
+// @param text the whole document working form
+// @param start the match's first byte, @param end one past its last
+// @return true when the span must not be produced
+func precededByIBANPrefix(text string, start, end int) bool {
+	// A short window is enough: the head is six bytes at most. Scanning back
+	// further would cost a regex pass over the whole document per candidate.
+	const window = 8
+	from := start - window
+	if from < 0 {
+		from = 0
+	}
+	return ibanPrefixRe.MatchString(text[from:start])
 }
 
 // validIBAN implements the ISO 13616 mod-97 check: move the first four

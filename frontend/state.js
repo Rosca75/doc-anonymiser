@@ -130,6 +130,7 @@ const initialState = {
     // source or reading needs no new field here.
     signalSuggestionSources: {
       email: { "email.person": true, "email.organisation": true },
+      url: { "url.organisation": true },
     },
     minConfidence: 0,
     // heuristicDiscovery is the tuning for the offline Smart
@@ -373,7 +374,7 @@ export const MATCH_CLASSES = [
 // Suggestions, and the checklist in the rail is built from this list, so adding
 // a source is one constant here and one implementation in Go rather than a new
 // row, a new field and a new persisted flag.
-export const SIGNAL_SOURCES = ["email"];
+export const SIGNAL_SOURCES = ["email", "url"];
 
 // AI_DETAIL_LEVELS mirrors engine.AllDetailLevels exactly, in the order the rail
 // offers them, and is checked by ../detection_parity_test.go. The dropdown is
@@ -392,6 +393,7 @@ export const AI_DETAIL_LEVELS = ["thorough", "faster"];
 // reading is one entry here and one producer in Go.
 export const SIGNAL_DERIVATIONS = {
   email: ["email.person", "email.organisation"],
+  url: ["url.organisation"],
 };
 
 // --- Pictures, as the Anonymise step's second half ------------------------

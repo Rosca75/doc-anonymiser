@@ -264,3 +264,191 @@ func FilterAllowed(spans []Span, allow *Allowlist) []Span {
 	}
 	return out
 }
+
+// --- defined terms: the vocabulary a document declares about itself ----------
+
+// Definition idioms, the drafting shapes that introduce a defined term. They are
+// string constants so a term's provenance survives the Wails JSON boundary and a
+// session file, and so the UI can name the idiom in the never-anonymise list
+// instead of showing an unexplained entry.
+const (
+	// DefinitionIdiomMeans is the dictionary form: `"Work Order" means ...`.
+	DefinitionIdiomMeans = "means"
+	// DefinitionIdiomParenthetical is the inline form: `(the "Dedicated
+	// Advisors")`, `(together the "Experts")`.
+	DefinitionIdiomParenthetical = "parenthetical"
+)
+
+// DefinedTerm is one phrase a DOCUMENT declares as its own vocabulary.
+//
+// A defined term is not merely noise in a review list: it is the strongest "do
+// not anonymise" signal a contract can offer, because the document itself says
+// the phrase is part of its machinery. A phrase introduced as `"Work Order"
+// means ...` or `(the "Dedicated Advisors")` is definitionally not a client
+// identity, and in the measured fixture nineteen such phrases accounted for the
+// largest single class of false positives in the review list.
+//
+// It carries its provenance so the never-anonymise list can show WHY the entry
+// is there and the user can delete it, exactly as a session exclusion is
+// visible and reversible. A suppressor the user cannot see is the mistake this
+// shape exists to avoid.
+type DefinedTerm struct {
+	// Term is the phrase as the document spells it, emphasis markers removed.
+	Term string `json:"term"`
+	// Idiom is which drafting shape introduced it (the constants above).
+	Idiom string `json:"idiom"`
+	// Document is the file the definition was read from, for the UI.
+	Document string `json:"document,omitempty"`
+}
+
+// definedTermMeansRe matches the dictionary idiom: a quoted phrase followed by
+// "means" or "shall mean".
+//
+// Matches:      “**Work Order**” means, "Confidential Information" means,
+//
+//	“Loss” shall mean
+//
+// Does not match: hereinafter referred to as “Contoso” (no "means", and no
+//
+//	parentheses either, which is what keeps a party's short name
+//	out of the suppressor: the short name is exactly what has to be
+//	anonymised).
+//
+// The capture tolerates the markdown emphasis markers the working form carries
+// inside the quotes, because the converter wraps the bold term the drafter
+// used; stripMarkdownEmphasis removes what is left.
+var definedTermMeansRe = regexp.MustCompile(
+	`["\x{201c}]([^"\x{201c}\x{201d}\n]{2,60}?)["\x{201d}][ ]*(?:shall[ ]+mean|means)\b`)
+
+// definedTermParentheticalRe matches the inline idiom: a quoted phrase inside
+// parentheses, introduced by an article.
+//
+// Matches:      (the “**Dedicated Advisors**”), (together the “***Experts***”),
+//
+//	(each a "Party")
+//
+// Does not match: (“AC Process”) — no article, so the shape is not certain
+//
+//	enough; and any unparenthesised quotation, so
+//	`referred to as “Contoso”` is untouched.
+//
+// The ARTICLE is required deliberately. It is what separates a definition from
+// an ordinary aside, and dropping it would let a document that writes
+// (“Contoso”) suppress its own party name.
+var definedTermParentheticalRe = regexp.MustCompile(
+	`\((?:[ ]*(?:together|collectively)[ ]+)?(?:the|a|an|each[ ]+an?|each)[ ]+["\x{201c}]([^"\x{201c}\x{201d}\n]{2,60}?)["\x{201d}][ ]*\)`)
+
+// markdownEmphasisRe matches a run of markdown emphasis markers, so a term read
+// out of the working form is stored as the drafter's words rather than with the
+// converter's bold markers around it.
+var markdownEmphasisRe = regexp.MustCompile(`[*_]{1,3}`)
+
+// DiscoverDefinedTerms returns the terms a document declares as its own
+// vocabulary, in first-seen order and deduplicated case-insensitively.
+//
+// Two idioms are recognised and no more, because the measurement that motivated
+// this found the dictionary form alone caught six of nineteen while adding the
+// inline parenthetical form caught all nineteen. A third, looser shape would
+// start suppressing the party names the document introduces with
+// `hereinafter referred to as "..."`, which are the values that most need
+// replacing.
+//
+// The terms are enforced through the allowlist, which matches a WHOLE term
+// case-insensitively. That is load-bearing rather than incidental: a
+// prefix-matching suppressor removed "Services NStar", because "Services" is a
+// defined term and "Services NStar" contains a real entity.
+//
+// @param name the document the text came from, recorded as provenance
+// @param text the document's markdown working form
+// @return one DefinedTerm per distinct phrase, in the order they appear
+func DiscoverDefinedTerms(name, text string) []DefinedTerm {
+	var out []DefinedTerm
+	seen := map[string]bool{}
+	collect := func(re *regexp.Regexp, idiom string) {
+		for _, m := range re.FindAllStringSubmatch(text, -1) {
+			term := cleanDefinedTerm(m[1])
+			if term == "" || len([]rune(term)) < minSpellingLen {
+				continue
+			}
+			key := strings.ToLower(term)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, DefinedTerm{Term: term, Idiom: idiom, Document: name})
+		}
+	}
+	collect(definedTermMeansRe, DefinitionIdiomMeans)
+	collect(definedTermParentheticalRe, DefinitionIdiomParenthetical)
+	return out
+}
+
+// cleanDefinedTerm strips the working form's emphasis markers and the
+// punctuation a quotation can carry, and collapses internal whitespace.
+func cleanDefinedTerm(raw string) string {
+	s := markdownEmphasisRe.ReplaceAllString(raw, "")
+	s = strings.Trim(s, " \t.,;:")
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// ApplyDefinedTerms adds every discovered defined term to the allowlist and
+// returns how many were added.
+//
+// It mirrors ApplyRemovals exactly, and for the same reason: Allowlist.Contains
+// is the single veto every span producer already consults, so a second
+// negative-rule mechanism would be one more thing a producer could forget to
+// ask. The terms stay a SEPARATE list in state, so "stop suppressing this term"
+// is not the same gesture as "delete a never-anonymise term the user typed".
+func ApplyDefinedTerms(allow *Allowlist, terms []DefinedTerm) int {
+	if allow == nil {
+		return 0
+	}
+	count := 0
+	for _, t := range terms {
+		if strings.TrimSpace(t.Term) == "" {
+			continue
+		}
+		for _, form := range definedTermForms(t.Term) {
+			allow.Add(form)
+			count++
+		}
+	}
+	return count
+}
+
+// definedTermForms returns the term plus the inflections a drafter writes it in:
+// the plural and the possessive.
+//
+// A document that defines "Work Order" writes "Work Orders" and "the Work
+// Order's" in the same breath, and they are the same vocabulary item. Without
+// the inflections the suppressor removes one review row and leaves its plural
+// sitting beside it, which reads as the suppressor not working.
+//
+// It stays a small closed transformation rather than a stemmer: only the LAST
+// word is inflected, and only by the three English rules below, so the result is
+// always a form a reader can recognise as the same term. Nothing here is a
+// prefix rule: every form is matched WHOLE, which is what keeps "Services NStar"
+// out of the suppressor while "Services" is in it.
+func definedTermForms(term string) []string {
+	forms := []string{term, term + "'s", term + "\u2019s"}
+	fields := strings.Fields(term)
+	if len(fields) == 0 {
+		return forms
+	}
+	last := fields[len(fields)-1]
+	lower := strings.ToLower(last)
+	var plural string
+	switch {
+	case strings.HasSuffix(lower, "s") || strings.HasSuffix(lower, "x") ||
+		strings.HasSuffix(lower, "z") || strings.HasSuffix(lower, "ch") ||
+		strings.HasSuffix(lower, "sh"):
+		plural = last + "es"
+	case strings.HasSuffix(lower, "y") && len(lower) > 1 &&
+		!strings.ContainsRune("aeiou", rune(lower[len(lower)-2])):
+		plural = last[:len(last)-1] + "ies"
+	default:
+		plural = last + "s"
+	}
+	fields[len(fields)-1] = plural
+	return append(forms, strings.Join(fields, " "))
+}

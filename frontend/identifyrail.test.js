@@ -341,7 +341,7 @@ test("a signal's readings are its implemented ones, each individually switchable
   const smart = all(railBody(getState()), "section.rail-section")[0].outer;
   const boxes = all(smart, "input.signal-box");
   assert.deepEqual(boxes.map((b) => b.attrs["data-derivation"]),
-    SIGNAL_DERIVATIONS.email);
+    SIGNAL_SOURCES.flatMap((source) => SIGNAL_DERIVATIONS[source]));
   assert.ok(boxes.every((b) => "checked" in b.attrs),
     "every reading defaults on: the evidence is deterministic and deriving from it "
     + "is why the feature exists");
@@ -356,8 +356,9 @@ test("every reading explains itself through a tooltip", () => {
   // anonymised, which is the distinction the whole setting exists for.
   resetState();
   const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  const rows = all(one(smart, ".signal-readings").outer, ".signal-reading");
-  assert.equal(rows.length, SIGNAL_DERIVATIONS.email.length);
+  const rows = all(smart, ".signal-reading");
+  assert.equal(rows.length,
+    SIGNAL_SOURCES.reduce((n, source) => n + SIGNAL_DERIVATIONS[source].length, 0));
   for (const row of rows) {
     assert.ok(exists(row.outer, "span.help"),
       `a reading with no help tooltip: ${stripTags(row.inner).trim()}`);
@@ -371,14 +372,17 @@ test("the drill-down's own checkbox is a DERIVED master over its readings", () =
   resetState();
   const railFor = () => all(railBody(getState()), "section.rail-section")[0].outer;
 
+  // Scoped to the email row: the rail carries one master per signal source, and
+  // this is a question about ONE source's master over ITS readings.
+  const emailMaster = () => all(railFor(), "input.signal-master")
+    .find((b) => b.attrs["data-source"] === "email");
+
   setSignalDerivation("email", "email.person", false);
-  let master = one(railFor(), "input.signal-master");
-  assert.ok("checked" in master.attrs,
+  assert.ok("checked" in emailMaster().attrs,
     "one reading off leaves the signal reading on, because it still derives something");
 
   setSignalDerivation("email", "email.organisation", false);
-  master = one(railFor(), "input.signal-master");
-  assert.ok(!("checked" in master.attrs),
+  assert.ok(!("checked" in emailMaster().attrs),
     "every reading off is the only thing that reads as off");
 });
 
@@ -386,7 +390,9 @@ test("the panel's read-out reads Off once every reading is cleared", () => {
   resetState();
   for (const source of SIGNAL_SOURCES) setSignalSource(source, false);
   const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  assert.equal(textOf(smart, "span.signal-count"), RAIL.signalSourcesOff);
+  for (const count of all(smart, "span.signal-count")) {
+    assert.equal(stripTags(count.inner).trim(), RAIL.signalSourcesOff);
+  }
 });
 
 test("clearing ONE reading leaves the other producing its own Suggestions", () => {

@@ -18,11 +18,14 @@ const (
 	// EvidenceEmailDomain is the registrable part of a matched email address's
 	// domain, used as an organisation seed.
 	EvidenceEmailDomain = "email_domain"
+	// EvidenceWebsiteDomain is the registrable label of a matched website URL,
+	// read as an organisation's name.
+	EvidenceWebsiteDomain = "website_domain"
 )
 
 // AllEvidenceKinds lists the kinds the engine can emit, so the frontend copy
 // table can be checked against it rather than guessed at.
-var AllEvidenceKinds = []string{EvidenceEmailLocalPart, EvidenceEmailDomain}
+var AllEvidenceKinds = []string{EvidenceEmailLocalPart, EvidenceEmailDomain, EvidenceWebsiteDomain}
 
 // Evidence is one reason a discovery method produced a Suggestion.
 type Evidence struct {
