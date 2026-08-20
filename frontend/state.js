@@ -271,6 +271,41 @@ const initialState = {
   // changed, finalValue}]}}. Decisions persist for the session so the
   // review only happens before the FIRST same-format export of a file.
   metaReview: {},
+
+  // --- The Anonymise step's IMAGE half ------------------------------------
+  //
+  // Which half of step 3 is on screen: "text" (the Compare card and the run
+  // cards) or "images" (the picture review). It lives here rather than in the
+  // view because both halves read the SAME document selector, so the tab and
+  // the selected document have to survive each other's changes.
+  anonymiseTab: "text",
+
+  // The picture list's filter and its layout, both from the lists above. They
+  // are ways of LOOKING at the inventory, not part of it, and they are shared
+  // by every document: a filter that reset per file would make walking a batch
+  // a matter of re-choosing the same view over and over.
+  imageFilter: "all",
+  imageLayout: "details",
+
+  // The picture inventory per IMPORTED document name:
+  // {docName: {loading, error, inventory}}. The inventory is what Go answered
+  // (applicable, reason, assets, warnings); `loading` and `error` are this
+  // side's record of the call, because a screen that cannot tell "not asked
+  // yet" from "asked and empty" renders one of them as the other.
+  images: {},
+
+  // One picture's preview, by imageThumbKey(docName, assetId). A deck can hold
+  // two hundred pictures and the list repaints on every keystroke, so a row
+  // asks for its thumbnail once and reads the cache afterwards. It is a cache
+  // and never a second source of truth: `images` says which assets exist.
+  imageThumbs: {},
+
+  // The treatment panel's open state, or null when it is closed:
+  // {docName, assetId, draft, preview, previewLoading, error}. `draft` is the
+  // decision being composed, which is deliberately NOT the stored one: the
+  // panel keeps its draft until Apply, so cancelling leaves the recorded
+  // decision untouched.
+  imageEditor: null,
 };
 
 // --- Category presets ----
@@ -358,6 +393,36 @@ export const AI_DETAIL_LEVELS = ["thorough", "faster"];
 export const SIGNAL_DERIVATIONS = {
   email: ["email.person", "email.organisation"],
 };
+
+// --- Pictures, as the Anonymise step's second half ------------------------
+//
+// Four lists the two sides SHARE, each mirroring an engine list and each held to
+// it by ../image_parity_test.go, exactly as the detection vocabularies above are.
+//
+// IMAGE_TREATMENTS mirrors imaging.AllTreatments, in the order the treatment
+// panel offers them. "keep" is the first because it is where every picture
+// starts: a decision is stored as the ABSENCE of one, so nothing is ever
+// undecided.
+export const IMAGE_TREATMENTS = ["keep", "box", "blur", "remove"];
+
+// IMAGE_FORMATS mirrors imaging.AllFormats. It is what a picture's BYTES turn
+// out to be, sniffed by Go and never read off the part's extension, because a
+// part named .png holding JPEG bytes is common enough in real documents to
+// matter. "other" is every format this application cannot redraw, and such a
+// picture is still LISTED: an image the user cannot see in the review is an
+// image they believe was reviewed.
+export const IMAGE_FORMATS = ["png", "jpeg", "svg", "other"];
+
+// IMAGE_KINDS mirrors imaging.AllKinds: what ENCLOSES a picture, which is a
+// separate question from what the picture is. It decides what removing it can
+// mean, so the review says it where it is not a plain picture element.
+export const IMAGE_KINDS = ["picture", "fill", "background"];
+
+// IMAGE_STATUS_FILTERS is the review banner's filter, and its three ids are the
+// frontend's own: the engine has no opinion about how a list is filtered. There
+// are only two STATUSES, because every picture starts at keep, so "all" is the
+// unfiltered view rather than a third status.
+export const IMAGE_STATUS_FILTERS = ["all", "kept", "anonymised"];
 
 /**
  * signalDerivationOn(s, source, derivation) reports whether ONE reading of a
@@ -1335,6 +1400,12 @@ export const STEP_RESETS = {
   }),
   // Anonymise owns the run itself, everything it produced, and the editing
   // surfaces that only exist once there is a result to edit.
+  //
+  // The picture decisions are deliberately NOT here. They are about the bytes
+  // captured at IMPORT, they need no run, and they are held by Go per imported
+  // document: discarding them because the user stepped back to review a value
+  // would throw away work the run never touched. What does go is the treatment
+  // panel, because an editing overlay must not outlive the screen it belongs to.
   anonymise: () => ({
     running: false,
     progress: null,
@@ -1344,6 +1415,7 @@ export const STEP_RESETS = {
     replacedValues: [],
     removedValues: [],
     dismissedWarnings: [],
+    imageEditor: null,
   }),
   // Export owns the per-document metadata review decisions.
   export: () => ({ metaReview: {} }),
@@ -1443,8 +1515,11 @@ export function applyImportResult(result) {
     aiScope: scopedDoc ? state.aiScope : { docName: "", mode: "all", pages: "" },
     // A fresh import list makes every cached source stale (a re-imported file
     // with the same name is a DIFFERENT file). Dropping the cache is cheaper
-    // and safer than deciding which entries survived.
+    // and safer than deciding which entries survived. The picture inventories
+    // and previews go with it for exactly the same reason: they describe bytes
+    // this import may have replaced.
     sourceCache: {},
+    ...forgetImages(),
   });
 }
 
@@ -2734,8 +2809,322 @@ export function startNewBatch() {
     metaReview: {},
     exportDir: state.exportDir,
     notice: null,
+    // The pictures belong to the documents, and a cleared batch has none.
+    ...forgetImages(),
   });
   return cleared;
+}
+
+// --- Pictures: the Anonymise step's IMAGE half ----------------------------
+//
+// Everything here is pure or a plain reducer, for the reason the rest of this
+// file is: the picture review's rules (which treatment a picture can carry, what
+// its status is, which rows a filter shows) are the half worth testing, and a
+// rule living in a view is a rule that can only be tested through markup.
+
+/**
+ * imageThumbKey(docName, assetId) is the cache key one preview is held under.
+ *
+ * The asset id is the archive part path, which is unique inside ONE document and
+ * not across a batch: two decks both have ppt/media/image1.png. Keying on the
+ * document as well is what stops one file's logo appearing in another's list.
+ *
+ * @param {string} docName the imported document's name
+ * @param {string} assetId the asset id from the inventory
+ * @returns {string} the key into state.imageThumbs
+ */
+export function imageThumbKey(docName, assetId) {
+  return `${docName ?? ""} ${assetId ?? ""}`;
+}
+
+/**
+ * imageDocName(s) is the document the IMAGE half is showing.
+ *
+ * It is the SAME selection the Compare card uses (state.resultDoc), so switching
+ * tabs keeps the user on the same file and switching file keeps them on the same
+ * tab. The fallback is the first IMPORTED document rather than the first result
+ * document, because the pictures live in the bytes captured at import and the
+ * review needs no run.
+ *
+ * @param {object} [s] state
+ * @returns {string} the document name, or "" when nothing is imported
+ */
+export function imageDocName(s = state) {
+  const documents = s.documents ?? [];
+  if (documents.some((d) => d.name === s.resultDoc)) return s.resultDoc;
+  return documents[0]?.name ?? "";
+}
+
+/**
+ * imagesFor(s, docName) is one document's scan record, or null when it has never
+ * been asked for.
+ *
+ * Null is the caller's cue to fetch, exactly as documentSource's null is. It is
+ * distinct from a record with an empty asset list, which means "asked, and this
+ * document has no pictures": an answer, not a failure.
+ *
+ * @param {object} s state
+ * @param {string} docName the imported document's name
+ * @returns {{loading: boolean, error: string|null, inventory: object|null}|null}
+ */
+export function imagesFor(s, docName) {
+  if (!docName) return null;
+  return (s?.images ?? {})[docName] ?? null;
+}
+
+/**
+ * imageAssets(s) lists the pictures of the selected document, unfiltered.
+ * @param {object} [s] state
+ * @returns {Array<object>} the assets, empty when there are none or none yet
+ */
+export function imageAssets(s = state) {
+  return imagesFor(s, imageDocName(s))?.inventory?.assets ?? [];
+}
+
+/**
+ * imageStatus(asset) is THE one place a treatment becomes a status.
+ *
+ * There are two statuses and not four, because the question the banner, the
+ * Status column and the tile chip all answer is "did this picture change". With
+ * the mapping written out in three places they can disagree, and then the filter
+ * shows a row the column calls Kept.
+ *
+ * @param {object} asset one inventory asset
+ * @returns {"kept"|"anonymised"}
+ */
+export function imageStatus(asset) {
+  const treatment = asset?.decision?.treatment ?? "keep";
+  return treatment === "keep" || treatment === "" ? "kept" : "anonymised";
+}
+
+/**
+ * imageStatusCounts(s) is the live count behind each filter chip.
+ * @param {object} [s] state
+ * @returns {{all: number, kept: number, anonymised: number}}
+ */
+export function imageStatusCounts(s = state) {
+  const assets = imageAssets(s);
+  const anonymised = assets.filter((a) => imageStatus(a) === "anonymised").length;
+  return { all: assets.length, kept: assets.length - anonymised, anonymised };
+}
+
+/**
+ * filteredImages(s) is the list the review actually renders.
+ * An unknown filter shows everything: a filter nobody can clear would hide the
+ * whole document.
+ * @param {object} [s] state
+ * @returns {Array<object>} the assets the current filter admits
+ */
+export function filteredImages(s = state) {
+  const assets = imageAssets(s);
+  const filter = s.imageFilter ?? "all";
+  if (filter !== "kept" && filter !== "anonymised") return assets;
+  return assets.filter((a) => imageStatus(a) === filter);
+}
+
+/**
+ * treatmentBlockedReason(asset, treatment) is the frontend half of
+ * imaging.Decision.Validate, and it answers with a CODE rather than a sentence
+ * so the sentence stays in copy.js.
+ *
+ * The two halves have to agree: a control the interface offers that Go refuses
+ * is a control that lies, and ../image_parity_test.go holds them together. The
+ * order of the tests is Go's order, because the order decides which reason the
+ * user is told, and "there are no bytes here" is more useful than "this
+ * application cannot redraw this format" for a picture that lives elsewhere.
+ *
+ * @param {object} asset one inventory asset
+ * @param {string} treatment one of IMAGE_TREATMENTS
+ * @returns {string} "" when the treatment is available, otherwise the reason
+ *   code: "linked", "format" or "svg_blur"
+ */
+export function treatmentBlockedReason(asset, treatment) {
+  // Keep is always available: it is where every picture starts, so refusing it
+  // would leave a changed picture with no way back.
+  if (treatment === "keep" || treatment === "") return "";
+  // Remove needs no bytes and no decoder: it deletes the picture element and
+  // overwrites whatever the archive holds, so it is available for every asset.
+  if (treatment === "remove") return "";
+  if (asset?.linked) return "linked";
+  if ((asset?.format ?? "") === "other") return "format";
+  if (treatment === "blur" && asset?.format === "svg") return "svg_blur";
+  return "";
+}
+
+/**
+ * treatmentAvailable(asset, treatment) is treatmentBlockedReason as a boolean,
+ * for a caller that only has to decide whether to disable a control.
+ * @param {object} asset one inventory asset
+ * @param {string} treatment one of IMAGE_TREATMENTS
+ * @returns {boolean}
+ */
+export function treatmentAvailable(asset, treatment) {
+  return treatmentBlockedReason(asset, treatment) === "";
+}
+
+/**
+ * setAnonymiseTab(tab) switches step 3's half. An unknown token falls back to
+ * "text", the half that is always available.
+ * @param {string} tab "text" or "images"
+ */
+export function setAnonymiseTab(tab) {
+  setState({ anonymiseTab: tab === "images" ? "images" : "text" });
+}
+
+/**
+ * setImageFilter(filter) changes which pictures the review lists. An unknown
+ * token falls back to "all" rather than hiding the document.
+ * @param {string} filter one of IMAGE_STATUS_FILTERS
+ */
+export function setImageFilter(filter) {
+  setState({ imageFilter: IMAGE_STATUS_FILTERS.includes(filter) ? filter : "all" });
+}
+
+/**
+ * setImageLayout(layout) switches between the details list and the tiles.
+ * @param {string} layout "details" or "tiles"
+ */
+export function setImageLayout(layout) {
+  setState({ imageLayout: layout === "tiles" ? "tiles" : "details" });
+}
+
+/**
+ * startImageScan(docName) records that the inventory has been asked for, so the
+ * list can say "loading" and the view knows not to ask again on the next paint.
+ * A previous answer is kept while the new one is in flight: replacing it with
+ * nothing would blank the list the user is reading.
+ * @param {string} docName the imported document's name
+ */
+export function startImageScan(docName) {
+  if (!docName) return;
+  const previous = state.images[docName];
+  setState({
+    images: {
+      ...state.images,
+      [docName]: { loading: true, error: null, inventory: previous?.inventory ?? null },
+    },
+  });
+}
+
+/**
+ * setImageInventory(docName, inventory) stores what Go answered.
+ * @param {string} docName the imported document's name
+ * @param {object} inventory {applicable, reason, assets, warnings}
+ */
+export function setImageInventory(docName, inventory) {
+  if (!docName) return;
+  setState({
+    images: {
+      ...state.images,
+      [docName]: { loading: false, error: null, inventory: inventory ?? null },
+    },
+  });
+}
+
+/**
+ * setImageScanError(docName, message) stores a refused scan. The message is
+ * Go's, which names what failed and how to fix it, so it is shown rather than
+ * replaced by copy of our own.
+ * @param {string} docName the imported document's name
+ * @param {string} message the error text from Go
+ */
+export function setImageScanError(docName, message) {
+  if (!docName) return;
+  setState({
+    images: {
+      ...state.images,
+      [docName]: { loading: false, error: message || "", inventory: null },
+    },
+  });
+}
+
+/**
+ * cacheImageThumb(docName, assetId, dataUrl) remembers one preview.
+ * @param {string} docName the imported document's name
+ * @param {string} assetId the asset id from the inventory
+ * @param {string} dataUrl the data URL Go answered with
+ */
+export function cacheImageThumb(docName, assetId, dataUrl) {
+  const key = imageThumbKey(docName, assetId);
+  setState({ imageThumbs: { ...state.imageThumbs, [key]: dataUrl ?? "" } });
+}
+
+/**
+ * applyImageDecision(docName, assetId, decision) writes an ACCEPTED decision
+ * onto the cached inventory.
+ *
+ * Go has already accepted it by the time this runs, so the row can say so
+ * without a second call: re-fetching the inventory to learn what we just told it
+ * would make every decision cost two round trips and leave the row stale in
+ * between.
+ *
+ * @param {string} docName the imported document's name
+ * @param {string} assetId the asset the decision belongs to
+ * @param {object} decision {treatment, boxText, blurStrength}
+ */
+export function applyImageDecision(docName, assetId, decision) {
+  const record = state.images[docName];
+  if (!record?.inventory) return;
+  const assets = (record.inventory.assets ?? []).map((a) =>
+    a.id === assetId ? { ...a, decision: { ...decision } } : a);
+  setState({
+    images: {
+      ...state.images,
+      [docName]: { ...record, inventory: { ...record.inventory, assets } },
+    },
+  });
+}
+
+/**
+ * openImageEditor(docName, assetId, draft) opens the treatment panel with a
+ * starting draft.
+ *
+ * The draft is a COPY of the stored decision, not a reference to it: the panel
+ * is an editing surface and cancelling it has to leave the recorded decision
+ * exactly as it was.
+ *
+ * @param {string} docName the imported document's name
+ * @param {string} assetId the asset being decided
+ * @param {object} draft the decision to start from
+ */
+export function openImageEditor(docName, assetId, draft) {
+  setState({
+    imageEditor: {
+      docName, assetId,
+      draft: { ...draft },
+      preview: null, previewLoading: false, error: "",
+    },
+  });
+}
+
+/**
+ * updateImageEditor(patch) merges into the open panel's state, and does nothing
+ * when the panel has been closed under an in-flight call: a preview arriving
+ * after Cancel must not reopen the panel.
+ * @param {object} patch fields to merge ({draft}, {preview}, {error}, ...)
+ */
+export function updateImageEditor(patch) {
+  if (!state.imageEditor) return;
+  setState({ imageEditor: { ...state.imageEditor, ...patch } });
+}
+
+/** closeImageEditor() dismisses the treatment panel, discarding its draft. */
+export function closeImageEditor() {
+  setState({ imageEditor: null });
+}
+
+/**
+ * forgetImages() drops every cached inventory, preview and open panel.
+ *
+ * It is called wherever the BYTES behind them can change (a new import, a
+ * cleared batch), for the same reason sourceCache is dropped there: a
+ * re-imported file with the same name is a different file, and deciding which
+ * entries survived is harder and less safe than asking again.
+ *
+ * @returns {object} the patch, so a caller already building one can spread it
+ */
+function forgetImages() {
+  return { images: {}, imageThumbs: {}, imageEditor: null };
 }
 
 // --- Allowlist / pattern reducers ---------------------------------------------

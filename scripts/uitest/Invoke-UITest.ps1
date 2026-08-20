@@ -272,6 +272,7 @@ function Invoke-DevChecks {
                 Test-OriginLink $cdp
                 Test-CompareSearch $cdp
                 Test-SelectionPanel $cdp
+                Test-ImageTab $cdp
                 Save-Screenshot $cdp 'wizard.png'
             } finally {
                 $cdp.Close()
@@ -1075,6 +1076,75 @@ function Test-SelectionPanel([CdpSession]$cdp) {
     Assert-That -Name 'the suggestions narrow to what was typed' -Condition ($r.picks.Count -gt 0) `
         -Expected 'at least one .selection-pick for the query' -Actual "$($r.picks.Count) pick(s)" `
         -Hint 'views/anonymise.js selectionPicks renders valueAutocomplete answer as buttons.'
+}
+
+function Test-ImageTab([CdpSession]$cdp) {
+    Write-Step 'The IMAGE half: the list scrolls, the page does not, and a tile keeps its height'
+    $r = $cdp.Eval('__uiProbes.imageTabGeometry()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the IMAGE half renders over a seeded inventory' -Condition $false `
+            -Expected '#image-card and #image-list on screen' -Actual $r.error `
+            -Hint 'views/anonymise.js dispatches on state.anonymiseTab; views/anonymiseimages.js renders the surface.'
+        return
+    }
+
+    Assert-That -Name 'the tiles view renders the whole seeded inventory' -Condition ($r.tileCount -eq 40) `
+        -Expected '40 tiles' -Actual "$($r.tileCount) tile(s)" `
+        -Hint 'A shorter list may not scroll at all, and then every check below measures nothing.'
+
+    Assert-That -Name 'the tiles list is the element that scrolls' -Condition ($r.tilesListScrolls) `
+        -Expected '#image-list taller than its box' -Actual 'nothing scrolls' `
+        -Hint 'style.css .card-body.image-list is the scroll owner, and every link above it carries min-height: 0.'
+
+    Assert-That -Name 'the page does not scroll with the tiles view on screen' `
+        -Condition (($r.pageScrollsDown -le 1) -and ($r.pageScrollsAcross -le 1)) `
+        -Expected '0px in both directions' `
+        -Actual "$($r.pageScrollsDown)px down, $($r.pageScrollsAcross)px across" `
+        -Hint 'The fixed-height layout contract: body and #app are 100vh and only a card body scrolls.'
+
+    Assert-That -Name 'the measured pair really is one shared picture beside one that is not' `
+        -Condition (($r.manyLocation -like '*more*') -and ($r.oneLocation -notlike '*more*')) `
+        -Expected 'the first tile location carrying a "+N more" marker and the second not' `
+        -Actual "first '$($r.manyLocation)', second '$($r.oneLocation)'" `
+        -Hint 'views/anonymiseimages.js locationCell puts the first place in the cell and the rest behind the count.'
+
+    Assert-That -Name 'a tile used in five places is the same height as one used in one' `
+        -Condition (($r.manyHeight -gt 0) -and ($r.manyHeight -eq $r.oneHeight)) `
+        -Expected "both $($r.oneHeight)px" -Actual "$($r.manyHeight)px beside $($r.oneHeight)px" `
+        -Hint 'style.css .image-tile has a fixed height. A card that grows when it has more to say moves every card below it, and the reader loses their scroll position.'
+
+    $wantHeadings = @('Preview', 'Name', 'Format', 'Dimensions', 'Size', 'Location', 'Status')
+    Assert-That -Name 'the details view renders the seven headings in order' `
+        -Condition ((($r.details.headings) -join '|') -eq ($wantHeadings -join '|')) `
+        -Expected ($wantHeadings -join ', ') -Actual (($r.details.headings) -join ', ') `
+        -Hint 'The header and the rows come from one shared column template, so they cannot drift apart.'
+
+    Assert-That -Name 'a details row keeps its height whatever its location says' `
+        -Condition (($r.details.manyRowHeight -gt 0) -and ($r.details.manyRowHeight -eq $r.details.oneRowHeight)) `
+        -Expected "both $($r.details.oneRowHeight)px" `
+        -Actual "$($r.details.manyRowHeight)px beside $($r.details.oneRowHeight)px" `
+        -Hint 'style.css .image-grid .grid-row has a fixed height and every cell is one clipped line.'
+
+    Assert-That -Name 'the details list is the element that scrolls' -Condition ($r.details.detailsListScrolls) `
+        -Expected '#image-list taller than its box' -Actual 'nothing scrolls' -Hint ''
+
+    Assert-That -Name 'the page does not scroll with the details view on screen' `
+        -Condition (($r.details.pageScrollsDown -le 1) -and ($r.details.pageScrollsAcross -le 1)) `
+        -Expected '0px in both directions' `
+        -Actual "$($r.details.pageScrollsDown)px down, $($r.details.pageScrollsAcross)px across" `
+        -Hint 'A seven-column grid must scroll inside its own container, never widen the page.'
+
+    Assert-That -Name 'the filter stays reachable from the bottom of the list' -Condition (-not $r.bannerInsideList) `
+        -Expected '.image-banner outside #image-list' -Actual 'the banner scrolls away with the list' `
+        -Hint 'The banner sits between the card head and the card body.'
+
+    Assert-That -Name 'the filter chips carry their counts' `
+        -Condition (($r.filterChips.Count -eq 3) -and ($r.filterChips[0] -like '*40*')) `
+        -Expected 'three chips, the first counting all 40 pictures' -Actual (($r.filterChips) -join ', ') `
+        -Hint 'state.js imageStatusCounts feeds copy.js IMAGES.filterChip.'
+
+    Assert-That -Name 'the card is inside the window' -Condition ($r.cardInsideViewport) `
+        -Expected '#image-card between the top and bottom of the viewport' -Actual 'the card is clipped' -Hint ''
 }
 
 # --- Packaged-binary smoke test (UI Automation) -----------------------------

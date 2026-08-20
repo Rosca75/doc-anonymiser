@@ -1163,6 +1163,50 @@ card rule, and it is the failure the harness exists to catch.
   deck opens in PowerPoint with exactly those three changed and nothing else.
 - Switching to TEXT shows the step 3 screen exactly as it was before this batch.
 
+### What B3 left behind that differs from the above
+
+1. **`state.js` mirrors FOUR lists, not three.** The Tests section asks the new
+   guard to hold the occurrence KINDS as well, so `IMAGE_KINDS`
+   (`picture`, `fill`, `background`) sits beside the three the state.js snippet
+   named. It earns its place rather than existing for the guard: `kindNote` walks
+   it so the Location tooltip lists a background or a shape fill in a stable
+   order, and `IMAGES.kindLabel` gives each one a word.
+2. **`ui.js card()` gained `bodyId`.** The picture list is the screen's scroll
+   owner and `scroll.js` keys a preserved offset on a selector that survives the
+   repaint, so the body needs an id of its own. That is one option on the ONE
+   card builder, not a second builder.
+3. **The disabled-treatment reasons are frontend CODES.**
+   `state.js treatmentBlockedReason` answers `"linked"`, `"format"` or
+   `"svg_blur"` and `copy.js IMAGES.blocked` owns the sentences, so the panel's
+   tooltips live where copy is reviewed. `image_parity_test.go` holds those three
+   codes to the copy table alongside Go's own reason and warning codes.
+4. **The document selector renders even when `Applicable` is false.** It is in
+   the banner as specified, but it is NOT gated on applicability: a selector that
+   vanished on a .txt document would strand the reader on the one file with
+   nothing to review. The filter and the view toggle are gated, because a filter
+   over an answer with no list can do nothing.
+5. **`resetImageDecisions` still has no control.** B3's screen description has no
+   bulk "keep them all", so the `api.js` wrapper B2 added is written, documented
+   and unreached by any view. Either give it a home or say why it has none.
+6. **The details grid has EIGHT tracks.** Seven carry the documented headings; the
+   eighth is the `Keep` / `Anonymise` pair and its header cell is deliberately
+   empty, because the two buttons say what they do.
+7. **The step 3 reset keeps the picture decisions.** `STEP_RESETS.anonymise`
+   clears the open treatment panel and nothing else of this feature: the
+   decisions are about the bytes captured at IMPORT, they need no run, and Go
+   holds them per imported document, so discarding them because the user stepped
+   back to re-read a value would throw away work the run never touched. A fresh
+   import and a cleared batch DO drop the inventories, the previews and the panel.
+8. **Previews are lazy by measured visibility, capped at twelve per paint.** A
+   row asks for its thumbnail when it is within 200px of the list's visible box,
+   and a refused render caches the empty string ("No preview") so a page with no
+   bridge does not retry the same picture on every repaint.
+9. **The treatment panel is its OWN overlay**, `.image-panel-layer`, not
+   `.modal-layer`. It borrows the confirm's mechanism (backdrop, Escape, a click
+   outside) and wires it itself, because `modal.js` is shell-level and answers a
+   question, while this is a screen-level editing surface holding a draft.
+   `wireModal` must keep looking only for `.modal-layer`.
+
 ---
 
 ## B4 — Telling the truth about it: report, export, guards, documentation
@@ -1232,7 +1276,7 @@ relationship ids referenced by the surviving pictures all resolve.
 | `CLAUDE.md` §5 | DONE in B2: the session paragraph already says `SessionVersion` is **9**. Check it, do not redo it |
 | `CLAUDE.md` §7 | the vendored 8x8 font row, in the assets style of the Material Symbols row |
 | `backend/CLAUDE.md` | `engine/imaging` in the module map; the export's two-pass rule (text first, then images, on the same part). Its session paragraph already records version 9 (B2) |
-| `frontend/CLAUDE.md` | the step 3 tabs in the file map and the discipline list; the SVG-in-`<img>` rule |
+| `frontend/CLAUDE.md` | the step 3 tabs in the file map and the discipline list; the SVG-in-`<img>` rule; `ui.js card()`'s `bodyId`; and that the treatment panel is its own overlay rather than `modal.js`'s confirm (see "What B3 left behind") |
 | `frontend/BRIDGE.md` | DONE in B1 and B2: the five wrappers and the `Inventory` / `Asset` / `Decision` wire shapes are written. B4 only adds whatever B3's screen turned out to need |
 | `README.md` | a short "Images" section: what the three treatments do, that blur is not a guarantee, that PDF images are always removed, that .xlsx images are not reviewed |
 | `frontend/docs/index.html` | the same, in the bundled offline user docs, in the voice that file already uses |

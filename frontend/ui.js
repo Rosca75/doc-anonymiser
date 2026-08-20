@@ -106,6 +106,10 @@ export function button(label, opts = {}) {
  * @param {string} [opts.id] element id
  * @param {string} [opts.cls] extra classes on the card
  * @param {string} [opts.bodyCls] extra classes on the body ("stack", "pane")
+ * @param {string} [opts.bodyId] element id on the body. The body is the card's
+ *   scrolling element, and scroll.js keys a preserved offset on a selector that
+ *   survives the repaint, so a list that has to keep the reader's place needs an
+ *   id of its own rather than a position among its siblings
  * @param {boolean} [opts.keyBearing] marks the card as holding data that can
  *   re-identify people; tints the head with the key surface
  * @returns {string} safe HTML
@@ -126,7 +130,8 @@ export function card(opts = {}) {
       `</div>${right}</div>`
     : "";
   const body = opts.bodyHTML !== undefined
-    ? `<div class="card-body${opts.bodyCls ? " " + opts.bodyCls : ""}">${opts.bodyHTML}</div>`
+    ? `<div class="card-body${opts.bodyCls ? " " + opts.bodyCls : ""}"` +
+      `${opts.bodyId ? ` id="${escapeHTML(opts.bodyId)}"` : ""}>${opts.bodyHTML}</div>`
     : "";
   return `<section class="${classes}"${opts.id ? ` id="${escapeHTML(opts.id)}"` : ""}>` +
     head + (opts.beforeBodyHTML ?? "") + body + (opts.afterBodyHTML ?? "") +

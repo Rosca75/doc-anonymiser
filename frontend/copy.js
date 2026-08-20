@@ -43,6 +43,10 @@ export const CARDS = {
   compare: {
     title: "Compare",
   },
+  images: {
+    title: "Pictures",
+    subtitle: "Decide what happens to each picture. Kept pictures leave the document unchanged.",
+  },
   export: {
     title: "Export",
     subtitle: "Save the anonymised copies and, if you need it, the re-identification key.",
@@ -1232,6 +1236,180 @@ export const ANONYMISE = {
   hintReady(n) {
     return `${n} replacement${n === 1 ? "" : "s"} ready to export`;
   },
+};
+
+// The Anonymise step's IMAGE half: every string on the picture review surface.
+//
+// It is a block of its own rather than more entries in ANONYMISE because it is a
+// whole screen's worth of copy, and a screen's strings are easier to review
+// together than scattered through the text half's.
+export const IMAGES = {
+  // The two halves of step 3, as the tab bar names them.
+  tabText: "TEXT",
+  tabImage: "IMAGE",
+  tabImageTitle: "Every picture in the selected document, and what happens to it on export.",
+
+  // The banner.
+  documentLabel: "Document",
+  filterLabel: "Show",
+  layoutLabel: "View",
+  layoutDetails: "Details",
+  layoutTiles: "Tiles",
+  /** filterChip(id, count) labels one filter chip with its live count, so the
+   *  banner says how many rows each choice would show BEFORE it is pressed. */
+  filterChip(id, count) {
+    const labels = { all: "All", kept: "Kept", anonymised: "Anonymised" };
+    return `${labels[id] ?? id} (${count})`;
+  },
+
+  // The details list's seven columns, in order.
+  colPreview: "Preview",
+  colName: "Name",
+  colFormat: "Format",
+  colDimensions: "Dimensions",
+  colSize: "Size",
+  colLocation: "Location",
+  colStatus: "Status",
+
+  // The two direct answers, on a row and on a tile.
+  keep: "Keep",
+  anonymise: "Anonymise",
+  keepTitle: "Leave this picture exactly as it is.",
+  anonymiseTitle: "Choose how this picture is replaced on export.",
+
+  // The status a decision reads as. Kept is the one status that is not a
+  // treatment: it is where every picture starts.
+  statusLabel: {
+    keep: "Kept",
+    box: "Boxed",
+    blur: "Blurred",
+    remove: "Removed",
+  },
+
+  // What a picture's BYTES turned out to be. Go sniffs the format from the
+  // content, so a part named .png holding JPEG bytes reads as JPG here.
+  // "other" is the fallback for a format this application cannot redraw and
+  // whose extension says nothing useful.
+  formatLabel: {
+    png: "PNG",
+    jpeg: "JPG",
+    svg: "SVG",
+    other: "Other",
+  },
+
+  // What ENCLOSES the picture, said only where it is not a plain picture
+  // element: removing a background or a shape fill has no element to delete, so
+  // it means overwriting the bytes, and that is worth knowing before deciding.
+  kindLabel: {
+    picture: "Picture",
+    fill: "Shape fill",
+    background: "Background",
+  },
+
+  /** dimensions(w, h) is the pixel size, or nothing at all. A picture whose
+   *  header could not be read has no size, and "0 x 0" would state a fact that
+   *  is not true. */
+  dimensions(w, h) {
+    if (!w || !h) return "";
+    return `${w} x ${h}`;
+  },
+  /** displaySize(cx, cy) is the frame the picture is DRAWN in, in centimetres,
+   *  for the cell's tooltip. The source states it in English Metric Units
+   *  (914400 per inch), and a fill or a background often states nothing. */
+  displaySize(cx, cy) {
+    if (!cx || !cy) return "";
+    const cm = (emu) => (emu / 360000).toFixed(1);
+    return `Drawn at ${cm(cx)} x ${cm(cy)} cm`;
+  },
+  /** fileSize(bytes) is one decimal above a megabyte and none below, because a
+   *  tenth of a kilobyte is noise and a tenth of a megabyte is not. */
+  fileSize(bytes) {
+    const n = Number(bytes) || 0;
+    if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+    if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+    return `${n} B`;
+  },
+  /** moreLocations(n) is the overflow marker on the Location cell. One decision
+   *  covers every place a picture appears, and this is where that becomes
+   *  visible. */
+  moreLocations(n) {
+    return `+${n} more`;
+  },
+  /** appearsIn(n) says how far one decision reaches, on the tile and in the
+   *  treatment panel. */
+  appearsIn(n) {
+    return n === 1 ? "Appears in 1 place" : `Appears in ${n} places`;
+  },
+  unknownLocation: "Location not recorded",
+
+  // The list's own states.
+  loading: "Reading the pictures in this document...",
+  empty: "This document has no pictures.",
+  noneMatchFilter: "No picture matches this filter.",
+  /** scanFailed(message) shows Go's own reason, which names what failed and how
+   *  to fix it, rather than a sentence of ours that knows less. */
+  scanFailed(message) {
+    return `The pictures in this document could not be listed. ${message}`;
+  },
+  previewUnavailable: "No preview",
+
+  // Why a document has no image review at all, by the reason CODE Go answers
+  // with. The tab is never hidden: a tab that appears and disappears as the
+  // user changes file reads as a bug, and this sentence is the answer to the
+  // question a missing tab would raise.
+  reason: {
+    pdf_images_removed: "PDF export rebuilds the document as text, so every image in a PDF is already removed from the exported file. There is nothing to review here.",
+    format_not_supported: "Image review is available for Word and PowerPoint files. This document has no images to review.",
+  },
+
+  // Per-document notes, by the warning CODE.
+  warning: {
+    unreadable_part: "At least one picture could not be read. It is still listed, and it can be removed.",
+    linked_images: "At least one picture is linked from outside this document, so there are no bytes here to change. It can be removed.",
+  },
+
+  // The treatment panel.
+  panelTitle: "Anonymise this picture",
+  panelClose: "Cancel",
+  panelApply: "Apply",
+  panelPreviewLabel: "Preview",
+  panelPreviewHint: "This is what the export will write, scaled down.",
+  panelPreviewLoading: "Rendering the preview...",
+  panelTreatmentLabel: "Replace it with",
+  treatmentLabel: {
+    keep: "Keep it",
+    box: "Replace with a box",
+    blur: "Blur",
+    remove: "Remove",
+  },
+  // Why a treatment is not on offer for this picture, by the reason code
+  // state.js treatmentBlockedReason answers with. Each names the way out, so a
+  // disabled chip is never mute.
+  blocked: {
+    linked: "This picture is linked from outside the document, so there are no bytes here to change. It can be removed, or kept.",
+    format: "This application cannot redraw this picture format. It can be removed, or kept.",
+    svg_blur: "An SVG picture cannot be blurred: a blur filter leaves the original shapes and text inside the file. Use Replace with a box, or Remove.",
+  },
+
+  boxTextLabel: "Text in the box",
+  boxTextPlaceholder: "for example, Client logo removed",
+  boxTextHint: "Drawn with a built-in font, so accents are simplified and unusual characters become a question mark.",
+  /** boxTextCount(n, max) is the live character counter. */
+  boxTextCount(n, max) {
+    return `${n}/${max}`;
+  },
+
+  blurLabel: "Blur strength",
+  blurCaption: "Blur removes detail. It is not a guarantee: at a low strength, large text can still be read. Check the preview.",
+
+  // The outcome notices.
+  /** decisionApplied(treatment) confirms what the picture will become. */
+  decisionApplied(treatment) {
+    const labels = { keep: "kept", box: "replaced with a box", blur: "blurred", remove: "removed" };
+    return `This picture will be ${labels[treatment] ?? treatment} in the exported file.`;
+  },
+  /** keptOne() confirms the one-click Keep. */
+  kept: "This picture will be left exactly as it is.",
 };
 
 // Export screen copy.

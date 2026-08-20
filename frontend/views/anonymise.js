@@ -1,6 +1,14 @@
 // views/anonymise.js, wizard step 3: run the pipeline and check the result
 //
-// A column of cards on the left, one big Compare card on the right:
+// The step has TWO halves behind one tab bar, because a document is words and
+// pictures and the pipeline only ever touches the words. This module owns the tab
+// bar, the shared document selection and the footer, plus the whole TEXT half
+// below. The IMAGE half is views/anonymiseimages.js, a sibling for the reason
+// identifyrail.js is a sibling of identify.js: one screen, halves big enough to
+// own a file each.
+//
+// The TEXT half: a column of cards on the left, one big Compare card on the
+// right:
 //
 //   Run                  RUN / RUN AGAIN, Cancel, the progress bar and the
 //                        four stat tiles.
@@ -38,6 +46,7 @@ import {
   blockingConflicts, foldIntoFamily, checkValueConflict,
   valueKey, deleteValue, removeAllowTerm,
   setIntersections, intersectionsFor, buildIntersectionRequest,
+  setAnonymiseTab,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { renderHighlighted } from "../highlight.js";
@@ -45,12 +54,13 @@ import { findHits, MAX_HITS } from "../panesearch.js";
 import { valueSpans, renderOriginWithSpans } from "../valuespans.js";
 import {
   button, card, statTile, collapsibleGroup, wireGroups, icon, sectionLabel,
-  searchBox, wireSearchBox,
+  searchBox, wireSearchBox, tabbar,
 } from "../ui.js";
+import { imageCount, imageTabHTML, wireImageTab } from "./anonymiseimages.js";
 import { categorySelect, conflictMessage } from "./identifyworkspace.js";
 import { stepFooterHTML, wireStepFooter } from "../nav.js";
 import { notify, wireNotice } from "../toast.js";
-import { CARDS, ANONYMISE, CATEGORY_LABELS, IMPORT, WORKSPACE, VALUES } from "../copy.js";
+import { CARDS, ANONYMISE, CATEGORY_LABELS, IMPORT, WORKSPACE, VALUES, IMAGES } from "../copy.js";
 import { toastHTML } from "../ui.js";
 
 // --- View-local state -----------------------------------------------------
@@ -145,6 +155,72 @@ const declaredHere = new Set();
 export function renderAnonymise(container) {
   const s = getState();
   const doc = currentDocument(s);
+  const images = s.anonymiseTab === "images";
+
+  container.innerHTML = `
+    <div class="anonymise-view">
+      ${anonymiseTabbar(s)}
+      ${images ? imageTabHTML(s) : textWorkspaceHTML(s, doc)}
+      ${stepFooterHTML({
+        hint: continueHint(s),
+        nextDisabled: !s.results || blockingConflicts(s).length > 0,
+        nextTitle: continueBlockedTitle(s),
+        standalone: true,
+      }, s)}
+      <div id="run-error"></div>
+    </div>
+  `;
+
+  wireAnonymiseTabbar(container);
+  if (images) {
+    // The IMAGE half wires itself, and it wires the footer too, because the
+    // footer is shared: the step 3 to 4 gate is about the TEXT run, and picture
+    // decisions deliberately do not gate the move to Export.
+    wireImageTab(container, s);
+    wireStepFooter(container);
+    return;
+  }
+  wire(container, s, doc);
+}
+
+/**
+ * anonymiseTabbar(s) is the two halves of step 3, above both columns.
+ *
+ * TEXT is the screen this step has always been; IMAGE is the picture review. The
+ * count is the number of pictures in the SELECTED document and is absent for a
+ * format that has no image review, so the badge never claims a .txt file was
+ * reviewed and found to have none.
+ *
+ * @param {object} s state
+ * @returns {string} safe HTML
+ */
+function anonymiseTabbar(s) {
+  return tabbar([
+    { id: "text", label: IMAGES.tabText, active: s.anonymiseTab !== "images" },
+    {
+      id: "images", label: IMAGES.tabImage, count: imageCount(s),
+      active: s.anonymiseTab === "images", title: IMAGES.tabImageTitle,
+    },
+  ], { attr: "anontab", ariaLabel: IMAGES.tabImageTitle });
+}
+
+/** wireAnonymiseTabbar(container) switches the half. It is wired for BOTH
+ *  halves, because the tab bar is the one control each has to offer the other. */
+function wireAnonymiseTabbar(container) {
+  for (const tab of container.querySelectorAll("[data-anontab]")) {
+    tab.addEventListener("click", () => setAnonymiseTab(tab.dataset.anontab));
+  }
+}
+
+/**
+ * textWorkspaceHTML(s, doc) is the TEXT half: the card column and the Compare
+ * card, exactly as this step has always rendered them.
+ *
+ * @param {object} s state
+ * @param {object|null} doc the result document the Compare card shows
+ * @returns {string} safe HTML
+ */
+function textWorkspaceHTML(s, doc) {
   // A refused run carries empty documents and an empty report, so the Replaced
   // values and Report cards would show a zero run beside a stale registry
   // table: the exact mismatch a refused run produces. They stay hidden until
@@ -154,8 +230,7 @@ export function renderAnonymise(container) {
   // way out is Identify, which discards the whole registry over a typo.
   const blocked = blockingConflicts(s).length > 0;
 
-  container.innerHTML = `
-    <div class="anonymise-view">
+  return `
       <div class="workspace workspace-side">
         <div class="card-column">
           ${runCard(s)}
@@ -165,18 +240,7 @@ export function renderAnonymise(container) {
           ${s.results ? missedCard(s) : ""}
         </div>
         ${compareCard(s, doc)}
-      </div>
-      ${stepFooterHTML({
-        hint: continueHint(s),
-        nextDisabled: !s.results || blocked,
-        nextTitle: continueBlockedTitle(s),
-        standalone: true,
-      }, s)}
-      <div id="run-error"></div>
-    </div>
-  `;
-
-  wire(container, s, doc);
+      </div>`;
 }
 
 /** continueBlockedTitle(s) is the disabled CONTINUE button's tooltip: it names
