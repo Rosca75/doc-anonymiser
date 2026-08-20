@@ -681,7 +681,8 @@ test("moveSpelling happy path: source curates without it, target gains it", () =
   setValueSpellings("person_names", "Jean Muller", ["Jean Muller", "J. Muller"]);
   setValueSpellings("person_names", "J Muller Sr", ["J Muller Sr"]);
 
-  assert.equal(moveSpelling("person_names", "Jean Muller", "person_names", "J Muller Sr", "J. Muller"), true);
+  assert.equal(moveSpelling("person_names", "Jean Muller", "person_names", "J Muller Sr", "J. Muller"), "",
+    "the family convention is \"\" on success, so a caller cannot read success as an error");
   const from = getState().values.find((e) => e.mainText === "Jean Muller");
   const to = getState().values.find((e) => e.mainText === "J Muller Sr");
   // The source is CURATED without the moved spelling: an automatic expansion
@@ -704,9 +705,9 @@ test("moveSpelling rejects self-drops, unknown rows and absent derivedSpellings"
   setValueSpellings("person_names", "Jean Muller", ["Jean Muller"]);
   setValueSpellings("entity_names", "Alpine", ["Alpine"]);
 
-  assert.equal(moveSpelling("person_names", "Jean Muller", "person_names", "Jean Muller", "Jean Muller"), false, "self-drop");
-  assert.equal(moveSpelling("person_names", "Ghost", "entity_names", "Alpine", "x"), false, "unknown source");
-  assert.equal(moveSpelling("person_names", "Jean Muller", "entity_names", "Alpine", "Not A Spelling"), false, "absent spelling");
+  assert.equal(moveSpelling("person_names", "Jean Muller", "person_names", "Jean Muller", "Jean Muller"), "self", "self-drop");
+  assert.equal(moveSpelling("person_names", "Ghost", "entity_names", "Alpine", "x"), "not found", "unknown source");
+  assert.equal(moveSpelling("person_names", "Jean Muller", "entity_names", "Alpine", "Not A Spelling"), "absent", "absent spelling");
   // No state damage from rejected moves.
   assert.equal(getState().values.find((e) => e.mainText === "Alpine").spellings.length, 0);
 });
@@ -722,7 +723,7 @@ test("moveSpelling across categories touches only the two rows involved", () => 
   setValueSpellings("entity_names", "Alpine", ["Alpine"]);
   setValueSpellings("entity_names", "Borealis", ["Borealis"]);
 
-  assert.equal(moveSpelling("person_names", "Jean Muller", "entity_names", "Alpine", "Muller"), true);
+  assert.equal(moveSpelling("person_names", "Jean Muller", "entity_names", "Alpine", "Muller"), "");
   const untouched = getState().values.find((e) => e.mainText === "Borealis");
   assert.deepEqual(untouched.derivedSpellings, ["Borealis"], "third row untouched");
   assert.equal(untouched.spellingPolicy, "automatic");
@@ -1790,7 +1791,7 @@ test("groupValues keeps the survivor curated when any participant was", () => {
 
   assert.equal(groupValues(
     { category: "entity_names", mainText: "Delta Industries" },
-    [{ category: "entity_names", mainText: "Delta Group" }]), 1);
+    [{ category: "entity_names", mainText: "Delta Group" }]), "");
   const kept = getState().values[0];
   assert.equal(kept.spellingPolicy, "curated", "the merged value stays curated");
   assert.ok(spellingsOf(kept).has("delta group"), "the folded name is a spelling");
@@ -1837,11 +1838,13 @@ test("groupValues folds sources into the target and removes them", () => {
   resetState();
   seedValue("entity_names", "Meridian Consulting", ["Meridian Consulting"]);
   seedValue("entity_names", "Meridian", ["Meridian"], { spellings: ["Merid"] });
-  const n = groupValues(
+  const before = getState().values.length;
+  assert.equal(groupValues(
     { category: "entity_names", mainText: "Meridian Consulting" },
-    [{ category: "entity_names", mainText: "Meridian" }]);
-  assert.equal(n, 1);
+    [{ category: "entity_names", mainText: "Meridian" }]), "");
   const list = getState().values;
+  assert.equal(before - list.length, 1,
+    "the count a caller wants comes from the store, not from the failure slot");
   assert.equal(list.length, 1, "the source value is gone");
   const kept = list[0];
   assert.equal(kept.mainText, "Meridian Consulting");
@@ -2599,4 +2602,79 @@ test("setImageInventory stores exactly what Go answered", () => {
   setImageInventory(PICTURE_DOC, inventory);
   assert.deepEqual(imagesFor(getState(), PICTURE_DOC),
     { loading: false, error: null, inventory });
+});
+
+// --- One return convention across the value-editing family -------------------
+
+test("all five value-editing reducers return \"\"-or-reason", () => {
+  // A caller writing `if (moveSpelling(...)) showError()` shows an error on
+  // success, and the falsy-on-success neighbours make exactly that mistake
+  // natural. So the family has ONE shape: a string, empty when it worked.
+  //
+  // A count is not a failure, which is why groupValues no longer returns one in
+  // the slot the family uses for failure: a caller that needs it reads the store
+  // before and after.
+  resetState();
+  seedValue("entity_names", "Alpha", ["Alpha", "Alph"]);
+  seedValue("entity_names", "Beta", ["Beta"]);
+
+  const results = {
+    renameValue: renameValue("entity_names", "Alpha", "Alpha Group"),
+    renameSpelling: renameSpelling("entity_names", "Alpha Group", "Alph", "Al"),
+    changeValueCategory: changeValueCategory("entity_names", "Alpha Group", "brand_names"),
+    moveSpelling: moveSpelling("brand_names", "Alpha Group", "entity_names", "Beta", "Al"),
+    groupValues: groupValues(
+      { category: "entity_names", mainText: "Beta" },
+      [{ category: "brand_names", mainText: "Alpha Group" }]),
+  };
+  for (const [name, got] of Object.entries(results)) {
+    assert.equal(typeof got, "string",
+      `${name} returned a ${typeof got}; the family's slot is a reason string`);
+    assert.equal(got, "", `${name} reported a failure on a valid call: ${got}`);
+  }
+});
+
+test("every reducer in the family names its refusal rather than returning a bare false", () => {
+  resetState();
+  seedValue("entity_names", "Alpha", ["Alpha"]);
+  seedValue("entity_names", "Beta", ["Beta"]);
+
+  assert.equal(renameValue("entity_names", "Ghost", "X"), "not found");
+  assert.equal(renameValue("entity_names", "Alpha", ""), "empty");
+  assert.equal(renameValue("entity_names", "Alpha", "Beta"), "duplicate");
+  assert.equal(renameSpelling("entity_names", "Alpha", "Alpha2", ""), "empty");
+  assert.equal(changeValueCategory("entity_names", "Alpha", "not_a_category"), "invalid");
+  assert.equal(changeValueCategory("entity_names", "Ghost", "brand_names"), "not found");
+  assert.equal(moveSpelling("entity_names", "Alpha", "entity_names", "Alpha", "Alpha"), "self");
+  assert.equal(moveSpelling("entity_names", "Ghost", "entity_names", "Beta", "x"), "not found");
+  assert.equal(moveSpelling("entity_names", "Alpha", "entity_names", "Beta", "Nope"), "absent");
+  assert.equal(groupValues({ category: "entity_names", mainText: "Ghost" }, []), "not found");
+  assert.equal(groupValues({ category: "entity_names", mainText: "Alpha" }, []), "nothing to merge");
+});
+
+test("a promotion keeps every form, and the store proves it as a set", () => {
+  // Acceptance criterion 8: renaming a MainText onto one of the row's OWN
+  // spellings leaves the set of replaced forms unchanged, and no operation
+  // reports success while losing a form.
+  resetState();
+  seedValue("entity_names", "Northstar", ["Northstar", "NStar"]);
+  const before = new Set([...spellingsOf(getState().values[0]).keys()]);
+
+  assert.equal(renameValue("entity_names", "Northstar", "NStar"), "");
+
+  const after = new Set([...spellingsOf(getState().values[0]).keys()]);
+  assert.deepEqual([...after].sort(), [...before].sort(),
+    "the forms this Value replaces are the same before and after; only which one "
+    + "is the main text changed");
+  assert.equal(getState().values[0].mainText, "NStar");
+});
+
+test("a promotion is refused when ANOTHER value already owns the name", () => {
+  // The duplicate check comes first and excludes this row: two values with one
+  // name is the ambiguity conflict, whether or not one of them spells it.
+  resetState();
+  seedValue("entity_names", "Northstar", ["Northstar", "NStar"]);
+  seedValue("entity_names", "NStar", ["NStar"]);
+  assert.equal(renameValue("entity_names", "Northstar", "NStar"), "duplicate");
+  assert.equal(getState().values[0].mainText, "Northstar", "nothing moved");
 });

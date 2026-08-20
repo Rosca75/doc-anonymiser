@@ -13,6 +13,10 @@
 import {
   COUNTRIES, DEFAULT_COUNTRY, countryIDCategories, COUNTRY_ID_CATEGORIES,
 } from "./countries.js";
+// repend lives beside pendingExpansions, which is the half that READS the
+// sentinel it writes. Keeping the two in one module is what makes the invariant
+// checkable: a change to either has to face the other.
+import { repend } from "./valuemodel.js";
 
 // WIZARD_STEPS defines the fixed wizard order (CLAUDE.md wizard flow).
 //
@@ -1813,9 +1817,11 @@ export function addSpelling(category, mainText, spelling) {
     values: state.values.map((e) => {
       if (valueKey(e.category, e.mainText) !== valueKey(category, mainText)) return e;
       if (e.spellings.some((m) => m.toLowerCase() === v.toLowerCase())) return e;
-      // Adding a spelling re-expands ONLY this row (derivedSpellings back to
-      // pending null, Phase 7a).
-      return { ...e, spellings: [...e.spellings, v], derivedSpellings: null, spellingsError: null };
+      // Adding a spelling hands ONLY this row back for its spellings to be
+      // settled. repend picks the sentinel from the policy: an automatic row goes
+      // pending and Go re-derives, a curated row is settled the moment it is
+      // amended, because its chips already ARE its list.
+      return repend({ ...e, spellings: [...e.spellings, v] });
     }),
   });
 }
@@ -2191,19 +2197,25 @@ export function rejectAllShown(texts) {
  * two values would claim it again, which is the collision conflict. The target
  * gains it as a manual spelling and re-expands.
  *
- * Pure reducer; the drag-and-drop wiring only calls it. Returns false for
- * self-drops, unknown rows, or a spelling the source does not actually carry.
+ * Pure reducer; the drag-and-drop wiring only calls it.
+ *
+ * @returns {string} "" on success, or a reason ("empty" | "self" | "not found" |
+ *   "absent") the caller can turn into feedback. It shares the convention of
+ *   renameValue, renameSpelling and changeValueCategory deliberately: with a
+ *   boolean here, `if (moveSpelling(...)) showError()` reads correctly and does
+ *   the opposite, and the falsy-on-success neighbours make exactly that mistake
+ *   natural.
  */
 export function moveSpelling(fromCategory, fromMainText, toCategory, toMainText, spelling) {
   const v = (spelling ?? "").trim();
-  if (!v) return false;
+  if (!v) return "empty";
   const fromKey = valueKey(fromCategory, fromMainText);
   const toKey = valueKey(toCategory, toMainText);
-  if (fromKey === toKey) return false; // cannot drop onto self
+  if (fromKey === toKey) return "self"; // cannot drop onto self
 
   const from = state.values.find((e) => valueKey(e.category, e.mainText) === fromKey);
   const to = state.values.find((e) => valueKey(e.category, e.mainText) === toKey);
-  if (!from || !to) return false;
+  if (!from || !to) return "not found";
 
   // The spelling must actually belong to the source row (expanded list or
   // manual additions); otherwise this is a stale drop.
@@ -2211,7 +2223,7 @@ export function moveSpelling(fromCategory, fromMainText, toCategory, toMainText,
   const carried =
     (from.derivedSpellings ?? []).some((x) => x.toLowerCase() === lower) ||
     (from.spellings ?? []).some((x) => x.toLowerCase() === lower);
-  if (!carried) return false;
+  if (!carried) return "absent";
 
   setState({
     values: state.values.map((e) => {
@@ -2227,12 +2239,12 @@ export function moveSpelling(fromCategory, fromMainText, toCategory, toMainText,
         // A target that is already curated keeps its curated list plus the new
         // spelling: re-deriving it would undo an explicit choice.
         if (e.spellingPolicy === "curated") return curate(e, [...(e.derivedSpellings ?? []), ...spellings]);
-        return { ...e, spellings, derivedSpellings: null, spellingsError: null };
+        return repend({ ...e, spellings });
       }
       return e;
     }),
   });
-  return true;
+  return "";
 }
 
 // --- Value editing (the My values tab) -----------------------------------
@@ -2246,11 +2258,21 @@ export function moveSpelling(fromCategory, fromMainText, toCategory, toMainText,
 /**
  * renameValue(category, mainText, newMainText) changes a value's name.
  *
- * The expansion depends on the name, so the row goes back to pending and Go
- * re-derives the spellings. A rename onto a name the same category already
- * holds is refused rather than silently merged: two values with one name would
- * be exactly the ambiguity conflict detection exists to prevent, and merging is
- * a separate, explicit gesture (groupValues).
+ * The expansion depends on the name, so the row is handed back for its spellings
+ * to be settled (repend). A rename onto a name ANOTHER value in the same
+ * category holds is refused rather than silently merged: two values with one
+ * name would be exactly the ambiguity conflict detection exists to prevent, and
+ * merging is a separate, explicit gesture (groupValues).
+ *
+ * Renaming onto one of the row's OWN spellings is a PROMOTION, not a rename, and
+ * it is handled as one. Treated as an ordinary rename it is a silent LEAK: the
+ * new name overwrites the old one, the old name lived in derivedSpellings, and
+ * clearing that cache drops it, so a Value that replaced both "Northstar" and
+ * "NStar" quietly starts replacing only "NStar" while the call reports success.
+ * Promoting keeps every form: the old main text becomes a spelling, the promoted
+ * spelling becomes the main text, and the row CURATES so nothing can re-derive
+ * the pair back apart. It is also the gesture the user is actually asking for, so
+ * it needs no control of its own.
  *
  * @returns {string} "" on success, or a reason ("empty" | "duplicate" |
  *   "not found") the caller can turn into feedback
@@ -2263,13 +2285,34 @@ export function renameValue(category, mainText, newMainText) {
   if (!next) return "empty";
   if (next === cur.mainText) return ""; // unchanged
   const newKey = valueKey(category, next);
+  // The duplicate check comes FIRST, and it excludes this row: another value
+  // already owning the name is a refusal whether or not this row spells it.
   if (newKey !== key && state.values.some((e) => valueKey(e.category, e.mainText) === newKey)) {
     return "duplicate";
   }
+
+  // Every form this row currently replaces, main text and spellings alike. It is
+  // read BEFORE anything is written, because it is what must survive.
+  const forms = [...spellingsOf(cur).values()];
+  const nextLower = next.toLowerCase();
+  const promoting = forms.some((x) => x.toLowerCase() === nextLower);
+  if (promoting) {
+    // The promoted form leaves the spelling list because it becomes the main
+    // text; every other form, the old main text included, stays.
+    const kept = forms.filter((x) => x.toLowerCase() !== nextLower);
+    setState({
+      values: state.values.map((e) =>
+        valueKey(e.category, e.mainText) === key
+          ? { ...curate(e, kept), mainText: next }
+          : e),
+    });
+    return "";
+  }
+
   setState({
     values: state.values.map((e) =>
       valueKey(e.category, e.mainText) === key
-        ? { ...e, mainText: next, derivedSpellings: null, spellingsError: null }
+        ? repend({ ...e, mainText: next })
         : e),
   });
   return "";
@@ -2340,7 +2383,7 @@ export function changeValueCategory(fromCategory, mainText, toCategory) {
   setState({
     values: state.values.map((e) =>
       valueKey(e.category, e.mainText) === fromKey
-        ? { ...e, category: toCategory, derivedSpellings: null, spellingsError: null }
+        ? repend({ ...e, category: toCategory })
         : e),
     settings: {
       ...state.settings,
@@ -2390,21 +2433,27 @@ export function changeSuggestionCategory(text, toCategory) {
  *
  * @param {{category, mainText}} target the value to keep
  * @param {Array<{category, mainText}>} sources the values to fold in
- * @returns {number} how many source values were merged
+ * @returns {string} "" on success, or a reason ("not found" | "nothing to
+ *   merge"). It shares the convention of the four reducers beside it rather than
+ *   returning the count in the same slot: a number is the family's failure slot
+ *   filled with something that is not a failure, so `if (groupValues(...))`
+ *   reads as an error check and fires on success. A caller that needs the count
+ *   takes it from the store, `state.values.length` before and after, which is
+ *   the idiom the allowlist's add already uses.
  */
 export function groupValues(target, sources) {
   const targetKey = valueKey(target?.category, target?.mainText ?? "");
   const keep = state.values.find((e) => valueKey(e.category, e.mainText) === targetKey);
-  if (!keep) return 0;
+  if (!keep) return "not found";
 
   const sourceKeys = new Set(
     (sources ?? [])
       .map((sc) => valueKey(sc.category, sc.mainText ?? ""))
       .filter((k) => k !== targetKey));
-  if (sourceKeys.size === 0) return 0;
+  if (sourceKeys.size === 0) return "nothing to merge";
 
   const folded = state.values.filter((e) => sourceKeys.has(valueKey(e.category, e.mainText)));
-  if (folded.length === 0) return 0;
+  if (folded.length === 0) return "nothing to merge";
 
   // Collect every spelling the sources brought, deduplicated and never equal to
   // the target's own name (that spelling is already the target).
@@ -2442,10 +2491,10 @@ export function groupValues(target, sources) {
         // If any participant was curated, the survivor is curated: a merge must
         // not silently re-derive a list the user set by hand.
         if (curatedMerge) return curate(e, [...(e.derivedSpellings ?? []), ...spellings]);
-        return { ...e, spellings, derivedSpellings: null, spellingsError: null };
+        return repend({ ...e, spellings });
       }),
   });
-  return folded.length;
+  return "";
 }
 
 /** clearAllValues() empties the value list. Returns how many it removed, so a

@@ -214,7 +214,9 @@ test("grouping three values and choosing a source as the main keeps that source 
     { category: "entity_names", mainText: "Acme" },
     { category: "entity_names", mainText: "Acme Corp" },
   ];
-  assert.equal(groupValues(main, rest), 2, "both other values were folded");
+  const before = getState().values.length;
+  assert.equal(groupValues(main, rest), "", "the merge succeeded");
+  assert.equal(before - getState().values.length, 2, "both other values were folded");
 
   const es = getState().values;
   assert.equal(es.length, 1, "only the chosen survivor remains");

@@ -1344,8 +1344,12 @@ async function moveSpellingElsewhere(cat, mainText, spelling) {
 
   const to = getState().values.find((o) => valueKey(o.category, o.mainText) === target);
   if (!to) { setState({}); return; }
-  const moved = moveSpelling(cat, mainText, to.category, to.mainText, spelling);
-  if (!moved) { setState({}); return; }
+  // "" is success; anything else is a reason the move did not happen (a stale
+  // drop, an unknown row), and the popup simply stays as it was.
+  if (moveSpelling(cat, mainText, to.category, to.mainText, spelling) !== "") {
+    setState({});
+    return;
+  }
   notify(WORKSPACE.spellingMoved(spelling, to.mainText), "ok");
   await refreshVariants();
 }
@@ -1931,8 +1935,13 @@ function wireGroupPanel(cardEl, cat, mainText) {
     const rest = participants.filter((p) => valueKey(p.category, p.mainText) !== mainKey);
 
     openValuePanel = { key: null, kind: null };
-    const n = groupValues(main, rest);
-    if (n) notify(WORKSPACE.groupedN(n, main.mainText), "ok");
+    // groupValues shares the family's ""-or-reason convention, so the COUNT is
+    // read from the store: how many rows the merge removed.
+    const before = getState().values.length;
+    if (groupValues(main, rest) === "") {
+      const merged = before - getState().values.length;
+      if (merged) notify(WORKSPACE.groupedN(merged, main.mainText), "ok");
+    }
     await refreshVariants();
   });
   cardEl.querySelector(".panel-cancel")?.addEventListener("click", () => {
