@@ -1664,6 +1664,27 @@ export function deleteValue(category, mainText) {
   });
 }
 
+/**
+ * deleteValues(keys) deletes several values in ONE state change.
+ *
+ * One change, not a loop over deleteValue, because each reducer call notifies
+ * every subscriber: removing twenty values one at a time repaints the workspace
+ * twenty times, and each repaint re-wires the cards the next removal is about to
+ * delete. It also makes the removal atomic, so a subscriber can never observe
+ * half of a bulk clear.
+ *
+ * @param {Array<string>} keys valueKeys, as valueKey(category, mainText) builds them
+ * @returns {number} how many rows were actually removed, so the caller can report it
+ */
+export function deleteValues(keys) {
+  const wanted = new Set(keys ?? []);
+  if (wanted.size === 0) return 0;
+  const kept = state.values.filter((e) => !wanted.has(valueKey(e.category, e.mainText)));
+  const removed = state.values.length - kept.length;
+  if (removed) setState({ values: kept });
+  return removed;
+}
+
 /** setValueSpellings stores the Go-expanded spelling list on a row
  *  ([] is a valid "no derivedSpellings" answer, distinct from pending null). */
 export function setValueSpellings(category, mainText, derivedSpellings) {

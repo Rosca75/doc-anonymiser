@@ -493,6 +493,132 @@ func checkValueCardActions(c *cdpClient, r *reporter) {
 		"The .value-remove handler calls deleteValue(category, mainText) from the card's dataset.")
 }
 
+// --- The My values tab: two captioned blocks, and the Ctrl+click selection --
+
+type valuesLayoutResult struct {
+	Error    string   `json:"error"`
+	Captions []string `json:"captions"`
+
+	FilterRowOffset int `json:"filterRowOffset"`
+	AddRowOffset    int `json:"addRowOffset"`
+
+	FilterWeight     int    `json:"filterWeight"`
+	CategoryWeight   int    `json:"categoryWeight"`
+	FilterFontSize   string `json:"filterFontSize"`
+	CategoryFontSize string `json:"categoryFontSize"`
+
+	PlainBg      string `json:"plainBg"`
+	SelectedBg   string `json:"selectedBg"`
+	OthersTinted string `json:"othersTinted"`
+
+	SelectedCount     int `json:"selectedCount"`
+	SelectedAfterUndo int `json:"selectedAfterUndo"`
+
+	ClearLabelPlain  string `json:"clearLabelPlain"`
+	ClearLabelPicked string `json:"clearLabelPicked"`
+	ClearLabelUndone string `json:"clearLabelUndone"`
+}
+
+// selectedCardBg is the painted fill of a picked value card: brand.css
+// --selected-bg (#EEF5FF), which every engine reports in rgb() form.
+const selectedCardBg = "rgb(238, 245, 255)"
+
+// checkValuesTabLayout asserts what the My values tab LOOKS like once laid out,
+// and that a Ctrl+click on a card is visible to the user.
+//
+// Four things, each of which a markup test can only predict:
+//
+//  1. the two captions are there and in order, so narrowing the list and
+//     changing it read as two jobs rather than one strip of controls.
+//
+//  2. the paired controls really are side by side. A flex row that wraps renders
+//     both children inside the right parent and still stacks them, so only a
+//     laid-out centre line answers "aligned".
+//
+//  3. the type filter is drawn like the add row's own category dropdown. Weight
+//     and size come from a shared class, which is exactly the kind of value that
+//     survives every string assertion and shows up as a bold caption on screen.
+//
+//  4. a picked card is TINTED. The class is on the element either way; only a
+//     computed background says whether the selection is visible, and a selection
+//     nobody can see is a bulk action aimed at nothing in particular.
+func checkValuesTabLayout(c *cdpClient, r *reporter) {
+	r.step("My values reads as two blocks, and a Ctrl+click picks a card visibly")
+
+	var got valuesLayoutResult
+	if err := c.eval("__uiProbes.valuesTabLayout()", &got); err != nil {
+		r.assert("the My values layout probe runs", false,
+			"the My values tab rendered", err.Error(),
+			"views/identifyworkspace.js valuesTab must render the FILTERS and VALUES blocks.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the My values layout probe runs", false,
+			"the tab's filter and add controls", got.Error,
+			"The probe seeds two accepted Values and opens the My values tab.")
+		return
+	}
+
+	r.assert("the tab captions its two blocks, filters first",
+		len(got.Captions) == 2 && got.Captions[0] == "Filters" && got.Captions[1] == "Values",
+		`["Filters", "Values"]`, fmt.Sprintf("%q", got.Captions),
+		"copy.js WORKSPACE.valuesFiltersHeading and valuesHeading, each rendered through "+
+			"ui.js sectionLabel inside its own .values-section.")
+
+	// 2px of slack: a select and an input can round their heights differently
+	// without being anything other than aligned.
+	r.assert("the search and the type filter sit on one row",
+		got.FilterRowOffset <= 2,
+		"centre lines within 2px", fmt.Sprintf("%dpx apart", got.FilterRowOffset),
+		"style.css .values-toolbar is one flex row. A control that wrapped is a control "+
+			"that no longer reads as part of the filter.")
+
+	r.assert("the bulk clear sits on the same row as Add value",
+		got.AddRowOffset <= 2,
+		"centre lines within 2px", fmt.Sprintf("%dpx apart", got.AddRowOffset),
+		"Both buttons live in .add-row (style.css), with the growing input between them.")
+
+	r.assert("the type filter is not bold",
+		got.FilterWeight > 0 && got.FilterWeight < 700,
+		"a regular weight", fmt.Sprintf("font-weight %d", got.FilterWeight),
+		"The filter must not take .head-select, which is the borderless BOLD spelling "+
+			"reserved for a filter inside a table header row.")
+
+	r.assert("the type filter matches the add row's own category dropdown",
+		got.FilterWeight == got.CategoryWeight && got.FilterFontSize == got.CategoryFontSize,
+		fmt.Sprintf("weight %d at %s, as the category select", got.CategoryWeight, got.CategoryFontSize),
+		fmt.Sprintf("weight %d at %s", got.FilterWeight, got.FilterFontSize),
+		"style.css .values-type-filter carries the same padding and size as .add-row select: "+
+			"both are one control picking a category.")
+
+	r.assert("a Ctrl+click tints the card it landed on",
+		got.SelectedBg == selectedCardBg,
+		selectedCardBg+" (brand.css --selected-bg)", got.SelectedBg,
+		"style.css .value-card.selected sets the background. The class alone is invisible: "+
+			"a selection the user cannot see is a bulk action aimed at nothing.")
+
+	r.assert("only that card is tinted",
+		got.SelectedCount == 1 && got.OthersTinted == got.PlainBg,
+		"one .value-card.selected, the rest unchanged",
+		fmt.Sprintf("%d selected, neighbour painted %s", got.SelectedCount, got.OthersTinted),
+		"toggleValueSelection stores ONE key per Ctrl+click, so a click cannot pick a card "+
+			"the user never pressed.")
+
+	r.assert("the bulk button says which of its two scopes the next press uses",
+		got.ClearLabelPlain == "Clear all" && got.ClearLabelPicked == "Clear selected",
+		`"Clear all" with nothing picked, "Clear selected" with a card picked`,
+		fmt.Sprintf("%q then %q", got.ClearLabelPlain, got.ClearLabelPicked),
+		"clearValuesButton reads the selection. A button reading \"Clear all\" beside a "+
+			"selection would remove the values the user just took the trouble to exclude.")
+
+	r.assert("the same gesture lets the card go again",
+		got.SelectedAfterUndo == 0 && got.ClearLabelUndone == "Clear all",
+		`nothing selected, button back to "Clear all"`,
+		fmt.Sprintf("%d selected, button %q", got.SelectedAfterUndo, got.ClearLabelUndone),
+		"Ctrl+click toggles. A selection with no way back turns a mis-click into a "+
+			"destroyed list.")
+}
+
 // --- The value card's geometry, and the scroll position it used to lose -----
 
 type cardGeometryResult struct {

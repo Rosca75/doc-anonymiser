@@ -44,7 +44,7 @@ import {
 } from "../api.js";
 import {
   getState, setState, llmEnabled, detectionRoutesOn,
-  addValues, deleteValue, valueKey,
+  addValues, deleteValue, deleteValues, valueKey,
   setValueSpellings, setValueSpellingError, addSpelling,
   addSuggestions, acceptSuggestion, rejectSuggestion,
   acceptAllShown, rejectAllShown, moveSpelling,
@@ -60,7 +60,7 @@ import {
 } from "../suggestionmodel.js";
 import { escapeHTML } from "../html.js";
 import {
-  button, tabbar, icon, toastHTML, searchBox, wireSearchBox,
+  button, tabbar, icon, toastHTML, searchBox, wireSearchBox, sectionLabel,
   helpTooltip, wireHelpTooltips, warningPopover, wireWarningPopovers,
 } from "../ui.js";
 import { askConfirm, askChoice } from "../modal.js";
@@ -135,6 +135,18 @@ let valuesFilter = { search: "", type: "" };
 // at a time: a stack of open "group with" pickers down the list would be noise.
 // key is an valueKey; kind is "group" | "solve" | null.
 let openValuePanel = { key: null, kind: null };
+// The value cards the user picked with Ctrl+click, as a Set of valueKeys. It is
+// view state for the same reason the filters are: nothing downstream reads it and
+// it must never travel in a session file. It exists so a bulk action can act on
+// SOME of the list instead of all of it, which is why the clear button reads the
+// set rather than the value count.
+//
+// Keys, not indexes or object references: the cards are re-rendered from state on
+// every repaint, so an index moves when a value is added above it and a reference
+// points at an object the next repaint replaced. A key survives both. It does not
+// survive a RENAME, which changes the key, and dropping the selection there is
+// the honest answer: the card the user picked is not the card that is now shown.
+let selectedValueKeys = new Set();
 // The suggestions search's debounce timer. That search re-renders (its result
 // is the bulk-action scope), so it cannot filter in place like the My values
 // search; debouncing keeps the input alive through a burst of keystrokes.
@@ -558,8 +570,82 @@ export function conflictMessage(c) {
   }
 }
 
-/** valuesFilterBar(s) is the toolbar above the value cards: search, a type
- *  filter and Clear all. */
+/**
+ * pruneValueSelection(s) drops picked keys whose value is no longer in the list.
+ *
+ * Called from the render rather than from every reducer that can remove a value,
+ * for the reason the intersection check is: a reducer added later cannot forget
+ * a rule that lives in the one place all of them repaint through.
+ *
+ * @param {object} s the state snapshot being rendered
+ */
+function pruneValueSelection(s) {
+  if (selectedValueKeys.size === 0) return;
+  const live = new Set((s.values ?? []).map((e) => valueKey(e.category, e.mainText)));
+  for (const key of selectedValueKeys) if (!live.has(key)) selectedValueKeys.delete(key);
+}
+
+/**
+ * SELECTION_SAFE_EXCLUDES are the elements a selecting click must NOT be read
+ * from: everything on a card that already does something when clicked.
+ *
+ * Ctrl+click selects a card only where there is nothing else to press. A modifier
+ * does not stop a button firing, so without this guard one gesture would both
+ * select the card and remove a spelling, and the user cannot tell which of the
+ * two they asked for.
+ *
+ * Listed one selector per entry rather than as one comma-separated selector
+ * because closest() is asked for each in turn, which is also what the test DOM
+ * supports.
+ */
+const SELECTION_SAFE_EXCLUDES = ["button", "input", "select", "textarea", "a", "label"];
+
+/**
+ * isInteractiveTarget(node) is true when the click landed on, or inside, one of
+ * the card's own controls.
+ *
+ * @param {object} node the event target
+ * @returns {boolean}
+ */
+function isInteractiveTarget(node) {
+  for (const selector of SELECTION_SAFE_EXCLUDES) {
+    if (node?.closest?.(selector)) return true;
+  }
+  return false;
+}
+
+/**
+ * toggleValueSelection(key) adds or removes one card from the selection.
+ *
+ * It repaints, because the selection is not only a tint on one card: the clear
+ * button's LABEL depends on whether anything is picked, and a tint applied in
+ * place beside a button still reading "Clear all" would be a lie about what the
+ * next press does.
+ *
+ * @param {string} key the card's valueKey
+ */
+function toggleValueSelection(key) {
+  if (selectedValueKeys.has(key)) selectedValueKeys.delete(key);
+  else selectedValueKeys.add(key);
+  setState({});
+}
+
+/**
+ * valuesFilterBar(s) is the FILTERS block: the caption, then the search and the
+ * type filter on ONE row.
+ *
+ * It holds nothing that CHANGES the list. Narrowing what is shown and adding to
+ * what exists are two different jobs, and one row carrying both let a user reach
+ * for the search and press Clear all: the two captions are what keep the reading
+ * unambiguous, so the bulk clear lives in the VALUES block beside Add value.
+ *
+ * The type filter is drawn as an ordinary select, the same as the add row's own
+ * category dropdown, because that is what it is: one control that picks a
+ * category. It must NOT wear .head-select, which is the borderless bold caption
+ * style a filter takes when it sits inside a table's HEADER ROW: standing on its
+ * own under a caption, that style reads as a second heading rather than as
+ * something to press.
+ */
 function valuesFilterBar(s) {
   const search = searchBox({
     id: "values-search", value: valuesFilter.search, cls: "values-search",
@@ -572,25 +658,51 @@ function valuesFilterBar(s) {
   const typeOptions = distinct(s.values, "category")
     .map((key) =>
       `<option value="${escapeHTML(key)}"${key === valuesFilter.type ? " selected" : ""}>` +
-      `${escapeHTML(categoryLabel(key).toUpperCase())}</option>`).join("");
+      `${escapeHTML(categoryLabel(key))}</option>`).join("");
   const typeFilter =
-    `<select id="values-type" class="head-select${valuesFilter.type ? " filtered" : ""}"` +
+    `<select id="values-type" class="values-type-filter${valuesFilter.type ? " filtered" : ""}"` +
     ` title="${escapeHTML(WORKSPACE.valuesFilterTypeTitle)}"` +
     ` aria-label="${escapeHTML(WORKSPACE.valuesFilterTypeTitle)}">` +
     `<option value="">${escapeHTML(WORKSPACE.valuesAllTypes)}</option>${typeOptions}</select>`;
 
-  const clear = button(WORKSPACE.clearAll, {
-    kind: "secondary", id: "btn-clear-values", icon: "delete",
-    disabled: s.values.length === 0, title: WORKSPACE.clearAllTitle,
-  });
+  return `<div class="values-section">` +
+    sectionLabel(WORKSPACE.valuesFiltersHeading) +
+    `<div class="values-toolbar">${search}${typeFilter}</div>` +
+    `</div>`;
+}
 
-  return `<div class="values-toolbar">${search}${typeFilter}${clear}</div>`;
+/**
+ * clearValuesButton(s) is the ONE bulk-removal control, and it states which of
+ * its two jobs it will do.
+ *
+ * With nothing picked it empties the list ("Clear all"). With cards picked by
+ * Ctrl+click it removes only those ("Clear selected"). One button rather than
+ * two, because two would put a live "Clear all" next to a selection the user
+ * just made, and pressing the wrong one destroys work no undo brings back. Its
+ * id does not change with its label: the handler reads the selection, so both
+ * jobs are the same control.
+ */
+function clearValuesButton(s) {
+  const picked = selectedValueKeys.size;
+  return button(picked ? WORKSPACE.clearSelected : WORKSPACE.clearAll, {
+    kind: "secondary", id: "btn-clear-values", icon: "delete",
+    disabled: s.values.length === 0,
+    title: picked ? WORKSPACE.clearSelectedTitle : WORKSPACE.clearAllTitle,
+  });
 }
 
 /** valuesTab(s) is the filter toolbar, the add row, then one card per value,
  *  each highlighting the conflicts that would block the run. */
 export function valuesTab(s) {
+  // A selection outlives the repaint that follows every edit, so keys pointing at
+  // values that are no longer there have to go: a stale key would leave the clear
+  // button saying "Clear selected" with nothing selected, which is a button that
+  // then removes nothing and explains nothing.
+  pruneValueSelection(s);
+
   const addRow =
+    `<div class="values-section">` +
+    sectionLabel(WORKSPACE.valuesHeading) +
     `<div class="add-row">` +
     `<input id="value-draft" class="grow" value="${escapeHTML(drafts.value)}"` +
     ` placeholder="${escapeHTML(WORKSPACE.addValuePlaceholder)}"` +
@@ -599,10 +711,15 @@ export function valuesTab(s) {
       id: "value-category", ariaLabel: WORKSPACE.addValueCategory,
     }) +
     button(WORKSPACE.addValue, { kind: "secondary", id: "btn-add-value" }) +
+    // The bulk clear sits on the SAME row as Add value, at its far end: both act
+    // on the list as a whole, so they belong to the same block, and the growing
+    // input between them is what keeps "add one" and "remove many" apart.
+    clearValuesButton(s) +
     `</div>` +
     // The live match count. A value that matches nothing is almost always a
     // typo, and saying so before the run is the cheapest correction there is.
-    `<p class="hint" id="value-matches">${escapeHTML(drafts.valueMatches)}</p>`;
+    `<p class="hint" id="value-matches">${escapeHTML(drafts.valueMatches)}</p>` +
+    `</div>`;
 
   // Conflicts are computed ONCE for the whole list, because a collision is a
   // relationship BETWEEN two values: each card needs to know about the other.
@@ -862,8 +979,16 @@ function valueCard(e, conflict, s, overlap) {
       : (openValuePanel.kind === "solve" && conflict ? solvePanel(e, conflict) : ""))
     : "";
 
-  return `<div class="value-card${conflict ? " conflicted" : ""}${overlap ? " intersects" : ""}" data-key="${escapeHTML(key)}"` +
+  // Picked with Ctrl+click. The title teaches the gesture where the gesture is
+  // performed: the controls inside the card carry their own titles, so this one
+  // only surfaces over the card's own surface, which is exactly the area a
+  // selecting click is allowed to land on.
+  const selected = selectedValueKeys.has(key);
+
+  return `<div class="value-card${conflict ? " conflicted" : ""}${overlap ? " intersects" : ""}` +
+    `${selected ? " selected" : ""}" data-key="${escapeHTML(key)}"` +
     ` data-category="${escapeHTML(e.category)}" data-main-text="${escapeHTML(e.mainText)}"` +
+    ` title="${escapeHTML(WORKSPACE.selectCardHint)}"` +
     ` data-search="${escapeHTML(searchText)}">` +
     `<div class="row-between">` +
     `<div class="value-head">${nameBtn}${typeSelect}${methods}` +
@@ -1586,6 +1711,24 @@ function wireValues(container) {
       continue;
     }
 
+    // Ctrl+click (Cmd+click too, so the gesture is the platform's own) picks the
+    // card, so a bulk action can name what it will act on. It is bound to the
+    // CARD and reads the event's target, rather than being bound to a bare
+    // "surface" element, because the card has no such element: its whole area is
+    // either a control or a gap between controls, and a gap cannot carry a
+    // listener. A plain click is left alone, so every existing gesture on the
+    // card is untouched.
+    cardEl.addEventListener("click", (ev) => {
+      if (!(ev.ctrlKey || ev.metaKey)) return;
+      if (isInteractiveTarget(ev.target)) return;
+      if (!key) return;
+      // The browser's own Ctrl+click meanings (opening a link, extending a text
+      // selection) have nothing to do here, and letting one through would leave
+      // the card selected AND a stray text selection across it.
+      ev.preventDefault?.();
+      toggleValueSelection(key);
+    });
+
     // Renaming the value: click the name to reveal an inline input.
     cardEl.querySelector(".value-name")?.addEventListener("click", () => {
       revealNameInput(cardEl, cat, mainText);
@@ -1724,9 +1867,28 @@ export function wireValuesToolbar(container) {
     setState({});
   });
 
+  // One button, two scopes: the picked cards when there are any, otherwise the
+  // whole list. It reads the selection at PRESS time rather than trusting its own
+  // rendered label, so a repaint between the two cannot make it act on a scope
+  // the user was never shown.
   container.querySelector("#btn-clear-values")?.addEventListener("click", async () => {
+    if (getState().values.length === 0) return;
+    const picked = [...selectedValueKeys];
+
+    if (picked.length) {
+      if (!await askConfirm({
+        title: WORKSPACE.clearSelected,
+        body: WORKSPACE.clearSelectedConfirm(picked.length),
+      })) return;
+      openValuePanel = { key: null, kind: null };
+      spellingsPopup = null;
+      selectedValueKeys = new Set();
+      const cleared = deleteValues(picked);
+      notify(WORKSPACE.clearedN(cleared), cleared ? "ok" : "info");
+      return;
+    }
+
     const n = getState().values.length;
-    if (n === 0) return;
     if (!await askConfirm({ title: WORKSPACE.clearAll, body: WORKSPACE.clearAllConfirm(n) })) return;
     openValuePanel = { key: null, kind: null };
     spellingsPopup = null;

@@ -139,6 +139,15 @@
   --more-chip-bg: #EEF5FF;
   --more-chip-edge: #CFE0FB;
 
+  /* A value card the user picked with Ctrl+click, so a bulk action can name
+     what it will act on. Same pale-blue family as the origin tint, and for the
+     same reason: both answer "this is the one you are pointing at" rather than
+     "this is what kind of thing it is", so neither may borrow a category hue or
+     a status hue. The edge is what keeps a selected card legible against the
+     unselected ones above and below it. */
+  --selected-bg: #EEF5FF;
+  --selected-edge: #CFE0FB;
+
   /* The origin tint: where in the ORIGINAL pane the placeholder under the
      pointer came from. It is a POSITIONAL answer, not a category one, so it
      must not be confused with the category marks (orange, grey, violet) or
