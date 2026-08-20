@@ -30,7 +30,10 @@ import (
 // Paths are relative to the repo root (this test's working directory). The
 // backend/ split moved the app layer and the logic packages under backend/,
 // so the guard now walks there; "." still covers the root main package.
-var guardedDirs = []string{".", "backend", "backend/engine", "backend/engine/convert", "backend/engine/exportfmt", "backend/ollama"}
+var guardedDirs = []string{
+	".", "backend", "backend/engine", "backend/engine/convert",
+	"backend/engine/exportfmt", "backend/engine/imaging", "backend/ollama",
+}
 
 func TestNoEmDashInUserFacingStrings(t *testing.T) {
 	var hits []string

@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"doc-anonymiser/backend/engine"
+	"doc-anonymiser/backend/engine/exportfmt"
 	"doc-anonymiser/backend/engine/imaging"
 )
 
@@ -48,7 +49,7 @@ func (a *App) ListDocumentImages(name string) (imaging.Inventory, error) {
 	defer a.mu.Unlock()
 
 	if inv, ok := a.imageScans[name]; ok {
-		return inv, nil
+		return a.withDecisionsLocked(name, inv), nil
 	}
 
 	doc, ok := a.docByNameLocked(name)
@@ -88,7 +89,196 @@ func (a *App) ListDocumentImages(name string) (imaging.Inventory, error) {
 		a.imageScans = map[string]imaging.Inventory{}
 	}
 	a.imageScans[name] = inv
-	return inv, nil
+	return a.withDecisionsLocked(name, inv), nil
+}
+
+// withDecisionsLocked returns the inventory with each asset's current decision
+// attached. Caller holds a.mu.
+//
+// The CACHE holds the scan alone, because the scan describes bytes that do not
+// change while the decisions do: caching them together would hand the screen a
+// decision the user has since changed. The copy is shallow on purpose, so only
+// the asset list is duplicated; nothing here mutates an occurrence.
+func (a *App) withDecisionsLocked(name string, inv imaging.Inventory) imaging.Inventory {
+	decisions := a.imageDecisions[name]
+	out := inv
+	out.Assets = make([]imaging.Asset, len(inv.Assets))
+	copy(out.Assets, inv.Assets)
+	for i := range out.Assets {
+		// An absent decision is keep, which is the zero Decision, so an asset
+		// nobody has touched needs nothing written into it.
+		out.Assets[i].Decision = decisions[out.Assets[i].ID]
+	}
+	return out
+}
+
+// SetImageDecision records one asset's treatment.
+//
+// It validates against the ASSET it names rather than against the treatment
+// alone, so a refusal ("an SVG image cannot be blurred") reaches the user beside
+// the control that caused it instead of at export time, when the only thing left
+// to do about it is start again.
+//
+// A keep is recorded as the ABSENCE of a decision, so the store holds only what
+// the user changed.
+//
+// @param docName the imported document's name
+// @param assetID the asset ID the inventory listed (the archive part path)
+// @param d the decision to record
+// @return an error for an unknown document, an unknown picture, or a decision
+//
+//	this picture cannot carry
+func (a *App) SetImageDecision(docName, assetID string, d imaging.Decision) error {
+	asset, err := a.imageAsset(docName, assetID)
+	if err != nil {
+		return err
+	}
+	if err := d.Validate(asset); err != nil {
+		return err
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !d.Anonymises() {
+		delete(a.imageDecisions[docName], assetID)
+		if len(a.imageDecisions[docName]) == 0 {
+			delete(a.imageDecisions, docName)
+		}
+		return nil
+	}
+	if a.imageDecisions == nil {
+		a.imageDecisions = map[string]map[string]imaging.Decision{}
+	}
+	if a.imageDecisions[docName] == nil {
+		a.imageDecisions[docName] = map[string]imaging.Decision{}
+	}
+	a.imageDecisions[docName][assetID] = d
+	return nil
+}
+
+// ResetImageDecisions drops every decision for one document: the "keep them
+// all" bulk action.
+//
+// It checks the document exists first, so a stale name is an error the caller
+// can act on rather than a silent success that leaves the decisions in place.
+//
+// @param docName the imported document's name
+// @return an error only for a document that is not imported
+func (a *App) ResetImageDecisions(docName string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if _, ok := a.docByNameLocked(docName); !ok {
+		return fmt.Errorf(
+			"the document %q is not imported, so its picture decisions cannot be cleared; "+
+				"pick another document from the list", docName)
+	}
+	delete(a.imageDecisions, docName)
+	return nil
+}
+
+// PreviewImageTreatment renders what the export WILL produce for one asset,
+// scaled to a preview.
+//
+// It runs the REAL treatment and the real thumbnailer, so the preview cannot
+// promise something the export does not do. A keep previews the picture as it
+// is, which is exactly what keeping it produces.
+//
+// @param docName the imported document's name
+// @param assetID the asset ID the inventory listed
+// @param d the decision to preview, which is NOT recorded
+// @param maxPx the longest side wanted; 0 asks for DefaultThumbnailPx
+// @return the data URL and the size it draws at
+func (a *App) PreviewImageTreatment(docName, assetID string, d imaging.Decision, maxPx int) (ImageThumb, error) {
+	if maxPx <= 0 {
+		maxPx = DefaultThumbnailPx
+	}
+	asset, err := a.imageAsset(docName, assetID)
+	if err != nil {
+		return ImageThumb{}, err
+	}
+	if err := d.Validate(asset); err != nil {
+		return ImageThumb{}, err
+	}
+
+	a.mu.Lock()
+	doc, ok := a.docByNameLocked(docName)
+	a.mu.Unlock()
+	if !ok {
+		return ImageThumb{}, fmt.Errorf(
+			"the document %q is not imported, so its pictures cannot be previewed; import it "+
+				"again or pick another document from the list", docName)
+	}
+
+	url, w, h, err := imaging.PreviewTreated(doc.Raw, asset, d, maxPx)
+	if err != nil {
+		return ImageThumb{}, err
+	}
+	return ImageThumb{DataURL: url, Width: w, Height: h}, nil
+}
+
+// imageAsset finds one asset of one document, so the three methods that need it
+// ask the same question the same way and report the same two failures.
+func (a *App) imageAsset(docName, assetID string) (imaging.Asset, error) {
+	inv, err := a.ListDocumentImages(docName)
+	if err != nil {
+		return imaging.Asset{}, err
+	}
+	for _, asset := range inv.Assets {
+		if asset.ID == assetID {
+			return asset, nil
+		}
+	}
+	return imaging.Asset{}, fmt.Errorf(
+		"the picture %q is not part of %q; the document may have been re-imported since the "+
+			"list was drawn, reopen the image list to refresh it", assetID, docName)
+}
+
+// imagePlanFor assembles what the exporter needs for one document: the cached
+// inventory and the decisions taken against it.
+//
+// An empty plan is the normal answer and means "change no picture", so a
+// document nobody reviewed exports exactly as it did before this pass existed.
+// The scan is skipped entirely when there are no decisions, because walking a
+// sixty-slide archive to find no work is a cost the user feels on every save.
+func (a *App) imagePlanFor(docName string) exportfmt.ImagePlan {
+	a.mu.Lock()
+	stored := a.imageDecisions[docName]
+	decisions := make(map[string]imaging.Decision, len(stored))
+	for id, d := range stored {
+		decisions[id] = d
+	}
+	a.mu.Unlock()
+
+	if len(decisions) == 0 {
+		return exportfmt.ImagePlan{}
+	}
+	inv, err := a.ListDocumentImages(docName)
+	if err != nil {
+		// The document cannot be scanned, so no decision can be applied to it.
+		// The export still runs and still anonymises the text: refusing it here
+		// would turn an unreadable picture into a document the user cannot save
+		// at all.
+		return exportfmt.ImagePlan{}
+	}
+	return exportfmt.ImagePlan{Inventory: inv, Decisions: decisions}
+}
+
+// imageDecisionsSnapshot copies the whole store, for the session file.
+func (a *App) imageDecisionsSnapshot() map[string]map[string]imaging.Decision {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.imageDecisions) == 0 {
+		return nil
+	}
+	out := make(map[string]map[string]imaging.Decision, len(a.imageDecisions))
+	for doc, byAsset := range a.imageDecisions {
+		copied := make(map[string]imaging.Decision, len(byAsset))
+		for id, d := range byAsset {
+			copied[id] = d
+		}
+		out[doc] = copied
+	}
+	return out
 }
 
 // ImageThumbnail returns one asset's preview as a data URL.
@@ -107,7 +297,7 @@ func (a *App) ImageThumbnail(docName, assetID string, maxPx int) (ImageThumb, er
 		maxPx = DefaultThumbnailPx
 	}
 
-	inv, err := a.ListDocumentImages(docName)
+	asset, err := a.imageAsset(docName, assetID)
 	if err != nil {
 		return ImageThumb{}, err
 	}
@@ -121,19 +311,11 @@ func (a *App) ImageThumbnail(docName, assetID string, maxPx int) (ImageThumb, er
 				"again or pick another document from the list", docName)
 	}
 
-	for _, asset := range inv.Assets {
-		if asset.ID != assetID {
-			continue
-		}
-		url, w, h, err := imaging.Preview(doc.Raw, asset, maxPx)
-		if err != nil {
-			return ImageThumb{}, err
-		}
-		return ImageThumb{DataURL: url, Width: w, Height: h}, nil
+	url, w, h, err := imaging.Preview(doc.Raw, asset, maxPx)
+	if err != nil {
+		return ImageThumb{}, err
 	}
-	return ImageThumb{}, fmt.Errorf(
-		"the picture %q is not part of %q; the document may have been re-imported since the "+
-			"list was drawn, reopen the image list to refresh it", assetID, docName)
+	return ImageThumb{DataURL: url, Width: w, Height: h}, nil
 }
 
 // docByNameLocked finds one imported document by name. Caller holds a.mu.
@@ -154,4 +336,30 @@ func (a *App) docByNameLocked(name string) (engine.Document, bool) {
 // a decision taken against it would be applied to the wrong picture.
 func (a *App) forgetImageScansLocked() {
 	a.imageScans = nil
+}
+
+// restoredImageDecisions copies a loaded session's decisions into the store's
+// own maps, so the App never holds a map the session struct also holds.
+//
+// A nil or empty field restores as nil, which is "no decisions": exactly what a
+// session saved before anyone reviewed a picture meant.
+func restoredImageDecisions(saved map[string]map[string]imaging.Decision) map[string]map[string]imaging.Decision {
+	if len(saved) == 0 {
+		return nil
+	}
+	out := make(map[string]map[string]imaging.Decision, len(saved))
+	for doc, byAsset := range saved {
+		if len(byAsset) == 0 {
+			continue
+		}
+		copied := make(map[string]imaging.Decision, len(byAsset))
+		for id, d := range byAsset {
+			copied[id] = d
+		}
+		out[doc] = copied
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

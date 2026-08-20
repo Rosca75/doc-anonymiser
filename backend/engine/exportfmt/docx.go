@@ -13,6 +13,8 @@ package exportfmt
 import (
 	"path"
 	"strings"
+
+	"doc-anonymiser/backend/engine/imaging"
 )
 
 // Extras reports replacements made in parts the user never previewed
@@ -43,35 +45,58 @@ func isDocxExtraPart(name string) bool {
 }
 
 // ExportDocx rewrites a Word document held in raw (the import-time
-// bytes). It returns the new file, the per-part extras counts, and the
-// total number of body replacements.
-func ExportDocx(raw []byte, cfg Config) ([]byte, Extras, int, error) {
+// bytes). It returns the new file, the per-part extras counts, the total number
+// of body replacements, and what happened to the document's pictures.
+//
+// Each rewritable part goes through the text pass FIRST and the picture pass
+// SECOND, on the bytes the text pass produced (engine/exportfmt/images.go says
+// why the two are sequential rather than merged). A part that carries pictures
+// but no rewritable text still gets the picture pass, so a decision cannot be
+// honoured in the body and forgotten in a header.
+func ExportDocx(raw []byte, cfg Config) ([]byte, Extras, int, imaging.Summary, error) {
 	extras := Extras{}
 	bodyCount := 0
+	plan := cfg.Images
+	media := plan.mediaRewrites()
 
 	out, err := rewriteZip(raw, func(name string) RewriteFunc {
+		if pair, ok := media[name]; ok {
+			// A media entry the plan changes: its bytes are REPLACED, which is
+			// what keeps the original pixels out of the produced file.
+			return treatMediaPart(name, pair)
+		}
+		partName := name
 		switch {
 		case isDocxBodyPart(name):
 			return func(data []byte) ([]byte, error) {
 				rewritten, n, err := rewriteTextPart(data, cfg)
+				if err != nil {
+					return nil, err
+				}
 				bodyCount += n
-				return rewritten, err
+				return applyImagePass(rewritten, partName, plan)
 			}
 		case isDocxExtraPart(name):
-			partName := name
 			return func(data []byte) ([]byte, error) {
 				rewritten, n, err := rewriteTextPart(data, cfg)
+				if err != nil {
+					return nil, err
+				}
 				if n > 0 {
 					extras[partName] += n
 				}
-				return rewritten, err
+				return applyImagePass(rewritten, partName, plan)
+			}
+		case plan.touchesPart(name):
+			return func(data []byte) ([]byte, error) {
+				return applyImagePass(data, partName, plan)
 			}
 		default:
 			return nil // bit-for-bit passthrough
 		}
 	})
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, imaging.Summary{}, err
 	}
-	return out, extras, bodyCount, nil
+	return out, extras, bodyCount, plan.Summary(), nil
 }

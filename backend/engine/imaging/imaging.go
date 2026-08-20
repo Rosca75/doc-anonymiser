@@ -146,6 +146,14 @@ type Asset struct {
 	Linked bool `json:"linked,omitempty"`
 	// Occurrences are every place this asset is used, in document order.
 	Occurrences []Occurrence `json:"occurrences"`
+	// Decision is what the user has decided about this picture, or the zero
+	// value (which reads as keep) when they have decided nothing.
+	//
+	// It travels WITH the asset so the review screen has one call rather than
+	// two, and therefore cannot draw a row whose decision it has not read. The
+	// scan itself never fills it: the scan describes the file, and a decision is
+	// something the user did.
+	Decision Decision `json:"decision"`
 }
 
 // Inventory is what crosses the bridge: one document's whole picture answer,

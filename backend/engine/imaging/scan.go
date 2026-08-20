@@ -226,6 +226,18 @@ type rawOcc struct {
 	page int
 	// cx and cy are the drawn frame in English Metric Units, when stated.
 	cx, cy int
+	// elemStart and elemEnd bound the whole picture ELEMENT in the part's bytes:
+	// from the "<p:pic" / "<w:drawing" / "<w:pict" token to just past its
+	// matching close tag. They are what an export deletes to remove a picture,
+	// and they are zero for an occurrence with no element of its own (a shape
+	// fill, a slide background), whose removal is served by overwriting its
+	// bytes.
+	elemStart, elemEnd int
+	// srcRectStart and srcRectEnd bound the <a:srcRect/> that crops this picture
+	// inside its frame, when it has one. A crop of a replacement box would show
+	// one corner of the rectangle with the text outside the frame, so box and
+	// blur drop it; zero when the picture is not cropped.
+	srcRectStart, srcRectEnd int
 }
 
 // containerElements are the elements that RESET the per-picture state: each one
@@ -236,6 +248,13 @@ var containerElements = map[string]bool{
 	"pic": true, "drawing": true, "pict": true, "sp": true,
 	"bg": true, "bgPr": true, "tc": true, "graphicFrame": true,
 }
+
+// removableElements are the containers an export may DELETE whole: a picture
+// element in its own right, in either format's spelling. Every other container
+// holds something besides the picture (a shape, a table cell, a slide
+// background), so deleting it would take content with it that the user asked to
+// keep.
+var removableElements = map[string]bool{"pic": true, "drawing": true, "pict": true}
 
 // pictureFrame is what one enclosing container says about the pictures inside
 // it: what it is called, whether it is hidden, and how large it is drawn.
@@ -253,6 +272,32 @@ type pictureFrame struct {
 	cx, cy   int
 	name     string
 	hidden   bool
+	// start is this container's own first byte in the part, and end is the byte
+	// just past its close tag. Recorded for every container and USED only for a
+	// removable one.
+	start, end int
+	// removable says this container is a picture element an export may delete
+	// whole.
+	removable bool
+}
+
+// blipFillScope is one <a:blipFill> being walked: the occurrence its blip
+// produced, and the crop rectangle beside it.
+//
+// It is a scope of its own rather than a field on pictureFrame because a crop
+// belongs to the FILL and not to the shape around it: a Word picture nests
+// pic:blipFill inside w:drawing, and attaching the crop to the outer container
+// would let one picture's crop be read as another's.
+type blipFillScope struct {
+	// occIndex is the occurrence the blip inside this fill produced, or -1 while
+	// none has been seen.
+	occIndex int
+	// srcStart and srcEnd bound the fill's crop rectangle; srcSeen says one was
+	// found at all, and srcOpen says the one being measured has not closed yet.
+	// A fill carries at most one crop, so a second is ignored rather than
+	// allowed to stretch the first one's range over the XML between them.
+	srcStart, srcEnd int
+	srcSeen, srcOpen bool
 }
 
 // walkPart token-scans ONE XML part and returns every picture occurrence in it.
@@ -263,6 +308,12 @@ type pictureFrame struct {
 // same rule to splice a replacement in, which a struct-shaped unmarshal cannot
 // do.
 //
+// It also records, per occurrence, the byte ranges an export needs: the picture
+// element it may delete, and the crop rectangle it must drop. They are recorded
+// HERE, in the one walk, because an export that found those ranges with a walk
+// of its own could disagree with the scan about which picture is which, and the
+// user would then see one picture reviewed and another one changed.
+//
 // @param partName the archive entry, for the error message
 // @param data the part's bytes
 // @return the occurrences, how many page breaks the part carried, whether the
@@ -272,11 +323,16 @@ func walkPart(partName string, data []byte) (occs []rawOcc, pageBreaks int, hidd
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	var stack []string
 	var frames []pictureFrame
+	var fills []blipFillScope
 	var (
 		root    = true
 		inBlip  bool
 		blip    rawOcc
 		ordinal int
+		// tokenStart is the offset of the token being handled. RawToken's tokens
+		// tile the input with no gaps (whitespace arrives as CharData), so the
+		// end of the previous token IS the start of this one.
+		tokenStart int64
 	)
 
 	// top is the container the current element belongs to, or nil outside every
@@ -299,6 +355,12 @@ func walkPart(partName string, data []byte) (occs []rawOcc, pageBreaks int, hidd
 	// closeFrame answers for every occurrence opened inside the container that
 	// is closing, filling in only what is still missing. That is what lets an
 	// inner container name a picture and an outer one size it.
+	//
+	// The element RANGE is the exception: it is overwritten rather than filled
+	// in, so the OUTERMOST removable container wins. Word nests the picture that
+	// carries the name inside the drawing that carries the frame, and deleting
+	// only the inner one would leave a drawing with no content in it, which Word
+	// draws as a broken placeholder rather than as nothing.
 	closeFrame := func(f pictureFrame) {
 		for i := f.startOcc; i < len(occs); i++ {
 			if occs[i].cx == 0 && occs[i].cy == 0 {
@@ -309,6 +371,9 @@ func walkPart(partName string, data []byte) (occs []rawOcc, pageBreaks int, hidd
 			}
 			if f.hidden {
 				occs[i].hidden = true
+			}
+			if f.removable && f.end > f.start {
+				occs[i].elemStart, occs[i].elemEnd = f.start, f.end
 			}
 		}
 	}
@@ -323,6 +388,7 @@ func walkPart(partName string, data []byte) (occs []rawOcc, pageBreaks int, hidd
 				"the part %q inside the file is not well-formed XML (%v); the file is damaged, "+
 					"re-export it from the source application and import it again", partName, tokErr)
 		}
+		tokenEnd := dec.InputOffset()
 
 		switch t := tok.(type) {
 		case xml.StartElement:
@@ -335,9 +401,25 @@ func walkPart(partName string, data []byte) (occs []rawOcc, pageBreaks int, hidd
 				}
 			}
 			if containerElements[local] {
-				frames = append(frames, pictureFrame{startOcc: len(occs)})
+				frames = append(frames, pictureFrame{
+					startOcc:  len(occs),
+					start:     int(tokenStart),
+					removable: removableElements[local],
+				})
 			}
 			switch local {
+			case "blipFill":
+				fills = append(fills, blipFillScope{occIndex: -1})
+			case "srcRect":
+				// A crop is self-closing in every producer this application has
+				// seen, and RawToken's synthetic end tag then lands on the same
+				// offset. The end is measured at that end tag regardless, so a
+				// spelled-out <a:srcRect></a:srcRect> is measured correctly too.
+				if len(fills) > 0 && !fills[len(fills)-1].srcSeen {
+					f := &fills[len(fills)-1]
+					f.srcSeen, f.srcOpen = true, true
+					f.srcStart, f.srcEnd = int(tokenStart), int(tokenEnd)
+				}
 			case "cNvPr", "docPr":
 				// The picture's own name and description, and the per-shape
 				// hidden flag.
@@ -388,13 +470,21 @@ func walkPart(partName string, data []byte) (occs []rawOcc, pageBreaks int, hidd
 
 		case xml.EndElement:
 			local := t.Name.Local
-			if local == "blip" && inBlip {
+			switch {
+			case local == "blip" && inBlip:
 				// Emitted at the END of the blip so the SVG extension inside it
 				// has already been seen.
 				inBlip = false
 				if blip.rid != "" || blip.link != "" {
 					emit(blip)
+					if len(fills) > 0 {
+						fills[len(fills)-1].occIndex = len(occs) - 1
+					}
 				}
+			case local == "srcRect" && len(fills) > 0 && fills[len(fills)-1].srcOpen:
+				f := &fills[len(fills)-1]
+				f.srcOpen = false
+				f.srcEnd = int(tokenEnd)
 			}
 			if len(stack) > 0 {
 				stack = stack[:len(stack)-1]
@@ -402,9 +492,19 @@ func walkPart(partName string, data []byte) (occs []rawOcc, pageBreaks int, hidd
 			if containerElements[local] && len(frames) > 0 {
 				f := frames[len(frames)-1]
 				frames = frames[:len(frames)-1]
+				f.end = int(tokenEnd)
 				closeFrame(f)
 			}
+			if local == "blipFill" && len(fills) > 0 {
+				fill := fills[len(fills)-1]
+				fills = fills[:len(fills)-1]
+				if fill.occIndex >= 0 && fill.srcSeen && fill.srcEnd > fill.srcStart {
+					occs[fill.occIndex].srcRectStart = fill.srcStart
+					occs[fill.occIndex].srcRectEnd = fill.srcEnd
+				}
+			}
 		}
+		tokenStart = tokenEnd
 	}
 	// A container left open by a truncated part still answers for its pictures.
 	for len(frames) > 0 {

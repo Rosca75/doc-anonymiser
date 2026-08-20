@@ -220,10 +220,13 @@ an override took. The renames a user made are recorded rather than inferred
 (`Registry.Overrides`) and persist in the session file; **session files are read
 only by the version that wrote them**, so a file whose `SessionVersion` this
 build does not know is refused with an actionable message instead of
-half-migrated. The current version is **8**, and version 7 is refused like any
-other: a v7 file's `signalSuggestionSources` holds one boolean per source, which
-cannot say which READING of a signal the user wanted, so reading it would mean
-guessing, and the guess changes what the next run suggests. A corrupt
+half-migrated. The current version is **9**, and version 8 is refused like any
+other: a v8 file carries no image treatments, and a v8 READER ignores the field,
+so either way round the file loads, nothing errors, and the exported document
+ships a picture the user had redacted. Version 7 is refused for the same shape of
+reason: its `signalSuggestionSources` holds one boolean per source, which cannot
+say which READING of a signal the user wanted, so reading it would mean guessing,
+and the guess changes what the next run suggests. A corrupt
 key (two entries claiming one value) is refused the same way, as an ERROR:
 these functions run behind bound methods on a file the user picked, so
 panicking would take the application down on a bad file.

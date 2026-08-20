@@ -82,6 +82,77 @@ func Preview(raw []byte, a Asset, maxPx int) (dataURL string, w, h int, err erro
 	return dataURLOf(mime, thumb), tw, th, nil
 }
 
+// PreviewTreated builds what the review screen shows for one asset under one
+// decision: the REAL treatment, thumbnailed.
+//
+// It runs Treat and then Thumbnail rather than drawing its own approximation, so
+// the preview cannot promise something the export does not do. That is the whole
+// point of it being here: a second drawing of the same idea would drift, and the
+// user would approve a redaction they never saw.
+//
+// A keep previews the picture as it is, which is exactly what keeping produces.
+// A remove previews the transparent pixel the export writes, which is exactly
+// what removing produces: nothing.
+//
+// @param raw the whole document, as captured at import
+// @param a the asset to preview, as the scan listed it
+// @param d the decision to preview
+// @param maxPx the longest side wanted for a raster preview
+// @return a data URL ready for an <img src>, and the size it will draw at
+func PreviewTreated(raw []byte, a Asset, d Decision, maxPx int) (dataURL string, w, h int, err error) {
+	if !d.Anonymises() {
+		return Preview(raw, a, maxPx)
+	}
+	if a.Linked {
+		return "", 0, 0, fmt.Errorf(
+			"this picture is linked from outside the document, so there is nothing here to "+
+				"preview; it can be removed from the document, which needs no preview, or kept as "+
+				"it is (%q)", a.ID)
+	}
+
+	// An SVG asset is two parts, and the SVG is the one the user sees, so it is
+	// the one previewed. The PNG fallback beside it gets the same treatment at
+	// export time.
+	part := a.ID
+	if a.Format == FormatSVG && a.Companion != "" {
+		part = a.Companion
+	}
+	source, err := AssetBytes(raw, part)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	treated, err := Treat(source, a, d)
+	if err != nil {
+		return "", 0, 0, err
+	}
+
+	// The treatment answers in the SOURCE's encoding, so what the preview is
+	// looking at is decided by the bytes that came back and not by the asset's
+	// reported format.
+	switch Sniff(treated) {
+	case FormatSVG:
+		mime, mimeErr := MIMEType(FormatSVG)
+		if mimeErr != nil {
+			return "", 0, 0, mimeErr
+		}
+		tw, th, ok := Measure(treated, FormatSVG)
+		if !ok {
+			tw, th = a.Width, a.Height
+		}
+		return dataURLOf(mime, treated), tw, th, nil
+	default:
+		thumb, tw, th, thumbErr := Thumbnail(treated, maxPx)
+		if thumbErr != nil {
+			return "", 0, 0, thumbErr
+		}
+		mime, mimeErr := MIMEType(FormatPNG)
+		if mimeErr != nil {
+			return "", 0, 0, mimeErr
+		}
+		return dataURLOf(mime, thumb), tw, th, nil
+	}
+}
+
 // dataURLOf assembles the base64 data URL an <img src> takes.
 func dataURLOf(mime string, data []byte) string {
 	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)

@@ -160,8 +160,10 @@ func TestApplySettingsCarriesTheStrictFormatChoice(t *testing.T) {
 // that says nothing about it restores as OFF without bumping the version.
 //
 // A bump is for a field whose old meaning cannot be recovered. Here silence and
-// the default agree, so an older file needs no migration and gets none: the
-// version stays 8.
+// the default agree, so no migration is needed and none exists. The property
+// this test owns is that pair of readings, not the version NUMBER: the number
+// moves whenever some other field's old meaning becomes unrecoverable, and
+// pinning it here would make an unrelated bump look like this field's fault.
 func TestStrictFormatSurvivesTheSessionFile(t *testing.T) {
 	on := true
 	data, err := engine.SaveSession(engine.Session{
@@ -176,10 +178,6 @@ func TestStrictFormatSurvivesTheSessionFile(t *testing.T) {
 	}
 	if loaded.Settings.AIStrictFormat == nil || !*loaded.Settings.AIStrictFormat {
 		t.Errorf("the format choice did not survive the file: %v", loaded.Settings.AIStrictFormat)
-	}
-	if engine.SessionVersion != 8 {
-		t.Errorf("SessionVersion is %d: an added field the loader can read as its default is not a bump",
-			engine.SessionVersion)
 	}
 
 	app := NewApp()
@@ -284,10 +282,6 @@ func TestDetailLevelSurvivesTheSessionFile(t *testing.T) {
 	if loaded.Settings.AIDetailLevel != engine.DetailFaster {
 		t.Errorf("the detail level did not survive the file: %q", loaded.Settings.AIDetailLevel)
 	}
-	if engine.SessionVersion != 8 {
-		t.Errorf("SessionVersion is %d: an added field the loader can read as its default is not a bump",
-			engine.SessionVersion)
-	}
 
 	app := NewApp()
 	if _, err := app.applyRestoredSession(loaded); err != nil {
@@ -297,8 +291,8 @@ func TestDetailLevelSurvivesTheSessionFile(t *testing.T) {
 		t.Errorf("the restored detail level is %q, want %q", got, engine.DetailFaster)
 	}
 
-	// A v8 file written before the setting existed says nothing about it, and
-	// must restore as thorough even when the live session is on faster.
+	// A file written before the setting existed says nothing about it, and must
+	// restore as thorough even when the live session is on faster.
 	silent, err := engine.SaveSession(engine.Session{
 		Settings: engine.SessionSettings{Level: "medium", OllamaPort: 11434},
 	})

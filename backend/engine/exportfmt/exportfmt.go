@@ -39,6 +39,10 @@ type Config struct {
 	// Registry is the SESSION registry: passing the same instance the
 	// pipeline used guarantees identical placeholders here.
 	Registry *engine.Registry
+	// Images is what happens to the document's pictures. The ZERO value changes
+	// no picture, which is exactly what an export whose user never opened the
+	// image review has to do.
+	Images ImagePlan
 }
 
 // selection resolves the effective category switches (nil = level preset,

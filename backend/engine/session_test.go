@@ -11,6 +11,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"doc-anonymiser/backend/engine/imaging"
 )
 
 // runExportFixture runs a tiny two-document pipeline (one text, one CSV)
@@ -429,6 +431,99 @@ func TestSessionRoundTripsSignalSources(t *testing.T) {
 		}
 		if !SignalSourceEnabled(sel, SignalSourceEmail) {
 			t.Errorf("the signal still derives something, so its master must read on, got %+v", sel)
+		}
+	})
+}
+
+// TestSessionRoundTripsImageDecisions: a picture decision has to survive the file
+// or a restored session exports the client logo the user had boxed, silently,
+// while the screen they saved from said it was anonymised.
+func TestSessionRoundTripsImageDecisions(t *testing.T) {
+	t.Run("roundtrip/session_v9_image_decisions", func(t *testing.T) {
+		saved := Session{
+			Settings: SessionSettings{Level: "medium", OllamaPort: 11434},
+			ImageDecisions: map[string]map[string]imaging.Decision{
+				"deck.pptx": {
+					"ppt/media/image1.png": {
+						Treatment: imaging.TreatmentBox,
+						BoxText:   "Client logo removed",
+					},
+					"ppt/media/image4.jpeg": {
+						Treatment:    imaging.TreatmentBlur,
+						BlurStrength: 8,
+					},
+				},
+				"report.docx": {
+					"word/media/image3.png": {Treatment: imaging.TreatmentRemove},
+				},
+			},
+		}
+		raw, err := SaveSession(saved)
+		if err != nil {
+			t.Fatalf("SaveSession: %v", err)
+		}
+		back, err := LoadSession(raw)
+		if err != nil {
+			t.Fatalf("LoadSession: %v", err)
+		}
+
+		for doc, byAsset := range saved.ImageDecisions {
+			for id, want := range byAsset {
+				got, ok := back.ImageDecisions[doc][id]
+				if !ok {
+					t.Errorf("the decision for %s in %s did not survive the file; the restored "+
+						"session would export the original picture", id, doc)
+					continue
+				}
+				if got != want {
+					t.Errorf("the decision for %s in %s came back %+v, want %+v", id, doc, got, want)
+				}
+			}
+		}
+	})
+
+	t.Run("roundtrip/session_v9_absent_decisions_are_absent", func(t *testing.T) {
+		raw, err := SaveSession(Session{Settings: SessionSettings{Level: "medium"}})
+		if err != nil {
+			t.Fatalf("SaveSession: %v", err)
+		}
+		if strings.Contains(string(raw), "imageDecisions") {
+			t.Errorf("a session with no picture decisions wrote the field anyway:\n%s", raw)
+		}
+		back, err := LoadSession(raw)
+		if err != nil {
+			t.Fatalf("LoadSession: %v", err)
+		}
+		if len(back.ImageDecisions) != 0 {
+			t.Errorf("a file with no decisions loaded %d of them", len(back.ImageDecisions))
+		}
+	})
+}
+
+// TestSessionVersion9RefusesAnOlderFile: the strict-version rule, at the version
+// the picture decisions arrived in.
+//
+// A v8 file has no decisions and a v8 READER ignores the field. Either way round,
+// the file loads, nothing errors, and the exported document is wrong: it ships a
+// picture the user had redacted. That is exactly the failure the
+// refuse-never-migrate rule exists for, which is why this field bumped the
+// version even though a loader could technically ignore it.
+func TestSessionVersion9RefusesAnOlderFile(t *testing.T) {
+	t.Run("errors/session_v8_is_refused", func(t *testing.T) {
+		if SessionVersion != 9 {
+			t.Fatalf("SessionVersion is %d; this test describes the move to 9 and must be "+
+				"rewritten for the version that replaces it", SessionVersion)
+		}
+		v8 := `{"version":8,"values":[],"allowTerms":[],"patterns":[],` +
+			`"settings":{"level":"medium","ollamaPort":11434,"model":"qwen3.5:0.8b"},` +
+			`"registry":[]}`
+		_, err := LoadSession([]byte(v8))
+		if err == nil {
+			t.Fatal("a version 8 session file was accepted; a session file is read only by the " +
+				"version that wrote it, because a half-read one silently reassigns placeholders")
+		}
+		if !strings.Contains(err.Error(), "9") {
+			t.Errorf("the refusal does not say which version this build reads:\n%v", err)
 		}
 	})
 }

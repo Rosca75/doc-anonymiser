@@ -870,17 +870,69 @@ visual property here that the integration tier cannot observe.
 - `SessionVersion` is 9 with its reason recorded, and a v8 file is refused.
 - Still nothing under `frontend/views/` has changed.
 
+### What B2 left behind that differs from the above
+
+1. **The three bound methods are wrapped in `api.js` and written into
+   `frontend/BRIDGE.md` already**, following what B1 did with its own two: a
+   bound method with no wrapper is unreachable, and the bridge contract is the
+   design-to-code handoff surface rather than a view. Nothing under
+   `frontend/views/` changed, and no view calls them yet.
+2. **The error messages carry no trailing full stop.** `.golangci.yml` enables
+   revive's `error-strings` rule (no capital, no trailing punctuation), so the
+   table's messages are used verbatim except for the final period, with the
+   clauses joined by `;` the way the rest of the repository's errors are.
+3. **`Decision.Validate` accepts `BlurStrength` 0** as "not stated", which reads
+   as `DefaultBlurStrength`. The `omitempty` encoding makes zero the absent
+   value, and every absent value in this application reads as its default rather
+   than as "none". Anything else outside 1..10 is refused with the table's
+   message.
+4. **The linked-asset rule is checked BEFORE the format rule**, because the scan
+   reports a linked picture as `FormatOther` and "there are no bytes here" is the
+   true reason: "this application cannot redraw this format" would send the user
+   looking for a converter that cannot help.
+5. **A box above the 40-megapixel decode limit is scaled down rather than
+   refused**, and a blur above it is refused with a message naming box and remove
+   (neither of which decodes the picture). The OOXML frame decides the drawn
+   size, so a smaller rectangle fills the same space; a blur has no such way out.
+6. **`session_v9_*` is in the UNIT tier**, in `backend/engine/session_test.go`
+   beside every other session round-trip, because session save/load is pure JSON
+   with no I/O and `docs/TESTING.md` decides the tier by what a test requires.
+7. **The committed JPEG and PNG fixture pictures now carry a gradient instead of
+   a flat colour** (`texturedPNG` / `texturedJPEG` in
+   `backend/engine/convert/fixtures_test.go`, and `images.docx` / `images.pptx`
+   regenerated). A flat colour blurs to itself and re-encodes to the same bytes,
+   so the leak guard passed on a blur that had done nothing. It found that on its
+   first run, which is the guard working.
+8. **`convert` gained `TestEveryCommittedFixtureIsGeneratable`.** No test in that
+   package asked for `images.docx` or `images.pptx`, so the instruction every
+   other package prints ("run `go test -tags=integration
+   ./backend/engine/convert/` once and commit what it writes") did not actually
+   write them.
+9. **`copy_guard_test.go` now walks `backend/engine/imaging`.** That package
+   holds user-facing error strings and was outside the guard's directory list.
+10. **`CLAUDE.md` §5 and `backend/CLAUDE.md` record `SessionVersion` 9 already**,
+    because leaving them saying 8 would make the charter describe a contract the
+    code no longer honours. The rest of B4's documentation work is untouched.
+
 ---
 
 ## B3 — The IMAGE tab: the review surface
 
 **What B2 hands you:** a backend that can list a document's images with their
 current decision (`App.ListDocumentImages`), render a thumbnail
-(`App.ImageThumbnail`, already wrapped in `api.js` as `listDocumentImages` and
-`imageThumbnail` since B1, with their contract in `frontend/BRIDGE.md`), render a PREVIEW of any treatment exactly as the export
+(`App.ImageThumbnail`), render a PREVIEW of any treatment exactly as the export
 will produce it (`App.PreviewImageTreatment`), record a decision
 (`App.SetImageDecision`), clear them all (`App.ResetImageDecisions`), and apply
 them to the same-format export. Nothing in the interface reaches any of it yet.
+
+**All five are already wrapped in `api.js`** (`listDocumentImages`,
+`imageThumbnail`, `setImageDecision`, `previewImageTreatment`,
+`resetImageDecisions`) with their contract in `frontend/BRIDGE.md`, including the
+`Decision` wire shape and the per-format table of which treatments may be
+offered. So this batch writes views and state, not bridge plumbing. Read the
+BRIDGE.md "Anonymise: images" section before designing the treatment panel: the
+disable rules the panel needs are already written down there, and
+`setImageDecision` refuses what the panel must not offer.
 
 **Goal:** step 3 gains the TEXT / IMAGE tabs and the whole image review surface.
 At the end of this batch the feature works end to end for a user.
@@ -1154,12 +1206,18 @@ said: those formats never carried the images in the first place.
 
 ### 3. The leak audit, as a permanent test
 
-Promote B2's `roundtrip/exported_archive_keeps_no_original_bytes` into a
-**table-driven** test across every treatment, both formats, and both the shared
-asset and the SVG pair, and give it a file header saying what it is for and that
-it must not be narrowed. Add one case it did not have: an asset that is
-`remove`d while ANOTHER asset in the same part is `keep`t, which is where a
-back-to-front splice bug shows up.
+B2 left `TestExportedArchiveKeepsNoOriginalBytes` in
+`backend/engine/exportfmt/images_integration_test.go` already table-driven over
+both formats with one decision of each kind, checking every entry of the produced
+archive (not only the media part) against the original's bytes AND its SHA-256,
+and covering an asset's SVG companion. Its file header says it is load-bearing and
+must not be narrowed. The remove-beside-a-keep case is covered at the unit tier
+(`roundtrip/images_remove_element_and_bytes`, two pictures in one slide).
+
+So B4 EXTENDS rather than rebuilds: add the SVG pair as a decided asset in the
+integration table (B2 boxes and blurs raster assets only), and add the
+remove-beside-a-keep case to the integration table too, so the splice order is
+held over a real archive as well as a built one.
 
 Add the companion assertion that the produced archive still opens: every part
 parses as XML, `[Content_Types].xml` still names every part's extension, and the
@@ -1171,11 +1229,11 @@ relationship ids referenced by the surviving pictures all resolve.
 |---|---|
 | `CLAUDE.md` §3 | `backend/engine/imaging/` and `backend/app_images.go` in the tree; `frontend/views/anonymiseimages.js` in the frontend list; `image_parity_test.go` in the guards list |
 | `CLAUDE.md` §5 | a new "Image anonymisation" block: the applicability matrix, the asset/occurrence/treatment/status vocabulary, the one-decision-per-asset rule, the three invariants (the pixels always leave the archive, blur destroys rather than hides, a control that does not anonymise is not called anonymise), and why PDF is out |
-| `CLAUDE.md` §5 | the session paragraph: `SessionVersion` is **9** |
+| `CLAUDE.md` §5 | DONE in B2: the session paragraph already says `SessionVersion` is **9**. Check it, do not redo it |
 | `CLAUDE.md` §7 | the vendored 8x8 font row, in the assets style of the Material Symbols row |
-| `backend/CLAUDE.md` | `engine/imaging` in the module map; the export's two-pass rule (text first, then images, on the same part) |
+| `backend/CLAUDE.md` | `engine/imaging` in the module map; the export's two-pass rule (text first, then images, on the same part). Its session paragraph already records version 9 (B2) |
 | `frontend/CLAUDE.md` | the step 3 tabs in the file map and the discipline list; the SVG-in-`<img>` rule |
-| `frontend/BRIDGE.md` | the five wrappers complete, plus the `Inventory` / `Asset` / `Decision` wire shapes |
+| `frontend/BRIDGE.md` | DONE in B1 and B2: the five wrappers and the `Inventory` / `Asset` / `Decision` wire shapes are written. B4 only adds whatever B3's screen turned out to need |
 | `README.md` | a short "Images" section: what the three treatments do, that blur is not a guarantee, that PDF images are always removed, that .xlsx images are not reviewed |
 | `frontend/docs/index.html` | the same, in the bundled offline user docs, in the voice that file already uses |
 | `docs/UITESTING.md` | the new probe and what the harness case measures |

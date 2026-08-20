@@ -7,6 +7,8 @@ package exportfmt
 import (
 	"path"
 	"strings"
+
+	"doc-anonymiser/backend/engine/imaging"
 )
 
 // isPptxTextPart selects the rewritable pptx parts: slides and speaker
@@ -23,21 +25,44 @@ func isPptxTextPart(name string) bool {
 }
 
 // ExportPptx rewrites a PowerPoint file held in raw (the import-time
-// bytes) and returns the new file plus the total replacement count.
-func ExportPptx(raw []byte, cfg Config) ([]byte, int, error) {
+// bytes) and returns the new file, the total replacement count, and what
+// happened to the deck's pictures.
+//
+// A slide goes through the text pass FIRST and the picture pass SECOND, on the
+// bytes the text pass produced. Slide layouts and masters carry no rewritable
+// text, and they DO carry pictures (a watermark, a client logo behind every
+// slide), so they get the picture pass on its own: a logo the user boxed must
+// not survive because it lives on the master.
+func ExportPptx(raw []byte, cfg Config) ([]byte, int, imaging.Summary, error) {
 	total := 0
+	plan := cfg.Images
+	media := plan.mediaRewrites()
+
 	out, err := rewriteZip(raw, func(name string) RewriteFunc {
-		if !isPptxTextPart(name) {
-			return nil // bit-for-bit passthrough
+		if pair, ok := media[name]; ok {
+			return treatMediaPart(name, pair)
 		}
-		return func(data []byte) ([]byte, error) {
-			rewritten, n, err := rewriteTextPart(data, cfg)
-			total += n
-			return rewritten, err
+		partName := name
+		switch {
+		case isPptxTextPart(name):
+			return func(data []byte) ([]byte, error) {
+				rewritten, n, err := rewriteTextPart(data, cfg)
+				if err != nil {
+					return nil, err
+				}
+				total += n
+				return applyImagePass(rewritten, partName, plan)
+			}
+		case plan.touchesPart(name):
+			return func(data []byte) ([]byte, error) {
+				return applyImagePass(data, partName, plan)
+			}
+		default:
+			return nil // bit-for-bit passthrough
 		}
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, imaging.Summary{}, err
 	}
-	return out, total, nil
+	return out, total, plan.Summary(), nil
 }

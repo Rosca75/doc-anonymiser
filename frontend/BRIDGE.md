@@ -306,15 +306,18 @@ collapsed removed list with restore.
 
 ## Anonymise: images
 
-The Anonymise step's IMAGE half reads these two. They answer about the
+The Anonymise step's IMAGE half reads these five. They answer about the
 **imported** document and need no run: the pictures live in the bytes captured
 at import, and the user reviews them before as well as after the text is
 anonymised.
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
-| `listDocumentImages(name)` | imported document name | `Inventory {applicable, reason, assets, warnings}`. Rejects only for a document that is not imported, or a file that cannot be read as an archive |
+| `listDocumentImages(name)` | imported document name | `Inventory {applicable, reason, assets, warnings}`. Each asset carries its current `decision`. Rejects only for a document that is not imported, or a file that cannot be read as an archive |
 | `imageThumbnail(docName, assetId, maxPx)` | asset ID from the inventory; `maxPx` 0 asks for the default | `{dataUrl, width, height}` |
+| `setImageDecision(docName, assetId, decision)` | a `Decision` (below) | resolves on success; REJECTS a decision the picture cannot carry, naming the reason and the way out of it. A `keep` CLEARS the stored decision |
+| `previewImageTreatment(docName, assetId, decision, maxPx)` | the decision to try, not to record | `{dataUrl, width, height}`: what the export WILL produce. Records nothing |
+| `resetImageDecisions(docName)` | imported document name | resolves on success; the "keep them all" bulk action. Rejects only for a document that is not imported |
 
 An **image asset** is one picture FILE inside the document archive, and it is
 what a decision attaches to. An **image occurrence** is one PLACE that asset is
@@ -336,7 +339,8 @@ row and one question.
       "occurrences": [
         { "part": "ppt/slides/slide1.xml", "ordinal": 0, "kind": "picture",
           "location": "Slide 1", "displayCX": 1828800, "displayCY": 1219200 }
-      ]
+      ],
+      "decision": { "treatment": "keep" }
     }
   ],
   "warnings": ["unreadable_part"]
@@ -358,6 +362,46 @@ row and one question.
   points at.
 - `linked` marks a picture that lives OUTSIDE the file, so there are no bytes
   here to change.
+- `decision` is what the user has decided about this picture, or
+  `{"treatment": "keep"}` when they have decided nothing. It travels with the
+  asset so the screen has ONE call and cannot draw a row whose decision it has
+  not read.
+
+### The `Decision` wire shape
+
+```json
+{ "treatment": "box", "boxText": "Client logo removed", "blurStrength": 5 }
+```
+
+- `treatment` is `"keep"`, `"box"`, `"blur"` or `"remove"`, in that order (the
+  order the interface offers them in). Every picture starts at `keep`, so
+  nothing is ever "undecided", and `keep` is stored as the ABSENCE of a
+  decision: the Go side holds only what the user changed.
+- `boxText` is drawn into the rectangle, centred and wrapped. Empty is allowed
+  and gives a plain rectangle. At most **120 characters**. The raster box is
+  drawn with a built-in bitmap font, so accents are simplified (`é` becomes `e`,
+  `ß` becomes `ss`) and anything it cannot draw becomes `?`; the SVG box names a
+  real font family and keeps the text as typed.
+- `blurStrength` is **1 to 10**, relative to the picture's own size, so the same
+  number means the same amount of destruction on a 60-pixel icon and on a
+  4000-pixel screenshot. ABSENT reads as the default (5), never as "none".
+  Strength 1 is deliberately weak.
+- Both extra fields are omitted when they carry nothing, so a `remove` is
+  `{"treatment": "remove"}`.
+
+**Not every treatment is offered for every picture**, and `setImageDecision`
+rejects the ones that are not, so the interface must disable rather than let the
+refusal arrive at export time:
+
+| Picture | Offered |
+|---|---|
+| PNG or JPEG | all four |
+| SVG | `keep`, `box`, `remove`. **No blur:** a blur filter leaves every original shape and every original text string inside the file, so a control that did it would be labelled "anonymise" while anonymising nothing |
+| any other format (emf, wmf, gif, tiff, bmp) | `keep`, `remove`. The application cannot redraw it |
+| `linked` | `keep`, `remove`. There are no bytes here to change |
+
+A decision is attached to the ASSET and applies to every place it appears, so a
+logo on five slides is one question and one answer.
 
 **`applicable: false` is an ANSWER, not a failure.** `reason` is a CODE the
 frontend maps to its own copy, never a sentence: `"pdf_images_removed"` (the

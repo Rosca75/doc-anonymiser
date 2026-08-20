@@ -226,6 +226,15 @@ type App struct {
 	// import, a removal, and both resets. A cached scan that outlived its
 	// document would list the pictures of a file the user has replaced.
 	imageScans map[string]imaging.Inventory
+	// imageDecisions is what the user decided about each picture: document name,
+	// then asset ID. A KEEP is stored as an ABSENT key, so the map holds only
+	// what the user changed and "nothing was decided" is one empty map rather
+	// than one entry per picture.
+	//
+	// It lives on the App for the reason a.removed does: the same-format export
+	// builds its own config from a.lastReq, so a decision carried only in a
+	// request would be honoured by one export path and forgotten by the other.
+	imageDecisions map[string]map[string]imaging.Decision
 }
 
 // allowlistFor builds the allowlist every pass and every export must obey: the
@@ -354,6 +363,11 @@ func (a *App) ResetSession() error {
 	a.lastReq = nil
 	a.removed = nil
 	a.forgetImageScansLocked()
+	// A clean sheet drops the picture decisions too. They deliberately survive a
+	// re-import, because an asset ID is stable across one, and just as
+	// deliberately do NOT survive this: "start from a clean sheet" is the action
+	// of a user beginning a separate engagement, who must inherit nothing.
+	a.imageDecisions = nil
 	a.settings = defaultSettings()
 	// The client is rebuilt from the default port and model so a session that
 	// changed the port does not leave the next one probing the wrong one.

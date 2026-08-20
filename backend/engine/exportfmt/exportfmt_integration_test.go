@@ -37,7 +37,7 @@ func TestDocxRoundTrip(t *testing.T) {
 	)
 	cfg.Allowlist.Add("Luxembourg")
 
-	out, extras, bodyCount, err := ExportDocx(raw, cfg)
+	out, extras, bodyCount, _, err := ExportDocx(raw, cfg)
 	if err != nil {
 		t.Fatalf("ExportDocx: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestPptxRoundTrip(t *testing.T) {
 		engine.Value{Category: "entity_names", MainText: "Borealis Fund"},
 	)
 
-	out, total, err := ExportPptx(raw, cfg)
+	out, total, _, err := ExportPptx(raw, cfg)
 	if err != nil {
 		t.Fatalf("ExportPptx: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestSpanningReplacement(t *testing.T) {
 		engine.Value{Category: "person_names", MainText: "Marie Duval"},
 		engine.Value{Category: "person_names", MainText: "Peter Stone"},
 	)
-	out, _, _, err := ExportDocx(raw, cfg)
+	out, _, _, _, err := ExportDocx(raw, cfg)
 	if err != nil {
 		t.Fatalf("ExportDocx: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestDocxHeaderExtras(t *testing.T) {
 			`<w:p><w:r><w:t>Contact marie.duval@example.com today</w:t></w:r></w:p></w:hdr>`,
 	})
 
-	out, extras, _, err := ExportDocx(raw, testConfig())
+	out, extras, _, _, err := ExportDocx(raw, testConfig())
 	if err != nil {
 		t.Fatalf("ExportDocx: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestEmptyMappingNoOp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, _, count, err := ExportDocx(raw, cfg)
+	out, _, count, _, err := ExportDocx(raw, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
