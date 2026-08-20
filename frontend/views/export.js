@@ -268,6 +268,7 @@ function metaReviewPanel(docName, review) {
     `<div class="card-body stack">` +
     `<p class="hint">${escapeHTML(EXPORT.reviewHint)}</p>` +
     grid +
+    imageNote(review.images) +
     `<div class="add-row">` +
     `<span class="hint">${escapeHTML(EXPORT.fileName)}</span>` +
     `<input class="meta-filename grow mono" value="${escapeHTML(review.filename)}"` +
@@ -275,6 +276,32 @@ function metaReviewPanel(docName, review) {
     button(EXPORT.close, { kind: "secondary", cls: "meta-cancel" }) +
     button(EXPORT.exportCopy(review.ext), { kind: "primary", cls: "meta-export" }) +
     `</div></div></section>`;
+}
+
+/**
+ * imageNote(summary) is the picture line above the review's export button.
+ *
+ * Go answers with the counts, or with nothing at all for a format that has no
+ * image review and for a document with no pictures, and nothing at all is what
+ * this renders then: a line reading "0 images" on a .txt-derived copy is noise,
+ * and one on a PDF would contradict the IMAGE tab, which says a PDF export has
+ * already dropped every picture.
+ *
+ * The all-kept sentence is the one that earns this line. A user who never opened
+ * the IMAGE tab has decided nothing, and this is the last surface before the file
+ * is written, so it is the only place they can be told that the client logo and
+ * the screenshot of the client's own system are going out untouched.
+ *
+ * @param {{kept:number, boxed:number, blurred:number, removed:number}|null|undefined} summary
+ * @returns {string} the line's HTML, or "" when there is nothing to say
+ */
+function imageNote(summary) {
+  if (!summary) return "";
+  const changed = (summary.boxed ?? 0) + (summary.blurred ?? 0) + (summary.removed ?? 0);
+  const total = changed + (summary.kept ?? 0);
+  if (total === 0) return "";
+  const text = changed > 0 ? EXPORT.imagesChanged(summary) : EXPORT.imagesAllKept(total);
+  return `<p class="hint image-note">${escapeHTML(text)}</p>`;
 }
 
 // --- The footer -----------------------------------------------------------
@@ -498,6 +525,9 @@ function wireDocuments(container) {
             ext,
             filename: meta?.filename ?? "",
             fields: (meta?.fields ?? []).map((f) => ({ ...f, finalValue: f.proposed })),
+            // Absent for a format with no image review, which is what makes the
+            // panel say nothing rather than "0 images".
+            images: meta?.images ?? null,
           });
         } catch (err) {
           notify(String(err?.message ?? err), "warn");

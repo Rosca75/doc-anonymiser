@@ -82,6 +82,30 @@ without the runtime. Preserve that behaviour.
   fourth persisted boolean can disagree with the three it summarises, and a section
   reading "On" while every method is off lies about what a run does. Its header
   switch is a master that changes all three in one action.
+
+  Anonymise is the SECOND such screen. It carries two tabs, **TEXT** and
+  **IMAGE**, over one document selection, because the two answer different
+  questions about the same file: what the pipeline replaced in the words, and
+  what happens to the PICTURES, which the pipeline never touches. `anonymise.js`
+  owns the tab bar (`ui.js tabbar()`), the shared document selector and the
+  footer; `anonymiseimages.js` owns everything below the tab bar on the IMAGE
+  side. The tab lives in `state.anonymiseTab`, and the IMAGE tab is never HIDDEN
+  for a format with no image review: a tab that appears and disappears as the
+  user changes file reads as a bug, and the sentence inside it is the answer to
+  the question a missing tab would raise.
+
+  A **picture decision is a draft until it is applied**, which is why the
+  treatment panel is its own overlay (`.image-panel-layer`) rather than
+  `modal.js`'s confirm. It borrows the confirm's mechanism (a backdrop, Escape, a
+  click outside) and wires it itself, because `modal.js` is shell-level and
+  answers a question, while this is a screen-level editing surface holding
+  unsaved state. `wireModal` must keep looking only for `.modal-layer`.
+
+  **An SVG preview is rendered through `<img src="data:image/svg+xml;base64,...">`
+  and never inlined into the page as an `<svg>` element.** An `<img>` context
+  executes no script; an inlined element does, and the SVG comes out of a client
+  document. This is not a style preference, and it applies to the row
+  thumbnails and to the treatment panel's preview alike.
 - **`nav.js` is the only module that moves the wizard.** Every screen has its
   own footer now, so the step bar and four footers all navigate; the
   backward-reset rule lives in `nav.js` once rather than in five places. It
@@ -159,12 +183,16 @@ Windows it steals focus from the window it belongs to.
   reason `smartDetectionOn` is derived; `setSignalSource` is the MASTER that
   writes them all, and `setSignalDerivation` writes one.
 - `copy.js` — all user-visible strings + `CATEGORY_LABELS`.
-- `ui.js` — shared UI toolkit: the card kit (`card`, `tabbar`, `countBadge`,
+- `ui.js` — shared UI toolkit: the card kit (`card` with its optional `bodyId`,
+  `tabbar`, `countBadge`,
   `chipRow`, `sectionLabel`, `statTile`, `collapsibleGroup`, `stepFooter`,
   `toastHTML`, `modalHTML`), the explanation kit (`helpTooltip`,
   `wireHelpTooltips`, `warningPopover`, `wireWarningPopovers`,
   `signalDrillDown`) plus `button` and `icon`. There is
-  exactly ONE way to draw each thing: `card` is the fixed-height surface,
+  exactly ONE way to draw each thing: `card` is the fixed-height surface, and
+  `bodyId` is an OPTION on it rather than a second builder, for the screens whose
+  card body is the scroll owner: `scroll.js` keys a preserved offset on a selector
+  that has to survive the repaint, so the body needs an id of its own.
   `collapsibleGroup` the foldable block, `helpTooltip` the explanation,
   `signalDrillDown` a nested set of switches hung on the row that raises the
   question, spending no permanent row of its own (a master over its readings, the
@@ -233,8 +261,11 @@ Windows it steals focus from the window it belongs to.
   truth for brand values.
 - `style.css` — all layout/component styling; consumes `brand.css` variables
   only.
-- `views/` — one module per wizard screen (Identify has three, see the
-  discipline rules) + the shared `allowlist.js` panel.
+- `views/` — one module per wizard screen (Identify has three and Anonymise two,
+  see the discipline rules) + the shared `allowlist.js` panel. `anonymise.js`
+  holds step 3's tabs, its document selector, its footer and the TEXT half;
+  `anonymiseimages.js` holds the IMAGE half: the banner, the picture list in its
+  two views, and the treatment panel.
 - `docs/` — the bundled offline user documentation, opened in a SECOND window
   (embedded assets only; see the documentation-window rule below).
 - `assets/icons/` — vendored Material Symbols SVGs + their LICENSE.

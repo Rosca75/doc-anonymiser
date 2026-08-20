@@ -170,7 +170,8 @@ A test left asserting a retired contract is worse than no test, because it is
 read as evidence.
 
 **The parity guards are load-bearing.** `category_parity_test.go`,
-`detection_parity_test.go`, `value_shape_test.go`, `step_parity_test.go`,
+`detection_parity_test.go`, `image_parity_test.go`, `value_shape_test.go`,
+`step_parity_test.go`,
 `copy_guard_test.go`, `uitest_parity_test.go`, `dataset_parity_test.go`,
 `icon_parity_test.go` and `frontend_tests_test.go` each
 exist because the mistake it catches already happened once and passed every

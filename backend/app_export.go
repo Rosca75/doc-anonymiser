@@ -17,6 +17,7 @@ import (
 
 	"doc-anonymiser/backend/engine"
 	"doc-anonymiser/backend/engine/exportfmt"
+	"doc-anonymiser/backend/engine/imaging"
 )
 
 // findResultDoc returns the anonymised document by name, or an actionable
@@ -128,6 +129,15 @@ func (a *App) sameFormatBytes(name, ext string) ([]byte, error) {
 type SameFormatMeta struct {
 	Fields   []exportfmt.MetaProposal `json:"fields"`
 	Filename string                   `json:"filename"`
+	// Images is what this save will do to the document's pictures, and it is
+	// ABSENT for a format with no image review or a document with no pictures,
+	// so the review panel says nothing at all rather than "0 images".
+	//
+	// It travels with the properties because this is the call the review panel
+	// already makes, and the panel is the last surface before the file is
+	// written: a user who never opened the IMAGE tab is otherwise never told
+	// that the pictures are going out exactly as they came in.
+	Images *imaging.Summary `json:"images,omitempty"`
 }
 
 // GetSameFormatMetadata extracts the document properties of one imported
@@ -161,10 +171,14 @@ func (a *App) GetSameFormatMetadata(name, ext string) (*SameFormatMeta, error) {
 	if reg != nil {
 		entries = reg.Entries()
 	}
-	return &SameFormatMeta{
+	meta := &SameFormatMeta{
 		Fields:   exportfmt.ProposeMetadata(fields, cfg),
 		Filename: engine.SameFormatFileName(name, ext, entries, docIndex),
-	}, nil
+	}
+	if summary, ok := a.imageSummaryFor(name); ok {
+		meta.Images = &summary
+	}
+	return meta, nil
 }
 
 // SaveSameFormat writes the same-format copy with the REVIEWED metadata
@@ -461,28 +475,83 @@ func (a *App) ExportMapping(format string) error {
 	}
 }
 
-// ExportReport saves the run report as JSON or human-readable markdown.
-func (a *App) ExportReport(format string) error {
+// reportPayload is what the JSON report export writes: the engine's own report
+// with the picture sections beside it.
+//
+// The engine's Report is EMBEDDED rather than nested under a key, so every field
+// a reader of an earlier report knows stays exactly where it was and the picture
+// sections are simply one more key at the top level.
+type reportPayload struct {
+	*engine.Report
+	// Images is one section per document that has pictures, absent for a batch
+	// of text files.
+	Images []DocumentImageReport `json:"images,omitempty"`
+}
+
+// reportBytes composes the exported report and names the file it belongs in.
+//
+// It is separate from ExportReport for the reason validateCopyText is separate
+// from CopyText: the save goes through the Wails dialog, which refuses a context
+// no lifecycle hook gave it, so the part worth testing has to be reachable
+// without one.
+//
+// @param format "json" or "md"
+// @return the file's bytes, the default filename, and an actionable error
+func (a *App) reportBytes(format string) ([]byte, string, error) {
 	a.mu.Lock()
 	results := a.results
 	a.mu.Unlock()
 	if results == nil {
-		return fmt.Errorf("no report yet, run the pipeline first")
+		return nil, "", fmt.Errorf("no report yet, run the pipeline first")
 	}
+
+	// In the run's own document order, so the picture sections read down the
+	// report in the same order as the per-document table above them.
+	names := make([]string, 0, len(results.Documents))
+	for _, rd := range results.Documents {
+		names = append(names, rd.Name)
+	}
+	images := a.imageReports(names)
 
 	switch format {
 	case "json":
-		data, err := results.Report.ToJSON()
-		if err != nil {
-			return err
+		if len(images) == 0 {
+			// No document had a picture, so the file is the engine's report and
+			// nothing else, byte for byte as it always was. The engine's own
+			// marshaller stays the one that writes it, rather than a wrapper
+			// that would have to be trusted to produce the same bytes.
+			data, err := results.Report.ToJSON()
+			if err != nil {
+				return nil, "", err
+			}
+			return data, "anonymisation_report.json", nil
 		}
-		return a.saveWithDialog("anonymisation_report.json", "JSON", "*.json", data)
+		data, err := jsonMarshalIndent(reportPayload{Report: &results.Report, Images: images})
+		if err != nil {
+			return nil, "", err
+		}
+		return data, "anonymisation_report.json", nil
 	case "md":
-		return a.saveWithDialog("anonymisation_report.md", "Markdown", "*.md",
-			[]byte(results.Report.ToMarkdown()))
+		return []byte(results.Report.ToMarkdown() + imageReportMarkdown(images)),
+			"anonymisation_report.md", nil
 	default:
-		return fmt.Errorf("unknown report format %q, expected json or md", format)
+		return nil, "", fmt.Errorf("unknown report format %q, expected json or md", format)
 	}
+}
+
+// ExportReport saves the run report as JSON or human-readable markdown,
+// INCLUDING what the picture decisions do on export: a report that described a
+// document as anonymised without mentioning its pictures would be read as
+// covering them.
+func (a *App) ExportReport(format string) error {
+	data, filename, err := a.reportBytes(format)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		return a.saveWithDialog(filename, "JSON", "*.json", data)
+	}
+	return a.saveWithDialog(filename, "Markdown", "*.md", data)
 }
 
 // SaveSessionToFile persists entities + allowlist + patterns + rules +

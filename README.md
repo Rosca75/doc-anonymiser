@@ -18,8 +18,10 @@ Office and PDF files are converted to Markdown on import for preview and
 processing, and export as text formats (`.md`, `.txt`, `.csv`, or `.json`).
 Word, PowerPoint and Excel files can ALSO export as a **same-format
 anonymised copy** (`.docx`, `.pptx`, `.xlsx`): the app rewrites a copy of
-the original bytes held in memory, so the layout, styles and images are
-preserved. One limitation: a replacement that spans differently formatted
+the original bytes held in memory, so the layout and styles are preserved.
+Pictures are preserved too unless you decide otherwise: see **Images**
+below, because that decision is yours and the app makes it visible before
+you save. One limitation: a replacement that spans differently formatted
 text runs (for example a name whose first half is bold) adopts the
 formatting of its first run. Document properties (title, author, company,
 custom fields) and the export filename go through the same anonymisation
@@ -88,12 +90,14 @@ Suggestion silently answers "reject" on your behalf.
    it rather than take it on trust. Manual entries show a live "Found N times in M
    documents" preview, and spellings can be dragged between Values to regroup
    them.
-3. **Anonymise**: run the pipeline with live progress, then review the
-   side-by-side before and after with highlighted replacements. Hover a
-   placeholder to see the original; select text in either pane to make it a
-   spelling of an existing Value or a Value of its own. **Add missed Value**
-   declares anything the run did not catch, and a fast re-run applies it while
-   every existing placeholder keeps its number.
+3. **Anonymise**: two tabs over the same document. **TEXT** runs the pipeline
+   with live progress, then shows the side-by-side before and after with
+   highlighted replacements. Hover a placeholder to see the original; select text
+   in either pane to make it a spelling of an existing Value or a Value of its
+   own. **Add missed Value** declares anything the run did not catch, and a fast
+   re-run applies it while every existing placeholder keeps its number. **IMAGE**
+   lists every picture in the document and what happens to it on export, one
+   decision per picture (see **Images** below).
 
    This step is fully deterministic. It runs no discovery of any kind and never
    contacts the model, so nothing can be replaced that you did not accept.
@@ -103,6 +107,50 @@ Suggestion silently answers "reject" on your behalf.
    same-format copy with layout preserved (PDF experimentally, as a
    simplified regenerated layout), each behind a document-properties
    review. Your original files are never modified.
+
+## Images
+
+Anonymising the words is only half of a Word document or a PowerPoint deck. The
+client logo, the screenshot of the client's own system, the photo of the team:
+those are personal and engagement-specific data too, and a same-format export
+copies them out of the original file untouched unless you say otherwise.
+
+The **IMAGE** tab on step 3 lists every picture in the selected document with
+where it appears, and gives each one a decision:
+
+- **Keep it.** The default for every picture, and what happens if you never open
+  the tab.
+- **Replace with a box.** The picture becomes a plain rectangle the same size,
+  carrying your own short caption ("Client logo removed"). The original pixels are
+  gone from the exported file.
+- **Blur.** The picture is broken into blocks, each replaced by its own average,
+  and then smoothed. This throws the detail away rather than smearing it, which is
+  why it is not a light blur you can read through. It is still not a guarantee:
+  the shape, the colours and the layout of what was there remain visible, so for
+  anything that must not be recognisable at all, use a box or remove it.
+- **Remove.** The picture is deleted from the page AND its bytes are overwritten
+  inside the file, because a picture left in the file that the page no longer
+  draws is still a picture anyone can extract.
+
+One decision covers every place a picture is used: a logo on five slides is one
+question, and the row tells you it appears in five places. An SVG picture cannot
+be blurred, and the control says why: a blur filter over a drawing leaves every
+original shape and every original text string inside the file.
+
+Where the review is offered:
+
+- **Word and PowerPoint**: fully reviewed, and your decisions reach the
+  same-format copy.
+- **PDF**: not offered, and nothing is lost by it. A PDF export rebuilds the
+  document from the anonymised text, so every picture in a source PDF is already
+  absent from the file the app writes.
+- **Excel**: not offered. A spreadsheet's pictures are left as they are.
+- **Text, CSV and Markdown**: there are no pictures in them.
+
+The properties review that opens before a same-format save states what will
+happen, including when nothing will: "This copy keeps all 7 of the document's
+images, exactly as they are." The exported report says the same in full, naming
+each changed picture, where it appeared and what was done to it.
 
 ## Optional: local AI assistance with Ollama
 

@@ -69,6 +69,10 @@ doc-anonymiser/
 ├── result_shape_test.go       # every doc.<field> the Anonymise view reads IS a key
 │                              #   engine.ResultDocument emits: JS reads a missing
 │                              #   key as undefined and says nothing about it
+├── image_parity_test.go       # JS↔Go picture parity guards: the treatments, the
+│                              #   sniffed formats, the occurrence kinds, and a
+│                              #   sentence in copy.js for every reason, warning
+│                              #   and blocked-treatment CODE (package main)
 ├── copy_guard_test.go         # no em dashes in Go user-facing strings (package main)
 ├── uitest_parity_test.go      # keeps the two UI harnesses on ONE probes.js (package main)
 ├── frontend/                  # THE GUI — vanilla ES modules, embedded via go:embed
@@ -85,7 +89,9 @@ doc-anonymiser/
 │   ├── suggestionmodel.js
 │   ├── countries.js
 │   ├── views/                 # one JS module per wizard step + shared panels:
-│   │                          #   home.js, import.js, export.js, anonymise.js,
+│   │                          #   home.js, import.js, export.js,
+│   │                          #   anonymise.js (step 3's tabs, footer and TEXT half)
+│   │                          #   + anonymiseimages.js (its IMAGE half),
 │   │                          #   identify.js (layout) + identifyrail.js (choices)
 │   │                          #   + identifyworkspace.js (values), allowlist.js
 │   ├── docs/                  # bundled offline user docs (SECOND window, embedded only)
@@ -469,6 +475,65 @@ doc-anonymiser/
   (`App.RunDetection`), every finding is a Suggestion, and every Local AI finding
   passes a **hallucination filter** (dropped unless the exact string occurs in
   the source text) and the allowlist before the user ever sees it.
+- **Image anonymisation: the second half of the Anonymise step.** The pipeline
+  replaces TEXT and never touches a picture, and `exportfmt.rewriteZip` copies
+  every archive entry it has no rewriter for byte for byte. So a picture leaves
+  the machine exactly as it arrived unless the user decides otherwise, and step 3
+  carries two tabs for that reason: **TEXT** (the Compare card) and **IMAGE**
+  (every picture in the selected document, with one decision each).
+
+  Where the review is offered is FIXED, and the table is not to be widened:
+
+  | Format | Image review | Why |
+  |---|---|---|
+  | `.pptx` | full | pictures are DrawingML blips in the slides, layouts and masters, with their bytes in `ppt/media/*` |
+  | `.docx` | full | pictures are `w:drawing`, or the legacy `w:pict` Word still writes, with their bytes in `word/media/*` |
+  | `.pdf` | not offered, one explanatory line | the PDF export REGENERATES the file from the anonymised text, so every picture in a source PDF is already absent from everything this application writes |
+  | `.xlsx` | not offered | the owner's decision: a spreadsheet's pictures are not worth the complexity |
+  | `.csv` `.txt` `.md` | not offered | there are no pictures in them |
+
+  Four words carry the model, and keeping them apart is what makes the review one
+  question per picture:
+
+  | Term | Definition |
+  |---|---|
+  | **Image asset** | one picture FILE inside the archive (`ppt/media/image3.png`). It carries the bytes, and it is what a decision attaches to |
+  | **Image occurrence** | one PLACE that asset is used. A logo on five slides is one asset with five occurrences |
+  | **Image treatment** | what happens to the asset on export: `keep`, `box`, `blur` or `remove` |
+  | **Image status** | what the review filters on: **Kept** (`keep`) or **Anonymised** (any of the other three). There is no third status, because every asset starts `keep` and nothing is ever "undecided" |
+
+  **One decision per ASSET, applied everywhere it appears**, with a visible
+  "appears in N places" note. Per-occurrence decisions would need the exporter to
+  clone picture parts and rewrite relationships, which is the riskiest code this
+  feature could hold, to answer a question a user reviewing "the logo" is not
+  asking. The identifiers live in `backend/engine/imaging`
+  (`AllTreatments`, `AllFormats`, `AllKinds`), are mirrored by `frontend/state.js`
+  and are guarded by `image_parity_test.go`, exactly as the categories are.
+
+  Three invariants, and each one is why a piece of the feature is shaped the way
+  it is:
+
+  1. **The original pixels always leave the archive.** All three anonymising
+     treatments OVERWRITE the asset's bytes in the produced file, and a `remove`
+     deletes the drawing element as well. A remove that deleted the element and
+     left `ppt/media/image3.png` in the zip would be a leak that LOOKS like a
+     redaction, which is worse than no feature.
+     `TestExportedArchiveKeepsNoOriginalBytes` is the permanent guard, and it
+     checks every entry of the produced archive rather than the media part alone.
+  2. **Blur destroys information rather than hiding it.** A Gaussian blur is
+     partly invertible and a light one over text is simply readable, so the
+     implementation is mosaic then smooth: the samples are thrown away.
+  3. **A control that does not anonymise is never labelled "anonymise."** That is
+     why an SVG has no blur: a blur filter over a vector leaves every original
+     shape and every original text string in the file. An SVG asset offers the box
+     and the remove, and the blur renders disabled with the reason.
+
+  The decisions are export-time state, not a pipeline pass: `engine.Run` knows
+  nothing about pictures and must keep knowing nothing, so the run REPORT's
+  picture section and the export screen's count are both composed by the App
+  (`backend/app_images.go`) from the decision store and the cached inventories.
+  A decision does NOT gate the step 3 to step 4 move: the gate exists for
+  unreviewed suggestions, and every picture starts with an answer.
 - **The local AI reads a document in slices aligned to its OWN units, never in
   one request.** `engine.ScanChunks` packs contiguous units (slides, pages, rows,
   lines: the same units `Document.PageCount` addresses) up to the size the user's
@@ -612,6 +677,7 @@ doc-anonymiser/
 | golang.org/x/vuln (audit tool, `tools/go.mod`) | v1.7.0 | supplies `cmd/govulncheck` |
 | go-task (audit tool, `tools/go.mod`) | v3.52.0 | `Taskfile.yml` runner; `make` is unavailable on the target laptop |
 | Material Symbols SVGs (assets, not a Go module) | snapshot at BUILD-02 Phase 1 | individual SVG files vendored into `frontend/assets/icons/`; Apache-2.0; licence text at `frontend/assets/icons/LICENSE` |
+| font8x8 bitmap table (asset, not a Go module) | "basic" block, vendored as Go source in `backend/engine/imaging/font8x8.go` | PUBLIC DOMAIN (Daniel Hepper's font8x8, itself a transcription of the IBM PC 8x8 ROM font); ASCII 32 to 126. The standard library has no font rasteriser and the owner declined `golang.org/x/image`, so the letters drawn into a raster box treatment come from this table. It is data with a licence, like the Material Symbols row above, not code with a dependency. The visible cost is accepted: the raster box's text is blocky, and a character outside ASCII 32 to 126 is folded to its unaccented form where one exists and drawn as `?` where it does not. The SVG box does NOT read this table, because an SVG can name a real font family, so the two boxes' letterforms differ by design |
 
 ## 8. Validated constants
 

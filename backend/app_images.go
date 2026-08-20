@@ -1,14 +1,22 @@
-// app_images.go — the bound methods behind the Anonymise step's IMAGE half.
+// app_images.go — the bound methods behind the Anonymise step's IMAGE half, and
+// the two places the rest of the application says what happened to the pictures.
 //
 // Method group, following the convention of app_values.go, app_detect.go,
 // app_export.go and app_run.go: thin adapters over engine/imaging, no business
 // logic. What a picture IS, where it sits and what its preview looks like are
 // all decided in the engine; this file picks the document the user named and
 // hands its bytes over.
+//
+// It also owns the run report's picture section and the export screen's count,
+// because both are read off the decision store and the cached inventories that
+// live here, and because the ENGINE cannot own either: engine.Run produces the
+// report and knows nothing about pictures, which is the invariant that keeps it
+// UI-agnostic and testable headless.
 package backend
 
 import (
 	"fmt"
+	"strings"
 
 	"doc-anonymiser/backend/engine"
 	"doc-anonymiser/backend/engine/exportfmt"
@@ -241,14 +249,7 @@ func (a *App) imageAsset(docName, assetID string) (imaging.Asset, error) {
 // The scan is skipped entirely when there are no decisions, because walking a
 // sixty-slide archive to find no work is a cost the user feels on every save.
 func (a *App) imagePlanFor(docName string) exportfmt.ImagePlan {
-	a.mu.Lock()
-	stored := a.imageDecisions[docName]
-	decisions := make(map[string]imaging.Decision, len(stored))
-	for id, d := range stored {
-		decisions[id] = d
-	}
-	a.mu.Unlock()
-
+	decisions := a.imageDecisionsFor(docName)
 	if len(decisions) == 0 {
 		return exportfmt.ImagePlan{}
 	}
@@ -362,4 +363,198 @@ func restoredImageDecisions(saved map[string]map[string]imaging.Decision) map[st
 		return nil
 	}
 	return out
+}
+
+// --- What the export will do to the pictures, said out loud ----------------
+//
+// Two surfaces ask that question and both are answered here, from the decision
+// store and the cached inventories this file already owns.
+//
+// The ENGINE cannot answer it. engine.Run produces the report and knows nothing
+// about pictures, and it must keep knowing nothing: the engine is UI-agnostic
+// and a picture decision is an export-time concern rather than a pipeline pass.
+// So the application composes the picture half of the report itself, rather than
+// teaching the pipeline about a step it does not perform.
+
+// ImageAssetReport is one picture an export changes: what it is, where it
+// appears, and what happens to it.
+//
+// It names no original VALUE, so a report carrying these is not a
+// re-identification key and needs no warning of its own. The box text is
+// reported because it is the only part of a treatment that cannot be read off
+// the treatment's name: it is the user's own sentence, and a reader checking
+// what left the machine needs to see it.
+type ImageAssetReport struct {
+	// Asset is the archive part path, which is what the decision was keyed on.
+	Asset string `json:"asset"`
+	// Name is what the picture calls itself, which is what the user recognises.
+	Name string `json:"name"`
+	// Locations are the places the picture appears, in the document's own words.
+	// One decision covers every one of them, so they are all listed.
+	Locations []string `json:"locations"`
+	// Treatment is box, blur or remove. A kept picture is never listed here.
+	Treatment string `json:"treatment"`
+	// BoxText is the text drawn into the replacement rectangle, for a box.
+	BoxText string `json:"boxText,omitempty"`
+}
+
+// DocumentImageReport is one document's picture section.
+//
+// The anonymised pictures are LISTED and the kept ones are only COUNTED: a list
+// of everything left alone is noise, while the count is what lets a reader tell
+// "this document had no pictures" from "it had pictures and they all went out as
+// they came in".
+type DocumentImageReport struct {
+	Document   string             `json:"document"`
+	Kept       int                `json:"kept"`
+	Anonymised []ImageAssetReport `json:"anonymised,omitempty"`
+}
+
+// imageDecisionsFor copies one document's decisions out of the store.
+//
+// The copy is what keeps the callers off the App's own map after the lock is
+// released: the exporter and the report both walk what they are given while the
+// user may still be changing decisions on screen.
+func (a *App) imageDecisionsFor(docName string) map[string]imaging.Decision {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	stored := a.imageDecisions[docName]
+	out := make(map[string]imaging.Decision, len(stored))
+	for id, d := range stored {
+		out[id] = d
+	}
+	return out
+}
+
+// imageSummaryFor counts what an export of this document would do to its
+// pictures.
+//
+// It is built from the inventory rather than from the ImagePlan, because a plan
+// with no decisions is deliberately EMPTY and skips the scan, and "this copy
+// keeps all seven of the document's images" is exactly the sentence a document
+// with no decisions needs. The counting itself goes through ImagePlan.Summary,
+// so the sentence on the screen and the pictures the export actually changes
+// cannot disagree.
+//
+// @param docName the imported document's name
+// @return the counts, and false for a format with no image review or a document
+//
+//	with no pictures, so the caller says nothing at all rather than "0 images"
+func (a *App) imageSummaryFor(docName string) (imaging.Summary, bool) {
+	inv, err := a.ListDocumentImages(docName)
+	if err != nil || !inv.Applicable || len(inv.Assets) == 0 {
+		return imaging.Summary{}, false
+	}
+	plan := exportfmt.ImagePlan{Inventory: inv, Decisions: a.imageDecisionsFor(docName)}
+	return plan.Summary(), true
+}
+
+// imageReportFor builds one document's picture section.
+//
+// @param name the document's name, as the run reported it
+// @return the section, and false when there is nothing to report: a format with
+//
+//	no image review, a document with no pictures, or one that no longer scans
+func (a *App) imageReportFor(name string) (DocumentImageReport, bool) {
+	inv, err := a.ListDocumentImages(name)
+	if err != nil || !inv.Applicable || len(inv.Assets) == 0 {
+		return DocumentImageReport{}, false
+	}
+	out := DocumentImageReport{Document: name}
+	for _, asset := range inv.Assets {
+		// ListDocumentImages attaches each asset's current decision, so the
+		// section describes what an export made now would do rather than what
+		// some earlier state of the screen would have done.
+		if !asset.Decision.Anonymises() {
+			out.Kept++
+			continue
+		}
+		row := ImageAssetReport{
+			Asset:     asset.ID,
+			Name:      asset.Name,
+			Locations: assetLocations(asset),
+			Treatment: string(asset.Decision.Treatment),
+		}
+		// Only a box draws the text. A decision that carries text and is then
+		// switched to blur still holds the string, and reporting it would
+		// describe a rectangle the export never draws.
+		if asset.Decision.Treatment == imaging.TreatmentBox {
+			row.BoxText = asset.Decision.BoxText
+		}
+		out.Anonymised = append(out.Anonymised, row)
+	}
+	return out, true
+}
+
+// imageReports builds the picture sections for a whole run, in the run's own
+// document order.
+//
+// Documents with nothing to report are left out entirely rather than listed
+// empty: a .txt file has no pictures, and a row saying so on every text
+// document would bury the decks that do.
+func (a *App) imageReports(names []string) []DocumentImageReport {
+	var out []DocumentImageReport
+	for _, name := range names {
+		if section, ok := a.imageReportFor(name); ok {
+			out = append(out, section)
+		}
+	}
+	return out
+}
+
+// assetLocations lists where one picture appears, in document order and without
+// repeats.
+//
+// A repeat is possible and meaningless: the same picture used twice on one slide
+// is two occurrences with one location, and printing "Slide 4, Slide 4" reads as
+// a fault in the report rather than as a fact about the deck.
+func assetLocations(asset imaging.Asset) []string {
+	out := make([]string, 0, len(asset.Occurrences))
+	seen := map[string]bool{}
+	for _, occ := range asset.Occurrences {
+		if occ.Location == "" || seen[occ.Location] {
+			continue
+		}
+		seen[occ.Location] = true
+		out = append(out, occ.Location)
+	}
+	return out
+}
+
+// imageReportMarkdown renders the picture sections for the human-readable
+// report.
+//
+// It returns the EMPTY string when no document had a picture, so a batch of text
+// files produces the report it always did rather than a heading over nothing.
+func imageReportMarkdown(reports []DocumentImageReport) string {
+	if len(reports) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n## Pictures\n\n")
+	b.WriteString("What the picture decisions do on export. The pictures being changed are listed; " +
+		"the ones left as they are are counted, so a document with no pictures reads differently " +
+		"from one whose pictures all go out untouched.\n")
+	for _, doc := range reports {
+		fmt.Fprintf(&b, "\n### %s\n\n", doc.Document)
+		fmt.Fprintf(&b, "- Kept as they are: %d\n", doc.Kept)
+		fmt.Fprintf(&b, "- Anonymised: %d\n", len(doc.Anonymised))
+		if len(doc.Anonymised) == 0 {
+			continue
+		}
+		b.WriteString("\n| Picture | Where | Treatment | Box text |\n| --- | --- | --- | --- |\n")
+		for _, asset := range doc.Anonymised {
+			fmt.Fprintf(&b, "| %s | %s | %s | %s |\n",
+				reportCell(asset.Name), reportCell(strings.Join(asset.Locations, ", ")),
+				asset.Treatment, reportCell(asset.BoxText))
+		}
+	}
+	return b.String()
+}
+
+// reportCell keeps a picture name or a box text containing a pipe from breaking
+// the markdown table it is printed in. Both are strings from a document or from
+// the user, so both can contain anything.
+func reportCell(s string) string {
+	return strings.ReplaceAll(s, "|", "\\|")
 }

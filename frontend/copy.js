@@ -1494,6 +1494,31 @@ export const EXPORT = {
     return `Properties review: ${doc}`;
   },
   reviewHint: "These properties travel inside the file, so a document whose text is anonymised but whose Author field still names the person is not anonymised. Edit a value, or keep the original. Nothing is rewritten without your review.",
+  /**
+   * imagesChanged(summary) is what this copy does to the document's pictures.
+   *
+   * It is stated on the review panel, one line above the button that writes the
+   * file, because this is the last moment the decision can be changed. The
+   * treatments are broken out rather than totalled: "3 images will be changed"
+   * alone does not say whether the client logo was boxed or removed.
+   */
+  imagesChanged(summary) {
+    const parts = [];
+    if (summary?.boxed) parts.push(`${summary.boxed} boxed`);
+    if (summary?.blurred) parts.push(`${summary.blurred} blurred`);
+    if (summary?.removed) parts.push(`${summary.removed} removed`);
+    const n = (summary?.boxed ?? 0) + (summary?.blurred ?? 0) + (summary?.removed ?? 0);
+    return `${n} image${n === 1 ? "" : "s"} will be changed in this copy (${parts.join(", ")}).`;
+  },
+  /**
+   * imagesAllKept(n) is the sentence that matters more than the other one: a
+   * user who never opened the IMAGE tab is told, at the moment it counts, that
+   * the pictures are leaving this machine exactly as they arrived.
+   */
+  imagesAllKept(n) {
+    if (n === 1) return "This copy keeps the document's one image, exactly as it is.";
+    return `This copy keeps all ${n} of the document's images, exactly as they are.`;
+  },
   property: "Property",
   current: "Current",
   willBecome: "Will become",

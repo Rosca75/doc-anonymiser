@@ -28,7 +28,6 @@ import (
 	"crypto/sha256"
 	"encoding/xml"
 	"errors"
-	"image"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
@@ -47,16 +46,27 @@ type treatedFixture struct {
 	scan func([]byte) (imaging.Inventory, error)
 	// export produces the anonymised copy.
 	export func([]byte, Config) ([]byte, imaging.Summary, error)
-	// decisions is asset ID -> decision, one of each treatment.
+	// decisions is asset ID -> decision, covering every treatment.
 	decisions map[string]imaging.Decision
-	// wantSize is the pixel size each treated asset must come back at: a box and
-	// a blur keep the source's size, and a removal is the one-pixel blank.
+	// wantSummary is what the export must report it did, per ASSET.
+	wantSummary imaging.Summary
+	// wantSize is the pixel size each treated PART must come back at: a box and
+	// a blur keep the source's size, and a removal is the one-pixel blank. It is
+	// keyed by part rather than by asset because an SVG picture is TWO parts and
+	// both of them are treated.
 	wantSize map[string][2]int
-	// wantFormat is the encoding each treated asset must come back in.
+	// wantFormat is the encoding each treated part must come back in.
 	wantFormat map[string]imaging.Format
 	// gonePart names the part a removed picture's element must have left, and
 	// goneName is how that element identifies itself in the part's own words.
 	gonePart, goneName string
+	// staysPart is the part the SPLICE ORDER is held over, and staysNames are the
+	// picture elements that must survive in it. A deletion is a byte-range edit,
+	// and one applied in the wrong order damages the element next to it: the
+	// interesting case is a removal beside a picture nobody decided anything
+	// about, which is exactly what the docx fixture holds.
+	staysPart  string
+	staysNames []string
 }
 
 func fixtures() []treatedFixture {
@@ -70,21 +80,40 @@ func fixtures() []treatedFixture {
 				return out, summary, err
 			},
 			decisions: map[string]imaging.Decision{
-				"ppt/media/image1.png":  {Treatment: imaging.TreatmentBox, BoxText: "Client logo removed"},
+				"ppt/media/image1.png": {Treatment: imaging.TreatmentBox, BoxText: "Client logo removed"},
+				// The SVG picture: one asset whose bytes live in TWO parts, the
+				// PNG fallback the relationship points at and the SVG in the
+				// blip's extension. Treating one and not the other means a
+				// "boxed" logo comes back sharp on whichever machine renders the
+				// part that was left alone.
+				"ppt/media/image2.png":  {Treatment: imaging.TreatmentBox, BoxText: "Schéma retiré"},
 				"ppt/media/image4.jpeg": {Treatment: imaging.TreatmentBlur, BlurStrength: 8},
 				"ppt/media/image5.png":  {Treatment: imaging.TreatmentRemove},
 			},
+			wantSummary: imaging.Summary{Boxed: 2, Blurred: 1, Removed: 1},
 			wantSize: map[string][2]int{
 				"ppt/media/image1.png":  {120, 80},
+				"ppt/media/image2.png":  {300, 150},
+				"ppt/media/image3.svg":  {300, 150},
 				"ppt/media/image4.jpeg": {200, 200},
 				"ppt/media/image5.png":  {1, 1},
 			},
 			wantFormat: map[string]imaging.Format{
-				"ppt/media/image1.png":  imaging.FormatPNG,
+				"ppt/media/image1.png": imaging.FormatPNG,
+				"ppt/media/image2.png": imaging.FormatPNG,
+				// The companion comes back as an SVG, because a replacement is
+				// written in the SOURCE part's own encoding: the archive's
+				// content types map an extension to a media type, and PNG bytes
+				// under a .svg name are a part Office may refuse to draw.
+				"ppt/media/image3.svg":  imaging.FormatSVG,
 				"ppt/media/image4.jpeg": imaging.FormatJPEG,
 				"ppt/media/image5.png":  imaging.FormatPNG,
 			},
 			gonePart: "ppt/slides/slide4.xml", goneName: "Photo équipe",
+			// Both of slide 1's pictures are boxed, and a box must never delete
+			// an element: it replaces the bytes the element draws.
+			staysPart:  "ppt/slides/slide1.xml",
+			staysNames: []string{"Alpine Trust logo", "Schéma Borealis"},
 		},
 		{
 			name: "roundtrip/export_images_docx",
@@ -101,6 +130,7 @@ func fixtures() []treatedFixture {
 				// rather than a w:drawing.
 				"word/media/image3.png": {Treatment: imaging.TreatmentRemove},
 			},
+			wantSummary: imaging.Summary{Kept: 2, Boxed: 1, Blurred: 1, Removed: 1},
 			wantSize: map[string][2]int{
 				"word/media/image1.png":  {120, 80},
 				"word/media/image2.jpeg": {200, 200},
@@ -112,6 +142,12 @@ func fixtures() []treatedFixture {
 				"word/media/image3.png":  imaging.FormatPNG,
 			},
 			gonePart: "word/document.xml", goneName: "v:imagedata",
+			// The remove-beside-a-keep case over a real archive: the legacy VML
+			// picture is deleted out of the middle of word/document.xml, and the
+			// picture AFTER it is one nobody decided anything about. A splice
+			// applied in the wrong order eats into its element.
+			staysPart:  "word/document.xml",
+			staysNames: []string{"Organigramme", "Alpine Trust logo"},
 		},
 	}
 }
@@ -177,8 +213,10 @@ func TestExportImagesOverTheCommittedFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatalf("the export failed: %v", err)
 			}
-			if summary.Boxed != 1 || summary.Blurred != 1 || summary.Removed != 1 {
-				t.Errorf("the summary is %+v, want one of each treatment", summary)
+			if summary != f.wantSummary {
+				t.Errorf("the summary is %+v, want %+v: it is what the report and the export "+
+					"screen both state, so it has to describe what the pass actually did",
+					summary, f.wantSummary)
 			}
 			if summary.Total() != len(inv.Assets) {
 				t.Errorf("the summary counts %d pictures, the document has %d",
@@ -196,17 +234,22 @@ func TestExportImagesOverTheCommittedFixtures(t *testing.T) {
 						"nothing", id)
 					continue
 				}
-				if got := imaging.Sniff(data); got != f.wantFormat[id] {
+				format := imaging.Sniff(data)
+				if format != f.wantFormat[id] {
 					t.Errorf("%q came back as %s, want %s: the archive's content types are "+
-						"declared by extension", id, got, f.wantFormat[id])
+						"declared by extension", id, format, f.wantFormat[id])
 				}
-				cfgImg, _, err := image.DecodeConfig(bytes.NewReader(data))
-				if err != nil {
-					t.Errorf("the treated picture %q does not decode: %v", id, err)
+				// Through Measure rather than image.DecodeConfig, because an SVG
+				// companion is one of the parts under test and only Measure can
+				// read a vector's size.
+				w, h, ok := imaging.Measure(data, format)
+				if !ok {
+					t.Errorf("the treated picture %q states no size, so nothing can confirm the "+
+						"replacement fills the frame the original did", id)
 					continue
 				}
-				if cfgImg.Width != want[0] || cfgImg.Height != want[1] {
-					t.Errorf("%q is %dx%d, want %dx%d", id, cfgImg.Width, cfgImg.Height, want[0], want[1])
+				if w != want[0] || h != want[1] {
+					t.Errorf("%q is %dx%d, want %dx%d", id, w, h, want[0], want[1])
 				}
 			}
 
@@ -218,6 +261,22 @@ func TestExportImagesOverTheCommittedFixtures(t *testing.T) {
 			} else {
 				t.Errorf("the produced archive lost the part %q entirely", f.gonePart)
 			}
+
+			// The splice order: what had to survive the deletion beside it.
+			if stays, ok := entries[f.staysPart]; ok {
+				for _, name := range f.staysNames {
+					if !strings.Contains(string(stays), name) {
+						t.Errorf("the picture %q is gone from %q; a byte-range deletion applied in "+
+							"the wrong order eats into the element next to it, and the pass must "+
+							"apply its edits back to front", name, f.staysPart)
+					}
+				}
+			} else {
+				t.Errorf("the produced archive lost the part %q entirely", f.staysPart)
+			}
+
+			contentTypesCoverEveryPart(t, entries)
+			pictureRelationshipsResolve(t, f, out)
 
 			// Everything the user did NOT decide on is still exactly where it was.
 			before := entriesOf(t, raw)
@@ -231,6 +290,82 @@ func TestExportImagesOverTheCommittedFixtures(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// contentTypesCoverEveryPart checks that the produced archive still DECLARES
+// every part it holds.
+//
+// [Content_Types].xml is what maps a part to a media type, by an extension
+// Default or a part-name Override, and Office refuses a package with an
+// undeclared part rather than drawing what it can. A treatment that wrote a
+// replacement under a new extension would produce exactly that, and every other
+// assertion here would still pass.
+func contentTypesCoverEveryPart(t *testing.T, entries map[string][]byte) {
+	t.Helper()
+	declared, ok := entries["[Content_Types].xml"]
+	if !ok {
+		t.Fatal("the produced archive has no [Content_Types].xml, so it is not a valid package " +
+			"at all")
+	}
+	types := string(declared)
+	for name := range entries {
+		if name == "[Content_Types].xml" {
+			continue
+		}
+		if strings.Contains(types, `PartName="/`+name+`"`) {
+			continue
+		}
+		dot := strings.LastIndex(name, ".")
+		if dot < 0 {
+			t.Errorf("the part %q has no extension and no Override, so nothing declares its type",
+				name)
+			continue
+		}
+		if !strings.Contains(types, `Extension="`+name[dot+1:]+`"`) {
+			t.Errorf("nothing in [Content_Types].xml declares the part %q (no Override for it and "+
+				"no Default for %q); Office refuses a package with an undeclared part rather than "+
+				"drawing what it can", name, name[dot+1:])
+		}
+	}
+}
+
+// pictureRelationshipsResolve re-scans the PRODUCED archive and checks that
+// every picture it still draws points at bytes that are really there.
+//
+// It goes through the scanner rather than a second XML walk in this file for the
+// reason the pass itself does: the scanner is what resolves a blip's
+// relationship, and a second resolver could disagree with it and then pass on an
+// archive the application cannot read. An unresolvable blip surfaces as the
+// unreadable_part warning, so the absence of that warning IS the assertion.
+func pictureRelationshipsResolve(t *testing.T, f treatedFixture, out []byte) {
+	t.Helper()
+	after, err := f.scan(out)
+	if err != nil {
+		t.Fatalf("the produced archive no longer scans: %v", err)
+	}
+	for _, warning := range after.Warnings {
+		if warning == imaging.WarnUnreadablePart {
+			t.Errorf("a picture in the produced archive points at a relationship or a part that "+
+				"is not there (%s); the pass must never leave a blip dangling", warning)
+		}
+	}
+	entries := entriesOf(t, out)
+	for _, asset := range after.Assets {
+		if asset.Linked {
+			continue
+		}
+		if _, ok := entries[asset.ID]; !ok {
+			t.Errorf("the produced archive still draws the picture %q, but holds no such part",
+				asset.ID)
+		}
+		if asset.Companion == "" {
+			continue
+		}
+		if _, ok := entries[asset.Companion]; !ok {
+			t.Errorf("the produced archive still draws the picture %q, but holds no companion %q",
+				asset.ID, asset.Companion)
+		}
 	}
 }
 
