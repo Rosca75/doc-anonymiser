@@ -17,7 +17,8 @@ import {
   valuePlaceholders, setValuePlaceholder, removeValue, restoreValue,
   listRemovedValues, validateValues, checkIntersections,
   copyText, probeOllama, applySettings,
-  listDocumentImages, imageThumbnail,
+  listDocumentImages, imageThumbnail, setImageDecision,
+  previewImageTreatment, resetImageDecisions,
 } from "./api.js";
 
 /**
@@ -331,5 +332,107 @@ test("imageThumbnail passes the document, the asset and the size", async () => {
     assert.deepEqual(asked, [["deck.pptx", "ppt/media/image1.png", 40]]);
     assert.match(thumb.dataUrl, /^data:image\/png;base64,/);
     assert.equal(thumb.width, 40);
+  });
+});
+
+test("listDocumentImages carries each asset's current decision", async () => {
+  // The decision travels WITH the asset so the review screen has one call
+  // rather than two, and therefore cannot draw a row whose decision it has not
+  // read. An untouched picture arrives as keep, which is the absence of one.
+  const app = {
+    ListDocumentImages: async () => ({
+      applicable: true,
+      assets: [
+        { id: "ppt/media/image1.png", name: "Logo", format: "png", occurrences: [], decision: { treatment: "keep" } },
+        {
+          id: "ppt/media/image2.png", name: "Photo", format: "png", occurrences: [],
+          decision: { treatment: "blur", blurStrength: 8 },
+        },
+      ],
+      warnings: [],
+    }),
+  };
+  await withStubBridge(app, () => ({}), async () => {
+    const inv = await listDocumentImages("deck.pptx");
+    assert.equal(inv.assets[0].decision.treatment, "keep");
+    assert.equal(inv.assets[1].decision.treatment, "blur");
+    assert.equal(inv.assets[1].decision.blurStrength, 8);
+  });
+});
+
+test("setImageDecision passes the document, the asset and the whole decision", async () => {
+  const asked = [];
+  const app = {
+    SetImageDecision: async (docName, assetId, decision) => {
+      asked.push([docName, assetId, decision]);
+      return null;
+    },
+  };
+  await withStubBridge(app, () => ({}), async () => {
+    await setImageDecision("deck.pptx", "ppt/media/image1.png", {
+      treatment: "box", boxText: "Client logo removed",
+    });
+    assert.deepEqual(asked, [[
+      "deck.pptx", "ppt/media/image1.png",
+      { treatment: "box", boxText: "Client logo removed" },
+    ]]);
+  });
+});
+
+test("setImageDecision rejects a decision the picture cannot carry", async () => {
+  // The refusal belongs beside the control that caused it. A wrapper that
+  // swallowed it would leave the user with a picture they believe is redacted
+  // until the export tells them otherwise, when there is nothing left to do
+  // about it.
+  const app = {
+    SetImageDecision: async () => {
+      throw new Error("an SVG image cannot be blurred: a blur filter leaves the original " +
+        'shapes and text inside the file; use "Replace with a box" or "Remove" instead');
+    },
+  };
+  await withStubBridge(app, () => ({}), async () => {
+    await assert.rejects(
+      () => setImageDecision("deck.pptx", "ppt/media/image2.png", { treatment: "blur" }),
+      /cannot be blurred/,
+    );
+  });
+});
+
+test("previewImageTreatment passes the decision it is asked about, and records nothing", async () => {
+  // The preview is a QUESTION: it must reach PreviewImageTreatment and never
+  // SetImageDecision, or moving a slider would commit every value it passed
+  // through.
+  const asked = [];
+  const app = {
+    PreviewImageTreatment: async (docName, assetId, decision, maxPx) => {
+      asked.push([docName, assetId, decision, maxPx]);
+      return { dataUrl: "data:image/png;base64,BBBB", width: 60, height: 40 };
+    },
+    SetImageDecision: async () => {
+      throw new Error("previewing must not record the decision");
+    },
+  };
+  await withStubBridge(app, () => ({}), async () => {
+    const thumb = await previewImageTreatment(
+      "deck.pptx", "ppt/media/image1.png", { treatment: "blur", blurStrength: 3 }, 60);
+    assert.deepEqual(asked, [[
+      "deck.pptx", "ppt/media/image1.png", { treatment: "blur", blurStrength: 3 }, 60,
+    ]]);
+    assert.match(thumb.dataUrl, /^data:image\/png;base64,/);
+    assert.equal(thumb.width, 60);
+  });
+});
+
+test("resetImageDecisions passes only the document name", async () => {
+  const asked = [];
+  const app = {
+    ResetImageDecisions: async (docName) => {
+      asked.push(docName);
+      return null;
+    },
+  };
+  await withStubBridge(app, () => ({}), async () => {
+    await resetImageDecisions("deck.pptx");
+    assert.deepEqual(asked, ["deck.pptx"]);
   });
 });
