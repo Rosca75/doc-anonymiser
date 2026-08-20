@@ -1189,17 +1189,61 @@ func extractRunsContext(ctx context.Context, text, country string) ([]smartRun, 
 				break
 			}
 		}
+		// nameEnd is where the NAME half of a legal name ends, when a comma sits
+		// between it and the legal form. It stays 0 when there is no comma to
+		// cross, which is the ordinary case.
+		nameEnd := 0
 		if !r.hasSuffix {
 			rest := text[r.end:]
 			trimmed := strings.TrimLeft(rest, " ")
 			pad := len(rest) - len(trimmed)
+			// Detector 2c, forward. "Acme, S.A." is the same continental legal-name
+			// form as "Acme, Societe anonyme", seen from the other side: a dotted
+			// single-letter form never joins a run at all, so there is no run after
+			// the comma to reach back FROM, and the comma has to be crossed going
+			// forward instead. The bound is the same: ONE comma, spaces only around
+			// it, and a recognised legal form after it.
+			if !strings.HasPrefix(trimmed, ",") {
+				// nothing to cross; the ordinary un-absorbed-suffix case below applies
+			} else if after := strings.TrimLeft(trimmed[1:], " "); after != "" {
+				for _, suffix := range legalSuffixes {
+					if strings.HasPrefix(after, suffix) && suffixBoundaryOK(after, suffix) {
+						nameEnd = r.end
+						r.end = len(text) - len(after) + len(suffix)
+						r.text = text[r.start:r.end]
+						r.hasSuffix = true
+						break
+					}
+				}
+			}
 			for _, suffix := range legalSuffixes {
+				if r.hasSuffix {
+					break
+				}
 				if strings.HasPrefix(trimmed, suffix) && suffixBoundaryOK(trimmed, suffix) {
 					r.end = r.end + pad + len(suffix)
 					r.text = text[r.start:r.end]
 					r.hasSuffix = true
 					break
 				}
+			}
+		}
+
+		// The NAME half of a comma-separated legal name, emitted beside the full
+		// name for the reason detector 2c's backward half emits it: the short form
+		// is what recurs through the document, and family folding then makes it the
+		// main text with the full legal name as its spelling.
+		if nameEnd > r.start {
+			nameText := text[r.start:nameEnd]
+			if len([]rune(nameText)) >= 3 && !isBareSuffix(nameText) {
+				runs = append(runs, smartRun{
+					text:          nameText,
+					start:         r.start,
+					end:           nameEnd,
+					sentenceStart: r.sentenceStart,
+					legalName:     true,
+					words:         significantWords(nameText),
+				})
 			}
 		}
 

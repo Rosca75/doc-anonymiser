@@ -332,10 +332,16 @@ export function blockedPanel(s) {
  */
 function blockedActions(s, c) {
   const refs = c.refs ?? [];
-  if (refs.some((r) => r.kind === "allowlist")) {
+  // The engine STATES the one-gesture fix (engine/conflicts.go
+  // ConflictResolution). Reading it, rather than inferring it from a ref kind, is
+  // what keeps this panel and the value card on Identify offering the same way
+  // out: two inferences can disagree, and then a button offers a fix the engine
+  // never described.
+  if (c.resolution?.action === "drop_allow_term") {
     return `<div class="run-actions">` +
       button(ANONYMISE.blockedRemoveAllowTerm, {
-        kind: "secondary", cls: "blocked-allow-remove", data: { term: c.value },
+        kind: "secondary", cls: "blocked-allow-remove",
+        data: { term: c.resolution.term || c.value },
       }) + `</div>`;
   }
 

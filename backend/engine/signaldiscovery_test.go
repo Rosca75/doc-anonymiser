@@ -554,3 +554,114 @@ func TestSeveralMethodsReduceToTheStrongestClass(t *testing.T) {
 		}
 	}
 }
+
+// --- The website source ------------------------------------------------------
+
+// TestWebsiteDomainSeedsAnOrganisation: a document need contain no email address
+// at all and still name its own parties.
+//
+// The measured framework agreement carried no address anywhere, so email
+// evidence contributed nothing, while "www.nstar.lu" sat in it as deterministic
+// evidence for the organisation NStar, whose spelling no derivation rule can
+// produce from "Northstar".
+func TestWebsiteDomainSeedsAnOrganisation(t *testing.T) {
+	docs := []Document{
+		{Name: "terms.md", Format: FormatMD, Markdown: "Our privacy notice is at www.nstar.lu/privacy."},
+		{Name: "letter.md", Format: FormatMD, Markdown: "The consultant NStar will deliver the work."},
+	}
+	got := DiscoverFromSignals(SignalDiscoveryInput{
+		Documents: docs, Allow: NewEmptyAllowlist(), Country: CountryLU,
+	})
+
+	var found *Suggestion
+	for i := range got {
+		if strings.EqualFold(got[i].MainText, "NStar") {
+			found = &got[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("the website did not seed the organisation it names; got %+v", got)
+	}
+	if found.Category != CatEntityNames {
+		t.Errorf("the seed was filed under %q, want %q", found.Category, CatEntityNames)
+	}
+	if len(found.Evidence) == 0 || found.Evidence[0].Kind != EvidenceWebsiteDomain {
+		t.Errorf("the Suggestion cannot say why it is there: evidence %+v", found.Evidence)
+	}
+	if found.Evidence[0].SignalCategory != CatURL {
+		t.Errorf("the evidence names signal category %q, want %q",
+			found.Evidence[0].SignalCategory, CatURL)
+	}
+}
+
+// TestWebsiteSourceRespectsTheSameFilters: everything an email domain is
+// filtered by applies here, and for the same reasons. A URL PATH is deliberately
+// ignored: a page is not an organisation.
+func TestWebsiteSourceRespectsTheSameFilters(t *testing.T) {
+	cases := []struct {
+		name string
+		docs []Document
+		not  string
+	}{
+		{
+			name: "a public mail provider names nothing",
+			docs: []Document{{Name: "a.md", Format: FormatMD, Markdown: "See www.gmail.com and Gmail is fine."}},
+			not:  "Gmail",
+		},
+		{
+			name: "an administrative second-level label names nothing",
+			docs: []Document{{Name: "a.md", Format: FormatMD, Markdown: "See www.statistiques.public.lu; a public limited company."}},
+			not:  "public limited",
+		},
+		{
+			name: "a path is a page, not an organisation",
+			docs: []Document{{Name: "a.md", Format: FormatMD, Markdown: "See www.nstar.lu/privacy and the Privacy team."}},
+			not:  "Privacy",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, s := range DiscoverFromSignals(SignalDiscoveryInput{
+				Documents: tc.docs, Allow: NewEmptyAllowlist(), Country: CountryLU,
+			}) {
+				if strings.EqualFold(s.MainText, tc.not) {
+					t.Errorf("the website source suggested %q", s.MainText)
+				}
+			}
+		})
+	}
+}
+
+// TestClearingTheWebsiteReadingLeavesTheURLAnonymised is the invariant the whole
+// signals file exists to protect, applied to the new source: clearing a reading
+// stops the Suggestions that reading produces and NEVER stops the signal itself
+// being anonymised.
+func TestClearingTheWebsiteReadingLeavesTheURLAnonymised(t *testing.T) {
+	const text = "Our privacy notice is at www.nstar.lu/privacy. NStar will deliver."
+	docs := []Document{{Name: "a.md", Format: FormatMD, Markdown: text}}
+
+	off := SignalSourceSelection{
+		SignalSourceWebsite: {DerivationWebsiteOrganisation: false},
+	}
+	for _, s := range DiscoverFromSignals(SignalDiscoveryInput{
+		Documents: docs, Allow: NewEmptyAllowlist(), Country: CountryLU, Sources: off,
+	}) {
+		if len(s.Evidence) > 0 && s.Evidence[0].Kind == EvidenceWebsiteDomain {
+			t.Errorf("the reading is off and it still produced %q", s.MainText)
+		}
+	}
+
+	// And the URL is still matched and replaced, which is governed by Built-in
+	// patterns and the url category, not by this setting.
+	spans := DetectPIISelected(text, PresetSelection(LevelSoft), CountryLU)
+	matched := false
+	for _, sp := range spans {
+		if sp.Category == CatURL && sp.Original == "www.nstar.lu/privacy" {
+			matched = true
+		}
+	}
+	if !matched {
+		t.Error("clearing the website READING stopped the website being anonymised; that is " +
+			"the mistake the separate setting exists to prevent")
+	}
+}

@@ -1046,10 +1046,14 @@ function solvePanel(e, conflict) {
       acts = button(WORKSPACE.solveRemoveThis, {
         kind: "ghost", cls: "solve-action", data: { act: "remove-value" },
       });
-    } else if (c.kind === "allowlist") {
+    } else if (c.resolution?.action === "drop_allow_term") {
+      // The action comes from the conflict's own stated resolution, the same one
+      // the refused-run panel on Anonymise reads, so the two screens cannot
+      // offer different ways out of one refusal.
       acts =
         button(WORKSPACE.solveRemoveFromAllowlist, {
-          kind: "ghost", cls: "solve-action", data: { act: "remove-allow" },
+          kind: "ghost", cls: "solve-action",
+          data: { act: "remove-allow", term: c.resolution.term || c.value },
         }) +
         button(WORKSPACE.solveRemoveThis, {
           kind: "ghost", cls: "solve-action", data: { act: "remove-value" },
@@ -1960,7 +1964,10 @@ function wireSolvePanel(cardEl, cat, mainText) {
       if (act === "remove-value") {
         deleteValue(cat, mainText);
       } else if (act === "remove-allow") {
-        removeAllowTerm(mainText);
+        // The term comes from the resolution rather than from the card's own
+        // main text: they agree today, and reading the stated one is what keeps
+        // them agreeing.
+        removeAllowTerm(action.dataset.term || mainText);
       } else if (act === "drop-spelling") {
         deleteVariant(cat, mainText, action.dataset.spelling);
         await refreshVariants();

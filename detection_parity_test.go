@@ -200,6 +200,26 @@ func TestSignalSourcesAgreeAcrossTheBridge(t *testing.T) {
 	}
 }
 
+// TestConflictResolutionsAgreeAcrossTheBridge: the same one-gesture fixes on both
+// sides.
+//
+// The engine STATES the resolution on a blocking conflict rather than each screen
+// inferring it from the conflict's refs, because the refusal reaches the user on
+// two screens (the value's own card on Identify, the refused-run panel on
+// Anonymise) and two inferences can disagree. That only holds while the two sides
+// use one vocabulary: an action only Go states is a fix no button performs, and
+// one only the frontend knows is a button offering something the engine never
+// described.
+func TestConflictResolutionsAgreeAcrossTheBridge(t *testing.T) {
+	js := frontendList(t, "CONFLICT_RESOLUTIONS")
+	if strings.Join(js, ",") != strings.Join(engine.AllConflictResolutions, ",") {
+		t.Errorf("CONFLICT_RESOLUTIONS in frontend/state.js is %v, engine.AllConflictResolutions is %v.\n"+
+			"An action only Go states is a fix no button performs; one only the frontend knows\n"+
+			"is a button offering a fix the engine never described.",
+			js, engine.AllConflictResolutions)
+	}
+}
+
 // TestAIDetailLevelsAgreeAcrossTheBridge: the same two levels on both sides, in
 // the same order.
 //

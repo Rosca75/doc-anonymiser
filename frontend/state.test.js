@@ -23,6 +23,7 @@ import {
   setUseBuiltInPatterns, setUseHeuristicDiscovery,
   addSuggestions, acceptSuggestion, rejectSuggestion, acceptAllShown,
   DISCOVERY_METHODS, MATCH_CLASSES, SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
+  CONFLICT_RESOLUTIONS,
   AI_DETAIL_LEVELS,
   signalSourceOn, enabledSignalSources, setSignalSource,
   signalDerivationOn, enabledSignalDerivations, setSignalDerivation,
@@ -2677,4 +2678,25 @@ test("a promotion is refused when ANOTHER value already owns the name", () => {
   seedValue("entity_names", "NStar", ["NStar"]);
   assert.equal(renameValue("entity_names", "Northstar", "NStar"), "duplicate");
   assert.equal(getState().values[0].mainText, "Northstar", "nothing moved");
+});
+
+test("the allowlist conflict on a card states the same resolution the engine does", () => {
+  // The card and the refused-run panel on Anonymise read ONE field. Each
+  // inferring the fix from a ref kind is two places deciding one thing, and two
+  // inferences can disagree, at which point a button offers a fix the engine
+  // never described.
+  resetState();
+  seedValue("country_names", "Luxembourg", ["Luxembourg"]);
+  addAllowTerm("Luxembourg");
+
+  const conflicts = valueConflicts(getState());
+  const entry = conflicts.get(valueKey("country_names", "Luxembourg"));
+  assert.ok(entry, "the card carries the conflict");
+  const c = entry.list.find((x) => x.kind === "allowlist");
+  assert.ok(c, "an allowlisted declared value is a blocking conflict");
+  assert.deepEqual(c.resolution, { action: "drop_allow_term", term: "Luxembourg" },
+    "the resolution names the action and the term, in the vocabulary "
+    + "CONFLICT_RESOLUTIONS mirrors from the engine");
+  assert.ok(CONFLICT_RESOLUTIONS.includes(c.resolution.action),
+    "and the action is one of the shared vocabulary, not an invented string");
 });

@@ -382,6 +382,18 @@ export const ALL_CATEGORIES = [
 // they find is ever a Value with provenance to record.
 export const DISCOVERY_METHODS = ["manual", "signal", "heuristic", "local_ai"];
 
+// CONFLICT_RESOLUTIONS mirrors engine.AllConflictResolutions exactly and is
+// checked by ../detection_parity_test.go. Each entry is an action an interface
+// can PERFORM, in one gesture, to clear a blocking conflict.
+//
+// The engine STATES the resolution on the conflict rather than each screen
+// inferring it from the conflict's refs, because the refusal reaches the user on
+// two screens (the value's own card on Identify, the refused-run panel on
+// Anonymise) and two inferences can disagree. A conflict with no resolution is
+// one no single gesture clears, which is honest: an ambiguity is cleared by
+// deleting one of two Values, and only the user can say which.
+export const CONFLICT_RESOLUTIONS = ["drop_allow_term"];
+
 // MATCH_CLASSES mirrors engine.AllMatchClasses exactly, in PRECEDENCE order
 // (lower index wins), and is checked by ../detection_parity_test.go.
 //
@@ -2603,7 +2615,13 @@ export function valueConflicts(s = state) {
     for (const e of active) {
       if (!allow.has(e.mainText.trim().toLowerCase())) continue;
       const entry = ensure(valueKey(e.category, e.mainText));
-      const conflict = { kind: "allowlist", value: e.mainText, spelling: e.mainText };
+      const conflict = {
+        kind: "allowlist", value: e.mainText, spelling: e.mainText,
+        // The same shape the engine states (engine/conflicts.go
+        // ConflictResolution), so the card and a refused run describe the fix in
+        // one vocabulary rather than two.
+        resolution: { action: "drop_allow_term", term: e.mainText },
+      };
       entry.nameConflicts.push(conflict);
       entry.list.push(conflict);
     }

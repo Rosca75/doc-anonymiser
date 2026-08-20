@@ -320,3 +320,61 @@ func TestManyDistinctOverlapsStopAtTheWarningCap(t *testing.T) {
 		t.Error("a full list must stop asking for more")
 	}
 }
+
+// TestAllowlistCollisionStatesItsResolution: the engine says HOW to clear the
+// conflict, not only that it exists.
+//
+// The refusal reaches the user on two screens, and each inferring the fix from a
+// ref kind is two places deciding one thing. The Fix sentence stays what a human
+// reads; the resolution is what a button performs.
+func TestAllowlistCollisionStatesItsResolution(t *testing.T) {
+	allow := NewEmptyAllowlist()
+	allow.Add("Luxembourg")
+	res := ValidateValues(ValidationInput{
+		Values:     []Value{{Category: CatCountryNames, MainText: "Luxembourg"}},
+		Allowlist:  allow,
+		Categories: CategorySelection{CatCountryNames: true},
+	})
+	if len(res.Blocking) != 1 {
+		t.Fatalf("expected one blocking conflict, got %d: %+v", len(res.Blocking), res.Blocking)
+	}
+	c := res.Blocking[0]
+	if c.Resolution == nil {
+		t.Fatal("the allowlist collision states no resolution, so both screens showing it " +
+			"have to infer the fix from a ref kind, and two inferences can disagree")
+	}
+	if c.Resolution.Action != ResolutionDropAllowTerm {
+		t.Errorf("the resolution action is %q, want %q", c.Resolution.Action, ResolutionDropAllowTerm)
+	}
+	if c.Resolution.Term != "Luxembourg" {
+		t.Errorf("the resolution names the term %q, want the spelling the user sees, %q",
+			c.Resolution.Term, "Luxembourg")
+	}
+	if c.Fix == "" {
+		t.Error("the sentence a human reads is still required beside the action a button performs")
+	}
+}
+
+// TestAmbiguityStatesNoResolution: a conflict no SINGLE gesture clears carries no
+// resolution, and that is honest rather than missing. An ambiguity is cleared by
+// deleting one of two Values, and only the user can say which.
+func TestAmbiguityStatesNoResolution(t *testing.T) {
+	res := ValidateValues(ValidationInput{
+		Values: []Value{
+			{Category: CatEntityNames, MainText: "Delta"},
+			{Category: CatPersonNames, MainText: "Delta"},
+		},
+		Allowlist:  NewEmptyAllowlist(),
+		Categories: CategorySelection{CatEntityNames: true, CatPersonNames: true},
+	})
+	if len(res.Blocking) == 0 {
+		t.Fatal("the same name under two active categories must block the run")
+	}
+	for _, c := range res.Blocking {
+		if c.Resolution != nil {
+			t.Errorf("the %s conflict on %q states resolution %+v; nothing here can be fixed "+
+				"without the user choosing which of the two Values to drop",
+				c.Kind, c.Value, c.Resolution)
+		}
+	}
+}

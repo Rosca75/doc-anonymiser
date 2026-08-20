@@ -774,3 +774,193 @@ func TestSmartDetectConnectorsInsideCommonPhrase(t *testing.T) {
 		t.Errorf("a run containing a genuine name token must not read as all-common")
 	}
 }
+
+// --- The structural rules the fixture pair exposed ---------------------------
+
+// discoverOne is the offline route over one short string, at the shipped tuning.
+func discoverOne(t *testing.T, text string) []Suggestion {
+	t.Helper()
+	allow := NewEmptyAllowlist()
+	got, err := HeuristicDiscoverContext(context.Background(), text, allow,
+		DefaultHeuristicDiscoveryOptions(), CountryLU)
+	if err != nil {
+		t.Fatalf("HeuristicDiscoverContext: %v", err)
+	}
+	return FoldValueFamilies(got, allow)
+}
+
+// hasSuggestion reports whether the list carries a row with this main text.
+func hasSuggestion(list []Suggestion, mainText string) bool {
+	for _, s := range list {
+		if strings.EqualFold(s.MainText, mainText) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestLegalFormCommaIsCrossed: "Name, Societe anonyme" is the standard
+// continental legal-name form and the dominant one in French and Luxembourg
+// drafting.
+//
+// A comma always terminates a run, so before this rule what survived was either
+// the legal form with no name in front of it (worthless: the name is the only
+// part worth replacing) or nothing at all. Both parties of the measured contract
+// were invisible offline for exactly this reason.
+func TestLegalFormCommaIsCrossed(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want string
+	}{
+		{"suffix, no comma", "Acme S.A. signed the deal in March.", "Acme S.A."},
+		{"suffix, one comma", "Acme, S.A. signed the deal in March.", "Acme"},
+		{"one-word legal form", "Northstar, Societe cooperative, a consulting group.", "Northstar"},
+		{"multi-word name", "Contoso Holdings, Societe anonyme, was incorporated here.", "Contoso Holdings"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := discoverOne(t, tc.text)
+			if !hasSuggestion(got, tc.want) {
+				t.Errorf("no suggestion %q; got %v", tc.want, suggestionTexts(got))
+			}
+		})
+	}
+}
+
+// TestLegalFormCommaRuleStaysBounded: one comma, no newline, and the tail must
+// be a legal-form phrase. Without those bounds the rule walks an enumeration of
+// ordinary nouns and turns a list into a company name.
+func TestLegalFormCommaRuleStaysBounded(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		not  string
+	}{
+		{
+			name: "the tail must be a legal form",
+			text: "Acme, Wednesday Morning arrived at last.",
+			not:  "Acme",
+		},
+		{
+			name: "a second comma stops it",
+			text: "Beta, Acme, Societe anonyme, was incorporated here.",
+			not:  "Beta Acme",
+		},
+		{
+			name: "an article never becomes the name",
+			text: "The, Societe cooperative, filed its accounts.",
+			not:  "The",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, s := range discoverOne(t, tc.text) {
+				if strings.EqualFold(s.MainText, tc.not) {
+					t.Errorf("the comma rule reached back too far and produced %q", s.MainText)
+				}
+			}
+		})
+	}
+}
+
+// TestJobTitleTerminatesAPersonRun: a signature block reads "PIERRE LAVENTURE
+// Partner". The person is the name and the title is what they do, so absorbing
+// the title produces a Value that matches the document in one place and the
+// person nowhere else.
+//
+// A title OPENING a run means there is no name at that position at all, which is
+// why "Chief Information Officer" yields nobody.
+func TestJobTitleTerminatesAPersonRun(t *testing.T) {
+	const text = "_________________________ PIERRE LAVENTURE Partner | " +
+		"_________________________ THOMAS LAVANDOU Partner"
+	got := discoverOne(t, text)
+
+	for _, want := range []string{"PIERRE LAVENTURE", "THOMAS LAVANDOU"} {
+		if !hasSuggestion(got, want) {
+			t.Errorf("no suggestion %q; got %v", want, suggestionTexts(got))
+		}
+	}
+	for _, s := range got {
+		if strings.Contains(strings.ToLower(s.MainText), "partner") {
+			t.Errorf("a job title joined the name beside it: %q", s.MainText)
+		}
+	}
+
+	t.Run("a title opening a run is nobody", func(t *testing.T) {
+		for _, s := range discoverOne(t, "Chief Information Officer, and the rest of the team.") {
+			if strings.Contains(strings.ToLower(s.MainText), "chief") {
+				t.Errorf("a job title was proposed as a Value: %q", s.MainText)
+			}
+		}
+	})
+}
+
+// TestASignatureRuleIsNotASentenceStart: a run of underscores is a ruled line,
+// which is what a signature block puts above a printed name.
+//
+// Read as a sentence boundary it makes the first word of every signature look
+// grammar-capitalised, and the sub-run rule then strips it: "PIERRE LAVENTURE"
+// became "LAVENTURE", which is also what stopped it folding into the
+// "Pierre Laventure" written elsewhere.
+func TestASignatureRuleIsNotASentenceStart(t *testing.T) {
+	got := discoverOne(t, "____________________ MARTIN DESCHAMPS")
+	if !hasSuggestion(got, "MARTIN DESCHAMPS") {
+		t.Errorf("the forename was stripped after the signature rule; got %v", suggestionTexts(got))
+	}
+}
+
+// TestANameRunNeverBeginsWithAConjunction: an ALL-CAPS heading is one adjacent
+// stretch of capitalised words to the tokenizer, so without this rule a run
+// starts at the "AND" it crosses and harvests the fragment behind it.
+func TestANameRunNeverBeginsWithAConjunction(t *testing.T) {
+	for _, heading := range []string{
+		"# COSTS AND EXPENSES",
+		"# TERM AND TERMINATION",
+		"# LIABILITY AND INDEMNITY",
+		"**BY AND BETWEEN**",
+	} {
+		for _, s := range discoverOne(t, heading+"\n\nSome ordinary sentence follows here.") {
+			if strings.HasPrefix(strings.ToUpper(s.MainText), "AND ") {
+				t.Errorf("a run began with a conjunction: %q (from %q)", s.MainText, heading)
+			}
+		}
+	}
+}
+
+// TestAllCapsHeadingTextIsNotAName: heading capitals and legal formulae are
+// document furniture.
+//
+// ALL CAPS alone cannot be the rule: a signature block writes real people in
+// capitals, and those are exactly the values the review list exists to surface.
+// What separates furniture from a name is the FUNCTION WORD inside it.
+func TestAllCapsHeadingTextIsNotAName(t *testing.T) {
+	furniture := []string{
+		"ROLES AND COMMITMENTS", "PARTIES ENTER INTO THIS AGREEMENT",
+		"IN WITNESS WHEREOF", "GOVERNING LAW AND COMPETENT JURISDICTION",
+	}
+	for _, phrase := range furniture {
+		if !isAllCapsHeadingText(phrase) {
+			t.Errorf("%q is heading furniture and was not recognised as such", phrase)
+		}
+	}
+	people := []string{"PIERRE DUPONT", "MARTIN DESCHAMPS", "THOMAS LAVANDOU"}
+	for _, name := range people {
+		if isAllCapsHeadingText(name) {
+			t.Errorf("%q is a real person written in capitals and must survive", name)
+		}
+	}
+	// A particle is not a function word: a real organisation carries one.
+	if isAllCapsHeadingText("BANQUE DE LA PLACE") {
+		t.Error("a name particle was read as a heading function word")
+	}
+}
+
+// suggestionTexts is the main texts of a list, for a readable failure.
+func suggestionTexts(list []Suggestion) []string {
+	out := make([]string, 0, len(list))
+	for _, s := range list {
+		out = append(out, s.MainText)
+	}
+	return out
+}

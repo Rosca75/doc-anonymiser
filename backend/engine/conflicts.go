@@ -27,6 +27,46 @@ type ValueRef struct {
 	Detail   string `json:"detail,omitempty"` // extra context (e.g., the regex pattern)
 }
 
+// Conflict resolution actions: what an interface can DO, in one gesture, to
+// clear a conflict.
+//
+// They are identifiers rather than prose because Fix below is the sentence and a
+// sentence cannot be executed. Mirrored by frontend/state.js
+// CONFLICT_RESOLUTIONS and guarded by ../../detection_parity_test.go, for the
+// reason every other shared vocabulary is: an action only Go knows is a fix no
+// button performs, and one only the frontend knows is a button that does
+// something the engine never described.
+const (
+	// ResolutionDropAllowTerm clears an allowlist collision by taking the term
+	// off the never-anonymise list. The term is in ConflictResolution.Term.
+	ResolutionDropAllowTerm = "drop_allow_term"
+)
+
+// AllConflictResolutions lists the actions this build states.
+var AllConflictResolutions = []string{ResolutionDropAllowTerm}
+
+// ConflictResolution is the action that clears a conflict, stated by the ENGINE
+// rather than inferred by each screen from the conflict's refs.
+//
+// It exists because the refusal reaches the user on two different screens (the
+// value's own card on Identify, and the refused-run panel on Anonymise) and both
+// have to offer the same way out. Each inferring it from a ref kind is two
+// places deciding "how is this conflict fixed", which is the shape of duplication
+// the pre-run intersection check exists to avoid: two answers can disagree, and
+// then a button offers a fix the engine never described.
+//
+// A conflict with NO resolution is one no single gesture clears, and that is
+// honest rather than missing: an ambiguity is cleared by deleting one of two
+// Values, and only the user can say which.
+type ConflictResolution struct {
+	// Action is one of AllConflictResolutions.
+	Action string `json:"action"`
+	// Term is the argument the action needs: the never-anonymise term to drop.
+	// It carries the spelling the ALLOWLIST holds rather than a lower-cased one,
+	// because it is what the user will see disappear from their list.
+	Term string `json:"term,omitempty"`
+}
+
 // Conflict is a value that violates an invariant and must be resolved.
 type Conflict struct {
 	Kind     string     `json:"kind"`           // "ambiguity" | "overlap" | "collision"
@@ -35,6 +75,9 @@ type Conflict struct {
 	Refs     []ValueRef `json:"refs,omitempty"` // all places this value appears
 	Message  string     `json:"message"`        // what failed
 	Fix      string     `json:"fix"`            // how to fix it
+	// Resolution is the action an interface can perform to clear this conflict,
+	// or nil when no single gesture clears it.
+	Resolution *ConflictResolution `json:"resolution,omitempty"`
 }
 
 // ValidationResult is the outcome of ValidateValues.
@@ -198,6 +241,12 @@ func checkAllowlistCollisions(values []Value, allowlist *Allowlist) []Conflict {
 				"%q is listed both as a value to replace and as a term never to anonymise, and the never-anonymise list always wins",
 				e.MainText),
 			Fix: "Remove it from one of the two lists, so the run does what you expect.",
+			// This conflict has a one-gesture way out, and the engine names it so
+			// both screens that show the refusal offer the same one.
+			Resolution: &ConflictResolution{
+				Action: ResolutionDropAllowTerm,
+				Term:   e.MainText,
+			},
 		})
 	}
 	return conflicts

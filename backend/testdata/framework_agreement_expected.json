@@ -1,0 +1,230 @@
+{
+  "source": "framework_agreement.docx",
+  "reference": "framework_agreement_anon.docx",
+  "note": "The ground truth for the fixture pair: what a human anonymiser replaced, and with what. It is DATA rather than a golden markdown blob on purpose. A blob fails on every unrelated converter improvement and teaches the next session to regenerate it without reading it; this table fails only when a value stops being found or starts being found under the wrong category. Every name, company, number and address in the source is fictional, and the IBAN is checksum-invalid (mod-97 remainder 74), which is what makes it the right fixture for the checksum policy.",
+  "settings": {
+    "level": "advanced",
+    "country": "LU",
+    "allowlistTermRemoved": "Luxembourg"
+  },
+  "placeholderNote": "Twenty-five placeholders over fourteen placeholder LABELS (ENTITY, COUNTRY, NATIONALITY, BUSINESS_SECTOR, DATE, ADDRESS, POSTAL_CODE, OTHER, PERSON, WEB_SITE, IBAN, BIC, VAT, PHONE), covering twenty-eight distinct original strings. A placeholder covering two originals is ONE Value with two spellings, never two Values: two placeholders for one thing would make the mapping CSV state they were different things.",
+  "placeholders": [
+    {
+      "placeholder": "ENTITY_1",
+      "category": "entity_names",
+      "occurrences": 113,
+      "originals": [{ "text": "Contoso", "occurrences": 113 }],
+      "reachable": "smart",
+      "note": "One of the document's two parties. Reached offline through the legal-form comma: the run reaches back over the comma in \"Contoso, Societe Francaise de Transport S.A.\", and the NAME half is emitted as its own row, which is the form that recurs 113 times."
+    },
+    {
+      "placeholder": "ENTITY_2",
+      "category": "entity_names",
+      "occurrences": 22,
+      "originals": [
+        { "text": "Northstar", "occurrences": 9 },
+        { "text": "NStar", "occurrences": 13 }
+      ],
+      "reachable": "smart",
+      "note": "ONE Value with two spellings, never two Values: two placeholders for one company would make the mapping CSV state they were different companies. No derivation rule can produce \"NStar\" from \"Northstar\", which is why the website signal source matters here: www.nstar.lu is deterministic evidence for it."
+    },
+    {
+      "placeholder": "ENTITY_3",
+      "category": "entity_names",
+      "occurrences": 1,
+      "originals": [{ "text": "Banque de la Place", "occurrences": 1 }],
+      "reachable": "smart"
+    },
+    {
+      "placeholder": "COUNTRY_1",
+      "category": "country_names",
+      "occurrences": 12,
+      "originals": [{ "text": "Luxembourg", "occurrences": 12 }],
+      "reachable": "manual",
+      "note": "The country seed stays in the default allowlist, so reaching this requires the user to take the term off the never-anonymise list. The blocking conflict is correct and the run states the one-gesture fix that clears it. In a two-party contract between two entities of one country the jurisdiction is part of the identity, which is why the category exists rather than the seed changing."
+    },
+    {
+      "placeholder": "NATIONALITY_1",
+      "category": "nationality_names",
+      "occurrences": 4,
+      "originals": [{ "text": "Française", "occurrences": 4 }],
+      "reachable": "manual",
+      "note": "An ordinary French adjective that happens to sit inside a legal name here. A pattern or gazetteer for nationalities would fire on running prose constantly, so this category is reachable by manual declaration and Local AI only."
+    },
+    {
+      "placeholder": "BUSINESS_SECTOR_1",
+      "category": "business_sector_names",
+      "occurrences": 4,
+      "originals": [{ "text": "Transport", "occurrences": 4 }],
+      "reachable": "manual",
+      "note": "An ordinary noun, for the same reason as the nationality above."
+    },
+    {
+      "placeholder": "DATE_1",
+      "category": "date",
+      "occurrences": 2,
+      "originals": [
+        { "text": "01 January 2001", "occurrences": 1 },
+        { "text": "01.01.2001", "occurrences": 1 }
+      ],
+      "reachable": "pattern",
+      "note": "Two spellings of one date, and they share a placeholder only because the registry's byOriginal index owns both, which needs both spans to exist. The second form is only matchable because adjacent runs sharing a formatting state are coalesced: per-run emphasis wrapping produced **0****1****.01.20****01**."
+    },
+    {
+      "placeholder": "ADDRESS_1",
+      "category": "address",
+      "occurrences": 1,
+      "originals": [{ "text": "1, Avenue de l'Innovation", "occurrences": 1 }],
+      "reachable": "pattern"
+    },
+    {
+      "placeholder": "ADDRESS_2",
+      "category": "address",
+      "occurrences": 2,
+      "originals": [{ "text": "12, rue des Tilleuls", "occurrences": 2 }],
+      "reachable": "pattern"
+    },
+    {
+      "placeholder": "POSTAL_CODE_1",
+      "category": "postal_code",
+      "occurrences": 1,
+      "originals": [{ "text": "L-1855", "occurrences": 1 }],
+      "reachable": "pattern"
+    },
+    {
+      "placeholder": "POSTAL_CODE_2",
+      "category": "postal_code",
+      "occurrences": 2,
+      "originals": [{ "text": "L-2550", "occurrences": 2 }],
+      "reachable": "pattern"
+    },
+    {
+      "placeholder": "OTHER_1",
+      "category": "other_names",
+      "occurrences": 1,
+      "originals": [{ "text": "B 9999", "occurrences": 1 }],
+      "reachable": "manual",
+      "note": "A trade-register number. other_names is defined by exclusion, so nothing can be inferred about its shape and nothing derives it."
+    },
+    {
+      "placeholder": "OTHER_2",
+      "category": "other_names",
+      "occurrences": 1,
+      "originals": [{ "text": "1012226518", "occurrences": 1 }],
+      "reachable": "manual",
+      "note": "An authorisation number."
+    },
+    {
+      "placeholder": "PERSON_1",
+      "category": "person_names",
+      "occurrences": 2,
+      "originals": [{ "text": "PIERRE DUPONT", "occurrences": 2 }],
+      "reachable": "smart"
+    },
+    {
+      "placeholder": "PERSON_2",
+      "category": "person_names",
+      "occurrences": 2,
+      "originals": [{ "text": "MARTIN DESCHAMPS", "occurrences": 2 }],
+      "reachable": "smart"
+    },
+    {
+      "placeholder": "PERSON_3",
+      "category": "person_names",
+      "occurrences": 2,
+      "originals": [
+        { "text": "Pierre Laventure", "occurrences": 1 },
+        { "text": "PIERRE LAVENTURE", "occurrences": 1 }
+      ],
+      "reachable": "smart",
+      "note": "One Value, two spellings. The ALL-CAPS form is only extracted correctly because a signature rule of underscores is a separator rather than a sentence start, and because a job title terminates a person run instead of joining it."
+    },
+    {
+      "placeholder": "PERSON_4",
+      "category": "person_names",
+      "occurrences": 1,
+      "originals": [{ "text": "THOMAS LAVANDOU", "occurrences": 1 }],
+      "reachable": "smart"
+    },
+    {
+      "placeholder": "WEB_SITE_1",
+      "category": "url",
+      "occurrences": 1,
+      "originals": [{ "text": "www.statistiques.public.lu", "occurrences": 1 }],
+      "reachable": "pattern",
+      "note": "A www. label is a host name and nothing else, so the URL rule matches it without a scheme. A bare word.word is still left alone."
+    },
+    {
+      "placeholder": "WEB_SITE_2",
+      "category": "url",
+      "occurrences": 1,
+      "originals": [{ "text": "www.nstar.lu", "occurrences": 2 }],
+      "reachable": "pattern",
+      "note": "The source carries this string twice; one of the two is the head of www.nstar.lu/privacy below, and longest-match-first is what keeps that one whole. The reference gives the two forms separate placeholders, which is what confirms the resolution order."
+    },
+    {
+      "placeholder": "WEB_SITE_3",
+      "category": "url",
+      "occurrences": 1,
+      "originals": [{ "text": "www.nstar.lu/privacy", "occurrences": 1 }],
+      "reachable": "pattern"
+    },
+    {
+      "placeholder": "IBAN_1",
+      "category": "iban",
+      "occurrences": 1,
+      "originals": [{ "text": "LU88 0055 6600 4321 6501", "occurrences": 1 }],
+      "reachable": "pattern",
+      "note": "Checksum-invalid (mod-97 remainder 74), which is what a synthetic or template document contains and precisely what must still be anonymised. A failed checksum lowers the span's confidence and never vetoes it, and the credit-card rule refuses a candidate preceded by an IBAN head, so the 16-digit interior is not reported as a card that never existed."
+    },
+    {
+      "placeholder": "BIC_1",
+      "category": "bic",
+      "occurrences": 1,
+      "originals": [{ "text": "BABAAXIL", "occurrences": 1 }],
+      "reachable": "pattern",
+      "note": "Matched because it sits beside its own BIC/SWIFT cue. The ISO country code at positions 5 and 6 is not enough on its own: eight and eleven letter English words carry one surprisingly often."
+    },
+    {
+      "placeholder": "VAT_1",
+      "category": "vat",
+      "occurrences": 1,
+      "originals": [{ "text": "LU22224633", "occurrences": 1 }],
+      "reachable": "pattern"
+    },
+    {
+      "placeholder": "PHONE_1",
+      "category": "phone",
+      "occurrences": 1,
+      "originals": [{ "text": "+352 29 19 19 5", "occurrences": 1 }],
+      "reachable": "pattern",
+      "note": "Seven national significant digits: a six-digit base with a one-digit PBX extension. An exactly-nine length rule rejected it, which fails closed and leaves the number in the document."
+    },
+    {
+      "placeholder": "PHONE_2",
+      "category": "phone",
+      "occurrences": 1,
+      "originals": [{ "text": "+352 29 19 19 2100", "occurrences": 1 }],
+      "reachable": "pattern",
+      "note": "Ten national significant digits, the same base with a four-digit extension."
+    }
+  ],
+  "outOfScope": [
+    {
+      "what": "GFS LU999",
+      "why": "The reference leaves it in clear text and replaces only the TVA number beside it. It is a good example of a value only a human or the Local AI finds, and manual declaration already covers it."
+    },
+    {
+      "what": "23 July 2016 and 27 April 2016",
+      "why": "Public statute and regulation dates. The engine replaces them at the advanced level and the reference keeps them, correctly, since a public statute date identifies nobody. Left to the user rather than fixed with a rule: a date-with-legal-cue suppressor would get the engagement date wrong in some other document, and date is already advanced-only and per-category switchable."
+    },
+    {
+      "what": "The reference drops (Partner) in one place and keeps (CEO) and (CIO) in another",
+      "why": "A hand-edit. A job title is either identifying or it is not; it cannot be both in one document. The application keeps role titles consistently."
+    },
+    {
+      "what": "The reference normalises \"Tilleuls ,\" to \"Tilleuls,\"",
+      "why": "The source has a stray space before the comma. Tidying the user's punctuation is not an anonymiser's job, and doing it would make the export differ from the original in a way the user did not ask for."
+    }
+  ]
+}
