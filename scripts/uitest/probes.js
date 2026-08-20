@@ -632,6 +632,101 @@
     },
 
     /**
+     * valuesTabLayout() measures the My values tab's two captioned blocks and its
+     * Ctrl+click selection.
+     *
+     * Three of the four claims here are pixel claims a string test cannot reach.
+     * "The search and the type filter are on one row" and "Clear all is aligned
+     * with Add value" are about laid-out geometry, and a container class only
+     * PREDICTS them: a wrapped flex row renders both controls inside the right
+     * parent and still stacks them. "The type filter is not bold and matches the
+     * add row's own dropdown" is about computed style, which is where a stray
+     * `font-weight: 700` from a shared class survives every markup assertion. And
+     * the selection tint is a colour: the card carries .selected either way, so
+     * only a computed background says whether the user can SEE what they picked.
+     *
+     * The gestures are the real ones: a Ctrl+click on the card's own surface, then
+     * the same click again to let it go. Anything that swallowed the modifier
+     * (a control catching the click, a preventDefault in the wrong place) shows up
+     * as a card that never changes colour.
+     */
+    async valuesTabLayout() {
+      const s = await store();
+      await seed("identify");
+      s.setState({ values: CARD_VALUES.map((v) => ({ ...v })) });
+      await settle();
+
+      const tab = document.querySelector('[data-wstab="values"]');
+      if (!tab) return { error: "no [data-wstab] tabs rendered in the Identify workspace" };
+      tab.click();
+      await settle();
+
+      const captions = [...document.querySelectorAll("#identify-workspace .values-section")]
+        .map((section) => section.querySelector(".section-label")?.textContent?.trim() ?? "");
+
+      const search = document.querySelector("#values-search");
+      const typeFilter = document.querySelector("#values-type");
+      const draft = document.querySelector("#value-draft");
+      const category = document.querySelector("#value-category");
+      const addBtn = document.querySelector("#btn-add-value");
+      const clearBtn = document.querySelector("#btn-clear-values");
+      if (!search || !typeFilter || !draft || !category || !addBtn || !clearBtn) {
+        return { error: "the My values tab is missing one of its filter or add controls" };
+      }
+
+      // Centre lines, not tops: a select and a button of different heights are
+      // still aligned, and comparing tops would report a false failure.
+      const centreY = (el) => {
+        const r = el.getBoundingClientRect();
+        return (r.top + r.bottom) / 2;
+      };
+      const filterRowOffset = Math.round(Math.abs(centreY(search) - centreY(typeFilter)));
+      const addRowOffset = Math.round(Math.abs(centreY(addBtn) - centreY(clearBtn)));
+
+      const filterStyle = getComputedStyle(typeFilter);
+      const categoryStyle = getComputedStyle(category);
+      const weight = (style) => Number.parseInt(style.fontWeight, 10) || 400;
+
+      // The card is picked by Ctrl+click on its own surface. The event is
+      // dispatched on the CARD rather than on a child, because a child is either
+      // a control (which must keep its own meaning) or a text node inside one.
+      const cardFor = (mainText) => [...document.querySelectorAll(".value-card")]
+        .find((c) => c.dataset.mainText === mainText) ?? null;
+      const picked = cardFor("Marie Duval");
+      const other = cardFor("Meridian Consulting");
+      if (!picked || !other) return { error: "the seeded Values did not both render a card" };
+
+      const plainBg = getComputedStyle(picked).backgroundColor;
+      const clearLabelPlain = clearBtn.textContent.trim();
+
+      picked.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true }));
+      await settle();
+
+      const pickedAgain = cardFor("Marie Duval");
+      const selectedBg = pickedAgain ? getComputedStyle(pickedAgain).backgroundColor : "";
+      const selectedCount = document.querySelectorAll(".value-card.selected").length;
+      const othersTinted = getComputedStyle(cardFor("Meridian Consulting")).backgroundColor;
+      const clearLabelPicked = document.querySelector("#btn-clear-values")?.textContent?.trim() ?? "";
+
+      // The way back, through the same gesture: a selection with no undo turns a
+      // mis-click into a destroyed list.
+      pickedAgain.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true }));
+      await settle();
+      const selectedAfterUndo = document.querySelectorAll(".value-card.selected").length;
+      const clearLabelUndone = document.querySelector("#btn-clear-values")?.textContent?.trim() ?? "";
+
+      return {
+        captions,
+        filterRowOffset, addRowOffset,
+        filterWeight: weight(filterStyle), categoryWeight: weight(categoryStyle),
+        filterFontSize: filterStyle.fontSize, categoryFontSize: categoryStyle.fontSize,
+        plainBg, selectedBg, othersTinted,
+        selectedCount, selectedAfterUndo,
+        clearLabelPlain, clearLabelPicked, clearLabelUndone,
+      };
+    },
+
+    /**
      * valueCardGeometry() measures whether a value card's HEIGHT is independent
      * of its data, and whether the list keeps its scroll position across the
      * actions that used to move it.

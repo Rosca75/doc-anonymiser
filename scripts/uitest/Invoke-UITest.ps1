@@ -260,6 +260,7 @@ function Invoke-DevChecks {
                 Test-ImportPreview $cdp
                 Test-ConfigureRail $cdp
                 Test-ValueCardActions $cdp
+                Test-ValuesTabLayout $cdp
                 Test-ValueCardGeometry $cdp
                 Test-SpellingsPopup $cdp
                 Test-SignalDerivations $cdp
@@ -531,6 +532,63 @@ function Test-ValueCardActions([CdpSession]$cdp) {
     Assert-That -Name "the card's remove control deletes the Value" -Condition ($r.removedOne -eq $true) `
         -Expected 'one fewer value in the store' -Actual "$($r.removedOne), values now: $($r.valuesAfter -join ', ')" `
         -Hint 'The .value-remove handler calls deleteValue(category, mainText) from the card dataset.'
+}
+
+# The My values tab reads as two captioned blocks, and a Ctrl+click on a card is
+# VISIBLE. Three pixel claims a markup test can only predict: a flex row that
+# wrapped renders both controls in the right parent and still stacks them; a
+# stray bold weight from a shared class survives every string assertion; and the
+# .selected class is on the element whether or not anything paints, so only a
+# computed background says the user can see what they picked.
+function Test-ValuesTabLayout([CdpSession]$cdp) {
+    Write-Step 'My values reads as two blocks, and a Ctrl+click picks a card visibly'
+    $r = $cdp.Eval('__uiProbes.valuesTabLayout()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the My values layout probe runs' -Condition $false `
+            -Expected "the tab's filter and add controls" -Actual $r.error `
+            -Hint 'views/identifyworkspace.js valuesTab renders the FILTERS and VALUES blocks.'
+        return
+    }
+    Assert-That -Name 'the tab captions its two blocks, filters first' `
+        -Condition ($r.captions.Count -eq 2 -and $r.captions[0] -eq 'Filters' -and $r.captions[1] -eq 'Values') `
+        -Expected 'Filters then Values' -Actual "$($r.captions -join ', ')" `
+        -Hint 'copy.js WORKSPACE.valuesFiltersHeading and valuesHeading, each through ui.js sectionLabel inside its own .values-section.'
+    Assert-That -Name 'the search and the type filter sit on one row' `
+        -Condition ($r.filterRowOffset -le 2) `
+        -Expected 'centre lines within 2px' -Actual "$($r.filterRowOffset)px apart" `
+        -Hint 'style.css .values-toolbar is one flex row. A control that wrapped no longer reads as part of the filter.'
+    Assert-That -Name 'the bulk clear sits on the same row as Add value' `
+        -Condition ($r.addRowOffset -le 2) `
+        -Expected 'centre lines within 2px' -Actual "$($r.addRowOffset)px apart" `
+        -Hint 'Both buttons live in .add-row, with the growing input between them.'
+    Assert-That -Name 'the type filter is not bold' `
+        -Condition ($r.filterWeight -gt 0 -and $r.filterWeight -lt 700) `
+        -Expected 'a regular weight' -Actual "font-weight $($r.filterWeight)" `
+        -Hint 'The filter must not take .head-select, the borderless BOLD spelling reserved for a filter inside a table header row.'
+    Assert-That -Name "the type filter matches the add row's own category dropdown" `
+        -Condition ($r.filterWeight -eq $r.categoryWeight -and $r.filterFontSize -eq $r.categoryFontSize) `
+        -Expected "weight $($r.categoryWeight) at $($r.categoryFontSize)" `
+        -Actual "weight $($r.filterWeight) at $($r.filterFontSize)" `
+        -Hint 'style.css .values-type-filter carries the same size as .add-row select: both are one control picking a category.'
+    Assert-That -Name 'a Ctrl+click tints the card it landed on' `
+        -Condition ($r.selectedBg -eq 'rgb(238, 245, 255)') `
+        -Expected 'rgb(238, 245, 255) (brand.css --selected-bg)' -Actual "$($r.selectedBg)" `
+        -Hint 'style.css .value-card.selected sets the background. A selection the user cannot see is a bulk action aimed at nothing.'
+    Assert-That -Name 'only that card is tinted' `
+        -Condition ($r.selectedCount -eq 1 -and $r.othersTinted -eq $r.plainBg) `
+        -Expected 'one .value-card.selected, the rest unchanged' `
+        -Actual "$($r.selectedCount) selected, neighbour painted $($r.othersTinted)" `
+        -Hint 'toggleValueSelection stores ONE key per Ctrl+click.'
+    Assert-That -Name 'the bulk button says which of its two scopes the next press uses' `
+        -Condition ($r.clearLabelPlain -eq 'Clear all' -and $r.clearLabelPicked -eq 'Clear selected') `
+        -Expected '"Clear all" with nothing picked, "Clear selected" with a card picked' `
+        -Actual "$($r.clearLabelPlain) then $($r.clearLabelPicked)" `
+        -Hint 'clearValuesButton reads the selection, so the label cannot promise a scope the press does not use.'
+    Assert-That -Name 'the same gesture lets the card go again' `
+        -Condition ($r.selectedAfterUndo -eq 0 -and $r.clearLabelUndone -eq 'Clear all') `
+        -Expected 'nothing selected, button back to "Clear all"' `
+        -Actual "$($r.selectedAfterUndo) selected, button $($r.clearLabelUndone)" `
+        -Hint 'Ctrl+click toggles. A selection with no way back turns a mis-click into a destroyed list.'
 }
 
 # A value card keeps its HEIGHT whatever its data, and the list keeps its place.

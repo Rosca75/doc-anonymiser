@@ -808,6 +808,11 @@ export const WORKSPACE = {
   },
 
   // My values: filters, editing, grouping, conflicts and clearing.
+  // The tab is two blocks under two captions, because narrowing the list and
+  // adding to it are different jobs: FILTERS holds the search and the type
+  // filter, VALUES holds the add row and the bulk clear.
+  valuesFiltersHeading: "Filters",
+  valuesHeading: "Values",
   valuesSearchPlaceholder: "search values and spellings",
   valuesSearchLabel: "Filter values by name or spelling",
   valuesAllTypes: "All types",
@@ -818,6 +823,18 @@ export const WORKSPACE = {
   /** clearAllConfirm(n) is the in-app confirm before emptying the list. */
   clearAllConfirm(n) {
     return `Remove all ${n} value${n === 1 ? "" : "s"} from the list? Their spellings go with them. This does not touch the never-anonymise list or the suggestions.`;
+  },
+  // Picking cards with Ctrl+click narrows the bulk clear to what was picked, so
+  // the one button has to SAY which of the two it will do. A button that reads
+  // "Clear all" while a selection is showing would remove values the user just
+  // took the trouble to exclude.
+  clearSelected: "Clear selected",
+  clearSelectedTitle: "Remove the selected values from this list",
+  selectCardHint: "Ctrl+click a card to select it",
+  /** clearSelectedConfirm(n) is the in-app confirm before removing the picked
+   *  cards. It names the count, because the selection scrolls out of sight. */
+  clearSelectedConfirm(n) {
+    return `Remove the ${n} selected value${n === 1 ? "" : "s"} from the list? Their spellings go with them. This does not touch the never-anonymise list or the suggestions.`;
   },
   /** clearedN(n) reports the result of Clear all. */
   clearedN(n) {

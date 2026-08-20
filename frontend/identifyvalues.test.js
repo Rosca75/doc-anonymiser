@@ -84,6 +84,68 @@ test("a shared spelling tints the chip, not the whole name", () => {
   assert.ok(all(html, "button.value-name").every((n) => !n.attrs.class.includes("bad")));
 });
 
+test("the My values tab is two captioned blocks: the filters, then the values", () => {
+  // The two jobs the tab does are narrowing the list and changing it, and the
+  // captions are what keep them apart: a user reaching for the search must not
+  // find the bulk clear in the same visual group.
+  resetState();
+  seed("entity_names", "Acme");
+  const html = valuesTab(getState());
+
+  const sections = all(html, ".values-section");
+  assert.equal(sections.length, 2,
+    `the tab renders a FILTERS block and a VALUES block, got ${sections.length}`);
+  const [filters, values] = sections;
+
+  assert.equal(textOf(filters.inner, ".section-label").trim(), WORKSPACE.valuesFiltersHeading);
+  assert.ok(exists(filters.inner, "input#values-search"), "the search lives under FILTERS");
+  assert.ok(exists(filters.inner, "select#values-type"), "so does the type filter");
+  assert.ok(!exists(filters.inner, "#btn-add-value"), "adding a value is not a filter");
+  assert.ok(!exists(filters.inner, "#btn-clear-values"), "neither is clearing the list");
+
+  assert.equal(textOf(values.inner, ".section-label").trim(), WORKSPACE.valuesHeading);
+  assert.ok(exists(values.inner, "input#value-draft"), "the add field lives under VALUES");
+  assert.ok(exists(values.inner, "select#value-category"), "so does its type dropdown");
+  assert.ok(exists(values.inner, "#btn-add-value"), "so does Add value");
+  assert.ok(exists(values.inner, "#btn-clear-values"), "and so does the bulk clear");
+});
+
+test("the search and the type filter share one row, and the add row carries the bulk clear", () => {
+  // Horizontal alignment is what the row containers are FOR, so the assertion is
+  // about which row each control is in: a control that drops out of .add-row
+  // stops being aligned with Add value however the CSS is written.
+  resetState();
+  seed("entity_names", "Acme");
+  const html = valuesTab(getState());
+
+  const toolbar = one(html, ".values-toolbar");
+  assert.ok(exists(toolbar.inner, "input#values-search"));
+  assert.ok(exists(toolbar.inner, "select#values-type"));
+
+  const addRow = one(html, ".add-row");
+  assert.ok(exists(addRow.inner, "input#value-draft"));
+  assert.ok(exists(addRow.inner, "select#value-category"));
+  assert.ok(exists(addRow.inner, "#btn-add-value"));
+  assert.ok(exists(addRow.inner, "#btn-clear-values"),
+    "Clear all is on the same row as Add value, which is what aligns them");
+});
+
+test("the type filter is drawn as an ordinary select, like the add row's own", () => {
+  // .head-select is the borderless bold caption spelling a filter takes INSIDE a
+  // table header row. Standing under its own caption it would read as a second
+  // heading, and its options would shout while the add row's whisper.
+  resetState();
+  seed("entity_names", "Acme");
+  const filter = one(valuesTab(getState()), "select#values-type");
+
+  const classes = String(filter.attrs.class ?? "").split(/\s+/);
+  assert.ok(!classes.includes("head-select"), "the filter is not a header caption");
+  assert.ok(classes.includes("values-type-filter"), "it wears the plain-select class");
+  assert.match(filter.inner, />All types</, "the neutral option reads in sentence case");
+  assert.match(filter.inner, />Entity names</,
+    "and so does every type, exactly as the add row's dropdown spells them");
+});
+
 test("Clear all is disabled only when the list is empty", () => {
   resetState();
   assert.ok("disabled" in one(valuesTab(getState()), "button#btn-clear-values").attrs,

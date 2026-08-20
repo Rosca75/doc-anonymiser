@@ -194,7 +194,7 @@ test("a new import drops a scope whose document is gone", () => {
 
 // --- Value review reducers -----------------------------------------------
 import {
-  addValues, deleteValue,
+  addValues, deleteValue, deleteValues,
   setValueSpellings, addSpelling, acceptedValues,
   addAllowTerm, removeAllowTerm, clearAllowlist, addPattern, removePattern, validPatterns,
 } from "./state.js";
@@ -267,6 +267,40 @@ test("deleteValue deletes the row", () => {
   addValues([{ category: "entity_names", mainText: "Alpine" }]);
   deleteValue("entity_names", "ALPINE");
   assert.equal(getState().values.length, 0);
+});
+
+test("deleteValues removes exactly the named rows, in one state change", () => {
+  resetState();
+  addValues([
+    { category: "entity_names", mainText: "Alpine" },
+    { category: "entity_names", mainText: "Meridian" },
+    { category: "person_names", mainText: "Marie Duval" },
+  ]);
+
+  // One notification for the whole batch: a bulk clear that repainted per row
+  // would re-wire the cards the next removal is about to delete.
+  let paints = 0;
+  const stop = subscribe(() => { paints += 1; });
+  try {
+    const removed = deleteValues([
+      valueKey("entity_names", "Alpine"),
+      valueKey("person_names", "Marie Duval"),
+    ]);
+    assert.equal(removed, 2, "it reports what it actually removed");
+    assert.equal(paints, 1, `one state change for the batch, got ${paints}`);
+  } finally {
+    stop();
+  }
+  assert.deepEqual(getState().values.map((v) => v.mainText), ["Meridian"]);
+});
+
+test("deleteValues ignores a key for a value that is not there, and reports zero", () => {
+  resetState();
+  addValues([{ category: "entity_names", mainText: "Alpine" }]);
+  assert.equal(deleteValues([]), 0, "nothing named, nothing removed");
+  assert.equal(deleteValues([valueKey("person_names", "Alpine")]), 0,
+    "the same text under another type is a different value");
+  assert.deepEqual(getState().values.map((v) => v.mainText), ["Alpine"]);
 });
 
 test("allowlist add/remove is case-insensitive on identity", () => {

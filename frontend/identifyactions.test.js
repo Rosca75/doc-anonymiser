@@ -15,7 +15,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  resetState, getState, subscribe,
+  resetState, getState, subscribe, answerConfirm,
   addValues, setValueSpellings, valueKey,
 } from "./state.js";
 import { renderIdentifyWorkspace } from "./views/identifyworkspace.js";
@@ -49,6 +49,23 @@ async function openValuesTab(root) {
   const tab = root.querySelector('[data-wstab="values"]');
   assert.ok(tab, "the workspace renders a My values tab");
   await fire(tab, "click");
+
+  // The Ctrl+click selection is view state inside the workspace module, so it
+  // outlives a test the way the active tab does, and a value seeded again under
+  // the same name and type comes back picked. Undone through the real gesture
+  // rather than by reaching into the module: a test that pokes at private state
+  // stops describing what a user can do.
+  for (const picked of root.querySelectorAll(".value-card").filter((c) => c.classList.contains("selected"))) {
+    await fire(picked, "click", { ctrlKey: true });
+  }
+}
+
+/** clearButton(root) is the tab's ONE bulk-removal control, whose label states
+ *  which of its two scopes the next press acts on. */
+function clearButton(root) {
+  const el = root.querySelector("#btn-clear-values");
+  assert.ok(el, "the My values tab renders a bulk clear");
+  return el;
 }
 
 /** card(root, category, mainText) is the rendered card for one Value, found the
@@ -171,6 +188,148 @@ test('"Merge with" folds the two Values into one family', async () => {
     assert.equal(values[0].mainText, "Marie Duval", "the card's own value survives the merge");
     assert.ok(values[0].spellings.includes("Marie Dupont"),
       `the folded value becomes a spelling, got ${JSON.stringify(values[0].spellings)}`);
+  } finally {
+    w.stop();
+  }
+});
+
+test("Ctrl+click picks a card, and Ctrl+click again lets it go", async () => {
+  resetState();
+  seed("entity_names", "Acme");
+  seed("entity_names", "Meridian");
+  const w = workspace();
+  try {
+    await openValuesTab(w.root);
+    await fire(card(w.root, "entity_names", "Acme"), "click", { ctrlKey: true });
+
+    assert.ok(card(w.root, "entity_names", "Acme").classList.contains("selected"),
+      "the picked card is tinted");
+    assert.ok(!card(w.root, "entity_names", "Meridian").classList.contains("selected"),
+      "and only that one is");
+    assert.equal(clearButton(w.root).textContent.trim(), WORKSPACE.clearSelected,
+      "the bulk button says which of its two jobs the next press does");
+
+    // The same gesture is the way back: a selection with no way to undo it turns
+    // a mis-click into a destroyed list.
+    await fire(card(w.root, "entity_names", "Acme"), "click", { ctrlKey: true });
+    assert.ok(!card(w.root, "entity_names", "Acme").classList.contains("selected"),
+      "the second Ctrl+click unpicks it");
+    assert.equal(clearButton(w.root).textContent.trim(), WORKSPACE.clearAll,
+      "with nothing picked the button is back to the whole list");
+  } finally {
+    w.stop();
+  }
+});
+
+test("several cards can be picked at once", async () => {
+  resetState();
+  seed("entity_names", "Acme");
+  seed("entity_names", "Meridian");
+  seed("person_names", "Marie Duval");
+  const w = workspace();
+  try {
+    await openValuesTab(w.root);
+    await fire(card(w.root, "entity_names", "Acme"), "click", { ctrlKey: true });
+    await fire(card(w.root, "person_names", "Marie Duval"), "click", { ctrlKey: true });
+
+    assert.deepEqual(
+      w.root.querySelectorAll(".value-card")
+        .filter((c) => c.classList.contains("selected"))
+        .map((c) => c.dataset.mainText),
+      ["Acme", "Marie Duval"],
+      "picking a second card keeps the first: this is a multi-selection");
+  } finally {
+    w.stop();
+  }
+});
+
+test("a plain click picks nothing, and Ctrl+click on a control does its own job instead", async () => {
+  resetState();
+  seed("entity_names", "Acme");
+  seed("entity_names", "Meridian");
+  const w = workspace();
+  try {
+    await openValuesTab(w.root);
+
+    // Without the modifier the card is untouched: every existing gesture on the
+    // card still means what it meant.
+    await fire(card(w.root, "entity_names", "Acme"), "click");
+    assert.ok(!card(w.root, "entity_names", "Acme").classList.contains("selected"),
+      "a plain click selects nothing");
+
+    // A modifier does not stop a button firing, so a Ctrl+click on Remove must
+    // remove and NOT also select: one gesture, one meaning.
+    await fire(card(w.root, "entity_names", "Acme").querySelector(".value-remove"), "click",
+      { ctrlKey: true });
+    assert.deepEqual(getState().values.map((v) => v.mainText), ["Meridian"],
+      "the control did its own job");
+    assert.equal(clearButton(w.root).textContent.trim(), WORKSPACE.clearAll,
+      "and nothing was picked on the way");
+  } finally {
+    w.stop();
+  }
+});
+
+test("Clear selected removes the picked cards and leaves the rest", async () => {
+  resetState();
+  seed("entity_names", "Acme");
+  seed("entity_names", "Meridian");
+  seed("person_names", "Marie Duval");
+  const w = workspace();
+  try {
+    await openValuesTab(w.root);
+    await fire(card(w.root, "entity_names", "Acme"), "click", { ctrlKey: true });
+    await fire(card(w.root, "person_names", "Marie Duval"), "click", { ctrlKey: true });
+
+    // The confirm is state-backed, so the test answers it the way the modal's
+    // button does. It is answered without awaiting the click first: the handler
+    // is already parked on the question by the time fire() returns its promise.
+    const pressed = fire(clearButton(w.root), "click");
+    answerConfirm(true);
+    await pressed;
+
+    assert.deepEqual(getState().values.map((v) => v.mainText), ["Meridian"],
+      "only the picked values are gone");
+    assert.equal(clearButton(w.root).textContent.trim(), WORKSPACE.clearAll,
+      "the selection is spent, so the button offers the whole list again");
+  } finally {
+    w.stop();
+  }
+});
+
+test("with nothing picked the same button still clears the whole list", async () => {
+  resetState();
+  seed("entity_names", "Acme");
+  seed("entity_names", "Meridian");
+  const w = workspace();
+  try {
+    await openValuesTab(w.root);
+    const pressed = fire(clearButton(w.root), "click");
+    answerConfirm(true);
+    await pressed;
+
+    assert.deepEqual(getState().values, [], "Clear all still empties the list");
+  } finally {
+    w.stop();
+  }
+});
+
+test("a selection does not outlive the value it points at", async () => {
+  // A key left behind by a removal would leave the button reading "Clear
+  // selected" with nothing selected: a press that removes nothing and says
+  // nothing about why.
+  resetState();
+  seed("entity_names", "Acme");
+  seed("entity_names", "Meridian");
+  const w = workspace();
+  try {
+    await openValuesTab(w.root);
+    await fire(card(w.root, "entity_names", "Acme"), "click", { ctrlKey: true });
+    assert.equal(clearButton(w.root).textContent.trim(), WORKSPACE.clearSelected);
+
+    await fire(card(w.root, "entity_names", "Acme").querySelector(".value-remove"), "click");
+    assert.equal(clearButton(w.root).textContent.trim(), WORKSPACE.clearAll,
+      "the removed card takes its selection with it");
   } finally {
     w.stop();
   }

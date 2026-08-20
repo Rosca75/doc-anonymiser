@@ -1175,10 +1175,32 @@ input, select {
 
 /* --- Value editing, filtering and conflicts (My values) ----------------- */
 
-/* The toolbar above the value cards: search, type filter, show/hide spellings
-   and Clear all. It sits with the add row inside the scrolling body. */
+/* The My values tab is two captioned blocks: FILTERS (search and type filter)
+   and VALUES (the add row and the bulk clear). Each block's label sits tight
+   above the controls it names, closer than the body's own 0.9rem rhythm, so it
+   reads as their caption rather than as a row of its own. */
+.values-section { display: flex; flex-direction: column; gap: 0.4rem; }
+/* The rule between the two blocks. Narrowing the list and changing it are
+   different jobs, and the line is what stops a user reaching for the search and
+   finding the bulk clear in the same visual group. */
+.values-section + .values-section {
+  border-top: 1px solid var(--gray-5); padding-top: 0.9rem;
+}
+
+/* The filter row inside the FILTERS block: the search grows, the type filter
+   keeps its own width, and both sit on ONE line. */
 .values-toolbar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 .values-search { flex: 1; min-width: 10rem; }
+/* The type filter is an ordinary bordered select, matched to the add row's
+   category dropdown beside it (.add-row select), because both are the same
+   control doing the same thing: picking a category. It must never take
+   .head-select, which is the borderless bold spelling reserved for a filter
+   sitting inside a table's header row. */
+.values-type-filter {
+  flex: none; padding: 0.5rem 0.65rem; font-size: 0.85rem;
+  color: var(--ink-2); cursor: pointer;
+}
+.values-type-filter.filtered { color: var(--text); }
 
 /* The value name reads as a heading until clicked, when it reveals an input.
    A button, not a span, so it is reachable by keyboard and announces that it
@@ -1228,6 +1250,16 @@ input, select {
 .intersection-note .hint.warn-hint { display: flex; align-items: center; gap: 0.35rem; }
 .intersection-note .hint.warn-hint .icon { flex: none; width: 1rem; height: 1rem; }
 .intersection-note .panel-actions { margin-top: 0.2rem; }
+
+/* A card the user picked with Ctrl+click, so the bulk clear can act on some of
+   the list instead of all of it. The fill is what has to be unmistakable, since
+   it is the only thing saying what the next press will remove, so it wins over
+   the conflict and intersection fills by cascade order. Their BORDERS are given
+   back below: a selected card that would refuse the run still has to look like
+   one, and the two states answer different questions. */
+.value-card.selected { background: var(--selected-bg); border-color: var(--selected-edge); }
+.value-card.selected.intersects { border-color: var(--warn); }
+.value-card.selected.conflicted { border-color: var(--err); }
 
 /* The inline panels a card opens: Group with and Solve conflicts. They live
    inside the card so the value they act on is right above them. */
