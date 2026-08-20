@@ -49,11 +49,20 @@ jobs:
         with:
           go-version: "1.26.x"
 
-      # The GitHub ubuntu image already ships Google Chrome; the harness finds it
-      # on PATH. If a future image drops it, this step says so with a fix.
+      # The GitHub ubuntu image ships BOTH google-chrome and a snap-wrapped
+      # /usr/bin/chromium, and they do not behave the same in a container: the
+      # snap wrapper cannot reach a session bus, so it intermittently never
+      # writes DevToolsActivePort and the harness times out waiting for a
+      # DevTools endpoint that is never going to arrive.
+      #
+      # So this step RESOLVES the browser, proves it runs, and EXPORTS it as
+      # CHROME, which is the override findChromium honours before any search of
+      # its own. Without the export the harness ran its own search, which prefers
+      # the name "chromium", so the job validated one binary and then drove a
+      # different one.
       - name: Locate the browser for the rendering harness
         run: |
-          BROWSER=$(command -v google-chrome || command -v chromium-browser || command -v chromium || true)
+          BROWSER=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium-browser || command -v chromium || true)
           if [ -z "${BROWSER}" ]; then
             echo "::error::No Chromium-family browser on PATH, so the rendering harness cannot run."
             echo "::error::Fix: add an install step (apt-get install -y chromium), or set CHROME to a browser binary."
@@ -61,6 +70,7 @@ jobs:
           fi
           echo "Using ${BROWSER}"
           "${BROWSER}" --version
+          echo "CHROME=${BROWSER}" >> "$GITHUB_ENV"
 
       - name: UI rendering harness (Linux, layer 3)
         run: |
