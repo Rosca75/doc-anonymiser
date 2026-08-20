@@ -937,10 +937,13 @@ var ibanPrefixRe = regexp.MustCompile(`\b[A-Z]{2}[0-9]{2}[ ]?$`)
 // then states the document contained a card that never existed while the IBAN's
 // country code and check digits survive in clear text beside the placeholder.
 //
+// The end offset is part of the shared `reject` signature and unused here: this
+// rule is entirely about what sits in FRONT of the candidate.
+//
 // @param text the whole document working form
-// @param start the match's first byte, @param end one past its last
+// @param start the match's first byte
 // @return true when the span must not be produced
-func precededByIBANPrefix(text string, start, end int) bool {
+func precededByIBANPrefix(text string, start, _ int) bool {
 	// A short window is enough: the head is six bytes at most. Scanning back
 	// further would cost a regex pass over the whole document per candidate.
 	const window = 8
@@ -1049,10 +1052,13 @@ var bicCueRe = regexp.MustCompile(`(?i)\b(?:bic|swift)(?:[ ]?code)?[ ]*[:/=,.\-]
 // real BIC vouch for the next ALL-CAPS word after it too, which is the same
 // false positive the cue exists to remove.
 //
+// The end offset is part of the shared `reject` signature and unused here, for
+// the same reason: the cue is in front of the candidate, never after it.
+//
 // @param text the whole document working form
-// @param start the candidate's first byte, @param end one past its last
+// @param start the candidate's first byte
 // @return true when the span must be rejected
-func bicCueMissing(text string, start, end int) bool {
+func bicCueMissing(text string, start, _ int) bool {
 	const window = 32
 	from := start - window
 	if from < 0 {
