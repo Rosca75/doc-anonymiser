@@ -41,6 +41,7 @@
       <li><a href="#formats">Which files you can import</a></li>
       <li><a href="#steps">The four steps</a></li>
       <li><a href="#detection">How values are found</a></li>
+      <li><a href="#images">Pictures</a></li>
       <li><a href="#placeholders">Placeholders and the re-identification key</a></li>
       <li><a href="#local">Local processing and the optional AI</a></li>
       <li><a href="#trouble">If something goes wrong</a></li>
@@ -131,6 +132,10 @@
 
       <dt>3. Anonymise</dt>
       <dd>
+        Two tabs over the same document, TEXT and IMAGE. TEXT is the words and
+        IMAGE is the pictures, which the anonymisation itself never touches: see
+        Pictures below.
+        <br><br>
         Run the anonymisation and read the result next to the original.
         Replacements are highlighted, and hovering one shows the Value it
         replaced and tints, in the Original pane, every place that Value was
@@ -150,7 +155,9 @@
         file. Word, PowerPoint and Excel documents can also be saved in their
         original format, as a new file. Document properties such as the author
         and the title are shown for review before that copy is written, since
-        they carry names too.
+        they carry names too. That same review states what will happen to the
+        pictures, including when nothing will, so a copy that keeps them all says
+        so before it is written.
       </dd>
     </dl>
   </section>
@@ -232,6 +239,71 @@
     <p>
       When two of these find the same thing, it is ONE suggestion carrying both,
       not two rows to decide about twice.
+    </p>
+  </section>
+
+  <section id="images">
+    <h2>Pictures</h2>
+    <p>
+      Anonymising the words is only half of a Word document or a PowerPoint
+      deck. The client logo, the screenshot of the client's own system, the
+      photo of the team: those carry as much as a sentence does. A copy saved
+      in the original format carries every picture out with it unless you
+      decide otherwise, so the IMAGE tab on step 3 is where you decide.
+    </p>
+    <p>
+      It lists every picture in the selected document with its size, where it
+      appears and what will happen to it. One decision covers every place a
+      picture is used: a logo on five slides is one question, and the row says
+      it appears in five places.
+    </p>
+    <dl>
+      <dt>Keep it</dt>
+      <dd>
+        Where every picture starts, and what happens if you never open this
+        tab.
+      </dd>
+
+      <dt>Replace with a box</dt>
+      <dd>
+        The picture becomes a plain rectangle of the same size carrying a short
+        caption you write, for example "Client logo removed". The original
+        pixels are not in the saved file at all.
+      </dd>
+
+      <dt>Blur</dt>
+      <dd>
+        The picture is broken into blocks, each replaced by its own average
+        colour, and then smoothed. That throws the detail away rather than
+        smearing it, which is why it is not a light blur you can read through.
+        It is still not a guarantee: the shape, the colours and the position of
+        what was there stay visible. For anything that must not be
+        recognisable at all, use a box or remove it.
+      </dd>
+
+      <dt>Remove</dt>
+      <dd>
+        The picture is taken off the page and its bytes are overwritten inside
+        the file. Both halves matter: a picture still in the file that the page
+        no longer draws is a picture anyone can extract.
+      </dd>
+    </dl>
+    <p>
+      An SVG picture cannot be blurred, and the control says why when you hover
+      it: a blur over a drawing leaves every original shape and every original
+      piece of text inside the file, so it would be called anonymising without
+      anonymising anything. A box or a removal works on it.
+    </p>
+    <p>
+      The tab is offered for Word and PowerPoint documents. For a PDF it says
+      so and there is nothing to do: a PDF is saved by rebuilding it from the
+      anonymised text, so every picture in the original is already gone from
+      the file the application writes. Excel workbooks are not reviewed, and
+      text, CSV and Markdown files have no pictures in them.
+    </p>
+    <p>
+      Your decisions are saved with a session, and the exported report names
+      every changed picture, where it appeared and what was done to it.
     </p>
   </section>
 

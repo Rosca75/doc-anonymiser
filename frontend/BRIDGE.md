@@ -317,7 +317,7 @@ anonymised.
 | `imageThumbnail(docName, assetId, maxPx)` | asset ID from the inventory; `maxPx` 0 asks for the default | `{dataUrl, width, height}` |
 | `setImageDecision(docName, assetId, decision)` | a `Decision` (below) | resolves on success; REJECTS a decision the picture cannot carry, naming the reason and the way out of it. A `keep` CLEARS the stored decision |
 | `previewImageTreatment(docName, assetId, decision, maxPx)` | the decision to try, not to record | `{dataUrl, width, height}`: what the export WILL produce. Records nothing |
-| `resetImageDecisions(docName)` | imported document name | resolves on success; the "keep them all" bulk action. Rejects only for a document that is not imported |
+| `resetImageDecisions(docName)` | imported document name | resolves on success; the "keep them all" bulk action. Rejects only for a document that is not imported. **No view calls it yet**, deliberately: the review screen has no bulk control, because with one decision per picture and every picture starting on `keep`, "undo all of them" is a gesture with no failure to recover from, and a button that clears work the user did needs a confirm of its own. The wrapper and the bound method stay, because the alternative to a documented and tested wrapper is discovering at the point of need that the bound method was never reachable; `api.test.js` keeps it honest |
 
 An **image asset** is one picture FILE inside the document archive, and it is
 what a decision attaches to. An **image occurrence** is one PLACE that asset is
@@ -483,7 +483,7 @@ session file exactly like one accepted on Identify.
 |---|---|---|
 | `exportDocumentFormats(name)` | name | offered extensions (default first) for one result document |
 | `saveDocument(name, ext)` | name, ext | opens a save dialog for one document |
-| `getSameFormatMetadata(name, ext)` | name, ext | `{fields, filename}`: document properties with proposed replacements + proposed anonymised filename, for the review panel |
+| `getSameFormatMetadata(name, ext)` | name, ext | `{fields, filename, images?}`: document properties with proposed replacements, the proposed anonymised filename, and what this save will do to the document's PICTURES, for the review panel |
 | `saveSameFormat(name, ext, fields, filename)` | name, ext, reviewed fields, filename | writes the same-format copy with the REVIEWED metadata and filename |
 | `chooseExportFolder()` | — | opens the native FOLDER picker and resolves to the chosen path, or `""` when cancelled. Picks only; writes nothing (BUILD-05 Phase 3) |
 | `exportAllZipTo(dir)` | folder path | writes the batch zip into that folder with NO second dialog and resolves to the full path written. The only dialog-free write in the contract, allowed because the folder was chosen explicitly and the zip carries no re-identification key (decision 4). An existing archive is never overwritten, the new one is numbered |
@@ -494,13 +494,36 @@ session file exactly like one accepted on Identify.
 | `saveSession(request)` | request | persists the session (Values, the never-anonymise list, patterns, settings, registry, the removal list and the spent placeholder numbers). Warn the user first: the file contains the re-identification key |
 | `loadSession()` | — | the `Session` object, or `null` when the user cancels |
 
-The session file is **schema version 8** and nothing else is accepted. Its shape
+`images` is ABSENT for a format with no image review (`.pdf`, `.xlsx`) and for a
+document with no pictures, and the review panel then says nothing about pictures
+at all: a line reading "0 images" on a PDF would contradict the IMAGE tab, which
+says a PDF export has already dropped every picture. When present it is
+`{kept, boxed, blurred, removed}`, counted per ASSET, and the panel states it one
+line above the button that writes the file. The all-kept case is the one that
+earns the line: a user who never opened the IMAGE tab has decided nothing, and
+this is the last surface that can tell them the pictures are leaving exactly as
+they arrived.
+
+The exported REPORT carries the same answer in full. Its JSON gains an `images`
+key, one entry per document that has pictures, shaped
+`{document, kept, anonymised: [{asset, name, locations, treatment, boxText?}]}`,
+and its markdown gains a "Pictures" section. The anonymised pictures are listed
+and the kept ones counted, because a list of everything left alone is noise while
+the count is what tells a reader "no pictures" from "pictures, all kept". It names
+no original value, so it is not part of the re-identification key and needs no
+warning of its own.
+
+The session file is **schema version 9** and nothing else is accepted. Its shape
 is `{version, values, allowTerms, patterns, settings, registry,
-placeholderOverrides, removedValues, retiredPlaceholders}`. A file of any other
+placeholderOverrides, removedValues, retiredPlaceholders, imageDecisions}`. A file
+of any other
 version is REFUSED with an actionable message naming which direction the mismatch
 goes, and never migrated: a session file holds the re-identification key, and a
 half-migrated one silently reassigns placeholders. There is no migration table and
-no compatibility alias anywhere in the loader.
+no compatibility alias anywhere in the loader. Version 8 is refused like every
+other: a v8 file carries no image treatments and a v8 READER ignores the field, so
+either way round the file loads, nothing errors, and the exported document ships a
+picture the user had redacted.
 
 ## Runtime events (push, not request/reply)
 

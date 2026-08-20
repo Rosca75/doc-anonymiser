@@ -223,6 +223,22 @@ unknown height is not a contract.
   pane visibly unchanged. The span is also checked for a size, for sitting inside
   the pane's visible box after being scrolled to, and for `elementFromPoint` at
   its centre, because a tint painted under something else is not a tint.
+- **the IMAGE half's list is the scroll owner, and a picture row keeps its
+  height whatever it has to say.** `imageTabGeometry()` seeds a forty-picture
+  inventory, one of which appears in five places and one in a single place, and
+  measures both views: the tiles and the seven-column details grid. In each it
+  checks that the list scrolls and the PAGE does not, in either direction, that
+  the shared-picture card and the single-place card are exactly the same height,
+  that the seven headings render in order, that the banner sits OUTSIDE the
+  scrolling element so the filter stays reachable from the bottom of the list,
+  that the filter chips carry their live counts, and that the card is inside the
+  viewport. The pair is the check the cheaper layers structurally cannot make: a
+  card that grows when it has more to say moves every card below it, the browser
+  clamps the list's restored scroll offset to the shorter content, and the next
+  repaint snapshots the clamped value. There is no bridge here, so every preview
+  request rejects and the cells read "No preview": that is the point rather than a
+  limitation, because a placeholder cell must reserve the space a picture would or
+  the list reflows the moment a thumbnail lands.
 - **no console error** during the run, collected from
   `Runtime.consoleAPICalled` and `Runtime.exceptionThrown` as they happen.
 

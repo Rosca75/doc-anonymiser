@@ -1309,6 +1309,60 @@ relationship ids referenced by the surviving pictures all resolve.
   a confirm sentence counting them.
 - Every file in the table above describes the code that now exists.
 
+### What B4 left behind that differs from the above
+
+1. **The picture summary travels with the PROPERTIES review, not beside it.**
+   `SameFormatMeta` gained `Images *imaging.Summary`, filled by
+   `GetSameFormatMetadata`, because that is the call the review panel already
+   makes and the panel is the last surface before the file is written. It is
+   ABSENT rather than zeroed for a format with no image review, which is what
+   makes the panel render no line at all: a line reading "0 images" on a PDF
+   would contradict the IMAGE tab, which says a PDF export has already dropped
+   every picture. The counting itself goes through `ImagePlan.Summary`, so the
+   sentence and the pictures the export actually changes cannot disagree.
+2. **The report export split into `reportBytes`**, for the reason
+   `validateCopyText` is split out of `CopyText`: the save goes through the Wails
+   dialog, which refuses a context no lifecycle hook gave it, so the part worth
+   testing has to be reachable headless. The JSON shape EMBEDS `engine.Report`
+   and adds one top-level `images` key, so every field a reader of an earlier
+   report knows stays where it was.
+3. **The picture section's builders live in `backend/app_images.go`**, not in a
+   new file: they read the decision store and the cached inventories that file
+   already owns, and the engine must keep knowing nothing about pictures. The
+   file's header says so.
+4. **The integration table grew a `wantSummary` and a `staysPart` / `staysNames`
+   pair** rather than keeping the hard-coded "one of each treatment" assertion.
+   The pptx case now decides FOUR assets (the SVG pair is boxed, which is what
+   put the companion under the leak guard: disabling companion rewriting makes
+   `TestExportedArchiveKeepsNoOriginalBytes` fail, and before this it did not).
+   The size check moved from `image.DecodeConfig` to `imaging.Measure`, because
+   an SVG companion is now one of the parts under test and only `Measure` can
+   read a vector's size. The remove-beside-a-keep case is the DOCX one, where
+   the legacy VML picture is deleted out of the middle of `word/document.xml`
+   and the picture after it is one nobody decided anything about; the pptx's
+   `staysNames` holds the weaker but still real rule that a box never deletes an
+   element.
+5. **The two archive-integrity companions are `contentTypesCoverEveryPart` and
+   `pictureRelationshipsResolve`.** The second re-scans the PRODUCED archive with
+   the same scanner the bound layer uses and asserts the absence of the
+   `unreadable_part` warning, rather than walking the XML a second time: a second
+   resolver could disagree with the first and then pass an archive the
+   application cannot read.
+6. **`frontend/BRIDGE.md` was NOT already correct.** It still said the session
+   file was schema version 8 and listed its shape without `imageDecisions`, so
+   B4 fixed both. `docs/TESTING.md` gained `image_parity_test.go` in its
+   load-bearing-guards list, which is a name and not a category.
+7. **`README.md`'s same-format paragraph was stale in the other direction**: it
+   promised that "the layout, styles and images are preserved", which after B2
+   is only true until the user decides otherwise. It now points at the Images
+   section instead of promising preservation.
+8. **`resetImageDecisions` still has no view**, and B3's question is answered in
+   `BRIDGE.md` rather than by inventing a control: with one decision per picture
+   and every picture starting on `keep`, "undo all of them" recovers from no
+   failure, and a button that clears work the user did would need a confirm of
+   its own. It sits in the same class as `documentationURL` and `validateValues`,
+   two other wrappers `deadexports` reports as kept alive by their own test.
+
 ---
 
 ## Decisions taken

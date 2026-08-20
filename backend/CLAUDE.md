@@ -290,6 +290,19 @@ NOT cached: they are the largest thing the feature holds.
   once at import and never written, moved or modified. If pure-Go PDF quality
   is unacceptable, the recorded fallback is a wazero WASM extractor (P3), not
   CGo.
+- **The same-format export makes TWO passes over one part, text first and then
+  pictures, deliberately sequential rather than merged.** A merged splice set
+  would have to reconcile a text replacement that falls INSIDE a picture element
+  being deleted (a Word text box lives inside `w:drawing`), and "apply the text,
+  then re-scan the result and apply the pictures" has no such case: the second
+  pass reads bytes the first pass has finished with. That is also why an
+  occurrence is identified by PART plus ORDINAL and never by a byte offset: every
+  offset the import-time scan recorded is stale once the text pass has run, so
+  the picture pass asks `imaging.PicturePlaces` again against the bytes it now
+  holds. The pass also writes REPLACEMENT BYTES for every anonymised asset, not
+  only for a removal, because `rewriteZip` copies an entry it has no rewriter for
+  byte for byte: leaving the media part alone is the leak the feature exists to
+  close (`exportfmt/images.go`).
 
 ## Coding rules
 

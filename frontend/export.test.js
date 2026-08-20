@@ -10,9 +10,10 @@ import assert from "node:assert/strict";
 
 import { outputName, applySession, renderExport } from "./views/export.js";
 import {
-  resetState, getState, smartDetectionOn, enabledSignalSources, signalDerivationOn, SIGNAL_SOURCES,
+  resetState, getState, setMetaReview,
+  smartDetectionOn, enabledSignalSources, signalDerivationOn, SIGNAL_SOURCES,
 } from "./state.js";
-import { exists } from "./testhtml.js";
+import { exists, textOf } from "./testhtml.js";
 
 test("outputName puts _anon before the extension", () => {
   assert.equal(outputName("services-agreement.docx"), "services-agreement_anon.docx");
@@ -126,4 +127,65 @@ test("the Export step has no profile control of its own: Save moved to Identify"
   assert.ok(exists(html, "#map-json"));
   assert.ok(exists(html, "#rep-json"));
   assert.ok(exists(html, "#rep-md"));
+});
+
+/**
+ * renderToString() renders the Export screen into a container that only records
+ * the HTML, so a render assertion needs no DOM. The wiring reads back null and
+ * empty lists, which is what the screen's own guards are written for.
+ */
+function renderToString() {
+  let html = "";
+  const container = {
+    set innerHTML(v) { html = v; },
+    get innerHTML() { return html; },
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+  };
+  renderExport(container);
+  return html;
+}
+
+/** openReview(images) puts one properties review on screen carrying that
+ *  picture summary, which is the shape Go answers GetSameFormatMetadata with. */
+function openReview(images) {
+  resetState();
+  setMetaReview("deck.pptx", {
+    ext: "pptx", filename: "deck_anon.pptx", fields: [], images,
+  });
+  return renderToString();
+}
+
+test("the properties review counts the pictures this copy will change", () => {
+  // The last surface before the file is written, so it is where the count has to
+  // be: after the save there is nothing left to do about it.
+  const html = openReview({ kept: 4, boxed: 1, blurred: 1, removed: 1 });
+  assert.equal(textOf(html, ".image-note"),
+    "3 images will be changed in this copy (1 boxed, 1 blurred, 1 removed).");
+});
+
+test("the properties review says so when the copy keeps every picture", () => {
+  // The important sentence: a user who never opened the IMAGE tab has decided
+  // nothing, and this is the only place they are told that the client logo and
+  // the screenshot of the client's own system are going out untouched.
+  const html = openReview({ kept: 7, boxed: 0, blurred: 0, removed: 0 });
+  assert.equal(textOf(html, ".image-note"),
+    "This copy keeps all 7 of the document's images, exactly as they are.");
+});
+
+test("the properties review names one changed picture in the singular", () => {
+  const html = openReview({ kept: 0, boxed: 0, blurred: 0, removed: 1 });
+  assert.equal(textOf(html, ".image-note"),
+    "1 image will be changed in this copy (1 removed).");
+});
+
+test("the properties review says nothing about pictures for a format with none", () => {
+  // Go answers with no summary at all for a PDF and for an .xlsx, and a line
+  // reading "0 images" on a PDF would contradict the IMAGE tab, which says a PDF
+  // export has already dropped every picture.
+  for (const images of [null, undefined, { kept: 0, boxed: 0, blurred: 0, removed: 0 }]) {
+    const html = openReview(images);
+    assert.equal(exists(html, ".image-note"), false,
+      `a summary of ${JSON.stringify(images)} must render no picture line at all`);
+  }
 });
