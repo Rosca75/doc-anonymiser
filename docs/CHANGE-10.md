@@ -538,6 +538,38 @@ file header so nobody "fixes" it later.
 the thumbnailer; `App.ListDocumentImages` and `App.ImageThumbnail`; the
 `images.docx` / `images.pptx` fixtures. Nothing applies a treatment yet.
 
+B1 left four things that differ from what this section assumed, and they change
+what you write:
+
+1. **The data-URL building lives in the engine, not in the bound method.**
+   `imaging/preview.go` holds `AssetBytes(raw, partName)` and
+   `Preview(raw, asset, maxPx)`; `App.ImageThumbnail` is the thin adapter over
+   them that `backend/CLAUDE.md` requires. Put `PreviewImageTreatment`'s own
+   bytes-to-data-URL step there too rather than in `app_images.go`.
+2. **`Asset` and `Occurrence` carry lowerCamel JSON tags** (`id`, `name`,
+   `format`, `bytes`, `width`, `height`, `companion`, `linked`, `occurrences`;
+   `part`, `ordinal`, `kind`, `location`, `displayCX`, `displayCY`), because
+   Wails would otherwise send Go field names across the bridge. `Decision` and
+   its fields must be tagged the same way. The wire shape is written out in
+   `frontend/BRIDGE.md`.
+3. **`Occurrence.Ordinal` counts EVERY picture occurrence in its part**, in the
+   order the walk finishes each one (a DrawingML blip counts when its element
+   closes, so the SVG extension inside it is already seen; a legacy VML
+   `v:imagedata` counts where it appears). Backgrounds and shape fills are
+   counted too. The export must re-scan with `walkPart` itself, not a private
+   walk, or the ordinals will not line up.
+4. **The bound layer's integration test lives in `backend/`, not in
+   `engine/imaging/`.** Injecting imported documents into the App needs
+   `app.docs`, which is unexported, so a test in package `imaging_test` cannot
+   reach it: `backend/app_images_integration_test.go` covers the bound layer
+   (format dispatch, the cache, a decoding preview) and
+   `backend/engine/imaging/scan_integration_test.go` covers the committed
+   fixtures through the engine. Add B2's export tests the same way.
+5. **A legacy VML picture has no display size.** VML states its size in a CSS
+   `style` attribute the scanner does not parse, so `DisplayCX`/`DisplayCY` are
+   0 there and the box treatment falls through to its 640x480 default. That is
+   the case to keep in mind when you write the box fallback chain.
+
 **Goal:** a decision recorded against an asset changes the .docx / .pptx the user
 exports, and can be previewed exactly as it will come out. Still no UI.
 
@@ -844,7 +876,8 @@ visual property here that the integration tier cannot observe.
 
 **What B2 hands you:** a backend that can list a document's images with their
 current decision (`App.ListDocumentImages`), render a thumbnail
-(`App.ImageThumbnail`), render a PREVIEW of any treatment exactly as the export
+(`App.ImageThumbnail`, already wrapped in `api.js` as `listDocumentImages` and
+`imageThumbnail` since B1, with their contract in `frontend/BRIDGE.md`), render a PREVIEW of any treatment exactly as the export
 will produce it (`App.PreviewImageTreatment`), record a decision
 (`App.SetImageDecision`), clear them all (`App.ResetImageDecisions`), and apply
 them to the same-format export. Nothing in the interface reaches any of it yet.
@@ -1054,7 +1087,9 @@ status mapping, `treatmentAvailable`.
 
 - `image_parity_test.go` (**new**, package `main`): `engine/imaging`'s
   `AllTreatments`, format constants and occurrence kinds are exactly what
-  `state.js` mirrors, in the same order. Same shape as
+  `state.js` mirrors, in the same order. The Go halves of the last two exist
+  since B1 as `imaging.AllFormats` (`png`, `jpeg`, `svg`, `other`) and
+  `imaging.AllKinds` (`picture`, `fill`, `background`). Same shape as
   `detection_parity_test.go`; read that file first and follow it, including how
   it parses the JS.
 - `copy_guard_test.go` and `frontend/copy.test.js` pick up the new strings

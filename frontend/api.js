@@ -346,6 +346,42 @@ export async function checkIntersections(request) {
   return bridge().CheckIntersections(request);
 }
 
+// --- Anonymise: images -------------------------------------------------
+
+/**
+ * listDocumentImages(name) resolves to the picture inventory of one IMPORTED
+ * document:
+ *
+ *   {applicable, reason, assets: [{id, name, format, bytes, width, height,
+ *                                  companion, linked, occurrences: [...]}],
+ *    warnings: [code]}
+ *
+ * It reads the imported document, so it needs no run: the pictures live in the
+ * bytes captured at import, and the user reviews them before as well as after
+ * anonymising the text.
+ *
+ * A format with no image review resolves with `applicable: false` and a reason
+ * CODE ("pdf_images_removed", "format_not_supported"), never a sentence: the
+ * sentence is copy, and copy lives in copy.js. It rejects only for a document
+ * that is not imported or a file that cannot be read.
+ */
+export async function listDocumentImages(name) {
+  return bridge().ListDocumentImages(name);
+}
+
+/**
+ * imageThumbnail(docName, assetId, maxPx) resolves to
+ * {dataUrl, width, height}: one picture's preview, ready for an <img src>.
+ *
+ * maxPx is the longest side; 0 asks for the application default. An SVG picture
+ * comes back as an image/svg+xml data URL and MUST be rendered through an <img>
+ * tag, never inlined into the page as an <svg> element: an <img> context
+ * executes no script and an inlined element does.
+ */
+export async function imageThumbnail(docName, assetId, maxPx) {
+  return bridge().ImageThumbnail(docName, assetId, maxPx);
+}
+
 // --- Run screen -------------------------------------------------
 
 /** runPipeline(request) starts the pipeline; resolves immediately (results

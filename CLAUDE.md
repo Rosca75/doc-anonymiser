@@ -98,6 +98,7 @@ doc-anonymiser/
 │   ├── CLAUDE.md              # backend charter (see above)
 │   ├── app.go                 # Wails bound struct: thin adapters to engine/* and ollama/*
 │   ├── app_values.go / app_detect.go / app_export.go / app_run.go  # method groups
+│   ├── app_images.go          # method group: the picture inventory and previews
 │   ├── engine/                # UI-agnostic anonymisation engine
 │   │   ├── document.go        # Document model, txt/csv/md ingestion
 │   │   ├── csvmd.go           # CSV ⇄ markdown-table conversion (round-trip)
@@ -121,6 +122,10 @@ doc-anonymiser/
 │   │   ├── allowlist.go       # Terms never anonymised
 │   │   ├── report.go          # Per-file / per-category / per-VALUE statistics
 │   │   ├── session.go         # Save/load session state (JSON, schema migrations)
+│   │   ├── imaging/           # pictures: the OOXML picture scanner, the format
+│   │   │                      #   sniffer and the thumbnailer. Its own package
+│   │   │                      #   because convert/ and exportfmt/ both need it
+│   │   │                      #   and neither may own it
 │   │   └── exportfmt/         # same-format export: rewrite of original bytes (docx/pptx/xlsx, pdf experimental)
 │   ├── ollama/
 │   │   └── client.go          # THE ONLY FILE that talks to Ollama (net/http)
