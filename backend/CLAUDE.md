@@ -109,6 +109,17 @@ be enforced anywhere else:
   `ResolveOverlapsWithLosers`, the one place the decision is made, because a
   parallel check can disagree with the pipeline and then describe something
   that did not happen.
+- `engine/presets.go` — presets as scoped DATA. A preset is a row in a table
+  carrying an ID, a family, a SCOPE and the categories it switches on, and
+  `ApplyPreset` is the ONLY writer: it rewrites its own scope and leaves every
+  category outside it untouched, which is what keeps a chip under one rail section
+  from moving a checkbox under another. `MatchingPreset` derives which preset a row
+  reads as rather than storing it, for the reason `SignalSourceEnabled` is derived,
+  and takes the FIRST match in table order so a row cannot flicker between two
+  presets that fill the same set. `DefaultSelection` is the pipeline's fallback and
+  the only caller of the both-scopes builder in the application. Nothing here is
+  consulted at run time: `CategorySelection` is the authority. Mirrored by
+  `frontend/state.js PRESETS`, guarded by `../preset_parity_test.go`.
 - `engine/matchclass.go` — the discovery methods, the match classes
   (`built_in_pattern`, `user_defined`, `rules_discovered`,
   `local_llm_discovered`), `MatchClassRank` (lower wins) and
@@ -258,11 +269,15 @@ an override took. The renames a user made are recorded rather than inferred
 (`Registry.Overrides`) and persist in the session file; **session files are read
 only by the version that wrote them**, so a file whose `SessionVersion` this
 build does not know is refused with an actionable message instead of
-half-migrated. The current version is **10**, and every older one is refused. The
-reason for the move to 10 runs BACKWARDS from the usual one: `Registry.Assign`
-PANICS on a category with no `placeholderLabels` row, so a v9 file written by this
-build carrying a `country_names` Value would be accepted by an older v9 binary and
-crash it on the next run, and the bump turns that crash into the clear
+half-migrated. The current version is **12**, and every older one is refused. The
+reason for the move to 12 is that `level` LEFT the schema and `presets` entered
+it: a single level string cannot say that the pattern categories are at Soft while
+the name categories are at Thorough, which is a selection the scoped chips make in
+two clicks, and the two spellings are not readable as each other in either
+direction. The move to 10 ran BACKWARDS from the usual reason: `Registry.Assign`
+PANICS on a category with no `placeholderLabels` row, so a v9 file written by a
+later build carrying a `country_names` Value would be accepted by an older v9
+binary and crash it on the next run, and the bump turns that crash into the clear
 "written by a different version" refusal. The move to 9 was for the shape of
 failure the rule exists for: a v8 file carries no image treatments and a v8 READER
 ignores the field, so either way round the file loads, nothing errors, and the
@@ -381,6 +396,6 @@ model `qwen3.5:0.8b` (a setting, never hardcoded outside defaults).
 ## Where to look next
 
 - The method surface the frontend calls: `../frontend/BRIDGE.md`.
-- Product/domain rules, anonymisation levels, full pinned-versions table:
+- Product/domain rules, the preset model, full pinned-versions table:
   repo-root `CLAUDE.md`.
 - Frontend rules: `../frontend/CLAUDE.md`.

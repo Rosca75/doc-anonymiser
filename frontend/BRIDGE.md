@@ -166,6 +166,33 @@ There is no cloud route and no `useCloudAI`, on either side.
 display choice: it decides which country-specific regex categories run.
 `applySettings` rejects an unknown code.
 
+`categories` is the per-category selection, and it is the ONLY thing the pipeline
+reads about which categories are on. An absent or empty map means
+`engine.DefaultSelection(country)`, the depth Standard presets in both scopes.
+
+`presets` records which preset each chip ROW is on, keyed `"<scope>.<family>"`
+(`engine.PresetKey`; the scopes are `patterns` and `names`, the only family today
+is `depth`, and the depth IDs are `soft`, `standard` and `thorough`). Flat rather
+than nested so a family added later needs no schema change.
+
+It is a RECORD, never an instruction. Nothing in the pipeline reads it: the rail
+DERIVES it from `categories` (`state.js activePresets`, mirroring
+`engine.MatchingPresets`) and sends both in one payload, so Go can never hold a
+preset that disagrees with the selection it was given. A row whose selection
+matches no preset contributes NO KEY, which is how "Custom" is representable at
+all; an empty map is therefore valid and means Custom on every row.
+
+`applySettings` REFUSES an unknown scope, family or preset ID and names what is
+valid, for the reason it refuses an unknown signal derivation: stored, the key
+would be one nothing reads for the rest of the session.
+
+The preset TABLE itself is `engine.AllPresets`, mirrored by `state.js PRESETS`
+and guarded by `../preset_parity_test.go`: the same rows, in the same ORDER
+(which is both the chips' display order and the first-match rule behind the
+derivation), filling the same categories. A preset writes only the categories of
+its own scope, which is what stops a chip in one rail section from changing a
+checkbox in another.
+
 ## Allowlist (never-anonymise terms)
 
 | `api.js` wrapper | Args | Resolves to |

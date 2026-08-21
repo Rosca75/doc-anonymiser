@@ -57,7 +57,7 @@ func TestExtendedRecognizerCategories(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spans := DetectPIISelected(tt.text, PresetSelection(LevelSoft), tt.country)
+			spans := DetectPIISelected(tt.text, DepthSelection(PresetSoft, tt.country), tt.country)
 			var got []string
 			for _, s := range spans {
 				if s.Category == tt.category {
@@ -177,20 +177,20 @@ func TestIPv4Range(t *testing.T) {
 	}
 }
 
-// TestExtendedRecognizersAtEveryLevel: hard-PII additions fire at soft,
-// medium and advanced levels alike (no regression against the level matrix).
-func TestExtendedRecognizersAtEveryLevel(t *testing.T) {
+// TestExtendedRecognizersAtEveryDepth: the hard-PII additions fire at every
+// depth preset alike, which is what "hard PII" means here.
+func TestExtendedRecognizersAtEveryDepth(t *testing.T) {
 	text := "card 4532 0151 1283 0366; ip 192.168.0.1; dsn postgres://u:p@h/d"
-	for _, level := range []Level{LevelSoft, LevelMedium, LevelAdvanced} {
-		spans := DetectPIISelected(text, PresetSelection(level), CountryLU)
+	for _, id := range PresetIDsFor(ScopePatterns, FamilyDepth) {
+		spans := DetectPIISelected(text, DepthSelection(id, CountryLU), CountryLU)
 		if !hasCategory(spans, CatCreditCard) {
-			t.Errorf("credit card must fire at level %s, spans: %+v", level, spans)
+			t.Errorf("credit card must fire at the %s preset, spans: %+v", id, spans)
 		}
 		if !hasCategory(spans, CatIPAddress) {
-			t.Errorf("ip must fire at level %s", level)
+			t.Errorf("ip must fire at the %s preset", id)
 		}
 		if !hasCategory(spans, CatDatabaseURI) {
-			t.Errorf("database uri must fire at level %s", level)
+			t.Errorf("database uri must fire at the %s preset", id)
 		}
 	}
 }
@@ -199,7 +199,7 @@ func TestExtendedRecognizersAtEveryLevel(t *testing.T) {
 // (or 1.0 after a context-word boost cap).
 func TestConfidenceDefaults(t *testing.T) {
 	text := "contact marie.duval@example.com or +352 621 000 111 today"
-	for _, s := range DetectPIISelected(text, PresetSelection(LevelSoft), CountryLU) {
+	for _, s := range DetectPIISelected(text, DepthSelection(PresetSoft, CountryLU), CountryLU) {
 		if s.Confidence < ConfidenceDeterministic || s.Confidence > 1.0 {
 			t.Errorf("span %+v has out-of-range confidence %v", s, s.Confidence)
 		}
@@ -213,20 +213,29 @@ func TestConfidenceDefaults(t *testing.T) {
 	}
 }
 
-// TestNewCategoriesInPresets: every new category is in AllPIICategories
-// and in the default (soft) preset.
-func TestNewCategoriesInPresets(t *testing.T) {
-	newCats := []string{
+// TestExtendedCategoriesAreInEveryDepthPreset: every extended recognizer is in
+// AllPIICategories and named by every depth preset in the patterns scope,
+// because they are hard PII.
+//
+// It reads the preset TABLE rather than a selection, on purpose: three of them
+// are national identifiers, so the selection a document actually gets has them
+// scoped to that document's country (DepthSelection). What must hold at every
+// depth is that the preset NAMES them, which is the thing a new recognizer is
+// forgotten from.
+func TestExtendedCategoriesAreInEveryDepthPreset(t *testing.T) {
+	extended := []string{
 		CatCreditCard, CatNHS, CatIPAddress, CatMACAddress, CatCrypto,
 		CatDatabaseURI, CatDESteuerID, CatESNIF,
 	}
 	all := strings.Join(AllPIICategories, ",")
-	for _, c := range newCats {
+	for _, c := range extended {
 		if !strings.Contains(all, c) {
 			t.Errorf("%s missing from AllPIICategories", c)
 		}
-		if !PresetSelection(LevelSoft)[c] {
-			t.Errorf("%s must be on at soft (it is hard PII)", c)
+		for _, preset := range PresetsFor(ScopePatterns, FamilyDepth) {
+			if !contains(preset.Categories, c) {
+				t.Errorf("%s must be named by the %s preset (it is hard PII)", c, preset.ID)
+			}
 		}
 	}
 }

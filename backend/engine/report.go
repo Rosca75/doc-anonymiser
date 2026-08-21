@@ -50,10 +50,18 @@ type DocumentReport struct {
 
 // Report aggregates a whole pipeline run.
 type Report struct {
-	GeneratedAt       time.Time      `json:"generatedAt"`
-	Level             Level          `json:"level"`
-	TotalReplacements int            `json:"totalReplacements"`
-	ByCategory        map[string]int `json:"byCategory"`
+	GeneratedAt time.Time `json:"generatedAt"`
+	// Presets names the preset each chip row's selection matched, keyed exactly
+	// as the settings are ("<scope>.<family>" to preset ID). A row with NO key
+	// read as Custom, which is a fact worth reporting rather than one to
+	// invent a name for.
+	//
+	// It is DERIVED by Run from the selection the run obeyed (MatchingPresets),
+	// never carried in beside it, so the report cannot name a preset the run did
+	// not use.
+	Presets           map[string]string `json:"presets,omitempty"`
+	TotalReplacements int               `json:"totalReplacements"`
+	ByCategory        map[string]int    `json:"byCategory"`
 	// Values lists every replaced value across the whole run, most frequent
 	// first. This is what the Anonymise screen's report shows and what the
 	// exported report was missing.
@@ -83,7 +91,18 @@ func (r *Report) ToMarkdown() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Anonymisation report\n\n")
 	fmt.Fprintf(&b, "- Generated: %s\n", r.GeneratedAt.Format("2006-01-02 15:04:05"))
-	fmt.Fprintf(&b, "- Level: %s\n", r.Level)
+	for _, key := range sortedPresetKeys(r.Presets) {
+		// The row's key and the preset's LABEL, because the label is what the
+		// user pressed. A row that read as Custom has no key here and so no
+		// line, which is the honest answer.
+		label := r.Presets[key]
+		if scope, family, ok := SplitPresetKey(key); ok {
+			if preset, found := FindPreset(scope, family, r.Presets[key]); found {
+				label = preset.Label
+			}
+		}
+		fmt.Fprintf(&b, "- Preset (%s): %s\n", key, label)
+	}
 	fmt.Fprintf(&b, "- Documents processed: %d\n", len(r.Documents))
 	fmt.Fprintf(&b, "- Total replacements: %d\n", r.TotalReplacements)
 	fmt.Fprintf(&b, "- Duration: %d ms\n\n", r.DurationMS)
@@ -130,6 +149,18 @@ func escapeCell(s string) string {
 
 // sortedKeys returns map keys alphabetically — deterministic reports make
 // stable golden tests and diffs.
+// sortedPresetKeys is sortedKeys for the preset map. A second function rather
+// than a generic one, because the two maps are read in different loops and a
+// shared helper here would be a type parameter for no gain.
+func sortedPresetKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for key := range m {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func sortedKeys(m map[string]int) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

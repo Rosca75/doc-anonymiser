@@ -63,12 +63,12 @@ type PipelineInput struct {
 	Documents []Document
 	Values    []Value
 	Patterns  []CustomPattern
-	// Level is the preset shorthand; kept for reports and as the fallback
-	// when Categories is nil.
-	Level Level
-	// Categories is the granular switch set the pipeline obeys
-	// nil means "use PresetSelection(Level)", which
-	// reproduces the v1 behaviour byte for byte.
+	// Categories is the granular switch set the pipeline obeys, and the ONLY
+	// thing it reads about which categories are on. A preset is a shortcut that
+	// WRITES this map (presets.go); no preset is consulted here.
+	//
+	// nil means "use DefaultSelection(Country)", the depth Standard presets in
+	// both scopes plus the always-on categories.
 	Categories CategorySelection
 	// MinConfidence drops every detected span scoring below it, on the
 	//  scale. 0 (the default) keeps
@@ -209,8 +209,8 @@ const (
 // CategorySelection is the granular per-category switch set the pipeline
 // obeys: every PII category (email, url, iban, vat,
 // matricule, phone, amount, date) and every value category maps to on/off.
-// Levels are PRESETS that fill this map (PresetSelection); the UI may then
-// flip individual switches ("custom" mode).
+// Presets are shortcuts that fill this map (presets.go ApplyPreset); the UI may
+// then flip individual switches, at which point its row reads "Custom".
 type CategorySelection map[string]bool
 
 // AllPIICategories lists the pass-1 categories in a stable order (used by
@@ -271,52 +271,6 @@ func unrecognisedValueWarnings(values []Value) []string {
 	return warnings
 }
 
-// PresetSelection fills a CategorySelection from a level (CLAUDE.md §5):
-//
-//	soft     = hard PII + value, project and identifier names + custom patterns
-//	medium   = soft + person, product and brand names (the default)
-//	advanced = medium + amounts, dates and other names
-//
-// The tiers are ordered by how much ordinary text each risks catching.
-// identifier_names is code-shaped and near-PII, so it sits with the hard group.
-// product_names and brand_names can catch a PUBLIC product name, which is a
-// per-document allowlist decision rather than a mistake, so they wait for
-// medium. other_names is the noisiest by definition, so it waits for advanced.
-func PresetSelection(level Level) CategorySelection {
-	sel := CategorySelection{
-		CatEmail: true, CatURL: true, CatIBAN: true, CatVAT: true,
-		CatMatricule: true, CatPhone: true,
-		CatCreditCard: true, CatNHS: true, CatIPAddress: true,
-		CatMACAddress: true, CatCrypto: true, CatDatabaseURI: true,
-		CatDESteuerID: true, CatESNIF: true,
-		// A BIC identifies a bank account's institution and travels beside the
-		// IBAN it belongs to, so it is hard PII and fires at every level.
-		CatBIC:         true,
-		CatEntityNames: true, CatProjectNames: true, CatIdentifierNames: true,
-		CatCustomPatterns: true,
-	}
-	if level == LevelMedium || level == LevelAdvanced {
-		sel[CatPersonNames] = true
-		sel[CatProductNames] = true
-		sel[CatBrandNames] = true
-	}
-	if level == LevelAdvanced {
-		sel[CatAmount] = true
-		sel[CatDate] = true
-		sel[CatOtherNames] = true
-		// Locations, and the context values that read like locations. CLAUDE.md
-		// §5 puts location names at advanced, and a street address, a postal code
-		// and a country are all locations; a nationality and a business sector
-		// are the same kind of context value, identifying only in combination.
-		sel[CatAddress] = true
-		sel[CatPostalCode] = true
-		sel[CatCountryNames] = true
-		sel[CatNationalityNames] = true
-		sel[CatBusinessSectorNames] = true
-	}
-	return sel
-}
-
 // Run executes the full pipeline over all documents. It returns partial
 // results with an error only for context cancellation; per-document
 // problems degrade to warnings instead of failing the batch.
@@ -326,24 +280,24 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 	if reg == nil {
 		reg = NewRegistry()
 	}
-	if in.Level == "" {
-		in.Level = LevelMedium // the documented default
-	}
 	if in.Country == "" {
 		in.Country = CountryLU
 	}
-	// The granular selection is what the pipeline obeys; a nil selection
-	// falls back to the level preset (v1-equivalent behaviour).
+	// The granular selection is what the pipeline obeys; a nil selection falls
+	// back to the documented default, which is the depth Standard presets.
 	sel := in.Categories
 	if sel == nil {
-		sel = PresetSelection(in.Level)
+		sel = DefaultSelection(in.Country)
 	}
 
 	res := &Results{
 		Report: Report{
 			GeneratedAt: time.Now(),
-			Level:       in.Level,
-			ByCategory:  map[string]int{},
+			// DERIVED from the selection the run obeys, not carried alongside
+			// it: a report naming a preset the run did not use would be worse
+			// than a report naming none.
+			Presets:    MatchingPresets(sel, in.Country),
+			ByCategory: map[string]int{},
 		},
 	}
 

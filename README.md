@@ -70,9 +70,11 @@ Suggestion silently answers "reject" on your behalf.
    - **Built-in patterns** (on, and needs nothing installed) finds structured
      signals: emails, phone numbers, VAT numbers, IBANs. Those are matched and
      replaced directly, because a pattern is not a guess. This section also holds
-     the scope every route reads: the document country, the preset (Soft,
-     Standard the default, or Thorough) and the categories, in eight groups from
-     contact details to credentials.
+     its own scope: the document country, its **preset** row (Soft, Standard the
+     default, or Thorough) and the categories, in eight groups from contact
+     details to credentials. A preset here changes only this section's
+     checkboxes; each section has its own preset row, so pressing a chip never
+     moves a switch somewhere you cannot see.
 
      *Signal-based suggestions* live on the row of the pattern that produces the
      evidence, because that is what they read: an address like

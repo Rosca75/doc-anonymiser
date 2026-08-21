@@ -28,7 +28,7 @@ func runWith(t *testing.T, minConfidence float32) string {
 			// A value accepted from a local model Suggestion: lower trust.
 			{Category: "person_names", MainText: "Anouk Berger", DiscoveryMethods: []string{MethodLocalLLM}, Confidence: ConfidenceLLMDefault},
 		},
-		Level:         LevelMedium,
+		Categories:    DepthSelection(PresetStandard, CountryLU),
 		MinConfidence: minConfidence,
 		Allowlist:     NewEmptyAllowlist(),
 	})
@@ -72,7 +72,7 @@ func TestMinConfidenceAboveUserTierKeepsPatternMatchesOnly(t *testing.T) {
 			Markdown: "Marie Duval, marie@example.com\n",
 		}},
 		Values:        []Value{{Category: "person_names", MainText: "Marie Duval"}},
-		Level:         LevelMedium,
+		Categories:    DepthSelection(PresetStandard, CountryLU),
 		MinConfidence: 0.99,
 		Allowlist:     NewEmptyAllowlist(),
 	})

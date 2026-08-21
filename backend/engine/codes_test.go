@@ -147,7 +147,7 @@ Card 4111 1111 1111 1111 was charged EUR 12,500 on 2026-01-15.
 German tax ID 12 345 678 901 and Spanish NIF 12345678Z apply.
 Ref. INV-88213 covers the project ATLAS-2024.`
 
-	sel := PresetSelection(LevelAdvanced)
+	sel := DepthSelection(PresetThorough, CountryLU)
 	pii := DetectPIISelected(fixture, sel, CountryLU)
 
 	for _, code := range DetectCodes(fixture, NewEmptyAllowlist()) {

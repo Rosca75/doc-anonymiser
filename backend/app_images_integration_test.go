@@ -170,7 +170,7 @@ func TestSameFormatExportHonoursTheImageDecisions(t *testing.T) {
 		app := importFixture(t, "images.pptx")
 		if _, err := app.FastRerun(RunRequest{
 			Values:     []engine.Value{{Category: "entity_names", MainText: "Alpine Trust"}},
-			Categories: engine.PresetSelection(engine.LevelMedium),
+			Categories: engine.DepthSelection(engine.PresetStandard, engine.CountryLU),
 		}); err != nil {
 			t.Fatalf("the run the export replays failed: %v", err)
 		}

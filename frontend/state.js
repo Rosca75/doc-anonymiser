@@ -12,6 +12,7 @@
 
 import {
   COUNTRIES, DEFAULT_COUNTRY, countryIDCategories, COUNTRY_ID_CATEGORIES,
+  categoryAppliesTo,
 } from "./countries.js";
 // repend lives beside pendingExpansions, which is the half that READS the
 // sentinel it writes. Keeping the two in one module is what makes the invariant
@@ -85,10 +86,12 @@ const initialState = {
   documentCountry: DEFAULT_COUNTRY,
 
   // Settings mirror (source of truth lives in Go; this copy renders the
-  // Configure screen): {level, categories, ollamaPort, model}. level is
-  // the LAST CHOSEN PRESET; categories is the granular switch set the
-  // pipeline obeys. The categories map is filled below
-  // after presetCategories is defined.
+  // Identify rail): {categories, ollamaPort, model, ...}. categories is the
+  // granular switch set the pipeline obeys, and it is the ONLY record of the
+  // scope: which preset each chip row is on is DERIVED from it (activePreset),
+  // never stored beside it, because a stored summary can disagree with the set
+  // it summarises. The categories map is filled below, once the preset table
+  // and defaultCategories are defined.
   // THE THREE DETECTION ROUTES. Each is one mechanism with one switch, and
   // every switch here is a real stored flag: a section switch must be the flag
   // it claims to be, or the section can read "On" while nothing it names runs.
@@ -109,9 +112,9 @@ const initialState = {
   //                   Ollama ENABLES the switch, it never flips it: turning on
   //                   a route that sends the document to a model, however
   //                   local, is the user's decision to make.
-  // The scope the routes share (the categories, the preset, the document
-  // country) and the confidence floor are settings of their own, read by
-  // whichever route is on rather than owned by one of them.
+  // The scope the routes share (the categories and the document country) and
+  // the confidence floor are settings of their own, read by whichever route is
+  // on rather than owned by one of them.
   // llmStrictFormat asks the local model to answer for EVERY category instead of
   //   only the ones it thought of. OFF by default: it sometimes finds a little
   //   more, and usually takes about twice as long.
@@ -124,7 +127,7 @@ const initialState = {
   // 1 on the engine's scale. 0 is the default and keeps every detection,
   // which is exactly the behaviour before the setting existed.
   settings: {
-    level: "medium", categories: null, ollamaPort: 11434, model: "", country: DEFAULT_COUNTRY,
+    categories: null, ollamaPort: 11434, model: "", country: DEFAULT_COUNTRY,
     contextSize: 8192, useLocalLLM: false, llmStrictFormat: false,
     llmDetailLevel: "thorough",
     useBuiltInPatterns: true, useHeuristicDiscovery: true,
@@ -354,31 +357,28 @@ export const HARD_PII_CATEGORIES = [
 // COUNTRIES_BY_CODE is the membership check setDocumentCountry needs: a Set
 // rather than a repeated find(), and built once at module load.
 const COUNTRIES_BY_CODE = new Set(COUNTRIES.map((c) => c.code));
-// The extended recognizers added to the engine. They are HARD
-// PII exactly like the group above, so every preset switches them on
-// (engine/pipeline.go PresetSelection).  finally surfaces
-// them in the Configure screen; until then they were detectable but
-// invisible, which is why the list is separate rather than merged: the
-// Configure screen shows them as their own group.
+// The extended recognizers. They are HARD PII exactly like the group above, so
+// every depth preset switches them on (the PRESETS table below). The list is
+// separate rather than merged because the rail shows them as their own group.
 export const EXTENDED_PII_CATEGORIES = [
   "credit_card", "uk_nhs", "ip_address", "mac_address",
   "crypto", "database_uri", "de_steuer_id", "es_nif",
 ];
-// The advanced regex categories: amounts, dates, and the two LOCATION shapes a
-// pattern can anchor (CLAUDE.md §5 puts location names at advanced). A street
-// address and a postal code are country-scoped in engine/country.go, so outside
-// their countries the row renders DISABLED rather than hidden.
-export const ADVANCED_PII_CATEGORIES = ["amount", "date", "address", "postal_code"];
-// The categories a DETECTOR or a manual entry can produce, split by the preset
-// tier that first switches them on. Together they mirror
-// engine.AllEntityCategories, enforced by ../category_parity_test.go.
+// The pattern categories only the Thorough depth adds: amounts, dates, and the
+// two LOCATION shapes a pattern can anchor. A street address and a postal code
+// are country-scoped in engine/country.go, so outside their countries the row
+// renders DISABLED rather than hidden.
+export const THOROUGH_PII_CATEGORIES = ["amount", "date", "address", "postal_code"];
+// The categories a DETECTOR or a manual entry can produce, split by the depth
+// preset that first switches each group on. Together they mirror
+// engine.AllValueCategories, enforced by ../category_parity_test.go.
 export const SOFT_NAME_CATEGORIES = ["entity_names", "project_names", "identifier_names"];
-export const MEDIUM_NAME_CATEGORIES = ["person_names", "product_names", "brand_names"];
-export const ADVANCED_NAME_CATEGORIES = [
+export const STANDARD_NAME_CATEGORIES = ["person_names", "product_names", "brand_names"];
+export const THOROUGH_NAME_CATEGORIES = [
   "other_names", "country_names", "nationality_names", "business_sector_names",
 ];
 export const NAME_CATEGORIES = [
-  ...SOFT_NAME_CATEGORIES, ...MEDIUM_NAME_CATEGORIES, ...ADVANCED_NAME_CATEGORIES,
+  ...SOFT_NAME_CATEGORIES, ...STANDARD_NAME_CATEGORIES, ...THOROUGH_NAME_CATEGORIES,
 ];
 // custom_patterns is the user's own regex. It is DECLARATIVE rather than
 // detected, which is why it sits on its own: its editor is the workspace's
@@ -409,7 +409,7 @@ export function adoptCategories(categories) {
   return out;
 }
 export const ALL_CATEGORIES = [
-  ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES, ...ADVANCED_PII_CATEGORIES,
+  ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES, ...THOROUGH_PII_CATEGORIES,
   ...NAME_CATEGORIES, ...DECLARED_CATEGORIES,
 ];
 
@@ -629,31 +629,245 @@ export function setSignalSource(source, on) {
   return true;
 }
 
+// --- Presets: the mirrored engine table ----------------------------------
+//
+// A preset is a SHORTCUT and nothing more: it WRITES the category selection, and
+// the selection is the authority from then on. Nothing here is consulted at run
+// time, on either side of the bridge.
+//
+// PRESET_SCOPES mirrors engine.AllPresetScopes and PRESETS mirrors
+// engine.AllPresets, row for row and in the same order; both are guarded by
+// ../preset_parity_test.go, exactly as the categories are. The table is DATA so a
+// preset family can be added without a view changing: adding one is a row per
+// scope here and the matching row in engine/presets.go.
+
+/** The two SCOPES: which half of the rail a preset may write. Named constants as
+ *  well as a list, so a view addresses a scope by name and never by position in
+ *  the list, which is the arithmetic that silently re-points a caller when the
+ *  order changes. */
+export const PRESET_SCOPE_PATTERNS = "patterns";
+export const PRESET_SCOPE_NAMES = "names";
+export const PRESET_SCOPES = [PRESET_SCOPE_PATTERNS, PRESET_SCOPE_NAMES];
+
+/** PRESET_FAMILY_DEPTH: the depth family, how much ordinary text the selection
+ *  risks catching. The only family today; a regulatory family beside it is a
+ *  table row, not a rewrite. */
+export const PRESET_FAMILY_DEPTH = "depth";
+
+// PRESET_STANDARD is the depth a fresh session starts on, and the only preset ID
+// this module names: every other one is read out of the table below. It is an
+// IDENTIFIER, persisted in the session file and the profile file, so it is never
+// renamed to follow a label.
+const PRESET_STANDARD = "standard";
+
+// PRESETS is the table. Each row names the categories it switches ON inside its
+// own scope; every other category in that scope goes off and every category
+// outside it is left alone.
+//
+// The category lists are the SPREAD constants above rather than a second copy of
+// the keys, so a recogniser added to a tier arrives here too. The labels live
+// here as well, which is what lets the rail render a chip row from the table
+// instead of a hand-written list beside it.
+//
+// The scope, family and id are written as LITERALS rather than as the constants
+// above, and they have to stay that way: ../preset_parity_test.go reads this table
+// out of the source to compare it against the Go one, and it resolves spreads for
+// the categories only. A constant here would parse as an empty field and the guard
+// would report a row that does not match anything.
+//
+// Soft and Standard are IDENTICAL in the patterns scope, and that is a fact about
+// the depths rather than a bug: Standard differs from Soft only in the name
+// categories. activePreset returns the FIRST match in this order, so the row reads
+// Soft instead of flickering between two chips that both match.
+export const PRESETS = [
+  {
+    scope: "patterns", family: "depth", id: "soft", label: "Soft",
+    categories: [...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES],
+  },
+  {
+    scope: "patterns", family: "depth", id: "standard", label: "Standard",
+    categories: [...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES],
+  },
+  {
+    scope: "patterns", family: "depth", id: "thorough", label: "Thorough",
+    categories: [
+      ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES, ...THOROUGH_PII_CATEGORIES,
+    ],
+  },
+  {
+    scope: "names", family: "depth", id: "soft", label: "Soft",
+    categories: [...SOFT_NAME_CATEGORIES],
+  },
+  {
+    scope: "names", family: "depth", id: "standard", label: "Standard",
+    categories: [...SOFT_NAME_CATEGORIES, ...STANDARD_NAME_CATEGORIES],
+  },
+  {
+    scope: "names", family: "depth", id: "thorough", label: "Thorough",
+    categories: [
+      ...SOFT_NAME_CATEGORIES, ...STANDARD_NAME_CATEGORIES, ...THOROUGH_NAME_CATEGORIES,
+    ],
+  },
+];
+
 /**
- * presetCategories(level) mirrors engine.PresetSelection exactly:
+ * presetScopeCategories(scope) is the set of categories a scope OWNS: the only
+ * keys a preset in it may name, and the only ones applyPreset writes. Mirrors
+ * engine.PresetScopeCategories.
  *
- *   soft hard and extended PII + entity, project and identifier names
- *            + custom patterns
- *   medium soft + person, product and brand names (the default)
- *   advanced medium + amounts, dates and other names
+ * ALWAYS_ON_CATEGORIES belong to no scope, because they have no switch: a preset
+ * that could clear one would be a pattern editor whose patterns never run.
  *
- * @param {string} level "soft", "medium" or "advanced"
- * @returns {object} every category in ALL_CATEGORIES mapped to on/off
+ * @param {string} scope "patterns" or "names"
+ * @returns {string[]} the scope's own category keys, or [] for an unknown scope
  */
-export function presetCategories(level) {
-  const sel = {};
-  for (const c of ALL_CATEGORIES) sel[c] = false;
-  const on = [
-    ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES,
-    ...SOFT_NAME_CATEGORIES, ...DECLARED_CATEGORIES,
-  ];
-  if (level === "medium" || level === "advanced") on.push(...MEDIUM_NAME_CATEGORIES);
-  if (level === "advanced") on.push(...ADVANCED_PII_CATEGORIES, ...ADVANCED_NAME_CATEGORIES);
-  for (const c of on) sel[c] = true;
-  return sel;
+export function presetScopeCategories(scope) {
+  if (scope === PRESET_SCOPE_PATTERNS) {
+    return [
+      ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES, ...THOROUGH_PII_CATEGORIES,
+    ];
+  }
+  if (scope === PRESET_SCOPE_NAMES) {
+    return NAME_CATEGORIES.filter((c) => !ALWAYS_ON_CATEGORIES.includes(c));
+  }
+  return [];
 }
 
-initialState.settings.categories = presetCategories("medium");
+/**
+ * presetFamilies(scope) lists the families with at least one preset in scope, in
+ * table order. The rail renders one chip ROW per entry, so a family with nothing
+ * behind it in this scope gets no row rather than an empty one.
+ * @param {string} scope
+ * @returns {string[]}
+ */
+export function presetFamilies(scope) {
+  const out = [];
+  for (const preset of PRESETS) {
+    if (preset.scope === scope && !out.includes(preset.family)) out.push(preset.family);
+  }
+  return out;
+}
+
+/**
+ * presetsFor(scope, family) is one row's presets in display order, which is also
+ * activePreset's first-match order.
+ * @param {string} scope
+ * @param {string} family
+ * @returns {Array<object>}
+ */
+export function presetsFor(scope, family) {
+  return PRESETS.filter((p) => p.scope === scope && p.family === family);
+}
+
+/**
+ * findPreset(scope, family, id) resolves one chip, or null for a combination the
+ * table does not hold. A caller must refuse rather than apply a missing preset,
+ * which would clear the whole scope.
+ * @returns {object|null}
+ */
+export function findPreset(scope, family, id) {
+  return PRESETS.find((p) => p.scope === scope && p.family === family && p.id === id) ?? null;
+}
+
+/** presetKey(scope, family) is the storage key for one row, mirroring
+ *  engine.PresetKey. Flat rather than nested so a family added later needs no
+ *  schema change. */
+export function presetKey(scope, family) {
+  return `${scope}.${family}`;
+}
+
+/**
+ * countryScoped(categories, code) forces every NATIONAL IDENTIFIER category that
+ * does not apply to code off, and leaves everything else alone.
+ *
+ * Every depth preset names all four of them, because to the pattern pass they are
+ * hard PII; each exists in exactly one country, so the switch follows the
+ * document and picking a preset must not silently re-enable the German tax
+ * identifier on a French document. The country is an orthogonal choice, so a
+ * preset must not overrule it.
+ *
+ * It is the same rule engine.DepthSelection and engine.MatchingPreset apply, over
+ * the same list (COUNTRY_ID_CATEGORIES, mirroring engine.CountryIDCategories), so
+ * the rail and the run report cannot name different presets for one selection.
+ *
+ * @param {object} categories a category map, mutated in place
+ * @param {string} code a country code
+ * @param {string[]} within only mask keys in this list, so a scoped write stays
+ *   inside its scope
+ * @returns {object} the same map
+ */
+function countryScoped(categories, code, within) {
+  for (const key of COUNTRY_ID_CATEGORIES) {
+    if (!within.includes(key)) continue;
+    if (!categoryAppliesTo(key, code)) categories[key] = false;
+  }
+  return categories;
+}
+
+/**
+ * presetSelection(preset, base, country) applies ONE preset to a category map and
+ * returns a fresh one. Module-private: applyPreset and depthSelection are the two
+ * ways in, so no view can reach past them.
+ *
+ * Every category in the preset's own scope is set to whether the preset names it,
+ * and every category in the preset's own scope set to whether the
+ * preset names it, every category outside that scope copied across untouched.
+ *
+ * That second half is the point of the scoped model, and it is why this is the
+ * only writer: a view filling a category map itself is how the two sides drift,
+ * and a chip under Built-in patterns reaching a checkbox under Heuristic
+ * discovery is invisible from the rail. Mirrors engine.ApplyPreset plus the
+ * country mask.
+ *
+ * @param {object} preset a PRESETS row
+ * @param {object} base the current category map
+ * @param {string} country the document country
+ * @returns {object} a fresh map, never the argument
+ */
+function presetSelection(preset, base, country) {
+  const owned = presetScopeCategories(preset.scope);
+  const out = { ...(base ?? {}) };
+  for (const key of owned) out[key] = preset.categories.includes(key);
+  return adoptCategories(countryScoped(out, country, owned));
+}
+
+/**
+ * depthSelection(id, country) is one depth preset applied across BOTH scopes: the
+ * whole category selection a fresh session at that depth has. Mirrors
+ * engine.DepthSelection.
+ *
+ * It is deliberately NOT what a chip does. A chip is scoped, and writing both
+ * scopes at once is exactly the cross-section reach the scoped model removes; no
+ * control calls this. It exists for the places that need a COMPLETE selection
+ * rather than an edit to one: the store's initial value, a reset, and the
+ * fallback for a payload that carries none.
+ *
+ * @param {string} id a depth preset ID
+ * @param {string} [country] the document country
+ * @returns {object} every category in ALL_CATEGORIES mapped to on/off
+ */
+export function depthSelection(id, country = DEFAULT_COUNTRY) {
+  let sel = {};
+  for (const c of ALL_CATEGORIES) sel[c] = false;
+  for (const scope of PRESET_SCOPES) {
+    const preset = findPreset(scope, PRESET_FAMILY_DEPTH, id);
+    if (preset) sel = presetSelection(preset, sel, country);
+  }
+  return adoptCategories(sel);
+}
+
+/**
+ * defaultCategories(country) is the selection a fresh session starts from and the
+ * fallback for a settings payload carrying none: the depth Standard presets in
+ * both scopes. Mirrors engine.DefaultSelection.
+ * @param {string} [country]
+ * @returns {object}
+ */
+export function defaultCategories(country = DEFAULT_COUNTRY) {
+  return depthSelection(PRESET_STANDARD, country);
+}
+
+initialState.settings.categories = defaultCategories();
 
 // state is module-private; mutate only via setState/reducers.
 let state = structuredClone(initialState);
@@ -905,33 +1119,38 @@ export function answerChoice(id) {
 // --- Category selection reducers --------------------------
 
 /**
- * applyPreset(level) sets the level AND fills the category switches from
- * the preset (the "Soft/Standard/Thorough" chips of the configure screen).
+ * applyPreset(scope, family, id) presses one chip: it writes the categories of
+ * that scope and LEAVES EVERY CATEGORY OUTSIDE IT exactly as it was.
+ *
+ * That is the whole point of the scoped model. A chip under Built-in patterns
+ * cannot move a checkbox under Heuristic discovery, so what the user sees change
+ * is what changed. presetSelection is the only writer, mirroring
+ * engine.ApplyPreset, so the two sides cannot fill the map differently.
+ *
+ * An unknown row or preset is REFUSED rather than applied as an empty set, which
+ * would clear the whole scope in silence.
+ *
+ * @param {string} scope "patterns" or "names"
+ * @param {string} family a preset family
+ * @param {string} id a preset ID within that row
+ * @returns {boolean} whether a preset was applied
  */
-export function applyPreset(level) {
+export function applyPreset(scope, family, id) {
+  const preset = findPreset(scope, family, id);
+  if (!preset) return false;
   setState({
     settings: {
       ...state.settings,
-      level,
-      // The preset, then the CURRENT COUNTRY's identifier switches on top of it
-      // Every preset switches all three country-specific
-      // identifiers on, because to the engine they are hard PII; re-applying the
-      // country here is what stops picking a preset silently re-enabling the
-      // German tax identifier on a French document. The country is an
-      // orthogonal choice, so a preset must not overrule it.
-      categories: adoptCategories({
-        ...presetCategories(level),
-        ...countryIDCategories(state.documentCountry),
-        matricule: state.documentCountry === "LU",
-      }),
+      categories: presetSelection(preset, state.settings.categories, state.documentCountry),
     },
   });
+  return true;
 }
 
 /**
- * toggleCategory(key, on) flips one granular switch. The level is kept as
- * the last chosen preset (the UI shows "Custom" when the selection
- * diverges, see selectionPresetName).
+ * toggleCategory(key, on) flips one granular switch. Nothing records a preset
+ * beside the selection, so the row it belongs to simply starts reading as
+ * "Custom" (see activePreset).
  */
 export function toggleCategory(key, on) {
   if (!ALL_CATEGORIES.includes(key)) return false;
@@ -1100,22 +1319,61 @@ export function heuristicDiscoveryOptions(s = state) {
 }
 
 /**
- * selectionPresetName(categories) returns "soft" | "medium" | "advanced"
- * when the selection exactly matches that preset, else "custom".
+ * activePreset(s, scope, family) is which preset ONE chip row reads as, or null
+ * for Custom. Mirrors engine.MatchingPreset.
+ *
+ * It is DERIVED from the selection rather than stored beside it, for the reason
+ * signalSourceOn is: a flag beside the set it summarises can disagree with it,
+ * and here that would mean the rail naming a preset the run does not use. Each
+ * row derives independently, so flipping a pattern category cannot make the name
+ * row read as Custom.
+ *
+ * The FIRST match in table order wins, which is what keeps the patterns row on
+ * Soft rather than flickering while Soft and Standard are identical there. The
+ * national identifier categories are expected off wherever they do not apply,
+ * exactly as applyPreset writes them.
+ *
+ * @param {object} s the state
+ * @param {string} scope "patterns" or "names"
+ * @param {string} family a preset family
+ * @returns {object|null} the matching PRESETS row, or null for Custom
  */
-export function selectionPresetName(categories) {
-  const countrySpecific = countryIDCategories(state.documentCountry);
-  for (const level of ["soft", "medium", "advanced"]) {
-    const preset = presetCategories(level);
-    const matches = ALL_CATEGORIES.every((c) => {
-      const expected = COUNTRY_ID_CATEGORIES.includes(c)
-      	? (preset[c] && !!countrySpecific[c])
-      	: preset[c];
-      return !!categories?.[c] === expected;
+export function activePreset(s, scope, family) {
+  const owned = presetScopeCategories(scope);
+  for (const preset of presetsFor(scope, family)) {
+    const matches = owned.every((c) => {
+      let expected = preset.categories.includes(c);
+      if (COUNTRY_ID_CATEGORIES.includes(c)) {
+        expected = expected && categoryAppliesTo(c, s.documentCountry);
+      }
+      return !!s.settings.categories?.[c] === expected;
     });
-    if (matches) return level;
+    if (matches) return preset;
   }
-  return "custom";
+  return null;
+}
+
+/**
+ * activePresets(s) is the whole stored shape at once: "<scope>.<family>" to
+ * preset ID for every row the selection matches, and NO KEY for a row that reads
+ * as Custom. Absence is how Custom is representable, which is why Go's field is
+ * omitempty.
+ *
+ * This is what a settings write SENDS, so what Go stores is always derived from
+ * the selection Go is also given, and the two cannot disagree.
+ *
+ * @param {object} s the state
+ * @returns {Record<string,string>}
+ */
+export function activePresets(s = state) {
+  const out = {};
+  for (const scope of PRESET_SCOPES) {
+    for (const family of presetFamilies(scope)) {
+      const preset = activePreset(s, scope, family);
+      if (preset) out[presetKey(scope, family)] = preset.id;
+    }
+  }
+  return out;
 }
 
 // --- Local-model gating -----------------------------------
@@ -1421,17 +1679,12 @@ export const STEP_RESETS = {
     documentCountry: DEFAULT_COUNTRY,
     settings: {
       ...state.settings,
-      // The preset first, then the DEFAULT COUNTRY's identifier switches on top
-      // of it. Order matters: every preset switches all three country-specific
-      // identifiers on (they are hard PII to the engine), so applying the
-      // preset alone would leave the rail showing Luxembourg with the German
-      // and Spanish tax identifiers active, which is precisely the disagreement
+      // The documented default selection, scoped to the DEFAULT COUNTRY.
+      // depthSelection masks the national identifiers itself, so a reset cannot
+      // leave the rail showing Luxembourg with the German and Spanish tax
+      // identifiers active, which is precisely the disagreement
       // setDocumentCountry exists to prevent.
-      categories: adoptCategories({
-        ...presetCategories(state.settings.level),
-        ...countryIDCategories(DEFAULT_COUNTRY),
-        matricule: true,
-      }),
+      categories: defaultCategories(DEFAULT_COUNTRY),
       country: DEFAULT_COUNTRY,
       minConfidence: 0,
       heuristicDiscovery: { ...HEURISTIC_DISCOVERY_DEFAULTS },
@@ -1641,7 +1894,7 @@ export function valueKey(category, mainText) {
  * replace" and then silently survive. Detection finds names by shape without
  * regard to the switches, so acceptance is the only moment that can reconcile
  * the two: turning the category on here keeps "My values" and the checkboxes
- * telling the same story, and flips the preset to Custom (selectionPresetName)
+ * telling the same story, and flips the row to Custom (activePreset)
  * exactly as ticking the box by hand would.
  */
 /**
@@ -3322,7 +3575,7 @@ export function buildRunRequest() {
     patterns: validPatterns(state),
     // The granular selection travels with every run request so the Go
     // pipeline always sees exactly what the configure screen shows.
-    categories: state.settings.categories ?? presetCategories(state.settings.level),
+    categories: state.settings.categories ?? defaultCategories(state.documentCountry),
     // The "Native detection" master switch, inverted: when Native detection is
     // off, the Go pipeline skips pass 1 so no regex signal category is replaced.
     suppressRegexPII: !getState().settings.useBuiltInPatterns,
@@ -3342,7 +3595,7 @@ export function buildIntersectionRequest() {
     values: acceptedValues(state),
     allowTerms: state.allowlist,
     patterns: validPatterns(state),
-    categories: state.settings.categories ?? presetCategories(state.settings.level),
+    categories: state.settings.categories ?? defaultCategories(state.documentCountry),
     suppressRegexPII: !state.settings.useBuiltInPatterns,
   };
 }

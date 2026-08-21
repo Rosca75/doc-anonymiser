@@ -51,6 +51,25 @@ var CategoryCountries = map[string][]string{
 	CatAddress: {CountryLU, CountryFR},
 }
 
+// CountryIDCategories are the pattern categories whose SWITCH follows the
+// document country: the national identifiers, each of which exists in exactly
+// one country. Picking France switches the German and Spanish identifiers off
+// rather than leaving them on beside nothing.
+//
+// It is a separate list from CategoryCountries, which says where a category
+// APPLIES, because these two answer different questions. Every category in this
+// list is country-scoped in CategoryCountries, but not every country-scoped
+// category is in it: a street address and a postal code are scoped too, and they
+// are ordinary depth choices the user makes rather than switches the country
+// selector moves on their behalf.
+//
+// It is mirrored by frontend/countries.js COUNTRY_ID_CATEGORIES and guarded by
+// ../../category_parity_test.go. Both sides need it because both sides answer
+// "which preset is this selection?": the rail for the chip, the engine for the
+// run report, and a mask only one of them applies would have them naming
+// different presets for one selection.
+var CountryIDCategories = []string{CatMatricule, CatDESteuerID, CatESNIF, CatNHS}
+
 func CategoryAppliesTo(category, country string) bool {
 	allowed, ok := CategoryCountries[category]
 	if !ok {

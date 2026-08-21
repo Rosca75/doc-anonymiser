@@ -108,45 +108,44 @@ func TestSingleCategorySelection(t *testing.T) {
 	}
 }
 
-// TestPresetEquivalence: a nil selection at level L and
-// PresetSelection(L) produce byte-identical output (the regression anchor
-// pinning v1 behaviour).
-func TestPresetEquivalence(t *testing.T) {
-	for _, level := range []Level{LevelSoft, LevelMedium, LevelAdvanced} {
-		t.Run(string(level), func(t *testing.T) {
-			byLevel, err := Run(context.Background(), PipelineInput{
-				Documents: []Document{{Name: "f.txt", Format: FormatTXT, Markdown: selectionFixture}},
-				Values:    selectionEntities,
-				Patterns:  selectionPatterns,
-				Level:     level,
-				Allowlist: NewEmptyAllowlist(),
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			bySelection, err := Run(context.Background(), PipelineInput{
-				Documents:  []Document{{Name: "f.txt", Format: FormatTXT, Markdown: selectionFixture}},
-				Values:     selectionEntities,
-				Patterns:   selectionPatterns,
-				Level:      level,
-				Categories: PresetSelection(level),
-				Allowlist:  NewEmptyAllowlist(),
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if byLevel.Documents[0].Anonymised != bySelection.Documents[0].Anonymised {
-				t.Errorf("level %s and PresetSelection(%s) diverge:\n%s\n---\n%s",
-					level, level, byLevel.Documents[0].Anonymised, bySelection.Documents[0].Anonymised)
-			}
-		})
+// TestNilSelectionIsTheDefaultSelection: a nil Categories map and an explicit
+// DefaultSelection(CountryLU) produce byte-identical output.
+//
+// The fallback is the one place a preset still reaches the pipeline, and it
+// reaches it as a MAP: Run fills a nil selection from DefaultSelection(CountryLU) and
+// then reads nothing else about presets. This pins that the shortcut and the
+// long way round are the same run, so the fallback can never quietly mean
+// something else.
+func TestNilSelectionIsTheDefaultSelection(t *testing.T) {
+	byFallback, err := Run(context.Background(), PipelineInput{
+		Documents: []Document{{Name: "f.txt", Format: FormatTXT, Markdown: selectionFixture}},
+		Values:    selectionEntities,
+		Patterns:  selectionPatterns,
+		Allowlist: NewEmptyAllowlist(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySelection, err := Run(context.Background(), PipelineInput{
+		Documents:  []Document{{Name: "f.txt", Format: FormatTXT, Markdown: selectionFixture}},
+		Values:     selectionEntities,
+		Patterns:   selectionPatterns,
+		Categories: DefaultSelection(CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if byFallback.Documents[0].Anonymised != bySelection.Documents[0].Anonymised {
+		t.Errorf("a nil selection and DefaultSelection(CountryLU) diverge:\n%s\n---\n%s",
+			byFallback.Documents[0].Anonymised, bySelection.Documents[0].Anonymised)
 	}
 }
 
 // TestMixedSelection: persons on and emails off leaves emails intact, while
 // everything else the selection asks for still happens.
 func TestMixedSelection(t *testing.T) {
-	sel := PresetSelection(LevelMedium)
+	sel := DepthSelection(PresetStandard, CountryLU)
 	sel[CatEmail] = false
 
 	res, err := Run(context.Background(), PipelineInput{
@@ -185,7 +184,7 @@ func TestAllowlistWinsOverAnEnabledCategory(t *testing.T) {
 	res, err := Run(context.Background(), PipelineInput{
 		Documents:  []Document{{Name: "f.txt", Format: FormatTXT, Markdown: selectionFixture}},
 		Values:     selectionEntities,
-		Categories: PresetSelection(LevelMedium),
+		Categories: DepthSelection(PresetStandard, CountryLU),
 		Allowlist:  allow,
 	})
 	if err != nil {

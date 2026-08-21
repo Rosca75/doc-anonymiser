@@ -33,7 +33,8 @@ import {
   WIZARD_STEPS, canGoTo, goTo, nextStep,
   isBackward, resetStep, STEP_RESETS,
   addSuggestions, applyPreset, setMinConfidence,
-  addAllowTerm, presetCategories,
+  addAllowTerm, defaultCategories,
+  PRESET_SCOPE_PATTERNS, PRESET_SCOPE_NAMES, PRESET_FAMILY_DEPTH,
   acceptSuggestion, rejectSuggestion, rejectAllShown,
 } from "./state.js";
 import { DEFAULT_COUNTRY, countryIDCategories } from "./countries.js";
@@ -50,7 +51,8 @@ const SHAPES = {
   },
   configured: () => {
     SHAPES.documents();
-    applyPreset("advanced");
+    applyPreset(PRESET_SCOPE_PATTERNS, PRESET_FAMILY_DEPTH, "thorough");
+    applyPreset(PRESET_SCOPE_NAMES, PRESET_FAMILY_DEPTH, "thorough");
     setMinConfidence(0.9);
     addAllowTerm("CSSF");
   },
@@ -314,10 +316,7 @@ test("matrix: resetting every step in turn lands on a usable session", () => {
   assert.deepEqual(s.suggestions, []);
   assert.equal(s.results, null);
   assert.equal(s.mapping, null, "the re-identification key is gone with the run");
-  assert.deepEqual(s.settings.categories, {
-    ...presetCategories(s.settings.level),
-    ...countryIDCategories(DEFAULT_COUNTRY),
-  });
+  assert.deepEqual(s.settings.categories, defaultCategories(DEFAULT_COUNTRY));
   // And the wizard is exactly as open as a fresh import: everything but
   // Export.
   assert.deepEqual(reachableSteps(), ["import", "identify", "anonymise"]);

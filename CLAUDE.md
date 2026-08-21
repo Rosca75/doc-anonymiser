@@ -58,6 +58,9 @@ doc-anonymiser/
 ├── embed_test.go              # asserts the frontend is embedded (package main)
 ├── backend/app_e2e_test.go    # headless end-to-end through the bound app layer
 ├── category_parity_test.go    # JS↔Go category parity guard (package main)
+├── preset_parity_test.go      # JS↔Go PRESET table parity: the same rows, in the
+│                              #   same order, filling the same categories, and a
+│                              #   copy.js title for every family (package main)
 ├── detection_parity_test.go   # JS↔Go discovery-method, match-class,
 │                              #   signal-source and detection-PHASE parity guards
 │                              #   (package main)
@@ -118,6 +121,9 @@ doc-anonymiser/
 │   │   ├── csvmd.go           # CSV ⇄ markdown-table conversion (round-trip)
 │   │   ├── convert/           # binary-format → markdown converters (pure Go, one-way)
 │   │   │   ├── docx.go / pptx.go / xlsx.go / pdf.go
+│   │   ├── presets.go        # presets as scoped DATA: one row per scope, so a
+│   │   │                      #   preset FAMILY is a chip row and adding one is a
+│   │   │                      #   table row rather than a rewrite
 │   │   ├── matchclass.go      # discovery methods (provenance) and match classes
 │   │   │                      #   (precedence), kept as separate concepts
 │   │   ├── signals.go         # which built-in signals may DERIVE Suggestions
@@ -135,7 +141,7 @@ doc-anonymiser/
 │   │   ├── values.go          # Value model, categories, spelling derivation
 │   │   ├── discover.go        # heuristic discovery, and the unified Suggestion
 │   │   ├── registry.go        # Placeholder registry (consistent pseudonyms)
-│   │   ├── pipeline.go        # Pass orchestration per anonymisation level
+│   │   ├── pipeline.go        # Pass orchestration over the category selection
 │   │   ├── allowlist.go       # Terms never anonymised
 │   │   ├── report.go          # Per-file / per-category / per-VALUE statistics
 │   │   ├── session.go         # Save/load session state (JSON, schema migrations)
@@ -475,8 +481,9 @@ doc-anonymiser/
 - **Country association:** the country-specific built-in pattern
   categories are scoped by the DOCUMENT COUNTRY, owned by the engine
   (`backend/engine/country.go`, `CategoryCountries`, `CategoryAppliesTo`) and
-  mirrored by `frontend/countries.js` exactly as `presetCategories()` mirrors
-  `PresetSelection`. `Settings.Country` and `PipelineInput.Country` carry it;
+  mirrored by `frontend/countries.js` exactly as `frontend/state.js PRESETS`
+  mirrors `engine.AllPresets`. `Settings.Country` and `PipelineInput.Country`
+  carry it;
   a category outside the selected country renders DISABLED rather than hidden,
   because an absent switch reads as "unsupported" rather than "not applicable
   here".
@@ -508,18 +515,70 @@ doc-anonymiser/
   live and be visible. `value_shape_test.go` fails the build if the field
   returns, on either side of the bridge, and it also asserts every field the
   current shape DOES carry, so a Value that lost one is caught too.
-- **Anonymisation levels** (mirror the notebook semantics):
-  - `soft` — hard PII (emails, phones, IBANs, national IDs, VAT numbers,
-    URLs with credentials) + engagement entities (entity/project names) +
-    custom patterns.
-  - `medium` (default) — soft + person names. Dates, locations and amounts
-    kept.
-  - `advanced` — medium + dates, amounts, organisation names and location
-    names.
-  - Levels are PRESETS over granular per-category switches
-    (`engine.CategorySelection`): the pipeline obeys the per-category selection;
-    a level is the UI shorthand that fills it. `medium` remains the default
-    preset.
+- **Presets are SCOPED DATA, and the per-category selection stays the
+  authority.** The pipeline obeys `engine.CategorySelection` and reads no preset
+  at run time: a preset is a shortcut that WRITES that map. That is what makes a
+  preset family addable without a rewrite.
+
+  A preset is a ROW IN A TABLE (`backend/engine/presets.go`, mirrored by
+  `frontend/state.js PRESETS` and guarded by `preset_parity_test.go`), carrying an
+  ID, a family, a scope, a label and the categories it switches on. Four rules
+  carry the model, and each one is why a piece of it is shaped as it is.
+
+  **1. SCOPE is what keeps the rail's sections separate.** Applying a preset
+  writes only the categories in its own scope (`patterns`, the built-in pattern
+  categories; `names`, the name categories a discovery method can emit) and leaves
+  every category outside it exactly as it was. A chip under Built-in patterns can
+  no longer reach a checkbox under Heuristic discovery. A `Categories` entry
+  outside its own scope is a defect the tests fail the build on, not a key
+  `ApplyPreset` ignores in silence.
+
+  **2. A FAMILY is a chip row.** Each section renders one row per family that has
+  entries in that section's scope, so adding the intended regulatory family adds a
+  row and introduces no new concept in the rail.
+
+  **3. A preset spanning both mechanisms is declared TWICE, once per scope,**
+  sharing an ID and a label. Sharing the ID across scopes is deliberate: it is
+  what lets the two rows be recognised as the same regulation while each instance
+  fills only its own section's categories.
+
+  **4. There is NO preset algebra.** A chip is a write, not a layer. Each row
+  derives independently whether the current selection still matches one of its
+  presets (`engine.MatchingPreset`, `state.js activePreset`) and reads as Custom
+  when it does not. Layering two families would need conflict rules for a category
+  two presets disagree about, and would make the active chip unrecoverable from
+  the selection, so the rail could no longer tell the user which preset they are
+  on. A regulation that needs to say "off" as well as "on" is a new order, and it
+  has to answer the reverse-derivation question first.
+
+  The DEPTH family is the only one today, and its three presets are what the rail
+  offers per section:
+
+  | Scope | Soft | Standard (default) | Thorough |
+  |---|---|---|---|
+  | patterns | hard PII (emails, phones, IBANs, BICs, national IDs, VAT numbers, URLs with credentials, cards, network and credential shapes) | the same set | plus amounts, dates, street addresses and postal codes |
+  | names | entity, project and identifier names | plus person, product and brand names | plus other, country, nationality and business-sector names |
+
+  Soft and Standard being IDENTICAL in the patterns scope is a fact about the
+  depths rather than a bug: Standard differs from Soft only in the name
+  categories. The row therefore shows the FIRST match in table order, so it reads
+  Soft instead of flickering between two chips that both match. `custom_patterns`
+  is in NO preset, because it has no switch and is permanently on.
+
+  Which preset each row is on is DERIVED from the selection on both sides, never
+  stored beside it, for the reason `SignalSourceEnabled` is derived: a summary
+  that can disagree with the set it summarises lies about what a run does. It is
+  PERSISTED, as `Settings.Presets` and `SessionSettings.Presets`, keyed
+  `"<scope>.<family>"` and flat rather than nested so a family added later needs
+  no schema change; a row matching no preset stores NO KEY, which is how Custom is
+  representable. The run report names the presets its own selection matched
+  (`engine.MatchingPresets`), so it cannot claim a preset the run did not use.
+
+  The national identifier categories (`engine.CountryIDCategories`, mirrored by
+  `frontend/countries.js COUNTRY_ID_CATEGORIES`) are masked by the document
+  country on both sides of that derivation, because every depth preset names all
+  four and each exists in one country: without the mask every document ever loaded
+  would read as Custom.
 - **Pipeline passes (fixed order):**
   1. Built-in pattern matching (`backend/engine/pii.go`).
 
@@ -750,9 +809,9 @@ doc-anonymiser/
   The rail lists the DETECTION ROUTES as switchable sections, **one switch per
   mechanism**, each switch bound to a REAL settings flag: **Built-in patterns**
   (`useBuiltInPatterns`), on by default and owning its own scope (document
-  country, preset, the eight pattern category groups); **Heuristic discovery**
-  (`useHeuristicDiscovery`), on by default and owning the name categories and its
-  own strictness block; and **Local LLM discovery** (`useLocalLLM`), off by
+  country, its own preset rows, the eight pattern category groups); **Heuristic
+  discovery** (`useHeuristicDiscovery`), on by default and owning the name
+  categories, its own preset rows and its own strictness block; and **Local LLM discovery** (`useLocalLLM`), off by
   default. Detecting Ollama ENABLES that switch, it never flips it. There is no
   cloud route.
 
@@ -787,7 +846,7 @@ doc-anonymiser/
   because health data is an Article 9 special category under the GDPR in this
   market, and dates and monetary amounts are their own because this application
   treats them as contextual identifiers rather than as PII. Grouping by class
-  rather than by preset tier is what gives a new recognizer an obvious home.
+  rather than by depth is what gives a new recognizer an obvious home.
   Every pattern category appears in exactly one group, guarded by
   `frontend/identifyrail.test.js`.
 
@@ -798,11 +857,12 @@ doc-anonymiser/
   stored `false` is a pattern editor whose patterns never run, with nothing on
   screen saying why.
 
-  A preset fills BOTH the pattern categories and the name categories, so a chip
-  pressed under Built-in patterns also changes the selection under Heuristic
-  discovery. That is a domain rule rather than a UI one, so the chip row carries a
-  live read-out naming what else the level switched on, which is dynamic
-  information and therefore allowed inline.
+  Each section renders the preset rows of its OWN scope, and a chip writes only
+  that section's categories. There is deliberately no read-out saying what a chip
+  "also" switched on somewhere else: a chip cannot reach another section, so there
+  is nothing to disclose. `frontend/copy.js RAIL.presetFamilyLabel` titles one
+  row per family, and the chip LABELS come from the mirrored table, so a preset
+  added to the engine appears in the rail with no second list to keep in step.
 
   The Configure panel keeps VISIBLE LABELS short and puts every explanation in a
   help tooltip. A paragraph under each control is read once and then occupies the
@@ -818,7 +878,7 @@ doc-anonymiser/
   + Values + settings + the removal list + the defined terms + the spent
   placeholder numbers + the
   image treatments) to disk is an explicit user action with a warning that the
-  file contains the re-identification key. `SessionVersion` is **11**; a file of
+  file contains the re-identification key. `SessionVersion` is **12**; a file of
   any other version
   is refused, never migrated, and the reasons for each bump are recorded beside
   the constant in `backend/engine/session.go`. There is no migration table and no

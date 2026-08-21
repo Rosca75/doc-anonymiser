@@ -26,7 +26,7 @@ import {
   getSameFormatMetadata, saveSameFormat,
 } from "../api.js";
 import {
-  getState, setState, addValues, presetCategories, adoptCategories,
+  getState, setState, addValues, defaultCategories, adoptCategories,
   setMetaReview, setExportDir, startNewBatch, setDocumentCountry,
   HEURISTIC_DISCOVERY_DEFAULTS, SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
 } from "../state.js";
@@ -460,12 +460,16 @@ export function applySession(session) {
     allowlist: session.allowTerms ?? [],
     patterns: (session.patterns ?? []).map((p) => ({ expr: p.expr, error: null })),
     settings: {
-      level: settings.level,
       // `categories` is omitted from the file when it equals nothing at all,
-      // which cannot happen for a session this build wrote; the preset is the
-      // safe reading either way and beats an empty selection that silently
-      // anonymises nothing.
-      categories: adoptCategories(settings.categories ?? presetCategories(settings.level)),
+      // which cannot happen for a session this build wrote; the default
+      // selection is the safe reading either way and beats an empty selection
+      // that silently anonymises nothing.
+      //
+      // The file's `presets` is deliberately NOT restored into the store: which
+      // preset each row is on is DERIVED from the categories (activePreset), so
+      // restoring the selection restores the chips with it and the two cannot
+      // come back disagreeing.
+      categories: adoptCategories(settings.categories ?? defaultCategories(settings.country)),
       ollamaPort: settings.ollamaPort,
       model: settings.model,
       contextSize: settings.contextSize,

@@ -101,9 +101,9 @@ func TestAllowlistIntegration(t *testing.T) {
 	allow.Add("regex:^CVE-\\d{4}-\\d+$")
 
 	res, err := Run(context.Background(), PipelineInput{
-		Documents: []Document{{Name: "f.txt", Format: FormatTXT, Markdown: text}},
-		Level:     LevelSoft,
-		Allowlist: allow,
+		Documents:  []Document{{Name: "f.txt", Format: FormatTXT, Markdown: text}},
+		Categories: DepthSelection(PresetSoft, CountryLU),
+		Allowlist:  allow,
 	})
 	if err != nil {
 		t.Fatal(err)

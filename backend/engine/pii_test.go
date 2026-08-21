@@ -20,70 +20,70 @@ func TestDetectPIICategories(t *testing.T) {
 	tests := []struct {
 		name     string
 		text     string
-		level    Level
+		preset   string
 		country  string
 		category string
 		want     string // expected matched text ("" = expect NO match of category)
 	}{
 		// --- email -------------------------------------------------------------
-		{"email positive", "contact marie.duval@example.com today", LevelSoft, CountryLU, CatEmail, "marie.duval@example.com"},
-		{"email negative: no TLD", "user@localhost is not external", LevelSoft, CountryLU, CatEmail, ""},
+		{"email positive", "contact marie.duval@example.com today", PresetSoft, CountryLU, CatEmail, "marie.duval@example.com"},
+		{"email negative: no TLD", "user@localhost is not external", PresetSoft, CountryLU, CatEmail, ""},
 		// --- url ---------------------------------------------------------------
-		{"url positive", "see https://intra.example.com/report?id=1 now", LevelSoft, CountryLU, CatURL, "https://intra.example.com/report?id=1"},
-		{"url with credentials", "wget https://svc:tok123@host.example.com/f", LevelSoft, CountryLU, CatURL, "https://svc:tok123@host.example.com/f"},
-		{"url negative: bare domain", "visit example.com sometime", LevelSoft, CountryLU, CatURL, ""},
+		{"url positive", "see https://intra.example.com/report?id=1 now", PresetSoft, CountryLU, CatURL, "https://intra.example.com/report?id=1"},
+		{"url with credentials", "wget https://svc:tok123@host.example.com/f", PresetSoft, CountryLU, CatURL, "https://svc:tok123@host.example.com/f"},
+		{"url negative: bare domain", "visit example.com sometime", PresetSoft, CountryLU, CatURL, ""},
 		// --- iban --------------------------------------------------------------
-		{"iban positive spaced", "account LU28 0019 4006 4475 0000 please", LevelSoft, CountryLU, CatIBAN, "LU28 0019 4006 4475 0000"},
-		{"iban positive compact", "send to DE89370400440532013000 now", LevelSoft, CountryLU, CatIBAN, "DE89370400440532013000"},
+		{"iban positive spaced", "account LU28 0019 4006 4475 0000 please", PresetSoft, CountryLU, CatIBAN, "LU28 0019 4006 4475 0000"},
+		{"iban positive compact", "send to DE89370400440532013000 now", PresetSoft, CountryLU, CatIBAN, "DE89370400440532013000"},
 		// A failed mod-97 check no longer vetoes the span; it lowers the
 		// confidence (TestChecksumFailureScoresRatherThanVetoes below). Leaving a
 		// mistyped or synthetic bank identifier in the document is the harm the
 		// old veto caused, so the match is expected here.
-		{"iban positive despite failed checksum", "account LU28 0019 4006 4475 0001 please", LevelSoft, CountryLU, CatIBAN, "LU28 0019 4006 4475 0001"},
-		{"iban negative: country word", "LUXEMBOURG is not an IBAN", LevelSoft, CountryLU, CatIBAN, ""},
+		{"iban positive despite failed checksum", "account LU28 0019 4006 4475 0001 please", PresetSoft, CountryLU, CatIBAN, "LU28 0019 4006 4475 0001"},
+		{"iban negative: country word", "LUXEMBOURG is not an IBAN", PresetSoft, CountryLU, CatIBAN, ""},
 		// --- vat ---------------------------------------------------------------
-		{"vat positive LU", "VAT number LU12345678 on file", LevelSoft, CountryLU, CatVAT, "LU12345678"},
-		{"vat positive FR", "TVA FR40303265045 enregistr?e", LevelSoft, CountryFR, CatVAT, "FR40303265045"},
-		{"vat negative: too short", "code LU1234 is not a VAT number", LevelSoft, CountryLU, CatVAT, ""},
+		{"vat positive LU", "VAT number LU12345678 on file", PresetSoft, CountryLU, CatVAT, "LU12345678"},
+		{"vat positive FR", "TVA FR40303265045 enregistr?e", PresetSoft, CountryFR, CatVAT, "FR40303265045"},
+		{"vat negative: too short", "code LU1234 is not a VAT number", PresetSoft, CountryLU, CatVAT, ""},
 		// Country scoping, pattern level: VAT applies to
 		// every country, but each VAT pattern is ONE national format, so the
 		// French format must stay silent under a Luxembourg selection.
-		{"vat negative: FR format under LU selection", "TVA FR40303265045 enregistree", LevelSoft, CountryLU, CatVAT, ""},
+		{"vat negative: FR format under LU selection", "TVA FR40303265045 enregistree", PresetSoft, CountryLU, CatVAT, ""},
 		// --- matricule ---------------------------------------------------------
-		{"matricule positive", "matricule 1893120105732 registered", LevelSoft, CountryLU, CatMatricule, "1893120105732"},
+		{"matricule positive", "matricule 1893120105732 registered", PresetSoft, CountryLU, CatMatricule, "1893120105732"},
 		// Country scoping, category level: the matricule is a Luxembourg
 		// national ID, so the whole category is off under another country.
-		{"matricule negative: LU number under FR selection", "matricule 1893120105732 registered", LevelSoft, CountryFR, CatMatricule, ""},
-		{"matricule negative: 12 digits", "ref 189312010573 stays", LevelSoft, CountryLU, CatMatricule, ""},
-		{"matricule negative: 14 digits", "ref 18931201057321 stays", LevelSoft, CountryLU, CatMatricule, ""},
+		{"matricule negative: LU number under FR selection", "matricule 1893120105732 registered", PresetSoft, CountryFR, CatMatricule, ""},
+		{"matricule negative: 12 digits", "ref 189312010573 stays", PresetSoft, CountryLU, CatMatricule, ""},
+		{"matricule negative: 14 digits", "ref 18931201057321 stays", PresetSoft, CountryLU, CatMatricule, ""},
 		// --- phone -------------------------------------------------------------
-		{"phone positive international", "call +352 621 000 111 today", LevelSoft, CountryLU, CatPhone, "+352 621 000 111"},
-		{"phone positive FR mobile", "t?l. 06 12 34 56 78 merci", LevelSoft, CountryFR, CatPhone, "06 12 34 56 78"},
-		{"phone negative: plain year", "the year 2026 report", LevelSoft, CountryLU, CatPhone, ""},
+		{"phone positive international", "call +352 621 000 111 today", PresetSoft, CountryLU, CatPhone, "+352 621 000 111"},
+		{"phone positive FR mobile", "t?l. 06 12 34 56 78 merci", PresetSoft, CountryFR, CatPhone, "06 12 34 56 78"},
+		{"phone negative: plain year", "the year 2026 report", PresetSoft, CountryLU, CatPhone, ""},
 		// --- amount (advanced only) --------------------------------------------
-		{"amount positive prefix currency", "fee of EUR 1,500.00 agreed", LevelAdvanced, CountryLU, CatAmount, "EUR 1,500.00"},
-		{"amount positive suffix", "budget 12 500 EUR total", LevelAdvanced, CountryLU, CatAmount, "12 500 EUR"},
-		{"amount negative: bare number", "about 1500 items", LevelAdvanced, CountryLU, CatAmount, ""},
+		{"amount positive prefix currency", "fee of EUR 1,500.00 agreed", PresetThorough, CountryLU, CatAmount, "EUR 1,500.00"},
+		{"amount positive suffix", "budget 12 500 EUR total", PresetThorough, CountryLU, CatAmount, "12 500 EUR"},
+		{"amount negative: bare number", "about 1500 items", PresetThorough, CountryLU, CatAmount, ""},
 		// Non-breaking spaces (U+00A0) and thin/narrow spaces appear in
 		// European/French documents both before the currency symbol and as
 		// the thousands separator; the regex must treat them like a space.
-		{"amount positive nbsp before euro", "total 1.500,00\u00a0\u20ac due", LevelAdvanced, CountryLU, CatAmount, "1.500,00\u00a0\u20ac"},
-		{"amount positive ascii space before euro decimal", "total 1.250,50 \u20ac due", LevelAdvanced, CountryLU, CatAmount, "1.250,50 \u20ac"},
-		{"amount positive ascii space before euro", "total 25.150 \u20ac due", LevelAdvanced, CountryLU, CatAmount, "25.150 \u20ac"},
+		{"amount positive nbsp before euro", "total 1.500,00\u00a0\u20ac due", PresetThorough, CountryLU, CatAmount, "1.500,00\u00a0\u20ac"},
+		{"amount positive ascii space before euro decimal", "total 1.250,50 \u20ac due", PresetThorough, CountryLU, CatAmount, "1.250,50 \u20ac"},
+		{"amount positive ascii space before euro", "total 25.150 \u20ac due", PresetThorough, CountryLU, CatAmount, "25.150 \u20ac"},
 		// Magnitude suffix k/M is honoured only next to a currency marker.
-		{"amount positive k suffix with euro", "cost 1,5k \u20ac roughly", LevelAdvanced, CountryLU, CatAmount, "1,5k \u20ac"},
-		{"amount negative: bare magnitude", "revenue grew 2M last year", LevelAdvanced, CountryLU, CatAmount, ""},
+		{"amount positive k suffix with euro", "cost 1,5k \u20ac roughly", PresetThorough, CountryLU, CatAmount, "1,5k \u20ac"},
+		{"amount negative: bare magnitude", "revenue grew 2M last year", PresetThorough, CountryLU, CatAmount, ""},
 		// --- date (advanced only) ----------------------------------------------
-		{"date positive iso", "due 2026-07-23 latest", LevelAdvanced, CountryLU, CatDate, "2026-07-23"},
-		{"date positive eu numeric", "signed 23/07/2026 in Luxembourg", LevelAdvanced, CountryLU, CatDate, "23/07/2026"},
-		{"date positive written en", "meeting on 23 July 2026 confirmed", LevelAdvanced, CountryLU, CatDate, "23 July 2026"},
-		{"date positive written fr", "r?union le 23 juillet 2026 confirm?e", LevelAdvanced, CountryLU, CatDate, "23 juillet 2026"},
-		{"date negative: bare year", "since 2026 things changed", LevelAdvanced, CountryLU, CatDate, ""},
+		{"date positive iso", "due 2026-07-23 latest", PresetThorough, CountryLU, CatDate, "2026-07-23"},
+		{"date positive eu numeric", "signed 23/07/2026 in Luxembourg", PresetThorough, CountryLU, CatDate, "23/07/2026"},
+		{"date positive written en", "meeting on 23 July 2026 confirmed", PresetThorough, CountryLU, CatDate, "23 July 2026"},
+		{"date positive written fr", "r?union le 23 juillet 2026 confirm?e", PresetThorough, CountryLU, CatDate, "23 juillet 2026"},
+		{"date negative: bare year", "since 2026 things changed", PresetThorough, CountryLU, CatDate, ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spans := DetectPIISelected(tt.text, PresetSelection(tt.level), tt.country)
+			spans := DetectPIISelected(tt.text, DepthSelection(tt.preset, tt.country), tt.country)
 			var got []string
 			for _, s := range spans {
 				if s.Category == tt.category {
@@ -106,24 +106,24 @@ func TestDetectPIICategories(t *testing.T) {
 	}
 }
 
-// TestLevelAwareness pins the level matrix: amounts and dates fire at
-// advanced only; hard PII fires at every level.
-func TestLevelAwareness(t *testing.T) {
+// TestDepthAwareness pins the depth matrix: amounts and dates fire at Thorough
+// only, and hard PII fires at every depth.
+func TestDepthAwareness(t *testing.T) {
 	text := "pay €500 to LU28 0019 4006 4475 0000 on 2026-07-23"
-	for _, level := range []Level{LevelSoft, LevelMedium} {
-		spans := DetectPIISelected(text, PresetSelection(level), CountryLU)
+	for _, id := range []string{PresetSoft, PresetStandard} {
+		spans := DetectPIISelected(text, DepthSelection(id, CountryLU), CountryLU)
 		for _, s := range spans {
 			if s.Category == CatAmount || s.Category == CatDate {
-				t.Errorf("%s fired at level %s, want advanced only", s.Category, level)
+				t.Errorf("%s fired at the %s preset, want Thorough only", s.Category, id)
 			}
 		}
 		if !hasCategory(spans, CatIBAN) {
-			t.Errorf("IBAN must fire at level %s", level)
+			t.Errorf("IBAN must fire at the %s preset", id)
 		}
 	}
-	adv := DetectPIISelected(text, PresetSelection(LevelAdvanced), CountryLU)
-	if !hasCategory(adv, CatAmount) || !hasCategory(adv, CatDate) {
-		t.Errorf("advanced level must add amount+date, got %+v", adv)
+	thorough := DetectPIISelected(text, DepthSelection(PresetThorough, CountryLU), CountryLU)
+	if !hasCategory(thorough, CatAmount) || !hasCategory(thorough, CatDate) {
+		t.Errorf("the Thorough preset must add amount and date, got %+v", thorough)
 	}
 }
 
@@ -140,7 +140,7 @@ func hasCategory(spans []Span, cat string) bool {
 // (longest match wins), deterministically.
 func TestOverlapResolution(t *testing.T) {
 	text := "profile at https://example.com/u/marie.duval@example.com end"
-	spans := ResolveOverlaps(DetectPIISelected(text, PresetSelection(LevelMedium), CountryLU))
+	spans := ResolveOverlaps(DetectPIISelected(text, DepthSelection(PresetStandard, CountryLU), CountryLU))
 	if len(spans) != 1 {
 		t.Fatalf("want exactly 1 span after resolution, got %+v", spans)
 	}
@@ -240,7 +240,7 @@ func TestOverlapLengthStillDecidesWithinOneRoute(t *testing.T) {
 func TestApplySpans(t *testing.T) {
 	text := "mail marie.duval@example.com or peter.stone@example.org, mail marie.duval@example.com again"
 	reg := NewRegistry()
-	spans := ResolveOverlaps(DetectPIISelected(text, PresetSelection(LevelMedium), CountryLU))
+	spans := ResolveOverlaps(DetectPIISelected(text, DepthSelection(PresetStandard, CountryLU), CountryLU))
 	out := ApplySpans(text, spans, func(s Span) string {
 		return reg.Assign(s.Category, s.MainTextOrOriginal())
 	})
@@ -293,7 +293,7 @@ func TestRegistryStability(t *testing.T) {
 // document held a card that never existed.
 func TestChecksumFailureScoresRatherThanVetoes(t *testing.T) {
 	const text = "IBAN LU88 0055 6600 4321 6501 - BIC/SWIFT: BABAAXIL"
-	spans := DetectPIISelected(text, PresetSelection(LevelAdvanced), CountryLU)
+	spans := DetectPIISelected(text, DepthSelection(PresetThorough, CountryLU), CountryLU)
 
 	var iban *Span
 	for i := range spans {
@@ -317,7 +317,7 @@ func TestChecksumFailureScoresRatherThanVetoes(t *testing.T) {
 
 	// A checksum-VALID IBAN keeps the full deterministic score, so the reduced
 	// score means "the digits did not add up" and nothing else.
-	valid := DetectPIISelected("account LU28 0019 4006 4475 0000 please", PresetSelection(LevelSoft), CountryLU)
+	valid := DetectPIISelected("account LU28 0019 4006 4475 0000 please", DepthSelection(PresetSoft, CountryLU), CountryLU)
 	for _, sp := range valid {
 		if sp.Category == CatIBAN && sp.Confidence != ConfidenceDeterministic {
 			t.Errorf("a valid IBAN scored %v, want ConfidenceDeterministic (%v)", sp.Confidence, ConfidenceDeterministic)
@@ -341,7 +341,7 @@ func TestLUPhoneAcceptsTheAllocatedRange(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.want, func(t *testing.T) {
-			spans := DetectPIISelected(tc.text, PresetSelection(LevelSoft), CountryLU)
+			spans := DetectPIISelected(tc.text, DepthSelection(PresetSoft, CountryLU), CountryLU)
 			for _, sp := range spans {
 				if sp.Category == CatPhone && sp.Original == tc.want {
 					return
@@ -357,7 +357,7 @@ func TestLUPhoneAcceptsTheAllocatedRange(t *testing.T) {
 // documents do. Longest-match-first is what keeps a path from being split off.
 func TestBareWWWURLsAreMatched(t *testing.T) {
 	const text = "see www.nstar.lu and www.nstar.lu/privacy and www.statistiques.public.lu"
-	spans := ResolveOverlaps(DetectPIISelected(text, PresetSelection(LevelSoft), CountryLU))
+	spans := ResolveOverlaps(DetectPIISelected(text, DepthSelection(PresetSoft, CountryLU), CountryLU))
 	got := map[string]bool{}
 	for _, sp := range spans {
 		if sp.Category == CatURL {
@@ -372,7 +372,7 @@ func TestBareWWWURLsAreMatched(t *testing.T) {
 
 	// A bare "word.word" stays untouched: that is the false-positive class the
 	// scheme requirement exists for, and the www. label is the exception to it.
-	bare := DetectPIISelected("visit example.com sometime", PresetSelection(LevelSoft), CountryLU)
+	bare := DetectPIISelected("visit example.com sometime", DepthSelection(PresetSoft, CountryLU), CountryLU)
 	for _, sp := range bare {
 		if sp.Category == CatURL {
 			t.Errorf("a bare domain was matched as a url: %q", sp.Original)

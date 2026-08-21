@@ -90,12 +90,33 @@ import (
 //	    not written here: the current ones are the contract, and
 //	    ../../vocabulary_guard_test.go is what keeps the retired ones out of the
 //	    tree.
-const SessionVersion = 11
+//	v12: `level` LEAVES the schema and `presets` enters it. A preset is scoped
+//	    data now (presets.go): a single level string cannot say that the
+//	    built-in pattern categories are at Soft while the name categories are at
+//	    Thorough, which is a selection the scoped chips make in two clicks, and
+//	    it has no room at all for a second preset family. The two are not
+//	    readable as each other in either direction: a v11 reader finds no level
+//	    and falls back to its default, silently moving the selection the user
+//	    saved, and a v11 file's level names presets ("medium", "advanced") that
+//	    no row in this build's table holds. The per-category selection is what a
+//	    run obeys either way, so the failure is not in what the file replaces
+//	    but in what the rail then SAYS it will replace, which is the shape of
+//	    silent disagreement the strict-version rule exists for.
+const SessionVersion = 12
 
 // SessionSettings mirrors the app settings worth persisting. The engine does not
 // interpret them: they round-trip for app.go.
 type SessionSettings struct {
-	Level       string            `json:"level"`
+	// Presets records which chip each preset row was on, keyed
+	// "<scope>.<family>" (presets.go PresetKey). FLAT rather than nested so a
+	// family added later needs no schema change, and ABSENT rather than
+	// defaulted so "Custom" is representable: a row whose selection matches no
+	// preset stores no key at all.
+	//
+	// It is a record of the rail's state, not an instruction. Categories below
+	// is what a run obeys, and the presets are derived from it on both sides,
+	// so the two cannot disagree about what the next run will do.
+	Presets     map[string]string `json:"presets,omitempty"`
 	Categories  CategorySelection `json:"categories,omitempty"`
 	OllamaPort  int               `json:"ollamaPort"`
 	Model       string            `json:"model"`

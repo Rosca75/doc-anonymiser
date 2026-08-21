@@ -26,7 +26,7 @@ func filledSession() *App {
 	app.removed = []engine.RemovedValue{{MainText: "Marie Duval", Category: "person_names"}}
 	// A non-default setting so a reset-to-defaults is observable.
 	app.settings.OllamaPort = 12345
-	app.settings.Level = string(engine.LevelAdvanced)
+	app.settings.Presets = depthPresets(engine.PresetThorough)
 	app.settings.Country = engine.CountryFR
 	return app
 }
@@ -52,7 +52,8 @@ func TestResetRunClearsRunStateKeepsDocsAndSettings(t *testing.T) {
 	if len(app.docs) != 1 {
 		t.Errorf("ResetRun dropped the documents (%d left), but a run reset must keep them", len(app.docs))
 	}
-	if app.settings.OllamaPort != 12345 || app.settings.Level != string(engine.LevelAdvanced) {
+	thoroughRow := app.settings.Presets[engine.PresetKey(engine.ScopePatterns, engine.FamilyDepth)]
+	if app.settings.OllamaPort != 12345 || thoroughRow != engine.PresetThorough {
 		t.Error("ResetRun changed the settings, but a run reset must leave the configuration alone")
 	}
 }
@@ -89,8 +90,10 @@ func TestResetSessionReturnsToDefaults(t *testing.T) {
 	if app.settings.OllamaPort != want.OllamaPort {
 		t.Errorf("ResetSession left the port at %d, want the default %d", app.settings.OllamaPort, want.OllamaPort)
 	}
-	if app.settings.Level != want.Level {
-		t.Errorf("ResetSession left the level at %q, want the default %q", app.settings.Level, want.Level)
+	row := engine.PresetKey(engine.ScopePatterns, engine.FamilyDepth)
+	if app.settings.Presets[row] != want.Presets[row] {
+		t.Errorf("ResetSession left the %s row on %q, want the default %q",
+			row, app.settings.Presets[row], want.Presets[row])
 	}
 	if app.settings.Country != want.Country {
 		t.Errorf("ResetSession left the country at %q, want the default %q", app.settings.Country, want.Country)

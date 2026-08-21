@@ -175,7 +175,7 @@ export const CONFIGURE = {
   // Ollama's availability, the run status.
   //
   // Every `...Help` key below is tooltip text. Nothing renders it as a paragraph.
-  presetHelp: "Start from a preset, then adjust the checkboxes if you need to. Changing any checkbox switches the preset to Custom.",
+  presetHelp: "Start from a preset, then adjust the checkboxes if you need to. A preset changes only this section's checkboxes, and changing any of them switches this row to Custom.",
   // The eight built-in pattern groups, in the order the rail renders them:
   // broadest classes first, the contextual one last, matching how the presets
   // escalate. The classes are the ones the established PII tools converge on
@@ -342,17 +342,21 @@ export const RAIL = {
 
   country: "Document country",
   countryHelp: "The phone, VAT and national identification examples follow this country's formats, and the matching national identifiers are switched on. It changes nothing else about how detection works.",
-  preset: "Preset",
   /**
-   * presetAlsoSets(n) is the live read-out under the preset chips. A preset
-   * fills BOTH the built-in pattern categories and the name categories, so a
-   * chip pressed under Built-in patterns also changes the selection under
-   * Heuristic discovery. That is a domain rule rather than a UI one, so the
-   * read-out makes it visible instead of hiding it. Dynamic, therefore allowed
-   * inline (CLAUDE.md §5, Configure panel).
+   * presetFamilyLabel titles ONE chip row, keyed by preset FAMILY. A row per
+   * family is what the rail renders, so a regulatory family can be titled by
+   * adding a key here rather than by changing a view.
+   *
+   * The preset LABELS themselves are not here: they come from the mirrored
+   * preset table in state.js, so a preset added to the engine appears in the
+   * rail with no second list to keep in step.
+   *
+   * There is no "this also switched on ..." read-out any more: a chip writes only
+   * its own section's categories, so there is nothing in another section to
+   * disclose.
    */
-  presetAlsoSets(n) {
-    return `This level also switched on ${n} auto detected value ${n === 1 ? "category" : "categories"}, under Heuristic discovery.`;
+  presetFamilyLabel: {
+    depth: "Preset",
   },
 
   // The category selection is the ONE scope the whole pipeline reads (CLAUDE.md
@@ -1219,9 +1223,35 @@ export const ANONYMISE = {
   valuesFilterPlaceholder: "Filter values",
   valuesFilterEmpty: "No replaced value matches this filter.",
   byCategoryTitle: "By category",
-  /** reportLevel(level) names the preset the run used. */
-  reportLevel(level) {
-    return `Ran at the ${level} preset`;
+  /**
+   * reportPresets(labels) names the presets the run's selection matched, one per
+   * chip row.
+   *
+   * Both rows on one preset is the common case and reads as one sentence; two
+   * different presets is a real state the scoped chips can produce in two
+   * clicks, so it is spelled out rather than reduced to whichever row came
+   * first. A row that matched no preset contributes nothing, because "Custom" is
+   * not a preset the run can be said to have used.
+   *
+   * @param {Array<{scope: string, preset: string}>} rows
+   * @returns {string} "" when no row matched a preset
+   */
+  reportPresets(rows) {
+    const named = (rows ?? []).filter((r) => r.preset);
+    if (!named.length) return "";
+    const distinct = [...new Set(named.map((r) => r.preset))];
+    if (distinct.length === 1) return `Ran at the ${distinct[0]} preset`;
+    const parts = named.map((r) => `the ${r.preset} preset for ${r.scope}`);
+    return `Ran at ${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+  },
+  /**
+   * presetScopeLabel names a preset SCOPE in the run note, keyed by the
+   * identifier the engine uses. It is the rail section the row belongs to, so the
+   * note reads as a place the user has seen.
+   */
+  presetScopeLabel: {
+    patterns: "built-in patterns",
+    names: "auto detected values",
   },
   noValuesInScope: "No values from this category appear in the files in scope.",
   dismissWarning: "Hide this warning",

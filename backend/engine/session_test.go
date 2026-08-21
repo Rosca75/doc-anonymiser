@@ -29,10 +29,10 @@ func runExportFixture(t *testing.T) (*Results, *Registry) {
 			{Name: "notes.txt", Format: FormatTXT, Markdown: "Alpine Trust wrote to marie.duval@example.com."},
 			csvDoc,
 		},
-		Values:    []Value{{Category: "entity_names", MainText: "Alpine Trust"}},
-		Level:     LevelMedium,
-		Allowlist: NewEmptyAllowlist(),
-		Registry:  reg,
+		Values:     []Value{{Category: "entity_names", MainText: "Alpine Trust"}},
+		Categories: DepthSelection(PresetStandard, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
+		Registry:   reg,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +112,7 @@ func TestSessionSaveLoadEquality(t *testing.T) {
 		Values:     []Value{{Category: "entity_names", MainText: "Alpine Trust", Spellings: []string{"Alpine"}}},
 		AllowTerms: []string{"CSSF", "Luxembourg"},
 		Patterns:   []CustomPattern{{Expr: "PRJ-[0-9]+"}},
-		Settings:   SessionSettings{Level: "advanced", OllamaPort: 12345, Model: "qwen3.5:0.8b"},
+		Settings:   SessionSettings{Presets: depthPresets(PresetThorough), OllamaPort: 12345, Model: "qwen3.5:0.8b"},
 		Registry:   reg.Export(),
 	}
 	raw, err := SaveSession(original)
@@ -280,7 +280,7 @@ func TestLoadSessionWithoutOptionalFields(t *testing.T) {
 	  "allowTerms": ["CSSF"],
 	  "patterns": [],
 	  "settings": {
-	    "level": "medium",
+	    "presets": {"patterns.depth": "standard", "names.depth": "standard"},
 	    "categories": {"email": true, "person_names": true},
 	    "ollamaPort": 11434,
 	    "model": "qwen3.5:0.8b",
@@ -299,7 +299,8 @@ func TestLoadSessionWithoutOptionalFields(t *testing.T) {
 			s.Settings.MinConfidence)
 	}
 	// The fields that WERE present must survive untouched.
-	if s.Settings.Level != "medium" || !s.Settings.UseLocalLLM || s.Settings.ContextSize != 8192 {
+	if s.Settings.Presets[PresetKey(ScopePatterns, FamilyDepth)] != PresetStandard ||
+		!s.Settings.UseLocalLLM || s.Settings.ContextSize != 8192 {
 		t.Errorf("existing settings were not preserved: %+v", s.Settings)
 	}
 	if len(s.Values) != 1 || s.Values[0].MainText != "Alpine Trust" {
@@ -315,7 +316,7 @@ func TestLoadSessionWithoutOptionalFields(t *testing.T) {
 // TestSessionRoundTripsMinConfidence: the new field survives save/load.
 func TestSessionRoundTripsMinConfidence(t *testing.T) {
 	raw, err := SaveSession(Session{
-		Settings: SessionSettings{Level: "medium", OllamaPort: 11434, MinConfidence: 0.9},
+		Settings: SessionSettings{Presets: depthPresets(PresetStandard), OllamaPort: 11434, MinConfidence: 0.9},
 	})
 	if err != nil {
 		t.Fatalf("SaveSession: %v", err)
@@ -344,7 +345,7 @@ func TestHeuristicDiscoveryAbsentVersusExplicitZero(t *testing.T) {
 	}
 
 	off := HeuristicDiscoveryOptions{}
-	raw, err := SaveSession(Session{Settings: SessionSettings{Level: "medium", HeuristicDiscovery: &off}})
+	raw, err := SaveSession(Session{Settings: SessionSettings{Presets: depthPresets(PresetStandard), HeuristicDiscovery: &off}})
 	if err != nil {
 		t.Fatalf("SaveSession: %v", err)
 	}
@@ -365,7 +366,7 @@ func TestSessionRoundTripsHeuristicDiscovery(t *testing.T) {
 	want := HeuristicDiscoveryOptions{
 		MinLength: 6, MinOccurrences: 2, ExcludeCommonWords: true, MinConfidence: 0.8,
 	}
-	raw, err := SaveSession(Session{Settings: SessionSettings{Level: "medium", HeuristicDiscovery: &want}})
+	raw, err := SaveSession(Session{Settings: SessionSettings{Presets: depthPresets(PresetStandard), HeuristicDiscovery: &want}})
 	if err != nil {
 		t.Fatalf("SaveSession: %v", err)
 	}
@@ -388,7 +389,7 @@ func TestSessionRoundTripsHeuristicDiscovery(t *testing.T) {
 func TestSessionRoundTripsSignalSources(t *testing.T) {
 	t.Run("roundtrip/every_reading_off", func(t *testing.T) {
 		raw, err := SaveSession(Session{Settings: SessionSettings{
-			Level: "medium",
+			Presets: depthPresets(PresetStandard),
 			SignalSuggestionSources: SignalSourceSelection{SignalSourceEmail: {
 				DerivationEmailPerson:       false,
 				DerivationEmailOrganisation: false,
@@ -409,7 +410,7 @@ func TestSessionRoundTripsSignalSources(t *testing.T) {
 
 	t.Run("roundtrip/one_reading_off", func(t *testing.T) {
 		raw, err := SaveSession(Session{Settings: SessionSettings{
-			Level: "medium",
+			Presets: depthPresets(PresetStandard),
 			SignalSuggestionSources: SignalSourceSelection{SignalSourceEmail: {
 				DerivationEmailPerson:       false,
 				DerivationEmailOrganisation: true,
@@ -441,7 +442,7 @@ func TestSessionRoundTripsSignalSources(t *testing.T) {
 func TestSessionRoundTripsImageDecisions(t *testing.T) {
 	t.Run("roundtrip/session_v9_image_decisions", func(t *testing.T) {
 		saved := Session{
-			Settings: SessionSettings{Level: "medium", OllamaPort: 11434},
+			Settings: SessionSettings{Presets: depthPresets(PresetStandard), OllamaPort: 11434},
 			ImageDecisions: map[string]map[string]imaging.Decision{
 				"deck.pptx": {
 					"ppt/media/image1.png": {
@@ -483,7 +484,7 @@ func TestSessionRoundTripsImageDecisions(t *testing.T) {
 	})
 
 	t.Run("roundtrip/session_v9_absent_decisions_are_absent", func(t *testing.T) {
-		raw, err := SaveSession(Session{Settings: SessionSettings{Level: "medium"}})
+		raw, err := SaveSession(Session{Settings: SessionSettings{Presets: depthPresets(PresetStandard)}})
 		if err != nil {
 			t.Fatalf("SaveSession: %v", err)
 		}
@@ -501,30 +502,27 @@ func TestSessionRoundTripsImageDecisions(t *testing.T) {
 }
 
 // TestSessionVersionRefusesAnOlderFile: the strict-version rule, at the version
-// the detection vocabulary's IDENTIFIERS arrived in.
+// the PRESETS became scoped data.
 //
-// A v10 file states a Value's provenance and the user's route settings in words
-// this build does not read. The methods would come back empty, which makes
-// MatchClassForMethods rank the Value as user-defined and hands it a precedence
-// it never had, and the three settings would read as their zero values, silently
-// switching the local route and its two options off.
+// A v11 file carries `level`, one string over both halves of the rail. This build
+// carries `presets`, one preset per scope and family. Neither is readable as the
+// other: a v11 reader finds no level and falls back to its own default, and a v11
+// file's level names presets no row in this build's table holds. The
+// per-category selection is what a run obeys either way, so the failure is not in
+// what the file replaces but in what the rail then SAYS it will replace, which is
+// the shape of silent disagreement the rule exists for.
 //
-// So a v10 file is refused for the same shape of reason a v9 one was: it loads,
-// nothing errors, and what the next run replaces has changed.
-//
-// The v10 fixture below spells the retired identifiers out, because a file
-// carrying the CURRENT spellings under the OLD version would not be the file this
-// test is about. That is why ../../vocabulary_guard_test.go exempts this one file
-// by name.
+// The v11 fixture below spells `level` out, because a file carrying the CURRENT
+// key under the OLD version would not be the file this test is about.
 func TestSessionVersionRefusesAnOlderFile(t *testing.T) {
 	t.Run("errors/older_versions_are_refused", func(t *testing.T) {
-		if SessionVersion != 11 {
-			t.Fatalf("SessionVersion is %d; this test describes the move to 11 and must be "+
+		if SessionVersion != 12 {
+			t.Fatalf("SessionVersion is %d; this test describes the move to 12 and must be "+
 				"rewritten for the version that replaces it", SessionVersion)
 		}
-		for _, older := range []int{8, 9, 10} {
+		for _, older := range []int{9, 10, 11} {
 			raw := fmt.Sprintf(`{"version":%d,"values":[],"allowTerms":[],"patterns":[],`+
-				`"settings":{"level":"medium","ollamaPort":11434,"model":"qwen3.5:0.8b"},`+
+				`"settings":{"ollamaPort":11434,"model":"qwen3.5:0.8b"},`+
 				`"registry":[]}`, older)
 			_, err := LoadSession([]byte(raw))
 			if err == nil {
@@ -534,7 +532,7 @@ func TestSessionVersionRefusesAnOlderFile(t *testing.T) {
 			}
 			// The message has to name BOTH numbers, or the user is told the file is
 			// wrong without being told what would be right.
-			if !strings.Contains(err.Error(), "11") {
+			if !strings.Contains(err.Error(), "12") {
 				t.Errorf("the refusal does not say which version this build reads:\n%v", err)
 			}
 			if !strings.Contains(err.Error(), fmt.Sprint(older)) {
@@ -546,14 +544,15 @@ func TestSessionVersionRefusesAnOlderFile(t *testing.T) {
 	t.Run("errors/no_migration_path_exists", func(t *testing.T) {
 		// The policy is refusal, never migration: a session file holds the
 		// re-identification key, and a half-migrated one silently reassigns
-		// placeholders. A v10 file carrying the OLD spellings must be refused on the
-		// version alone, before anything reads a field.
-		raw := `{"version":10,"values":[{"category":"person_names","mainText":"Marie Duval",` +
-			`"discoveryMethods":["local_ai"]}],"allowTerms":[],"patterns":[],` +
-			`"settings":{"level":"medium","ollamaPort":11434,"model":"qwen3.5:0.8b",` +
-			`"useLocalAI":true,"aiStrictFormat":true,"aiDetailLevel":"faster"},"registry":[]}`
+		// placeholders. A v11 file carrying the retired `level` key must be refused
+		// on the version alone, before anything reads a field, and the loader must
+		// hold no alias that would turn "advanced" into a preset ID.
+		raw := `{"version":11,"values":[{"category":"person_names","mainText":"Marie Duval",` +
+			`"discoveryMethods":["local_llm"]}],"allowTerms":[],"patterns":[],` +
+			`"settings":{"level":"advanced","ollamaPort":11434,"model":"qwen3.5:0.8b"},` +
+			`"registry":[]}`
 		if _, err := LoadSession([]byte(raw)); err == nil {
-			t.Fatal("a v10 file carrying the retired identifiers was accepted; there is no " +
+			t.Fatal("a v11 file carrying the retired level key was accepted; there is no " +
 				"migration table and no compatibility alias anywhere in the loader")
 		}
 	})
@@ -588,7 +587,7 @@ func TestNewValueCategoriesHaveAPlaceholderLabel(t *testing.T) {
 // the same gesture as dropping a definition read out of a document.
 func TestDefinedTermsSurviveTheFile(t *testing.T) {
 	saved := Session{
-		Settings: SessionSettings{Level: "medium"},
+		Settings: SessionSettings{Presets: depthPresets(PresetStandard)},
 		DefinedTerms: []DefinedTerm{
 			{Term: "Work Order", Idiom: DefinitionIdiomMeans, Document: "a.docx"},
 			{Term: "Dedicated Advisors", Idiom: DefinitionIdiomParenthetical, Document: "a.docx"},

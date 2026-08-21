@@ -33,7 +33,6 @@ type Config struct {
 	Values     []engine.Value
 	Patterns   []engine.CustomPattern
 	Categories engine.CategorySelection
-	Level      engine.Level
 	Country    string
 	Allowlist  *engine.Allowlist
 	// Registry is the SESSION registry: passing the same instance the
@@ -45,17 +44,13 @@ type Config struct {
 	Images ImagePlan
 }
 
-// selection resolves the effective category switches (nil = level preset,
-// mirroring engine.Run).
+// selection resolves the effective category switches (nil = the documented
+// default selection, mirroring engine.Run).
 func (c Config) selection() engine.CategorySelection {
 	if c.Categories != nil {
 		return c.Categories
 	}
-	level := c.Level
-	if level == "" {
-		level = engine.LevelMedium
-	}
-	return engine.PresetSelection(level)
+	return engine.DefaultSelection(c.Country)
 }
 
 // Replacement is one span to splice: text[Start:End) becomes Text.

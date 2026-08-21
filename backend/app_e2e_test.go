@@ -68,7 +68,7 @@ func TestDetectionRouteDefaults(t *testing.T) {
 func TestSessionSettingsRoundTrip(t *testing.T) {
 	saved := engine.Session{
 		Settings: engine.SessionSettings{
-			Level: "advanced", OllamaPort: 11500, Model: "m:1b", ContextSize: 4096,
+			Presets: depthPresets(engine.PresetThorough), OllamaPort: 11500, Model: "m:1b", ContextSize: 4096,
 			MinConfidence: 0.85,
 			HeuristicDiscovery: &engine.HeuristicDiscoveryOptions{
 				MinLength: 7, MinOccurrences: 3, ExcludeCommonWords: false, MinConfidence: 0.4,
@@ -167,7 +167,7 @@ func TestApplySettingsCarriesTheStrictFormatChoice(t *testing.T) {
 func TestStrictFormatSurvivesTheSessionFile(t *testing.T) {
 	on := true
 	data, err := engine.SaveSession(engine.Session{
-		Settings: engine.SessionSettings{Level: "medium", OllamaPort: 11434, LLMStrictFormat: &on},
+		Settings: engine.SessionSettings{Presets: depthPresets(engine.PresetStandard), OllamaPort: 11434, LLMStrictFormat: &on},
 	})
 	if err != nil {
 		t.Fatalf("SaveSession: %v", err)
@@ -189,7 +189,7 @@ func TestStrictFormatSurvivesTheSessionFile(t *testing.T) {
 	}
 
 	// And a file with nothing to say about it restores as off, never as on.
-	silent, err := engine.SaveSession(engine.Session{Settings: engine.SessionSettings{Level: "medium", OllamaPort: 11434}})
+	silent, err := engine.SaveSession(engine.Session{Settings: engine.SessionSettings{Presets: depthPresets(engine.PresetStandard), OllamaPort: 11434}})
 	if err != nil {
 		t.Fatalf("SaveSession: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestApplySettingsValidatesTheDetailLevel(t *testing.T) {
 func TestDetailLevelSurvivesTheSessionFile(t *testing.T) {
 	data, err := engine.SaveSession(engine.Session{
 		Settings: engine.SessionSettings{
-			Level: "medium", OllamaPort: 11434, LLMDetailLevel: engine.DetailFaster,
+			Presets: depthPresets(engine.PresetStandard), OllamaPort: 11434, LLMDetailLevel: engine.DetailFaster,
 		},
 	})
 	if err != nil {
@@ -294,7 +294,7 @@ func TestDetailLevelSurvivesTheSessionFile(t *testing.T) {
 	// A file written before the setting existed says nothing about it, and must
 	// restore as thorough even when the live session is on faster.
 	silent, err := engine.SaveSession(engine.Session{
-		Settings: engine.SessionSettings{Level: "medium", OllamaPort: 11434},
+		Settings: engine.SessionSettings{Presets: depthPresets(engine.PresetStandard), OllamaPort: 11434},
 	})
 	if err != nil {
 		t.Fatalf("SaveSession: %v", err)

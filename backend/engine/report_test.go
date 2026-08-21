@@ -33,9 +33,9 @@ func runForReport(t *testing.T) *Results {
 			{Category: "person_names", MainText: "Thomas Berger"},
 			{Category: "entity_names", MainText: "Meridian Consulting"},
 		},
-		Level:     LevelMedium,
-		Allowlist: NewEmptyAllowlist(),
-		Registry:  NewRegistry(),
+		Categories: DepthSelection(PresetStandard, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
+		Registry:   NewRegistry(),
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)

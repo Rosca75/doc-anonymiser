@@ -17,9 +17,9 @@ func TestOnTraceReceivesResolvedSpans(t *testing.T) {
 
 	traces := map[string][]SpanTrace{}
 	_, err := Run(context.Background(), PipelineInput{
-		Documents: []Document{{Name: "note.txt", Format: FormatTXT, Markdown: text}},
-		Level:     LevelSoft,
-		Allowlist: NewEmptyAllowlist(),
+		Documents:  []Document{{Name: "note.txt", Format: FormatTXT, Markdown: text}},
+		Categories: DepthSelection(PresetSoft, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
 		OnTrace: func(docName string, ts []SpanTrace) {
 			traces[docName] = ts
 		},
@@ -87,10 +87,10 @@ func TestOnTraceSkipsEmptyRegions(t *testing.T) {
 	}
 	var got []SpanTrace
 	_, err = Run(context.Background(), PipelineInput{
-		Documents: []Document{doc},
-		Level:     LevelSoft,
-		Allowlist: NewEmptyAllowlist(),
-		OnTrace:   func(_ string, ts []SpanTrace) { got = ts },
+		Documents:  []Document{doc},
+		Categories: DepthSelection(PresetSoft, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
+		OnTrace:    func(_ string, ts []SpanTrace) { got = ts },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -111,18 +111,18 @@ func TestOnTraceSkipsEmptyRegions(t *testing.T) {
 func TestOnTraceNilIsFree(t *testing.T) {
 	text := "call +352 621 000 111 about ip 192.168.0.1"
 	base, err := Run(context.Background(), PipelineInput{
-		Documents: []Document{{Name: "f.txt", Format: FormatTXT, Markdown: text}},
-		Level:     LevelSoft,
-		Allowlist: NewEmptyAllowlist(),
+		Documents:  []Document{{Name: "f.txt", Format: FormatTXT, Markdown: text}},
+		Categories: DepthSelection(PresetSoft, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	withTrace, err := Run(context.Background(), PipelineInput{
-		Documents: []Document{{Name: "f.txt", Format: FormatTXT, Markdown: text}},
-		Level:     LevelSoft,
-		Allowlist: NewEmptyAllowlist(),
-		OnTrace:   func(string, []SpanTrace) {},
+		Documents:  []Document{{Name: "f.txt", Format: FormatTXT, Markdown: text}},
+		Categories: DepthSelection(PresetSoft, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
+		OnTrace:    func(string, []SpanTrace) {},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +172,7 @@ func TestOverlapResolutionLegacyZeroConfidence(t *testing.T) {
 // then wins). Guards against a Phase-F regression in v1 semantics.
 func TestOverlapResolutionURLBeatsEmail(t *testing.T) {
 	text := "profile at https://example.com/u/marie.duval@example.com end"
-	spans := ResolveOverlaps(DetectPIISelected(text, PresetSelection(LevelMedium), CountryLU))
+	spans := ResolveOverlaps(DetectPIISelected(text, DepthSelection(PresetStandard, CountryLU), CountryLU))
 	if len(spans) != 1 || spans[0].Category != CatURL {
 		t.Errorf("URL must still beat embedded email, got %+v", spans)
 	}
