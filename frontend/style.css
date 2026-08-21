@@ -215,6 +215,13 @@ main#view.page { overflow-y: auto; }
   display: grid; gap: 1.25rem;
   grid-template-columns: 1fr 2fr;
 }
+/* Identify stacks its grid over a footer while the review panel is hidden, so it
+   needs a gap between them that #view (a plain flex column) does not provide. */
+.identify-view {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; gap: 1.25rem;
+}
+
 /* Import: a narrower list column beside a wider preview. */
 .workspace-import { grid-template-columns: minmax(23rem, 0.9fr) 1.1fr; }
 /* Anonymise and Export: a fixed-measure column of cards beside one big card.
@@ -244,10 +251,13 @@ main#view.page { overflow-y: auto; }
   overflow: hidden;
 }
 
+/* The head is deliberately SHALLOW: it names the card and, where the card has
+   one, carries its single action. Every vertical millimetre it takes comes off
+   the body, which is where the work is. */
 .card-head {
   flex: none;
   display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
-  padding: 1.25rem 1.5rem 1rem;
+  padding: 0.85rem 1.5rem 0.7rem;
   border-bottom: 1px solid var(--gray-5);
 }
 /* Head content that is a row of controls rather than a title sits on the
@@ -289,7 +299,10 @@ main#view.page { overflow-y: auto; }
 
 /* The rail is a card; it is named separately because its padding is tighter
    (it is a third of the width and holds a form, not a table). */
-.rail .card-head { padding: 1.25rem 1.4rem 1rem; }
+.rail .card-head { padding: 0.75rem 1.4rem 0.7rem; }
+/* The progress bar lives under the rail's head, because the button that starts
+   the run does: it takes the rail's own tighter side padding. */
+.rail > .detect-progress { padding: 0.6rem 1.4rem; }
 .rail .card-body { padding: 1.25rem 1.4rem 1.5rem; display: flex; flex-direction: column; gap: 1.6rem; }
 
 /* A card whose content can re-identify people (the value mapping, the
@@ -477,7 +490,8 @@ main#view.page { overflow-y: auto; }
   border: 1px solid var(--gray-4); border-radius: var(--card-radius);
   padding: 0.85rem 1.5rem;
 }
-/* When a screen supplies its footer as a card foot (Import, Identify), the
+/* When a screen supplies its footer as a card foot (Import, and Identify once
+   its review panel is on screen), the
    step-footer sits inside .card-foot, which already owns the padding, border
    and background. It must fill that foot so its own space-between pushes the
    primary button to the right, instead of taking only its content width and
@@ -746,6 +760,11 @@ button.primary, .btn-primary {
   color: #FFFFFF; font-weight: 700;
 }
 .btn-secondary { background: var(--gray-5); border-color: var(--gray-3); color: var(--text); }
+/* Run detection, in the Configure rail's head: the ONE action of step 2 until it
+   has been pressed, since the review panel does not exist before then. It is a
+   primary button with no border at all, so it reads as a single block of accent
+   orange rather than as an outlined control. */
+.btn-run-detect { border: none; }
 .btn-ghost { background: transparent; border-color: transparent; color: var(--text); }
 .btn-ghost:hover { background: var(--gray-5); }
 button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; }

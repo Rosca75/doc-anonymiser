@@ -24,7 +24,7 @@ import {
   PRESET_FAMILY_DEPTH,
   adoptCategories, ALWAYS_ON_CATEGORIES,
   setUseLocalLLM, adoptProbe,
-  detectionRoutesOn, llmEnabled,
+  detectionRoutesOn, detectionCanRun, llmEnabled,
   setUseBuiltInPatterns, setUseHeuristicDiscovery,
   addSuggestions, acceptSuggestion, rejectSuggestion, acceptAllShown,
   DISCOVERY_METHODS, MATCH_CLASSES, SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
@@ -254,8 +254,9 @@ test("adding a value enables its category and flips its row to custom", () => {
   addValues([{ category: "person_names", mainText: "Oscar Liber" }]);
   assert.equal(getState().settings.categories.person_names, true, "the value's category is now on");
   assert.equal(namesRow(), "custom");
-  assert.equal(patternsRow(), "soft",
-    "a NAME category moved, so the patterns row is untouched: the rows derive independently");
+  assert.equal(patternsRow(), "standard",
+    "a NAME category moved, so the patterns row is untouched: the rows derive " +
+    "independently, and Soft and Standard are identical there so it reads as the default");
 });
 
 test("adding a value already on a preset does not flip the preset", () => {
@@ -508,10 +509,11 @@ test("applyPreset refuses a row or a preset the table does not hold", () => {
   assert.deepEqual(getState().settings.categories, before, "nothing was written");
 });
 
-test("Soft and Standard are identical in the patterns scope, and the row reads Soft", () => {
+test("Soft and Standard are identical in the patterns scope, and the row reads Standard", () => {
   // A fact about the depths, not a bug: Standard differs from Soft only in the
-  // name categories. The FIRST match in table order wins, so the row settles on
-  // Soft instead of flickering between two chips that both match.
+  // name categories. Where several rows match, the DEFAULT depth wins, so the row
+  // settles on Standard instead of flickering between two chips that both match,
+  // and a fresh session's row names the depth it actually started on.
   const soft = findPreset(PRESET_SCOPE_PATTERNS, PRESET_FAMILY_DEPTH, "soft");
   const standard = findPreset(PRESET_SCOPE_PATTERNS, PRESET_FAMILY_DEPTH, "standard");
   assert.deepEqual([...soft.categories].sort(), [...standard.categories].sort());
@@ -519,7 +521,7 @@ test("Soft and Standard are identical in the patterns scope, and the row reads S
   resetState();
   for (const id of ["soft", "standard"]) {
     applyDepth(id);
-    assert.equal(patternsRow(), "soft", `${id}: the patterns row reads Soft`);
+    assert.equal(patternsRow(), "standard", `${id}: the patterns row reads Standard`);
     assert.equal(namesRow(), id, `${id}: the names row still tells the two apart`);
   }
 });
@@ -558,7 +560,8 @@ test("activePresets leaves out the row that reads Custom", () => {
   resetState();
   applyDepth("standard");
   assert.deepEqual(activePresets(getState()), {
-    "patterns.depth": "soft", // Soft and Standard are identical here
+    // Soft and Standard are identical here, and the DEFAULT depth wins the tie.
+    "patterns.depth": "standard",
     "names.depth": "standard",
   });
   toggleCategory("email", false);
@@ -640,13 +643,15 @@ test("buildRunRequest carries the category selection", () => {
 
 test("setUseBuiltInPatterns and setUseHeuristicDiscovery flip their flags independently", () => {
   resetState();
-  assert.equal(getState().settings.useBuiltInPatterns, true, "Native detection defaults on");
-  assert.equal(getState().settings.useHeuristicDiscovery, true, "Auto detection defaults on");
+  assert.equal(getState().settings.useBuiltInPatterns, true, "built-in patterns default on");
+  assert.equal(getState().settings.useHeuristicDiscovery, false,
+    "heuristic discovery defaults off");
   setUseBuiltInPatterns(false);
   assert.equal(getState().settings.useBuiltInPatterns, false);
-  assert.equal(getState().settings.useHeuristicDiscovery, true, "Auto is untouched by Native");
-  setUseHeuristicDiscovery(false);
-  assert.equal(getState().settings.useHeuristicDiscovery, false);
+  assert.equal(getState().settings.useHeuristicDiscovery, false,
+    "heuristic discovery is untouched by the pattern switch");
+  setUseHeuristicDiscovery(true);
+  assert.equal(getState().settings.useHeuristicDiscovery, true);
   setUseBuiltInPatterns(true);
   assert.equal(getState().settings.useBuiltInPatterns, true);
 });
@@ -701,13 +706,16 @@ test("adoptProbe leaves the stored model alone when nothing was resolved", () =>
   assert.equal(getState().ollama.available, false, "the status itself still lands");
 });
 
-test("the two offline routes start on and Local LLM discovery starts off", () => {
-  // Built-in patterns and Heuristic discovery need nothing installed, so both run
-  // by default. Local LLM discovery hands the document to a model, so the user
-  // turns it on themselves, even when Ollama is detected.
+test("Built-in patterns is the only route on by default", () => {
+  // Built-in patterns produces DIRECT matches, so a fresh session's first run
+  // shows what the deterministic patterns found and asks the user nothing. The
+  // two discovery routes produce Suggestions to review one by one, which is a
+  // task to opt into: Heuristic discovery is off for that reason, and Local LLM
+  // discovery additionally hands the document to a model, so the user turns it on
+  // themselves even when Ollama is detected.
   resetState();
   assert.equal(getState().settings.useBuiltInPatterns, true);
-  assert.equal(getState().settings.useHeuristicDiscovery, true);
+  assert.equal(getState().settings.useHeuristicDiscovery, false);
   assert.equal(getState().settings.useLocalLLM, false);
   setState({ ollama: { available: true, models: [], detail: "" } });
   assert.equal(getState().settings.useLocalLLM, false,
@@ -767,20 +775,26 @@ test("each route reducer writes exactly one flag and leaves the others alone", (
   resetState();
   setUseBuiltInPatterns(false);
   assert.equal(getState().settings.useBuiltInPatterns, false);
-  assert.equal(getState().settings.useHeuristicDiscovery, true, "untouched");
+  assert.equal(getState().settings.useHeuristicDiscovery, false, "untouched");
   assert.deepEqual(enabledSignalSources(getState()), SIGNAL_SOURCES,
     "switching the pattern pass off must not clear a signal reading: the readings " +
     "match their own evidence, and that asymmetry is why the setting is separate");
 
   resetState();
-  setUseHeuristicDiscovery(false);
-  assert.equal(getState().settings.useHeuristicDiscovery, false);
+  setUseHeuristicDiscovery(true);
+  assert.equal(getState().settings.useHeuristicDiscovery, true);
   assert.equal(getState().settings.useBuiltInPatterns, true, "untouched");
 });
 
 test("detectionRoutesOn counts the DISCOVERY routes that are enabled", () => {
   resetState();
+  // One by default, and it is signal-based discovery rather than the heuristic
+  // pass: the signal readings live under Built-in patterns and are gated only by
+  // signalSuggestionSources, so they are on in a fresh session while
+  // useHeuristicDiscovery is not.
   assert.equal(detectionRoutesOn(), 1, "the offline discovery phase alone");
+  setUseHeuristicDiscovery(true);
+  assert.equal(detectionRoutesOn(), 1, "both offline producers are still ONE phase");
   setState({ ollama: { available: true, models: [], detail: "" } });
   setUseLocalLLM(true);
   assert.equal(detectionRoutesOn(), 2);
@@ -789,6 +803,22 @@ test("detectionRoutesOn counts the DISCOVERY routes that are enabled", () => {
   assert.equal(detectionRoutesOn(), 1, "local LLM discovery alone");
   setUseLocalLLM(false);
   assert.equal(detectionRoutesOn(), 0, "nothing to run, and the UI must say so");
+});
+
+test("built-in pattern matching alone still gives the RUN something to do", () => {
+  // It is not a discovery route, so detectionRoutesOn does not count it, but a run
+  // with every discovery route off still produces the patterns' read-only preview.
+  // The button is gated on detectionCanRun for that reason: gating it on the
+  // discovery routes would leave a user who wants only the deterministic matches
+  // with a dead button and a review panel that never appears.
+  resetState();
+  setUseHeuristicDiscovery(false);
+  for (const source of SIGNAL_SOURCES) setSignalSource(source, false);
+  assert.equal(detectionRoutesOn(), 0, "no DISCOVERY route is on");
+  assert.equal(detectionCanRun(), true, "and the run still has the preview to produce");
+
+  setUseBuiltInPatterns(false);
+  assert.equal(detectionCanRun(), false, "with the patterns off too, nothing would look");
 });
 
 test("built-in pattern matching alone gives the detect button nothing to run", () => {
@@ -1075,7 +1105,7 @@ test("setCategoryGroup ignores unknown keys and reports no-op runs (CR10)", () =
 test("a deselected group makes its row Custom (CR10)", () => {
   resetState();
   applyDepth("standard");
-  assert.equal(patternsRow(), "soft");
+  assert.equal(patternsRow(), "standard");
   setCategoryGroup(EXTENDED_PII_CATEGORIES, false);
   assert.equal(patternsRow(), "custom");
   assert.equal(namesRow(), "standard", "the names row is untouched by a pattern group");

@@ -56,7 +56,6 @@ import {
   adoptProbe,
   LLM_DETAIL_LEVELS,
   parsePageSpec,
-  ALL_CATEGORIES,
   NAME_CATEGORIES,
   PRESET_SCOPE_PATTERNS, PRESET_SCOPE_NAMES, presetFamilies, presetsFor,
 } from "../state.js";
@@ -72,6 +71,9 @@ import { notify } from "../toast.js";
 // The Profile controls are shared with step 3, which offers Save as well. This
 // is a one-way edge: profile.js never imports the rail.
 import { profileControlsHTML, wireProfileControls } from "./profile.js";
+// The run control renders here and is wired by views/identify.js, which is the
+// one module that knows about both halves of the step.
+import { runControlHTML, progressStrip } from "./detectionrun.js";
 
 /**
  * llmDisabledTooltip(port) is what every disabled LLM control says when Ollama
@@ -119,10 +121,9 @@ const SECTION_HELP = {
 // must not travel in a session file, and putting it in the store would mean
 // every fold went through a reducer.
 //
-// Local LLM discovery starts folded: it is off, and an open panel of disabled
-// fields is noise above the settings that ARE in use. Load profile starts folded
-// for the same reason: most sessions never touch it.
-const collapsedGroups = new Set(["rail-local", "rail-profile"]);
+// EVERY section starts folded; the loop that seeds the rest of this set is below
+// the group lists, because it derives the ids from them.
+const collapsedGroups = new Set();
 
 // Which signal rows are EXPANDED to show their individual readings. A VIEW
 // preference, like the folded sections: nothing downstream reads it, it must not
@@ -197,19 +198,33 @@ for (const [type, groups] of Object.entries(GROUPS_BY_TYPE)) {
   groups.forEach((_g, index) => collapsedGroups.add(`cat-group-${type}-${index}`));
 }
 
+// The route sections and the Profile panel start FOLDED as well, so the rail
+// opens as a short column of headers: the route name, its help icon and its
+// switch. That is what a session actually starts by reading (which routes are
+// on), and it puts the Run detection button in the head within reach of it
+// instead of below three expanded panels of settings. Derived from the section
+// list so a route added later folds by default too.
+for (const [id] of RAIL_SECTIONS) collapsedGroups.add(id);
+collapsedGroups.add("rail-profile");
+
 /**
  * renderIdentifyRail(container) fills the rail card.
  * @param {HTMLElement} container the card element views/identify.js created
  */
 export function renderIdentifyRail(container) {
   const s = getState();
-  const active = ALL_CATEGORIES.filter((c) => s.settings.categories?.[c]).length;
 
+  // The head carries the step's ONE action rather than a read-out. A count of
+  // active categories stated a number nobody acts on, in the place the user
+  // looks for something to press; Run detection is what this half of the screen
+  // is for, and the review panel beside it does not exist until it is pressed.
+  // The progress bar follows the button it belongs to.
   container.innerHTML =
-    `<div class="card-head">` +
+    `<div class="card-head with-controls">` +
     `<div class="card-head-left"><h2>${escapeHTML(CARDS.configure.title)}</h2></div>` +
-    `<span class="card-sub">${escapeHTML(RAIL.activeCount(active, ALL_CATEGORIES.length))}</span>` +
+    `<div class="card-head-right">${runControlHTML(s, s.discovery?.running === true)}</div>` +
     `</div>` +
+    progressStrip(s) +
     `<div class="card-body">${railBody(s)}</div>` +
     `<div id="settings-error"></div>`;
 

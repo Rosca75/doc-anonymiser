@@ -52,6 +52,12 @@ without the runtime. Preserve that behaviour.
   it is one screen with two halves, each big enough to deserve its own file, so
   `identify.js` owns the layout and the footer, `identifyrail.js` the choices
   and `identifyworkspace.js` the Values, Suggestions and patterns.
+  `detectionrun.js` is the third file that split out of them: the Run detection
+  button renders in the rail's head and its findings fill the workspace's tabs, so
+  neither half can own the run, and the two already depend on each other closely
+  enough that a third edge would close an import cycle. What the run needs FROM
+  the workspace (which tab to land on) arrives as a callback that `identify.js`
+  passes, because that is the one module knowing about both halves.
 
   A **value card is a fixed-height surface**, and that is a behaviour rather than
   a style. Its height must not depend on how many warnings it carries or how many
@@ -67,11 +73,18 @@ without the runtime. Preserve that behaviour.
 
   The rail is THREE switchable DETECTION ROUTE sections, not tabs, one per
   MECHANISM, each switch bound to a real settings flag: **Built-in patterns**
-  (`useBuiltInPatterns`, on by default, owning the document country, its own
-  preset rows and the eight pattern category groups), **Heuristic discovery**
-  (`useHeuristicDiscovery`, on by default, owning the name categories, its own
-  preset rows and its own strictness block) and **Local LLM discovery** (`useLocalLLM`, off by default).
-  There is no cloud route.
+  (`useBuiltInPatterns`, THE ONE ROUTE ON BY DEFAULT, owning the document country,
+  its own preset rows and the eight pattern category groups), **Heuristic
+  discovery** (`useHeuristicDiscovery`, off by default, owning the name
+  categories, its own preset rows and its own strictness block) and **Local LLM
+  discovery** (`useLocalLLM`, off by default). There is no cloud route.
+
+  Every section starts FOLDED, and so does the Profile panel: the rail opens as a
+  short column of route headers under the head's **Run detection** button
+  (`views/detectionrun.js`), which is the one action of the step. The head carries
+  no read-out beside it. The Review half of the screen is not rendered at all
+  until a run has settled (`state.js detectionRan`), and until then the step
+  footer is a standalone bar under the rail.
 
   ONE switch-less panel follows them, carrying `.rail-panel` rather than
   `.rail-section` so a utility panel is never counted as a route: **Profile**,

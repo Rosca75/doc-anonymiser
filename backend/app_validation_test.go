@@ -119,6 +119,10 @@ func TestCuratedSpellings(t *testing.T) {
 // only, so it reaches no model and stays a unit test.
 func TestOfflineRouteReturnsSuggestionsNotValues(t *testing.T) {
 	app := NewApp()
+	// The route is off by default now, so the test that exercises it turns it on:
+	// what is asserted here is the SHAPE of what it returns, not whether a fresh
+	// session runs it.
+	app.settings.UseHeuristicDiscovery = true
 	app.settings.HeuristicDiscovery = engine.HeuristicDiscoveryOptions{} // no filtering
 	app.docs = []engine.Document{
 		{

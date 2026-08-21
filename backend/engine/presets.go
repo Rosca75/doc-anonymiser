@@ -140,9 +140,10 @@ var (
 )
 
 // AllPresets is THE preset table, in display order within each scope and family.
-// Order is load-bearing: MatchingPreset returns the FIRST row whose categories
-// the selection matches, which is what makes the patterns row read "Soft" rather
-// than flickering between Soft and Standard when the two are identical there.
+// Order is load-bearing: where several rows match one selection MatchingPreset
+// prefers the DEFAULT depth and falls back to the FIRST matching row, so the
+// answer is stable rather than flickering between Soft and Standard when the two
+// are identical in a scope.
 //
 // Mirrored by frontend/state.js PRESETS and guarded by
 // ../../preset_parity_test.go.
@@ -297,8 +298,11 @@ func ApplyPreset(sel CategorySelection, preset Preset) CategorySelection {
 // disagree with it, and here that would mean the rail naming a preset the run
 // does not use.
 //
-// The FIRST matching row wins, which is the rule that keeps the patterns row on
-// "Soft" instead of flickering while Soft and Standard are identical there.
+// Where SEVERAL rows match, the DEFAULT depth wins and table order breaks any
+// remaining tie. Both halves matter: Soft and Standard are identical in the
+// patterns scope, so a fresh session must read "Standard" there (the depth it
+// started on) rather than "Soft", and a tie between two non-default rows must
+// still resolve to one stable answer rather than flickering.
 //
 // country is what makes the answer honest. The national identifier categories
 // follow the document country (CountryIDCategories), so a Luxembourg document at
@@ -307,6 +311,8 @@ func ApplyPreset(sel CategorySelection, preset Preset) CategorySelection {
 // for every document ever loaded.
 func MatchingPreset(sel CategorySelection, scope, family, country string) (Preset, bool) {
 	categories := PresetScopeCategories(scope)
+	var first Preset
+	found := false
 	for _, preset := range PresetsFor(scope, family) {
 		matched := true
 		for _, category := range categories {
@@ -321,11 +327,24 @@ func MatchingPreset(sel CategorySelection, scope, family, country string) (Prese
 				break
 			}
 		}
-		if matched {
+		if !matched {
+			continue
+		}
+		// SEVERAL presets can match one selection, because two depths can name the
+		// same categories in one scope: Soft and Standard are identical in the
+		// patterns scope, differing only in the names scope. The tie is broken
+		// toward the DEFAULT depth, so a fresh session's row reads as the depth the
+		// session actually started on rather than as whichever row happens to come
+		// first in the table. Table order decides the rest, so the answer stays
+		// stable instead of flickering between two rows that both match.
+		if preset.ID == PresetStandard {
 			return preset, true
 		}
+		if !found {
+			first, found = preset, true
+		}
 	}
-	return Preset{}, false
+	return first, found
 }
 
 // PresetKey is the storage key for one row: "<scope>.<family>". Flat rather than

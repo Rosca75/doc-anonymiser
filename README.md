@@ -82,9 +82,12 @@ Suggestion silently answers "reject" on your behalf.
      whose name starts "Tpps" are involved, so if either is written elsewhere in
      your files it is suggested for review. They keep working with Built-in
      patterns switched off, because they match their own evidence.
-   - **Heuristic discovery** (on, and needs nothing installed) finds recurring
-     names by how they are written, with a Luxembourg-aware legal-form
-     gazetteer. It owns the name categories and its own strictness settings.
+   - **Heuristic discovery** (off until you switch it on, and needs nothing
+     installed) finds recurring names by how they are written, with a
+     Luxembourg-aware legal-form gazetteer. It owns the name categories and its
+     own strictness settings. It is off by default because everything it finds is
+     a suggestion to accept or reject one row at a time, which is work you choose
+     to take on rather than work handed to you.
    - **Local LLM discovery** (off by default) hands the documents to a model
      running on your own machine and suggests what it finds.
 

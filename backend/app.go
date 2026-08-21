@@ -339,11 +339,15 @@ func defaultSettings() Settings {
 		// The stricter defaults, matching the frontend store: heuristic discovery
 		// over-detecting is the failure mode that matters.
 		HeuristicDiscovery: engine.DefaultHeuristicDiscoveryOptions(),
-		// The offline routes are on by default: neither needs anything
-		// installed. Local LLM discovery is off, because handing the
-		// document to a model is the user's decision to make.
+		// Built-in pattern matching is the ONLY route on by default, matching the
+		// frontend store. It needs nothing installed and it produces direct
+		// matches rather than a review list, so a fresh session starts by showing
+		// what the deterministic patterns match. Heuristic discovery is off
+		// because its output is Suggestions the user must review one by one, and
+		// Local LLM discovery is off because handing the document to a model is
+		// the user's decision to make.
 		UseBuiltInPatterns:      true,
-		UseHeuristicDiscovery:   true,
+		UseHeuristicDiscovery:   false,
 		SignalSuggestionSources: engine.DefaultSignalSources(),
 	}
 }

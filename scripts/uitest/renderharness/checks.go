@@ -278,12 +278,13 @@ type railResult struct {
 // the documented default switch positions, the two switch-less panels below them,
 // and every switchable category on screen.
 //
-// The Configure choices are the left rail of Identify, restructured as
-// switchable DETECTION ROUTES rather than peer tabs (root CLAUDE.md section 5,
-// frontend/CLAUDE.md discipline rules). One switch, one mechanism: Built-in
-// patterns and Heuristic discovery are on by default because neither needs
-// anything installed; Local LLM discovery is off by default because handing the
-// document to a model is the user's decision.
+// The Configure choices are the left rail of Identify, switchable DETECTION
+// ROUTES rather than peer tabs (root CLAUDE.md section 5, frontend/CLAUDE.md
+// discipline rules). One switch, one mechanism: Built-in patterns is the only
+// route on by default, because it produces DIRECT matches and asks the user
+// nothing; both discovery routes produce Suggestions to review one by one, which
+// is a task to opt into, and Local LLM discovery additionally hands the document
+// to a model.
 func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 	r.step("The Configure rail is the three detection routes")
 
@@ -325,9 +326,10 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 		"the rail-patterns route switch checked", describeBool(got.PatternsOn),
 		"state.js settings.useBuiltInPatterns defaults to true: it needs nothing installed.")
 
-	r.assert("Heuristic discovery is on by default", boolIs(got.HeuristicOn, true),
-		"the rail-heuristic route switch checked", describeBool(got.HeuristicOn),
-		"state.js settings.useHeuristicDiscovery defaults to true: it needs nothing installed.")
+	r.assert("Heuristic discovery is off by default", boolIs(got.HeuristicOn, false),
+		"the rail-heuristic route switch unchecked", describeBool(got.HeuristicOn),
+		"state.js settings.useHeuristicDiscovery defaults to false: its output is "+
+			"Suggestions to review one by one, which is a task the user opts into.")
 
 	r.assert("Local LLM discovery is off by default", boolIs(got.LocalOn, false),
 		"the rail-local route switch unchecked", describeBool(got.LocalOn),
@@ -344,17 +346,18 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 			"fixture behind keeps the harness green, which is a test reporting safety it no "+
 			"longer provides.")
 
-	r.assert("the category groups are folded by default",
+	r.assert("the rail is folded by default",
 		got.Categories > 0 && got.CategoriesWithSize == 0,
-		"no category checkbox laid out until its group is opened",
+		"no category checkbox laid out until its section and its group are opened",
 		fmt.Sprintf("%d of %d have a height while nothing was clicked", got.CategoriesWithSize, got.Categories),
-		"views/identifyrail.js seeds collapsedGroups with every cat-group id so the rail opens on the "+
-			"route switches and the scope summary, not a wall of category lists.")
+		"views/identifyrail.js seeds collapsedGroups with every section id AND every cat-group "+
+			"id, so the rail opens as a short column of route headers under the Run detection "+
+			"button rather than as a wall of category lists.")
 
-	r.assert("opening a category group lays out its checkboxes",
+	r.assert("opening a section and a category group lays out its checkboxes",
 		got.Categories > 0 && got.CategoriesWithSizeAfterExpand == got.Categories,
-		"every category checkbox laid out once its group is opened",
-		fmt.Sprintf("%d of %d have a height after opening every group", got.CategoriesWithSizeAfterExpand, got.Categories),
+		"every category checkbox laid out once its section and its group are opened",
+		fmt.Sprintf("%d of %d have a height after opening every section and group", got.CategoriesWithSizeAfterExpand, got.Categories),
 		"A folded group is only useful if it opens: collapsibleGroup + wireGroups reveal the "+
 			"checkboxes, and a folded-forever group would be a category the user cannot reach.")
 
@@ -387,9 +390,9 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 			boolIs(box.LaidOut, true) && boolIs(box.Disabled, false),
 			"a laid-out, enabled checkbox",
 			fmt.Sprintf("laidOut=%s disabled=%s", describeBool(box.LaidOut), describeBool(box.Disabled)),
-			"Built-in patterns is open by default, and the box must be settable while the pass "+
-				"itself is off, exactly as the category boxes are: a user configures the pass "+
-				"before switching it on.")
+			"The probe opens Built-in patterns first, and the box must then be settable while "+
+				"the pass itself is off, exactly as the category boxes are: a user configures "+
+				"the pass before switching it on.")
 
 		r.assert("the checksum switch carries its help and fits the rail",
 			boolIs(box.HasHelp, true) && boolIs(box.LabelFullyShown, true) &&

@@ -41,16 +41,19 @@ func TestDiscoveryPromptsNameNoRetiredCategory(t *testing.T) {
 
 // --- The detection route switches ----------------------------------------
 
-// TestDetectionRouteDefaults: neither offline route needs anything installed, so
-// both are on; Local LLM discovery hands the document to a model, so the
-// user turns that one on themselves.
+// TestDetectionRouteDefaults: built-in pattern matching is the ONLY route on by
+// default. It produces direct matches, so a fresh session's first run shows what
+// the deterministic patterns found and asks the user nothing. Both DISCOVERY
+// routes produce Suggestions to review one by one, which is a task to opt into,
+// and Local LLM discovery additionally hands the document to a model. The signal
+// readings stay on: they hang off the pattern categories, not off a route switch.
 func TestDetectionRouteDefaults(t *testing.T) {
 	s := NewApp().GetSettings()
 	if !s.UseBuiltInPatterns {
 		t.Error("built-in pattern matching must be on by default")
 	}
-	if !s.UseHeuristicDiscovery {
-		t.Error("heuristic discovery must be on by default")
+	if s.UseHeuristicDiscovery {
+		t.Error("heuristic discovery must be OFF by default")
 	}
 	if !engine.SignalSourceEnabled(s.SignalSuggestionSources, engine.SignalSourceEmail) {
 		t.Error("email-derived Suggestions must be on by default")

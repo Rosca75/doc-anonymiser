@@ -32,36 +32,31 @@
 //                    badge. Named for its author, which is the only difference
 //                    between it and the tab above.
 //
-// One structural change beyond the layout: "Run detection" is
-// ONE button in the card header. It used to be a panel with a per-file checkbox
-// list and a separate button per method.
+// The RUN is not here. The Run detection button, the progress bar and the
+// bridge call live in views/detectionrun.js, and the button itself is rendered
+// in the Configure rail's head: this panel is not on screen at all until a run
+// has happened, so the control that starts one cannot sit inside it. All this
+// module exports towards the run is landOnResultTab(), because the tab state is
+// its own.
 //
-//  made it ONE bridge call as well (api.js runDetection): Go runs every
-// switched-on route under one cancellation context, reports one monotonic
-// progress fraction across the whole run, and always ends with a terminal
-// event. This module no longer sequences the passes, no longer computes a
-// percentage, and no longer decides which routes run.
-//
-// Naming note: the visible labels
-// have changed twice now, from "Values" to "Values" to this half of
-// "Identify". The ENGINE identifiers this module manipulates (the category keys
+// Naming note: the ENGINE identifiers this module manipulates (the category keys
 // entity_names, person_names, ... and the state.values array) have not changed
 // once, on purpose: a label is a display string, an identifier is a contract.
 
 import {
-  runDetection, cancelDetection, countTermMatches, patternMatches,
+  countTermMatches, patternMatches,
   expandSpellings, validatePattern, checkIntersections,
 } from "../api.js";
 import {
-  getState, setState, llmEnabled, detectionRoutesOn,
+  getState, setState,
   addValues, deleteValue, deleteValues, valueKey,
   setValueSpellings, setValueSpellingError, addSpelling,
-  addSuggestions, acceptSuggestion, rejectSuggestion, setBuiltInPatterns,
+  acceptSuggestion, rejectSuggestion,
   acceptAllShown, rejectAllShown, moveSpelling,
   addPattern, removePattern, NAME_CATEGORIES,
   renameValue, renameSpelling, changeValueCategory, changeSuggestionCategory,
   groupValues, clearAllValues, valueConflicts, spellingsOf, removeAllowTerm, addAllowTerm,
-  llmScopeArg, curate, setIntersections, intersectionsFor, buildIntersectionRequest,
+  curate, setIntersections, intersectionsFor, buildIntersectionRequest,
   foldIntoFamily, DISCOVERY_METHODS, relatedTo,
 } from "../state.js";
 import { pendingExpansions } from "../valuemodel.js";
@@ -201,10 +196,9 @@ let dragging = null;
 export function renderIdentifyWorkspace(container, opts = {}) {
   const s = getState();
   const shown = visibleSuggestions(s.suggestions, suggestionFilter);
-  const busy = s.discovery?.running === true;
 
   container.innerHTML =
-    head(s, busy) +
+    head() +
     `<div class="workspace-tabs">${tabs(s)}</div>` +
     `<div class="card-body stack">${tabBody(s, shown)}</div>` +
     toastHTML(s.notice) +
@@ -253,74 +247,16 @@ function intersectionSignature(s) {
   ]);
 }
 
-/** head(s, busy) is the card header: the title and the one Run detection
- *  button. */
-function head(s, busy) {
-  // The run button says what it will DO, which depends on which detection
-  // ROUTES are switched on in the rail. With every route off there
-  // is nothing to run, and the button says so rather than running an empty
-  // pass and reporting "0 suggestions" as if it had looked.
-  const aiOK = llmEnabled(s);
-  const routes = detectionRoutesOn(s);
-  const blocked = s.documents.length === 0 ? WORKSPACE.runNeedsDocuments
-    : (routes === 0 ? WORKSPACE.runNeedsRoute : "");
-  const runTitle = aiOK ? WORKSPACE.runWithLLM : WORKSPACE.runOffline;
-  const run = busy
-    ? button(WORKSPACE.cancel, { kind: "secondary", id: "btn-detect-cancel", icon: "cancel" })
-    : button(WORKSPACE.runDetection, {
-      kind: "secondary", id: "btn-detect", icon: "smart_toy",
-      disabled: !!blocked,
-      title: blocked || runTitle,
-    });
-
-  return `<div class="card-head with-controls">` +
+/** head(s) is the card header: the panel's title, and nothing else.
+ *
+ *  The Run detection button is NOT here. It lives in the Configure rail's head
+ *  (views/detectionrun.js runControlHTML), because this panel is not on screen
+ *  until a run has happened: a button that reveals the card it sits in cannot
+ *  sit in that card. */
+function head() {
+  return `<div class="card-head">` +
     `<div class="card-head-left"><h2>${escapeHTML(CARDS.identify.title)}</h2></div>` +
-    `<div class="card-head-right">${run}</div>` +
-    `</div>` +
-    progressStrip(s);
-}
-
-/**
- * progressStrip(s) is the bar shown while a detection run is in flight.
- *
- * The percentage comes from GO: it covers the whole run across
- * every route, so it cannot rewind when the second route starts over with a
- * smaller file count. Recomputing it here from (current+1)/total per route is
- * exactly the bug that made the bar jump backwards mid-run.
- */
-export function progressStrip(s) {
-  const d = s.discovery;
-  // The gate is deliberately `=== true` and nothing else: the
-  // bar must depend on a run being in flight, never on a leftover object.
-  if (d?.running !== true) return "";
-  const pct = Math.max(0, Math.min(100, Math.round((d.fraction ?? 0) * 100)));
-  return `<div class="detect-progress">` +
-    `<div class="progress-bar"><div style="width:${pct}%"></div></div>` +
-    `<span class="hint mono" id="detect-caption">${escapeHTML(detectionCaption(d))}</span>` +
     `</div>`;
-}
-
-/**
- * detectionCaption(d) says which route is running, on which file, how far
- * into it, and for how long.
- *
- * Every part of that answers a question the old one-line caption left open
- * when a run felt stuck: WHICH pass is this (two routes read the same files
- * twice), where inside a long file has it got to (a chunked model scan sat on
- * one caption for minutes), and has anything happened at all recently.
- */
-export function detectionCaption(d) {
-  const route = d.phaseCount > 1
-    ? `${WORKSPACE.phaseName(d.phase)} (${(d.phaseIndex ?? 0) + 1}/${d.phaseCount})`
-    : WORKSPACE.phaseName(d.phase);
-  const parts = [route];
-  if (d.total) parts.push(WORKSPACE.fileOf(d.file ?? "", (d.current ?? 0) + 1, d.total));
-  if (d.chunkCount > 1) parts.push(WORKSPACE.chunkOf((d.chunk ?? 0) + 1, d.chunkCount));
-  if (d.startedAt) {
-    const seconds = Math.max(0, Math.round((Date.now() - d.startedAt) / 1000));
-    parts.push(WORKSPACE.elapsed(seconds));
-  }
-  return parts.join(", ");
 }
 
 function tabs(s) {
@@ -1624,7 +1560,6 @@ function wire(container, s, shown) {
     });
   }
 
-  wireDetection(container);
   wireNotice(container);
   // Both hover surfaces are wired for the WHOLE workspace, not per tab: a card
   // carries one of each and re-wiring them per tab would mean four call sites
@@ -1639,95 +1574,21 @@ function wire(container, s, shown) {
   else if (activeTab === "patterns") wirePatterns(container);
 }
 
-// --- Run detection --------------------------------------------------------
+// --- Where a run lands ----------------------------------------------------
 
 /**
- * wireDetection(container) wires the ONE Run detection button to the ONE
- * detection call.
+ * landOnResultTab() selects the tab the finished detection run filled.
  *
- * Everything this function used to decide now belongs to Go: which routes run,
- * which files the local model can read, what happens when one file fails, and
- * when the run is over. What is left here is what a view should do: start it,
- * fold the findings into the store, and report what came back, INCLUDING the
- * cancelled flag and the per-file problems the old code discarded.
+ * views/detectionrun.js calls it once the run has settled. It is exported
+ * rather than inlined there because `activeTab` is this module's state: the
+ * panel that owns the tabs is the only place that may choose between them.
  */
-function wireDetection(container) {
-  container.querySelector("#btn-detect-cancel")?.addEventListener("click", () => cancelDetection());
-
-  const btn = container.querySelector("#btn-detect");
-  if (!btn || btn.disabled) return;
-
-  btn.addEventListener("click", async () => {
-    const all = getState().documents.map((d) => d.name);
-    if (all.length === 0) return;
-
-    // ONE call for the whole run. Go decides which routes are on,
-    // skips what the local model cannot read and says so, keeps going past a
-    // file that failed, and always ends the run with a terminal event that
-    // clears the progress bar. The old two-call sequence could not do any of
-    // that: it had two cancellation slots with a dead zone between them, and
-    // it dropped the cancelled flag and the status both passes returned.
-    setState({
-      discovery: {
-        running: true, phase: "", phaseIndex: 0, phaseCount: 1,
-        current: 0, total: all.length, file: all[0],
-        chunk: 0, chunkCount: 0, fraction: 0, startedAt: Date.now(),
-      },
-    });
-
-    try {
-      const result = await runDetection(all, getState().allowlist, llmScopeArg());
-      // ONE list, one call. Every row already says which methods found it, so
-      // there is no per-route mapping step here for a field to fall out of: the
-      // Local LLM route's folded spellings used to be lost in exactly such a step.
-      const added = addSuggestions(result?.suggestions ?? []);
-
-      // The built-in patterns' read-only preview, replaced wholesale: it
-      // describes the categories that were on for THIS run, so a merge with an
-      // older run would show matches from a category since switched off.
-      setBuiltInPatterns(result);
-
-      // What the local model actually did, kept for the rail's read-out. A run
-      // that found nothing is not the same fact as a document that holds
-      // nothing, and the request count is what separates them.
-      if ((result?.llmRequests ?? 0) > 0) {
-        setState({
-          lastLLMScan: {
-            requests: result.llmRequests,
-            silent: result.llmSilentRequests ?? 0,
-            truncated: result.llmTruncatedRequests ?? 0,
-            secondsPerRequest: result.llmSecondsPerRequest ?? 0,
-          },
-        });
-      }
-
-      // A file the model could not read is reported, not silently dropped.
-      for (const skip of result?.skipped ?? []) {
-        notify(WORKSPACE.skippedNotice(skip.name, skip.reason), "warn");
-      }
-      // So is a route that failed on one file while the others succeeded.
-      for (const message of result?.errors ?? []) {
-        notify(message, "warn");
-      }
-      if (result?.cancelled) {
-        notify(WORKSPACE.detectionCancelled(added), "info");
-      } else {
-        notify(WORKSPACE.detectionDone(added), added ? "ok" : "info");
-      }
-    } catch (err) {
-      notify(String(err?.message ?? err), "warn");
-    } finally {
-      // Belt and braces: the terminal event already clears this (main.js), so
-      // a lost event cannot strand the bar, and a lost promise cannot either.
-      setState({ discovery: null });
-      // Land the user on the fresh suggestion list, which is what they ran for,
-      // unless no discovery route ran at all: then there IS no suggestion list
-      // and what the run produced is the built-in pattern preview, so that is
-      // the tab to land on rather than an empty one.
-      activeTab = builtInOnlyRun(getState()) ? "builtin" : "suggestions";
-      setState({});
-    }
-  });
+export function landOnResultTab() {
+  // The fresh suggestion list is what the user ran for, unless no discovery
+  // route ran at all: then there IS no suggestion list and what the run produced
+  // is the built-in pattern preview, so that is the tab to land on rather than
+  // an empty one.
+  activeTab = builtInOnlyRun(getState()) ? "builtin" : "suggestions";
 }
 
 /**

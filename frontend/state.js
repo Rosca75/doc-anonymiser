@@ -105,9 +105,12 @@ const initialState = {
   //                   signalSuggestionSources, below, and the two are separate
   //                   so clearing one cannot silently clear the other.
   //   useHeuristicDiscovery heuristic discovery: spelling, context, frequency
-  //                   and deterministic gazetteers. ON by default. Its
-  //                   strictness is the heuristicDiscovery block below, which
-  //                   nothing else reads.
+  //                   and deterministic gazetteers. OFF by default, because it
+  //                   is the route that produces Suggestions to review and a
+  //                   fresh session should start by showing what the DETERMINISTIC
+  //                   patterns match rather than a review list. Its strictness is
+  //                   the heuristicDiscovery block below, which nothing else
+  //                   reads.
   //   useLocalLLM the local model (Ollama). OFF by default. Detecting
   //                   Ollama ENABLES the switch, it never flips it: turning on
   //                   a route that sends the document to a model, however
@@ -130,7 +133,7 @@ const initialState = {
     categories: null, ollamaPort: 11434, model: "", country: DEFAULT_COUNTRY,
     contextSize: 8192, useLocalLLM: false, llmStrictFormat: false,
     llmDetailLevel: "thorough",
-    useBuiltInPatterns: true, useHeuristicDiscovery: true,
+    useBuiltInPatterns: true, useHeuristicDiscovery: false,
     // Which READINGS of which built-in signals may DERIVE Suggestions.
     // Data-driven, keyed by SIGNAL_SOURCES and then by SIGNAL_DERIVATIONS: a new
     // source or reading needs no new field here.
@@ -163,6 +166,15 @@ const initialState = {
   // It is a transient per-run choice, deliberately NOT part of settings, so it
   // never travels in a session file and never reaches Go through applySettings.
   llmScope: { docName: "", mode: "all", pages: "" },
+
+  // detectionRan records that a detection run has SETTLED at least once this
+  // session, cancelled runs included. It is what reveals step 2's review panel:
+  // before the first run that panel holds four empty tabs and a footer refusing
+  // to continue, which reads as a broken screen rather than as "nothing has
+  // looked yet". It is a fact about the session rather than a view preference,
+  // which is why it lives here and not in a module-level flag: the identify step
+  // reset must be able to hide the panel again.
+  detectionRan: false,
 
   // Entity review state: array of
   // {category, mainText, spellings, status: "accepted"|"denied"}.
@@ -1332,10 +1344,13 @@ export function heuristicDiscoveryOptions(s = state) {
  * row derives independently, so flipping a pattern category cannot make the name
  * row read as Custom.
  *
- * The FIRST match in table order wins, which is what keeps the patterns row on
- * Soft rather than flickering while Soft and Standard are identical there. The
- * national identifier categories are expected off wherever they do not apply,
- * exactly as applyPreset writes them.
+ * Where SEVERAL presets match, the DEFAULT depth wins and table order breaks any
+ * remaining tie. Both halves matter: Soft and Standard are identical in the
+ * patterns scope, so a fresh session must read Standard there, which is the depth
+ * it actually started on, and a tie between two non-default rows must still
+ * resolve to one stable answer rather than flickering between them. The national
+ * identifier categories are expected off wherever they do not apply, exactly as
+ * applyPreset writes them.
  *
  * @param {object} s the state
  * @param {string} scope "patterns" or "names"
@@ -1344,6 +1359,7 @@ export function heuristicDiscoveryOptions(s = state) {
  */
 export function activePreset(s, scope, family) {
   const owned = presetScopeCategories(scope);
+  let first = null;
   for (const preset of presetsFor(scope, family)) {
     const matches = owned.every((c) => {
       let expected = preset.categories.includes(c);
@@ -1352,9 +1368,11 @@ export function activePreset(s, scope, family) {
       }
       return !!s.settings.categories?.[c] === expected;
     });
-    if (matches) return preset;
+    if (!matches) continue;
+    if (preset.id === PRESET_STANDARD) return preset;
+    if (!first) first = preset;
   }
-  return null;
+  return first;
 }
 
 /**
@@ -1559,6 +1577,23 @@ export function detectionRoutesOn(s = state) {
 }
 
 /**
+ * detectionCanRun(s) is whether the Run detection button has ANYTHING to do.
+ *
+ * It is deliberately wider than detectionRoutesOn: a run with every discovery
+ * route off still produces the built-in patterns' read-only PREVIEW
+ * (engine.PreviewPatternMatches), which is a complete answer in itself, and the
+ * review panel it appears in is not on screen until a run has happened. Gating
+ * the button on the discovery routes alone would therefore leave a user who wants
+ * only the deterministic matches with a dead button and nothing to look at.
+ *
+ * @param {object} [s] state
+ * @returns {boolean}
+ */
+export function detectionCanRun(s = state) {
+  return detectionRoutesOn(s) > 0 || s.settings.useBuiltInPatterns === true;
+}
+
+/**
  * llmEnabled(s) is THE gate for every control that depends on the local model
  * (Local LLM discovery): the route's own switch must be on AND Ollama must be
  * reachable.
@@ -1695,6 +1730,9 @@ export const STEP_RESETS = {
     },
     values: [],
     suggestions: [],
+    // The review panel goes back into hiding with the findings it held: leaving
+    // it on screen would show four empty tabs and claim a run had happened.
+    detectionRan: false,
     builtInPatterns: null,
     intersections: [],
     patterns: [],
@@ -3182,6 +3220,9 @@ export function startNewBatch() {
     sourceCache: {},
     values: [],
     suggestions: [],
+    // The review panel goes back into hiding with the findings it held: leaving
+    // it on screen would show four empty tabs and claim a run had happened.
+    detectionRan: false,
     builtInPatterns: null,
     intersections: [],
     patterns: [],

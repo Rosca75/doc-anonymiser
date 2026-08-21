@@ -303,12 +303,16 @@ test("each route section carries its own help beside its switch", () => {
   }
 });
 
-test("the two offline routes are ON by default, and switchable", () => {
+test("Built-in patterns is the ONE route on by default, and all three are switchable", () => {
+  // Built-in patterns produces direct matches, so a fresh session's run shows what
+  // the deterministic patterns found without asking anything. Both DISCOVERY
+  // routes produce Suggestions to review one by one, so both are opt-in.
   const html = railHTML();
-  for (const id of ["rail-patterns", "rail-heuristic"]) {
+  const on = { "rail-patterns": true, "rail-heuristic": false, "rail-local": false };
+  for (const [id, expected] of Object.entries(on)) {
     const box = routeToggle(html, id);
-    assert.ok("checked" in box.attrs, `${id} runs unless the user says otherwise`);
-    assert.ok(!("disabled" in box.attrs), "and the user can say otherwise");
+    assert.equal("checked" in box.attrs, expected, `${id} default state`);
+    assert.ok(!("disabled" in box.attrs), `${id}: the user can say otherwise`);
   }
 });
 
@@ -605,6 +609,7 @@ test("each header switch renders its OWN flag, and no other section's", () => {
   // shown for a section follows only the flag that section names, so a user
   // reading the rail sees three independent answers rather than one summary.
   resetState();
+  setUseHeuristicDiscovery(true);
   setUseBuiltInPatterns(false);
   let html = railBody(getState());
   assert.ok(!("checked" in routeToggle(html, "rail-patterns").attrs),
@@ -613,6 +618,7 @@ test("each header switch renders its OWN flag, and no other section's", () => {
     "and its neighbour is untouched");
 
   resetState();
+  setUseHeuristicDiscovery(true);
   setUseHeuristicDiscovery(false);
   html = railBody(getState());
   assert.ok(!("checked" in routeToggle(html, "rail-heuristic").attrs));
@@ -733,16 +739,17 @@ test("a category with no switch renders no checkbox anywhere in the rail", () =>
   }
 });
 
-test("the active count still counts a switch-less category as on", () => {
-  // The heading's read-out is over ALL_CATEGORIES, so a category with no switch
-  // must be counted rather than silently dropped from the denominator.
+test("a switch-less category is ON at every depth", () => {
+  // custom_patterns has no control in the rail at all, so nothing but a test can
+  // notice a preset that leaves it off: its editor would then be a pattern editor
+  // whose patterns never run, with nothing on screen saying why.
   resetState();
   for (const id of ["soft", "standard", "thorough"]) {
     applyPreset(PRESET_SCOPE_PATTERNS, PRESET_FAMILY_DEPTH, id);
     applyPreset(PRESET_SCOPE_NAMES, PRESET_FAMILY_DEPTH, id);
     for (const key of ALWAYS_ON_CATEGORIES) {
       assert.equal(getState().settings.categories[key], true,
-        `${key} is on at ${id}, so the "N of M categories on" read-out counts it`);
+        `${key} must stay on at ${id}: it has no switch to turn it back on`);
     }
   }
 });
@@ -1004,7 +1011,7 @@ test("the Built-in patterns switch writes its own flag and no other", async () =
   await flipRoute(railRoot(), "rail-patterns", false);
   const s = getState().settings;
   assert.equal(s.useBuiltInPatterns, false, "its own flag moved");
-  assert.equal(s.useHeuristicDiscovery, true, "the heuristic route is untouched");
+  assert.equal(s.useHeuristicDiscovery, false, "the heuristic route is untouched");
   assert.equal(s.useLocalLLM, false, "and the local route is untouched");
   // And the signal readings survive it: signal-based discovery matches its own
   // evidence, so the pattern pass being off must not silently clear them.
@@ -1018,9 +1025,11 @@ test("the Built-in patterns switch writes its own flag and no other", async () =
 
 test("the Heuristic discovery switch writes its own flag and no other", async () => {
   resetState();
-  await flipRoute(railRoot(), "rail-heuristic", false);
+  // Flipped ON, because OFF is where it starts: asserting a switch wrote the
+  // value it already held would pass with no wiring behind it at all.
+  await flipRoute(railRoot(), "rail-heuristic", true);
   const s = getState().settings;
-  assert.equal(s.useHeuristicDiscovery, false, "its own flag moved");
+  assert.equal(s.useHeuristicDiscovery, true, "its own flag moved");
   assert.equal(s.useBuiltInPatterns, true, "the pattern route is untouched");
   assert.equal(s.useLocalLLM, false, "and the local route is untouched");
 });
@@ -1032,7 +1041,7 @@ test("the Local LLM discovery switch writes its own flag and no other", async ()
   const s = getState().settings;
   assert.equal(s.useLocalLLM, true, "its own flag moved");
   assert.equal(s.useBuiltInPatterns, true, "the pattern route is untouched");
-  assert.equal(s.useHeuristicDiscovery, true, "and the heuristic route is untouched");
+  assert.equal(s.useHeuristicDiscovery, false, "and the heuristic route is untouched");
 });
 
 test("the checksum switch writes its own flag and no other", async () => {
@@ -1053,7 +1062,7 @@ test("the checksum switch writes its own flag and no other", async () => {
   const s = getState().settings;
   assert.equal(s.requireChecksum, true, "its own flag moved");
   assert.equal(s.useBuiltInPatterns, true, "the route switch above it is untouched");
-  assert.equal(s.useHeuristicDiscovery, true, "and the other routes with it");
+  assert.equal(s.useHeuristicDiscovery, false, "and the other routes with it");
   assert.equal(s.useLocalLLM, false);
   assert.deepEqual(s.categories, before.categories, "no category moved");
   assert.deepEqual(s.heuristicDiscovery, before.heuristicDiscovery,

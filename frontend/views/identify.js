@@ -1,80 +1,75 @@
-// views/identify.js, wizard step 2: the two-column Identify screen
-// .
+// views/identify.js, wizard step 2: the two-column Identify screen.
 //
 // Identify is one screen with two halves:
 //
-//   the rail a third of the width: WHAT to look for (country, preset, the
-//                   22 categories, the confidence floor) and HOW (smart
-//                   patterns, heuristic discovery, local LLM discovery). This is
-//                   the left half of the Identify step, and what used to be a Configure
-//                   step of its own;  folded it in, because choosing
-//                   what to detect and reviewing what was detected is one task,
-//                   not two screens. It is big enough to deserve its own file,
-//                   views/identifyrail.js.
-//   the workspace the other two thirds, owned by this module: the suggestions
-//                   to review, the values accepted so far, the never-anonymise
-//                   list (views/allowlist.js) and the custom patterns.
+//   the rail       a third of the width: WHAT to look for (the document country,
+//                  the preset rows, the category groups) and HOW (Built-in
+//                  patterns, Heuristic discovery, Local LLM discovery), plus the
+//                  Profile panel and the head's Run detection button. It is big
+//                  enough to deserve its own file, views/identifyrail.js.
+//   the workspace  the other two thirds: the suggestions to review, the values
+//                  accepted so far, the never-anonymise list
+//                  (views/allowlist.js), the built-in pattern preview and the
+//                  custom patterns. views/identifyworkspace.js.
 //
-// This module owns the layout, the workspace, and the screen's footer, which is
-// written here because this is the only place that knows about both halves.
+// The second half appears only once a detection run has happened, so a fresh
+// step 2 is the rail alone: choosing what to look for is a complete task on its
+// own, and there is nothing to review until something has looked.
+//
+// This module owns the layout, the screen's footer and the wiring of the run
+// control, because it is the only place that knows about both halves.
 
 import { getState } from "../state.js";
 import { WORKSPACE } from "../copy.js";
 import { stepFooterHTML, wireStepFooter } from "../nav.js";
 import { renderIdentifyRail } from "./identifyrail.js";
-import { renderIdentifyWorkspace } from "./identifyworkspace.js";
+import { renderIdentifyWorkspace, landOnResultTab } from "./identifyworkspace.js";
+import { wireDetection } from "./detectionrun.js";
 
 export function renderIdentify(container) {
   const s = getState();
 
+  // The REVIEW panel is not rendered until a detection run has happened. Before
+  // that it holds four empty tabs and a footer refusing to continue, which reads
+  // as a broken screen rather than as "there is nothing here yet"; the rail's Run
+  // detection button is the one thing to do, and it is what reveals this half.
+  const reviewed = s.detectionRan === true;
+
+  // The grid keeps BOTH its columns while the panel is hidden, so the rail sits in
+  // exactly the place it will still occupy once the panel appears: nothing on
+  // screen moves when the run finishes. That is also why the hidden state gets no
+  // class of its own, since there is no styling to hang on it.
+  //
   // Two hosts, then each half fills its own. Both halves are rendered by a
   // function rather than composed as strings here, because both wire their own
   // handlers and neither should have to hand its markup through a parent.
   container.innerHTML = `
-    <div class="workspace">
-      <section class="card rail" id="identify-rail"></section>
-      <section class="card" id="identify-workspace"></section>
+    <div class="identify-view">
+      <div class="workspace">
+        <section class="card rail" id="identify-rail"></section>
+        ${reviewed ? `<section class="card" id="identify-workspace"></section>` : ""}
+      </div>
+      ${reviewed ? "" : stepFooterHTML({ hint: gateReason(s), standalone: true }, s)}
     </div>
   `;
 
   renderIdentifyRail(container.querySelector("#identify-rail"));
-  renderIdentifyWorkspace(container.querySelector("#identify-workspace"), {
-    // The hint doubles as the disabled button's tooltip while the review gate
-    // is shut: a control that refuses to work must say why in the place the
-    // user is already looking, and again where they hover.
-    footerHTML: stepFooterHTML({ hint: readyHint(s), nextTitle: gateReason(s) }, s),
-  });
+  if (reviewed) {
+    renderIdentifyWorkspace(container.querySelector("#identify-workspace"), {
+      // The hint doubles as the disabled button's tooltip while the review gate
+      // is shut: a control that refuses to work must say why in the place the
+      // user is already looking, and again where they hover.
+      footerHTML: stepFooterHTML({ hint: gateReason(s), nextTitle: gateReason(s) }, s),
+    });
+  }
 
-  // The footer is the workspace card's foot, so it is wired after that half has
-  // rendered its markup.
+  // The footer is the workspace card's foot once there is a workspace, and a
+  // standalone bar under the rail before that, so it is wired after both halves
+  // have rendered their markup. The run control is wired from here for the same
+  // reason: it is drawn in the rail and it fills the workspace, so this is the
+  // only module that can hand one to the other.
   wireStepFooter(container);
-}
-
-/**
- * readyHint(s) is the footer's sentence, and since it is the
- * REASON the disabled CONTINUE gives rather than a neutral progress read-out.
- *
- * Two states, because there are two things worth saying:
- *
- *   review outstanding the move to Anonymise is refused (state.js canGoTo
- *                        rule 2), so the sentence is the refusal: how many are
- *                        waiting and the one action that clears them. It used
- *                        to append the count to a "0 values ready" sentence,
- *                        which narrated the blockage without ever naming it as
- *                        one, and the button beside it simply looked broken.
- *   review done how much the next step will act on. It counts
- *                        ACCEPTED values rather than suggestions, and "0 values
- *                        ready to replace" is an honest answer, not an empty
- *                        one.
- *
- * @param {object} s state
- * @returns {string}
- */
-export function readyHint(s) {
-  const gate = gateReason(s);
-  if (gate) return gate;
-  const accepted = s.values.filter((e) => e.status === "accepted").length;
-  return WORKSPACE.readyToReplace(accepted);
+  wireDetection(container, { onSettled: landOnResultTab });
 }
 
 /**
@@ -83,6 +78,12 @@ export function readyHint(s) {
  * It is derived from the same field the guard reads (s.suggestions), rather than
  * re-deriving the guard's answer, so the sentence and the disabled button can
  * never disagree about whether the gate is shut.
+ *
+ * It is the footer's WHOLE sentence. There is no progress read-out beside it: a
+ * count of accepted values narrated the state of the list the user is already
+ * looking at, and it was the only thing the footer said whenever nothing was
+ * blocking, which made the empty case ("0 values ready to replace") read as a
+ * problem. Silence is the honest answer when nothing is in the way.
  *
  * @param {object} s state
  * @returns {string} the refusal sentence, or "" when nothing is blocking

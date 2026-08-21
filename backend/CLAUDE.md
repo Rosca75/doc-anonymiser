@@ -123,8 +123,9 @@ be enforced anywhere else:
   category outside it untouched, which is what keeps a chip under one rail section
   from moving a checkbox under another. `MatchingPreset` derives which preset a row
   reads as rather than storing it, for the reason `SignalSourceEnabled` is derived,
-  and takes the FIRST match in table order so a row cannot flicker between two
-  presets that fill the same set. `DefaultSelection` is the pipeline's fallback and
+  and where several presets match it prefers the DEFAULT depth, then table order,
+  so a row cannot flicker between two presets that fill the same set and a fresh
+  session's row names the depth it started on. `DefaultSelection` is the pipeline's fallback and
   the only caller of the both-scopes builder in the application. Nothing here is
   consulted at run time: `CategorySelection` is the authority. Mirrored by
   `frontend/state.js PRESETS`, guarded by `../preset_parity_test.go`.

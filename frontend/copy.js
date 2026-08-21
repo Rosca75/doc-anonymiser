@@ -370,11 +370,6 @@ export const RAIL = {
   },
   localValuesHelp: "Local LLM discovery looks for the same categories chosen under Heuristic discovery above. Switching this route on adds a model pass over them; it does not change what is selected.",
 
-  /** activeCount(n, total) is the rail heading's read-out. */
-  activeCount(n, total) {
-    return `${n} of ${total} categories on`;
-  },
-
   ollamaDetected: "Ollama detected",
   ollamaMissing: "Ollama not detected",
   hostLocked: "The host is locked to 127.0.0.1; only the port can be changed.",
@@ -610,7 +605,7 @@ export const WORKSPACE = {
   runDetection: "Run detection",
   runOffline: "Reads every imported document and suggests values, without any AI.",
   runWithLLM: "Reads every imported document twice: the offline passes, then the local model. Nothing leaves your computer.",
-  runNeedsRoute: "No detection route is on. Turn on Built-in patterns, Heuristic discovery or Local LLM discovery in Configure.",
+  runNeedsRoute: "Nothing would look. Turn on Built-in patterns, Heuristic discovery or Local LLM discovery in Configure.",
   runNeedsDocuments: "Import at least one document first.",
   cancel: "Cancel",
   // The progress caption. It is assembled from these parts rather
@@ -672,12 +667,6 @@ export const WORKSPACE = {
   /** acceptedN / rejectedN report a bulk action's result. */
   acceptedN(n) {
     return n === 0 ? "Nothing to accept." : `${n} value${n === 1 ? "" : "s"} accepted.`;
-  },
-  /** readyToReplace(n) is the Identify footer's sentence when the review is
-   *  done: it counts ACCEPTED values, because that is what the next step acts
-   *  on. Zero is a real answer, not an empty one. */
-  readyToReplace(n) {
-    return `${n} value${n === 1 ? "" : "s"} ready to replace`;
   },
   /** reviewGate(n) is the Identify footer's sentence while suggestions are
    *  still waiting, and the tooltip on the disabled CONTINUE. It is the REASON

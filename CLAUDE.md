@@ -101,7 +101,12 @@ doc-anonymiser/
 │   │                          #   anonymise.js (step 3's tabs, footer and TEXT half)
 │   │                          #   + anonymiseimages.js (its IMAGE half),
 │   │                          #   identify.js (layout) + identifyrail.js (choices)
-│   │                          #   + identifyworkspace.js (values), allowlist.js
+│   │                          #   + identifyworkspace.js (values)
+│   │                          #   + detectionrun.js (the ONE Run detection control
+│   │                          #     and the ONE call: the button is drawn in the
+│   │                          #     rail's head and the findings land in the
+│   │                          #     workspace, so neither half may own it),
+│   │                          #   allowlist.js
 │   ├── docs/                  # bundled offline user docs (SECOND window, embedded only)
 │   ├── assets/icons/          # vendored Material Symbols SVGs + LICENSE
 │   ├── testhtml.js            # dev-time HTML query helper for the render tests
@@ -564,9 +569,12 @@ doc-anonymiser/
 
   Soft and Standard being IDENTICAL in the patterns scope is a fact about the
   depths rather than a bug: Standard differs from Soft only in the name
-  categories. The row therefore shows the FIRST match in table order, so it reads
-  Soft instead of flickering between two chips that both match. `custom_patterns`
-  is in NO preset, because it has no switch and is permanently on.
+  categories. Where SEVERAL presets match one selection the DEFAULT depth wins and
+  table order breaks any remaining tie, so the patterns row reads Standard instead
+  of flickering between two chips that both match, and a fresh session's row names
+  the depth the session actually started on rather than the first row in the
+  table. `custom_patterns` is in NO preset, because it has no switch and is
+  permanently on.
 
   Which preset each row is on is DERIVED from the selection on both sides, never
   stored beside it, for the reason `SignalSourceEnabled` is derived: a summary
@@ -826,12 +834,42 @@ doc-anonymiser/
 
   The rail lists the DETECTION ROUTES as switchable sections, **one switch per
   mechanism**, each switch bound to a REAL settings flag: **Built-in patterns**
-  (`useBuiltInPatterns`), on by default and owning its own scope (document
-  country, its own preset rows, the eight pattern category groups); **Heuristic
-  discovery** (`useHeuristicDiscovery`), on by default and owning the name
-  categories, its own preset rows and its own strictness block; and **Local LLM discovery** (`useLocalLLM`), off by
-  default. Detecting Ollama ENABLES that switch, it never flips it. There is no
-  cloud route.
+  (`useBuiltInPatterns`), THE ONE ROUTE ON BY DEFAULT and owning its own scope
+  (document country, its own preset rows, the eight pattern category groups);
+  **Heuristic discovery** (`useHeuristicDiscovery`), off by default and owning the
+  name categories, its own preset rows and its own strictness block; and **Local
+  LLM discovery** (`useLocalLLM`), off by default. Detecting Ollama ENABLES that
+  switch, it never flips it. There is no cloud route.
+
+  Built-in patterns is the default because it produces DIRECT MATCHES: a fresh
+  session's first run shows what the deterministic patterns found and asks the
+  user nothing. Both DISCOVERY routes produce SUGGESTIONS, which is a review list
+  to work through one row at a time, so both are opted into rather than opted out
+  of. The signal readings are unaffected by that: they hang off the pattern
+  categories and are gated only by `signalSuggestionSources`, so a fresh session
+  still derives Suggestions from an email domain.
+
+  EVERY section of the rail, and the Profile panel with them, starts FOLDED, so
+  the rail opens as a short column of route headers: the name, its help icon and
+  its switch. Which routes are on is what a session starts by reading, and folding
+  puts that within reach of the head's Run detection button instead of below three
+  expanded panels of settings.
+
+  The rail's HEAD carries that button (`views/detectionrun.js`), and no read-out.
+  A count of active categories stated a number nobody acts on, in the place the
+  user looks for something to press. The run control lives in a module of its own
+  because the button is drawn in the rail and the findings land in the Review
+  workspace, so neither half can own it: `views/identify.js` is the only module
+  that knows about both and it does the wiring.
+
+  The Review workspace is NOT ON SCREEN until a detection run has settled
+  (`detectionRan`, reset with the rest of the step). Before that it is four empty
+  tabs and a footer refusing to continue, which reads as a broken screen rather
+  than as "nothing has looked yet"; while it is hidden the step footer is a
+  standalone bar under the rail. The footer's sentence is the review gate's
+  REFUSAL and nothing else: a count of accepted values narrated the list the user
+  is already looking at, and it was all the footer ever said while the gate was
+  open, so the honest empty case read as a problem.
 
   A section switch must be the flag it claims to be. A section whose state is
   derived from several methods can read "On" while nothing it names runs, and the

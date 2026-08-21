@@ -127,6 +127,47 @@
   const DOC_NAME = "engagement.md";
 
   /**
+   * toggleGroup(id) clicks one collapsible group's header, by the id its toggle
+   * carries (ui.js collapsibleGroup), and waits for the repaint.
+   *
+   * Every fold goes through setState and rebuilds the rail, so a caller must
+   * re-query anything it measured before calling this.
+   */
+  async function toggleGroup(id) {
+    const head = document.querySelector(`[data-group-toggle="${id}"]`);
+    if (!head) return false;
+    head.click();
+    await settle(60);
+    return true;
+  }
+
+  /**
+   * openRailSections(...ids) unfolds route sections of the Identify rail and
+   * returns a function that folds them back again.
+   *
+   * Every section of the rail starts FOLDED, so anything inside one is in the DOM
+   * at zero height: present to a string test and absent to the user. A probe that
+   * measures a control INSIDE a section therefore has to open its section first,
+   * exactly as the user does, or it measures a box of no size and reports a bug
+   * that is only its own setup.
+   *
+   * The fold state is module-level view state in views/identifyrail.js, so it
+   * OUTLIVES the re-seed every probe begins with: the returned closer must be
+   * called, or the probes that run afterwards see a rail nobody put back.
+   */
+  async function openRailSections(...ids) {
+    const opened = [];
+    for (const id of ids) {
+      const section = document.querySelector(`[data-group-toggle="${id}"]`)
+        ?.closest("section.cgroup");
+      if (section?.dataset.open === "false" && await toggleGroup(id)) opened.push(id);
+    }
+    return async () => {
+      for (const id of [...opened].reverse()) await toggleGroup(id);
+    };
+  }
+
+  /**
    * seed(step) puts the application on `step` with one imported document and one
    * finished run, then waits for the repaint to land.
    *
@@ -160,6 +201,11 @@
       running: false,
       progress: null,
       discovery: null,
+      // Step 2's review panel is hidden until a detection run has settled, so
+      // the seed states that one has: every probe below that measures the panel
+      // needs it on screen, and a probe measuring the pre-run rail says so for
+      // itself by overriding this.
+      detectionRan: true,
       dismissedWarnings: [],
       notice: null,
       confirm: null,
@@ -412,14 +458,14 @@
      *
      * The Configure choices are switchable DETECTION ROUTE sections rather than
      * peer tabs, one section per mechanism: Built-in patterns on, Heuristic
-     * discovery on, Local LLM discovery off. ONE switch-less panel follows them,
+     * discovery off, Local LLM discovery off. ONE switch-less panel follows them,
      * Profile, and it carries .rail-panel rather than .rail-section so a utility
      * panel is never counted as a route.
      *
-     * The category groups start FOLDED, so the rail opens on the route switches
-     * and the scope summary rather than a wall of category lists; this probe
-     * measures both that they are folded by default and that opening a group lays
-     * its checkboxes out.
+     * EVERY section starts FOLDED, so the rail opens as a short column of route
+     * headers with the Run detection button above them rather than as a wall of
+     * settings; this probe measures both that they are folded by default and that
+     * opening one lays its contents out.
      */
     async configureRail() {
       // The store is read for the lists the rail is meant to RENDER, so an
@@ -436,17 +482,19 @@
       const catWithSize = () => [...railOf().querySelectorAll(".cat-toggle")]
         .filter((c) => c.getBoundingClientRect().height > 0).length;
 
-      // Folded by default: expect zero laid out. Then open every category group
-      // and measure again, which proves they are reachable once opened; then fold
-      // them all back so the probes that run after this one see the default rail.
+      // Folded by default: expect zero laid out, and the SECTIONS are folded too,
+      // so this is measured before anything is opened.
       const categoriesWithSize = catWithSize();
+
+      // Then open the two sections that hold categories, and every category group
+      // inside them, and measure again: that proves the checkboxes are reachable
+      // once opened. Everything opened here is folded back at the end, because the
+      // fold state outlives the re-seed the next probe starts with.
+      const closeSections = await openRailSections("rail-patterns", "rail-heuristic");
       const catGroupIds = [...railOf().querySelectorAll("[data-group-toggle]")]
         .map((h) => h.dataset.groupToggle)
         .filter((id) => id && id.startsWith("cat-group-"));
-      const clickGroup = async (id) => {
-        const head = railOf().querySelector(`[data-group-toggle="${id}"]`);
-        if (head) { head.click(); await settle(60); }
-      };
+      const clickGroup = toggleGroup;
       for (const id of catGroupIds) await clickGroup(id);
       const categoriesWithSizeAfterExpand = catWithSize();
 
@@ -477,11 +525,10 @@
 
       for (const id of catGroupIds) await clickGroup(id);
 
-      // The Local LLM discovery section is folded by default, so its controls are
-      // in the DOM at zero height: a string test reads them as present and a user
-      // reads them as absent. Open it, measure the detail level (a label and a
-      // select on one line, in the narrowest column of the application), then fold
-      // it back so the probes after this one see the default rail.
+      // The Local LLM discovery section's controls are in the DOM at zero height
+      // while it is folded: a string test reads them as present and a user reads
+      // them as absent. Open it, measure the detail level (a label and a select on
+      // one line, in the narrowest column of the application), then fold it back.
       await clickGroup("rail-local");
       const detailLevelRow = (() => {
         const row = [...railOf().querySelectorAll(".rail-field-row")]
@@ -522,11 +569,11 @@
       })();
       await clickGroup("rail-local");
 
-      // The checksum switch is inside Built-in patterns, which is OPEN by
-      // default, so it has to be genuinely laid out and not merely in the DOM: a
-      // string test reads a zero-height checkbox as present and the user cannot
-      // click it. It is measured here, beside the route counts, because "which
-      // section is it in" is the whole point of it.
+      // The checksum switch is inside Built-in patterns, opened above, so it has
+      // to be genuinely laid out and not merely in the DOM: a string test reads a
+      // zero-height checkbox as present and the user cannot click it. It is
+      // measured here, beside the route counts, because "which section is it in"
+      // is the whole point of it.
       const checksumSwitch = (() => {
         const box = railOf().querySelector("#require-checksum");
         if (!box) return null;
@@ -552,6 +599,10 @@
           label: (label?.textContent ?? "").trim(),
         };
       })();
+
+      // Everything inside a section has now been measured, so the rail goes back
+      // to the state the next probe expects: sections folded.
+      await closeSections();
 
       const rail = railOf();
       const toggles = [...rail.querySelectorAll(".route-toggle")];
@@ -1213,11 +1264,11 @@
      * about geometry, and this answers it with geometry, by clicking the button the
      * user clicks and measuring the readings before and after.
      *
-     * The drill-down hangs off the signal's own CATEGORY row, and the category
-     * groups start folded, so the group is opened first: with it folded, "no reading
-     * is laid out" would be true for a reason that has nothing to do with the
-     * drill-down. rowLaidOut is what says the row itself IS on screen while its
-     * readings are not.
+     * The drill-down hangs off the signal's own CATEGORY row, and both the section
+     * and the category group inside it start folded, so both are opened first:
+     * with either shut, "no reading is laid out" would be true for a reason that
+     * has nothing to do with the drill-down. rowLaidOut is what says the row
+     * itself IS on screen while its readings are not.
      *
      * It also drives the two controls that must NOT be one: the button opens
      * without ticking, and a reading ticks without closing. Two jobs on one element
@@ -1229,6 +1280,11 @@
       const railOf = () => document.querySelector("#identify-rail");
       const rowOf = () => railOf()?.querySelector(".signal-row");
       if (!rowOf()) return { error: "no .signal-row in the Identify rail" };
+      // The row lives inside Built-in patterns, which starts folded like every
+      // section, so the section is opened before the group inside it: with the
+      // section shut, "no reading is laid out" would be true for a reason that has
+      // nothing to do with the drill-down under test.
+      const closeSections = await openRailSections("rail-patterns");
       const source = rowOf().dataset.signalSource;
 
       const boxes = () => [...(rowOf()?.querySelectorAll("input.signal-box") ?? [])];
@@ -1268,13 +1324,15 @@
       const stored = s.getState().settings?.signalSuggestionSources?.[source] ?? {};
       const masterAfterTick = rowOf()?.querySelector(".signal-master")?.checked ?? null;
 
-      // Leave the rail as the next probe expects it: the drill-down closed and the
-      // category group folded again. Both are module-level view state, so they
-      // outlive the re-seed every probe starts with.
+      // Leave the rail as the next probe expects it: the drill-down closed, the
+      // category group folded and the section folded again. All three are
+      // module-level view state, so they outlive the re-seed every probe starts
+      // with.
       rowOf()?.querySelector(".signal-drill")?.click();
       await settle();
       groupToggle()?.click();
       await settle();
+      await closeSections();
 
       return {
         source,
@@ -1305,16 +1363,24 @@
      */
     async strictnessFields() {
       await seed("identify");
-      const rail = document.querySelector("#identify-rail");
-      if (!rail) return { error: "no #identify-rail rendered on the Identify screen" };
+      // Every fold rebuilds the rail, so nothing here holds a node across a click:
+      // both handles are re-read after the last one.
+      const railOf = () => document.querySelector("#identify-rail");
+      const subgroupOf = () => railOf()?.querySelector(".rail-subgroup");
+      if (!railOf()) return { error: "no #identify-rail rendered on the Identify screen" };
 
-      const subgroup = rail.querySelector(".rail-subgroup");
-      if (!subgroup) return { error: "no .rail-subgroup (the Discovery strictness block) in the rail" };
-      // The block folds; open it the way the user does, through its own head.
-      if (subgroup.dataset.open === "false") {
-        subgroup.querySelector(".cgroup-title")?.click();
+      // The block sits inside Heuristic discovery, and every section starts
+      // folded, so that section is opened first: a control inside a folded section
+      // has no box at all, and every number below would read as zero.
+      const closeSections = await openRailSections("rail-heuristic");
+      if (!subgroupOf()) return { error: "no .rail-subgroup (the Discovery strictness block) in the rail" };
+      // The block folds too; open it the way the user does, through its own head.
+      if (subgroupOf().dataset.open === "false") {
+        subgroupOf().querySelector(".cgroup-title")?.click();
         await settle();
       }
+      const rail = railOf();
+      const subgroup = subgroupOf();
 
       const select = document.querySelector("#smart-strictness");
       if (!select) return { error: "no #smart-strictness select in the strictness block" };
@@ -1355,7 +1421,7 @@
         ?.closest(".rail-block")?.querySelector(".section-label")
         ?? rail.querySelector(".rail-section .cgroup-body .section-label");
 
-      return {
+      const measured = {
         selectWidth: Math.round(select.getBoundingClientRect().width),
         widestOption: Math.round(widestOption),
         widestText,
@@ -1379,6 +1445,9 @@
         // The rail must not have been widened past its column to fit any of this.
         railOverflowsX: rail.scrollWidth > rail.clientWidth + 1,
       };
+      // Leave the rail folded as the next probe expects to find it.
+      await closeSections();
+      return measured;
     },
 
     /**
@@ -1478,8 +1547,15 @@
      */
     async scrollRetention() {
       await seed("identify");
+      if (!document.querySelector("#identify-rail")) {
+        return { error: "no #identify-rail rendered on the Identify screen" };
+      }
+      // The rail only overflows once something in it is open: folded, it is a
+      // short column of headers and there is no scroll offset to lose. So the
+      // section that holds the categories is opened first, exactly as a user
+      // reaching for a checkbox opens it, and folded again at the end.
+      const closeSections = await openRailSections("rail-patterns");
       const rail = document.querySelector("#identify-rail");
-      if (!rail) return { error: "no #identify-rail rendered on the Identify screen" };
 
       // The rail's scroller named by BEHAVIOUR, not by class: whichever element
       // inside actually overflows. This keeps the probe honest if the markup is
@@ -1492,6 +1568,7 @@
         // A rail that fits the viewport cannot demonstrate the bug. Report it
         // rather than passing vacuously, so the harness can say the check could
         // not run instead of claiming a green it did not earn.
+        await closeSections();
         return { scrollable: false, before: 0, after: 0 };
       }
 
@@ -1500,7 +1577,10 @@
       const before = scroller.scrollTop;
 
       const box = rail.querySelector(".cat-toggle:not([disabled])");
-      if (!box) return { error: "no enabled .cat-toggle to force a repaint with" };
+      if (!box) {
+        await closeSections();
+        return { error: "no enabled .cat-toggle to force a repaint with" };
+      }
       box.checked = !box.checked;
       box.dispatchEvent(new Event("change", { bubbles: true }));
       await settle();
@@ -1510,6 +1590,10 @@
       const freshRail = document.querySelector("#identify-rail");
       const freshScroller = freshRail ? overflowing(freshRail) : null;
       const after = freshScroller ? freshScroller.scrollTop : -1;
+      // The checkbox above was flipped through the view's own listener, so the
+      // selection is left as the next probe's re-seed will find it; the fold is
+      // view state and outlives that re-seed, so it is put back by hand.
+      await closeSections();
       return { scrollable: true, before, after };
     },
 

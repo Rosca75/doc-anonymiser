@@ -130,7 +130,7 @@ nested map of readings:
 | Setting | What it does | Default |
 |---|---|---|
 | `useBuiltInPatterns` | MASTER over the structured signal categories (email, VAT, IBAN, amount, date, …). Off means pass 1 is skipped and no signal category is replaced, whatever `categories` selects; the selection is left intact. Produces DIRECT MATCHES, never Suggestions. The rail labels it **Built-in patterns**. | on |
-| `useHeuristicDiscovery` | Heuristic discovery: spelling, context, frequency and deterministic gazetteers. Produces SUGGESTIONS. The rail labels it **Heuristic discovery**. | on |
+| `useHeuristicDiscovery` | Heuristic discovery: spelling, context, frequency and deterministic gazetteers. Produces SUGGESTIONS, which is a review list to work through row by row, so it is opted into. The rail labels it **Heuristic discovery**. | off |
 | `signalSuggestionSources` | `{email: {"email.person": bool, "email.organisation": bool}}`, keyed by `engine.AllSignalSources` and then by `engine.SignalDerivations[source]`. Which READINGS of which built-in signals may be used as EVIDENCE to derive Suggestions. Produces SUGGESTIONS. | every reading on |
 | `requireChecksum` | "Only replace when the checksum matches", inside Built-in patterns. On, `engine.RejectFailedChecksums` drops the pattern matches whose CORROBORATING checksum did not verify (`engine.ConfidenceChecksumFailed`) and nothing else. It reaches pass 1's spans alone: an accepted Value, a custom pattern and every discovery method's output are untouched by it. Off is the shipped default and is what the application has always done. | off |
 

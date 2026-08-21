@@ -192,8 +192,9 @@ func TestDepthPresetsFillTheRecordedSets(t *testing.T) {
 }
 
 // TestSoftAndStandardAreIdenticalInThePatternsScope, and the row therefore reads
-// Soft: the first-match rule, pinned so it cannot regress into a row that
-// flickers between two chips that both match.
+// Standard: the default-wins rule, pinned so it cannot regress into a row that
+// flickers between two chips that both match, and so a fresh session's row cannot
+// go back to naming a depth the session did not start on.
 func TestSoftAndStandardAreIdenticalInThePatternsScope(t *testing.T) {
 	soft, _ := FindPreset(ScopePatterns, FamilyDepth, PresetSoft)
 	standard, _ := FindPreset(ScopePatterns, FamilyDepth, PresetStandard)
@@ -202,13 +203,14 @@ func TestSoftAndStandardAreIdenticalInThePatternsScope(t *testing.T) {
 		t.Fatalf("Soft and Standard have diverged in the patterns scope: %v versus %v",
 			soft.Categories, standard.Categories)
 	}
-	// Soft comes first in the table, so it is what the row reads as, for both
-	// depths' selections.
+	// Both depths' selections therefore read as the DEFAULT depth, not as the first
+	// row in the table: a fresh session starts on Standard, and a row naming Soft
+	// there tells the user they are on a depth they never chose.
 	for _, id := range []string{PresetSoft, PresetStandard} {
 		got, ok := MatchingPreset(DepthSelection(id, CountryLU), ScopePatterns, FamilyDepth, CountryLU)
-		if !ok || got.ID != PresetSoft {
-			t.Errorf("the patterns row at %s reads as %q (found=%v), want soft: "+
-				"the FIRST match in table order wins", id, got.ID, ok)
+		if !ok || got.ID != PresetStandard {
+			t.Errorf("the patterns row at %s reads as %q (found=%v), want standard: "+
+				"where several rows match, the DEFAULT depth wins", id, got.ID, ok)
 		}
 	}
 	// The names row still tells them apart, which is where the difference is.

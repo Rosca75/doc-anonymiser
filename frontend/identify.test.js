@@ -1,11 +1,9 @@
 // identify.test.js, tests for the Identify screen's footer sentence
 //
-// views/identify.js used to be an exempt module in ../frontend_tests_test.go:
-// "layout and footer only". That stopped being true when the footer sentence
-// became the REASON the disabled CONTINUE gives rather than a progress
-// read-out. A sentence that explains a refusal is logic, because it can be
-// wrong in the one way that matters: it can say the move is available when the
-// guard refuses it, or say nothing at all while the button sits dead.
+// The footer sentence is the REASON the disabled CONTINUE gives, and a sentence
+// that explains a refusal is logic: it can be wrong in the one way that matters,
+// by saying the move is available when the guard refuses it, or saying nothing
+// at all while the button sits dead.
 //
 // What is asserted here is the pair, always together: the guard's answer
 // (state.js canGoTo) and the sentence beside the button. The bug this phase
@@ -16,8 +14,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { readyHint, gateReason } from "./views/identify.js";
-import { canGoTo } from "./state.js";
+import { gateReason, renderIdentify } from "./views/identify.js";
+import { canGoTo, resetState, setState } from "./state.js";
+import { container } from "./testdom.js";
 import { WORKSPACE } from "./copy.js";
 
 /**
@@ -45,36 +44,24 @@ const waiting = (n) =>
     text: `Value ${i}`, category: "entity_names", count: 1,
   }));
 
-// --- The review done -----------------------------------------------------
+// --- Nothing blocking ----------------------------------------------------
 
-test("with the review done the hint counts what the next step will act on", () => {
-  assert.equal(readyHint(screen({ values: accepted(3) })),
-    WORKSPACE.readyToReplace(3));
-  assert.equal(readyHint(screen({ values: accepted(1) })),
-    WORKSPACE.readyToReplace(1), "one value reads in the singular");
-});
-
-test("zero accepted values is an answer, not an empty hint", () => {
-  // A user who rejected everything has a legitimately empty run ahead of them.
-  // The footer says so rather than going blank, and the move stays OPEN: the
-  // gate is about unreviewed suggestions, not about having accepted any.
-  const s = screen();
-  assert.equal(readyHint(s), WORKSPACE.readyToReplace(0));
-  assert.equal(gateReason(s), "", "nothing is blocking");
+test("with nothing waiting the footer says nothing", () => {
+  // There is deliberately no progress read-out here. Counting accepted values
+  // narrated the state of the list the user is already looking at, and it was
+  // the ONLY thing the footer said whenever the gate was open, so the honest
+  // empty case ("0 values ready to replace") read as a problem.
+  const s = screen({ values: accepted(3) });
+  assert.equal(gateReason(s), "", "nothing is blocking, so there is nothing to say");
   assert.equal(canGoTo("anonymise", s), true);
 });
 
-test("a value that is not accepted is not counted as ready", () => {
-  // The entity list also carries rejected and pending rows; only accepted ones
-  // are what the run will replace.
-  const s = screen({
-    values: [
-      { category: "person_names", mainText: "Kept", status: "accepted" },
-      { category: "person_names", mainText: "Dropped", status: "rejected" },
-      { category: "person_names", mainText: "Unanswered" },
-    ],
-  });
-  assert.equal(readyHint(s), WORKSPACE.readyToReplace(1));
+test("an empty review is an open gate, not a refusal", () => {
+  // A user who rejected everything has a legitimately empty run ahead of them.
+  // The gate is about unreviewed suggestions, not about having accepted any.
+  const s = screen();
+  assert.equal(gateReason(s), "");
+  assert.equal(canGoTo("anonymise", s), true);
 });
 
 // --- The gate shut -------------------------------------------------------
@@ -83,9 +70,8 @@ test("a waiting suggestion turns the hint into the refusal, and the guard agrees
   const s = screen({ values: accepted(3), suggestions: waiting(2) });
 
   assert.equal(canGoTo("anonymise", s), false, "the guard refuses the move");
-  assert.equal(gateReason(s), WORKSPACE.reviewGate(2));
-  assert.equal(readyHint(s), WORKSPACE.reviewGate(2),
-    "the footer says why, rather than narrating the count beside a dead button");
+  assert.equal(gateReason(s), WORKSPACE.reviewGate(2),
+    "the footer says why, rather than narrating a count beside a dead button");
 });
 
 test("the refusal names the action that clears it", () => {
@@ -111,7 +97,37 @@ test("the guard and the hint move together across the whole review", () => {
     const s = screen({ values: accepted(3 - left), suggestions: waiting(left) });
     const open = canGoTo("anonymise", s);
     assert.equal(open, left === 0, `${left} waiting`);
-    assert.equal(readyHint(s) === gateReason(s), !open,
-      `${left} waiting: the hint is the refusal exactly while the move is refused`);
+    assert.equal(gateReason(s) === "", open,
+      `${left} waiting: the footer speaks exactly while the move is refused`);
   }
+});
+
+// --- The review panel appears only once a run has happened ----------------
+
+test("the review panel is hidden until a detection run has settled", () => {
+  // Before the first run the panel is four empty tabs and a footer refusing to
+  // continue, which reads as a broken screen rather than as "nothing has looked
+  // yet". The run button is in the rail's head precisely so it survives that:
+  // a button that reveals a card cannot live inside the card it reveals.
+  resetState();
+  setState({ step: "identify", documents: [{ name: "a.md", markdown: "text" }] });
+  const root = container();
+  renderIdentify(root);
+
+  assert.equal(root.querySelector("#identify-workspace"), null,
+    "no review panel before a run");
+  assert.ok(root.querySelector("#identify-rail"), "the rail is the whole screen");
+  assert.ok(root.querySelector("#btn-detect"),
+    "and the run button is on screen, or the panel could never be revealed");
+  assert.ok(root.querySelector(".step-footer.standalone"),
+    "the footer is a card of its own while there is no workspace to be the foot of");
+
+  setState({ detectionRan: true });
+  renderIdentify(root);
+
+  assert.ok(root.querySelector("#identify-workspace"), "the panel appears after the run");
+  assert.ok(root.querySelector("#btn-detect"),
+    "and the button stays in the rail: the run is repeatable");
+  assert.equal(root.querySelector(".step-footer.standalone"), null,
+    "the footer moves back into the workspace card's foot");
 });
