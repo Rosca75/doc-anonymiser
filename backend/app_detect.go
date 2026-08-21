@@ -600,6 +600,18 @@ func (a *App) runSmartPhase(ctx context.Context, docs []engine.Document, allow *
 	// document at a time: the evidence is an email in one file and the text it
 	// points at is usually in another, so per document it would find almost
 	// nothing.
+	//
+	// It still reports ONE progress event, because it can be the phase's only
+	// work: with heuristic discovery off (the shipped default) a rules phase
+	// that never reports leaves the run with no progress at all, and the bar
+	// reads as hung. The event sits at the END of the phase's document walk
+	// (the last file, which this pass genuinely reads), so the fraction never
+	// rewinds after the heuristic loop's per-file events above.
+	report(DetectionProgress{
+		DocIndex: len(docs) - 1,
+		DocCount: len(docs),
+		DocName:  docs[len(docs)-1].Name,
+	})
 	batches = append(batches, engine.DiscoverFromSignals(engine.SignalDiscoveryInput{
 		Documents: docs,
 		Sources:   settings.SignalSuggestionSources,
