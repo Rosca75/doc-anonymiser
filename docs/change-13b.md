@@ -18,10 +18,12 @@ appended to `docs/change-13.md`. If the gate says NO-GO, this batch also
 removes what it added, and the repository is left exactly as it was, plus the
 recorded rejection.
 
-**Do not start this batch until the owner has answered OQ1** (whether a pre-1.0
-dependency with almost no adoption is acceptable for client documents at all).
-Running the gate first and asking afterwards spends a session measuring a
-library the owner may refuse on principle.
+**The starting condition is met: the owner answered OQ1 on 2026-08-21 (risk
+accepted), along with OQ2 to OQ5** (`docs/change-13.md` §9). This batch may
+start. The OQ3 answer's decommissioning gate (the old PDF path leaves only
+after the owner confirms the tests successful, against the owner's tag and
+release as the rollback point) binds batch 13c, not this one: this batch
+removes nothing either way.
 
 ## Ground rules
 
@@ -296,9 +298,11 @@ Before this batch is reported finished:
    invalidates, with the reason, in the decisions table itself. A finding
    that contradicts the plan is recorded in the plan, never quietly worked
    around in a later document.
-4. Confirm the owner questions OQ2, OQ4 and OQ5 are put to the owner with the
-   gate's evidence attached (the rasterised before/after images for OQ2),
-   because 13c cannot be written without the answers.
+4. Attach the rasterised before/after images to the GO/NO-GO note. OQ2 to OQ5
+   are already answered (`docs/change-13.md` §9), so nothing waits on them;
+   the images exist so the owner's accepted font substitution is an acceptance
+   of something seen, and so a result that looks worse than the acceptance
+   assumed can be raised rather than shipped.
 
 ---
 

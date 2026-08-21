@@ -162,18 +162,18 @@ the owner made or must make, `mine` for a call this plan makes and argues,
 | D1 | The dependency is `aspose-pdf-foss-for-go`, pinned exactly at v0.7.0 and **vendored**; the C++ product and `purego` are rejected and recorded as rejected | above, and Q6 | mine, gated by D15 |
 | D2 | Whether `WriteTo` is a full rewrite is proved with bytes in 13b, never assumed; an incremental-update output is an automatic NO-GO | Q1 | 13b |
 | D3 | Every export runs a **whole-file leak check**: every stream in the produced PDF is decompressed and scanned for every registry original (string-object encodings included), and the export FAILS naming the surface that leaked. It replaces the body-only `assertNoOriginals` | Q1 | mine |
-| D4 | Surfaces the text pass cannot reach are anonymised through the existing metadata review (Info, XMP) or scrubbed as text at export (annotations, form values, outlines), and the rest are **dropped from the produced copy** (page thumbnails, embedded attachments, JavaScript actions), each drop reported | Q1, Q3 | mine; the attachment/JS drop is flagged to the owner as OQ4 |
+| D4 | Surfaces the text pass cannot reach are anonymised through the existing metadata review (Info, XMP) or scrubbed as text at export (annotations, form values, outlines), and the rest are **dropped from the produced copy** (page thumbnails, embedded attachments, JavaScript actions), each drop reported | Q1, Q3 | mine; OQ4 confirmed by the owner, 2026-08-21 |
 | D5 | Binding is **string-driven**, registry original to placeholder, with a fixed fallback ladder: `ReplaceText`, else redact-and-redraw (`NewRedactAnnotation` + `ApplyRedactions` + `Page.AddText` fitted to the original rectangle down to a floor), else a solid redaction box with no caption; every rung is counted and reported | Q2 | mine |
-| D6 | An occurrence that cannot be **located** at all blocks the export with an actionable refusal naming the placeholder and the page; a half-anonymised PDF that looks finished is worse than a refusal. Whether a regenerated-layout fallback stays available behind that refusal is the owner's call (OQ5), and it decides whether `fpdf` actually leaves | Q2 | owner (OQ5); refusal itself: mine |
+| D6 | An occurrence that cannot be **located** at all blocks the export with an actionable refusal naming the placeholder and the page; a half-anonymised PDF that looks finished is worse than a refusal. OQ5 is answered: there is NO regenerated-layout fallback behind the refusal, which names the `.md` export as the way out, and `fpdf` leaves | Q2 | mine; OQ5 confirmed by the owner, 2026-08-21 |
 | D7 | Extraction stays **page-shaped** (`Document.Pages`, so `PageCount`, `engine.ScanChunks` and `pagescope.go` are untouched); the working markdown remains the body text in reading order; annotations, form field values and outline titles are NOT added to the markdown and are scrubbed at export through the same span machinery, following the existing docx header/footer precedent, with the extra hits reported as the docx `document_extras` warning is | Q3 | mine |
 | D8 | The spacing-repair heuristic's fate is a 13b measurement: if the library's layout-aware extraction no longer produces the kerning defect, the repair retires for PDF in 13c; if it does, the repair keeps running over the new extractor's output | Q3 | 13b |
 | D9 | A PDF image asset's ID is a **content hash** (`pdf:sha256:<16 hex>`); an occurrence is `Part: "page/<n>"` plus `Ordinal` among that page's image placements. The inventory lists raster image XObjects; vector drawings are content, not assets, and are never offered a control that cannot anonymise them | Q4 | mine |
 | D10 | Treatments reuse `imaging.Treat` unchanged; the treated PNG/JPEG bytes go back through `ImageInfo.ReplaceFromStream`. The PDF format table row changes to full image review, `ReasonPDFImagesRemoved` and `copy.js` `pdf_images_removed` retire (with a `vocabulary_guard_test.go` entry), and `image_parity_test.go` moves with them, all in 13d | Q4 | mine |
-| D11 | The copy promises what is measured, never "almost identical": replaced words are redrawn in a substitute font and may shrink to fit. PDF **keeps its EXPERIMENTAL label** through 13c and 13d; dropping it is the owner's call afterwards (OQ3) | Q5 | mine + owner |
-| D12 | Dependency arithmetic is **+1 and −2**, staged: `ledongthuc/pdf` and `go-pdf/fpdf` leave at the END of 13c, after its acceptance criteria pass and never before; the module is vendored so its exact source is auditable in-tree; a version bump is never automatic and re-runs the 13b gate checks | Q6 | mine |
+| D11 | The copy promises what is measured, never "almost identical": replaced words are redrawn in a substitute font and may shrink to fit. PDF **keeps its EXPERIMENTAL label** through 13c and 13d (OQ3 answered: the label stays; revisit after real-document use) | Q5 | mine; OQ3 answered by the owner, 2026-08-21 |
+| D12 | Dependency arithmetic is **+1 and −2**, staged: `ledongthuc/pdf` and `go-pdf/fpdf` leave at the END of 13c, after its acceptance criteria pass, **and only after the owner has explicitly confirmed the tests are successful** (the OQ3 answer's decommissioning gate; the owner's tag and release of the pre-change application is the rollback point). If the confirmation has not arrived when 13c's session ends, the new path ships with the old one still present and the removals become a small follow-up commit under the 13c order, applied on confirmation. The module is vendored so its exact source is auditable in-tree; a version bump is never automatic and re-runs the 13b gate checks | Q6 | mine, amended per the owner's OQ3/OQ5 answers, 2026-08-21 |
 | D13 | The local-only guarantee gets a **boundary guard test** in the idiom of `vocabulary_guard_test.go`: a forbidden-symbol scan over `backend/`, `frontend/` and `scripts/`, plus a committed inventory of the vendored files that import `net/http`, held unchanged so a version bump cannot widen the network surface unnoticed. Built in 13b as a first-class step, before any measurement that exercises the library | Q7 | mine |
 | D14 | Scanned PDFs: the refusal and its exact message stay word for word. The library's OCR runs through the copilot endpoint, which D13 forbids, and returns no coordinates, which in-place replacement needs, so OCR has not arrived and the plan says so once | Q8 | mine |
-| D15 | The **adoption gate** (Q10) runs in 13b before any production wiring: measurable GO/NO-GO criteria, counts only, on committed synthetic fixtures plus the owner's two confidential reference documents. NO-GO leaves today's pipeline untouched and records the measurement here as a rejected option, pdfcpu-style | Q10 | 13b; acceptability of a pre-1.0 dependency at all is the owner's (OQ1) |
+| D15 | The **adoption gate** (Q10) runs in 13b before any production wiring: measurable GO/NO-GO criteria, counts only, on committed synthetic fixtures plus the owner's two confidential reference documents. NO-GO leaves today's pipeline untouched and records the measurement here as a rejected option, pdfcpu-style | Q10 | 13b; OQ1 answered by the owner, 2026-08-21: risk accepted, 13b may start |
 | D16 | `SessionVersion` bumps **13 to 14 in 13d** and nowhere else, with the reason recorded beside the constant; the bump costs the owner every saved session and every saved profile on disk, and this plan says so plainly | Q9 | mine |
 
 ---
@@ -286,12 +286,11 @@ through the same session registry.
 
 **An occurrence that cannot be located blocks the export (D6).** The refusal
 names the placeholder (via `redactTerm`), the page, and the way out (export as
-`.md`, or per OQ5 the regenerated layout). It cannot be a warning: the Q1
-whole-file check would fail on the surviving original anyway, and a
-half-anonymised PDF that looks finished is worse than a refusal. Whether the
-old regenerated export remains available as the explicitly-labelled fallback
-behind that refusal is the owner's question OQ5, because keeping it keeps
-`fpdf` and changes the Q6 arithmetic.
+`.md`). It cannot be a warning: the Q1 whole-file check would fail on the
+surviving original anyway, and a half-anonymised PDF that looks finished is
+worse than a refusal. OQ5 is answered (§9): the old regenerated export does
+NOT remain as a fallback behind the refusal, so `fpdf` leaves and the Q6
+arithmetic is +1 and −2.
 
 ### Q3. What must extraction now cover?
 
@@ -421,13 +420,14 @@ fit; a replacement that cannot fit becomes a plain box. Concretely, after 13c:
   (`exportfmt/pdf.go ExtractPDFMetadata`), and the export self-check's reader
   (subsumed by the Q1 whole-file check).
 - `github.com/go-pdf/fpdf` leaves when 13c's in-place export replaces
-  regeneration, **unless** the owner keeps regeneration as the explicit
-  fallback behind D6's refusal (OQ5), in which case `fpdf` stays and the
-  arithmetic is +1 and −1. The recommendation is to remove it: the refusal
-  names the `.md` export as the way out, and a second PDF writer kept for a
-  rare failure path is a maintenance cost with no reviewer.
-- Removal happens at the **end of 13c**, after its acceptance criteria pass,
-  never in 13b: the replacement is proven before the incumbent leaves.
+  regeneration. OQ5 is answered (§9): regeneration keeps NO fallback role, the
+  refusal names the `.md` export as the way out, and a second PDF writer kept
+  for a rare failure path would be a maintenance cost with no reviewer.
+- Removal happens at the **end of 13c**, after its acceptance criteria pass
+  and after the owner has explicitly confirmed the tests are successful (the
+  OQ3 answer's decommissioning gate, D12), never in 13b: the replacement is
+  proven, and the owner's tag and release of the pre-change application stands
+  as the rollback point, before the incumbent leaves.
 - **The module is vendored** (`go mod vendor`): the exact source is auditable
   in-tree, cannot move underneath the build, and is what the Q7 inventory is
   computed from. The audit layer keeps working: `govulncheck` analyses the
@@ -621,14 +621,20 @@ D12 (`ledongthuc/pdf`, and `fpdf` subject to OQ5); every implied document edit
 (`CLAUDE.md` §5's PDF rules and §7's table, both charters, `BRIDGE.md`,
 `README.md`, `frontend/docs/index.html`).
 
-**Gate before it runs:** 13b's GO, plus owner answers to OQ2, OQ4 and OQ5.
+**Gate before it runs:** 13b's GO (OQ2, OQ4 and OQ5 are already answered, §9).
+The removals carry their own second gate per D12: `ledongthuc/pdf`, `fpdf` and
+the regenerated-export code leave only after the owner has explicitly
+confirmed the tests are successful, with the owner's tag and release of the
+pre-change application as the rollback point; until that confirmation the new
+path ships beside the old code and the removals wait as a follow-up commit
+under this order.
 **Acceptance (to be sharpened by 13b's findings):** both suites green; the
 framework-agreement suite untouched and green; the exported PDF of every
 fixture passes the whole-file check; ladder rung counts reported in the export
-review panel and the report; `go.mod` no longer names `ledongthuc/pdf` (and
-`fpdf`, per OQ5); a grep for the removed imports returns nothing outside
-`docs/`; `SessionVersion` still 13 and every existing session file still
-loads; scanned-PDF refusal byte-identical.
+review panel and the report; after the owner's confirmation, `go.mod` no
+longer names `ledongthuc/pdf` or `fpdf` and a grep for the removed imports
+returns nothing outside `docs/`; `SessionVersion` still 13 and every existing
+session file still loads; scanned-PDF refusal byte-identical.
 
 ### 13d — pictures in the PDF
 
@@ -659,7 +665,7 @@ obligation and not a suggestion.
 
 | Batch | State | Session | Outcome |
 |---|---|---|---|
-| 13 (this plan) | done | 2026-08-21 planning session | plan and 13b order written; owner questions OQ1 to OQ5 open |
+| 13 (this plan) | done | 2026-08-21 planning session | plan and 13b order written; owner answered OQ1 to OQ5 the same day (§9), 13b cleared to start |
 | 13b | planned | | |
 | 13c | scoped, not written | | order to be written after 13b's GO |
 | 13d | scoped, not written | | order to be written after 13b's GO, revised after 13c |
@@ -675,6 +681,7 @@ with the decision each finding forced. Measurements land here, as counts.
 |---|---|---|---|
 | F1 | planning, 2026-08-21 | `frontend/BRIDGE.md`'s session-file paragraph still says "schema version 9" while `SessionVersion` is 13 (`backend/engine/session.go`, `CLAUDE.md` §5) | the correction rides with 13d's `BRIDGE.md` edits, which touch that section anyway for the version bump; no separate batch |
 | F2 | planning, 2026-08-21 | `WriteTo` full-rewrite behaviour and the copilots' exact configuration symbols could not be verified from documentation | both became 13b measurements: G1 proves the save with bytes, and the Q7 symbol table is generated from the vendored source rather than from the README |
+| F3 | owner review, 2026-08-21 | the owner answered OQ1 to OQ5 (§9) and added a constraint the plan did not have: a tag and a release of the pre-change application exist as the rollback point, and the old PDF path may be decommissioned only after the owner explicitly confirms the tests are successful | D12 and the 13c scope amended: the dependency removals and the deletion of the regenerated export are gated on that confirmation, shipping the new path beside the old code until it arrives |
 
 ---
 
@@ -689,18 +696,19 @@ reason, rather than contradicted quietly in a later document.
 
 ---
 
-## 9. Open questions for the owner
+## 9. Open questions for the owner — ANSWERED 2026-08-21
 
-Each is in the decisions table with `owner` in the Source column; none may be
-answered by an implementing session on its own.
+Each was in the decisions table with `owner` in the Source column. The owner
+answered all five on 2026-08-21; the answers are recorded here verbatim in
+substance and folded into the decisions they touch (D4, D6, D11, D12, D15).
 
-| # | Question | Recommendation |
-|---|---|---|
-| OQ1 | Is a pre-1.0 dependency with 3 stars acceptable for reading client documents at all, given the mitigations (vendored and pinned source, the Q7 boundary guard, bytes-only entry points, the whole-file leak check, the 13b gate)? | Yes, behind the gate: the alternative is no in-place PDF at all, and the mitigations make the risk inspectable. But this is the owner's risk to accept, before 13b runs. |
-| OQ2 | Is a substituted metric-compatible font (Arimo for Helvetica/Arial, Tinos for Times) an acceptable price for layout fidelity on replaced text? | Yes; it is the only pure-Go answer, and it touches only the replaced words. 13b produces rasterised before/after images from the fixtures so the owner judges with their eyes, not a description. |
-| OQ3 | Does PDF lose its EXPERIMENTAL label after 13d? | Keep it through 13c and 13d; revisit after real-document use. The label is cheap and honest while the extractor and injector are new. |
-| OQ4 | May the produced PDF drop embedded file attachments and JavaScript actions outright (reported, never silent)? | Yes: an attachment is an inner document the pipeline never read, and carrying it through an "anonymised" file is a leak wearing a paperclip. |
-| OQ5 | When an occurrence cannot be located and the export refuses (D6), should the old regenerated-layout export remain available as an explicitly-labelled fallback? Keeping it keeps `go-pdf/fpdf`, making the arithmetic +1/−1 instead of +1/−2. | Remove it: the refusal names the `.md` export as the way out, and a second PDF writer kept for a rare failure path is unreviewed code in the leak-critical path. |
+| # | Question | Recommendation | Owner's answer (2026-08-21) |
+|---|---|---|---|
+| OQ1 | Is a pre-1.0 dependency with 3 stars acceptable for reading client documents at all, given the mitigations (vendored and pinned source, the Q7 boundary guard, bytes-only entry points, the whole-file leak check, the 13b gate)? | Yes, behind the gate: the alternative is no in-place PDF at all, and the mitigations make the risk inspectable. But this is the owner's risk to accept, before 13b runs. | **Risk accepted.** 13b may start. |
+| OQ2 | Is a substituted metric-compatible font (Arimo for Helvetica/Arial, Tinos for Times) an acceptable price for layout fidelity on replaced text? | Yes; it is the only pure-Go answer, and it touches only the replaced words. 13b produces rasterised before/after images from the fixtures so the owner judges with their eyes, not a description. | **Accepted.** 13b still attaches the rasterised before/after images to the GO/NO-GO note, so the acceptance is of something seen. |
+| OQ3 | Does PDF lose its EXPERIMENTAL label after 13d? | Keep it through 13c and 13d; revisit after real-document use. The label is cheap and honest while the extractor and injector are new. | **The label stays.** The owner additionally created a tag and a release of the current application as the rollback point, and set a gate this plan did not have: **the old PDF path is decommissioned only after the owner has confirmed to the implementing session that the tests are successful** (folded into D12 and the 13c scope). |
+| OQ4 | May the produced PDF drop embedded file attachments and JavaScript actions outright (reported, never silent)? | Yes: an attachment is an inner document the pipeline never read, and carrying it through an "anonymised" file is a leak wearing a paperclip. | **Confirmed:** both are dropped from the anonymised file, reported, never silent. |
+| OQ5 | When an occurrence cannot be located and the export refuses (D6), should the old regenerated-layout export remain available as an explicitly-labelled fallback? Keeping it keeps `go-pdf/fpdf`, making the arithmetic +1/−1 instead of +1/−2. | Remove it: the refusal names the `.md` export as the way out, and a second PDF writer kept for a rare failure path is unreviewed code in the leak-critical path. | **Confirmed:** the regenerated export goes, `go-pdf/fpdf` leaves, and the arithmetic is +1 and −2 (subject to the OQ3 decommissioning gate). |
 
 ---
 
@@ -719,9 +727,10 @@ answered by an implementing session on its own.
 5. The IMAGE tab reviews a PDF's pictures with one decision per asset, the
    treatments run through `imaging.Treat`, and a treated asset's original
    bytes are absent from the produced file.
-6. `go.mod` gained exactly one dependency and lost two (or one, per OQ5);
-   `vendor/` holds the module's exact pinned source; `CLAUDE.md` §7 carries
-   the module row, the fonts row and the go-cpp rejection row.
+6. `go.mod` gained exactly one dependency and lost two (`ledongthuc/pdf` and
+   `fpdf`, removed only after the owner's tests-successful confirmation, per
+   D12); `vendor/` holds the module's exact pinned source; `CLAUDE.md` §7
+   carries the module row, the fonts row and the go-cpp rejection row.
 7. `pdf_boundary_test.go` guards the copilot symbols, the vendored network
    inventory and the engine's bytes-only entry points, and
    `TestAnonymiseNeverCallsOllama` is untouched and green.
