@@ -88,10 +88,13 @@ jobs:
           go-version: "1.26.x"
 
       # Formatting is a guard, not a preference: an unformatted file fails every
-      # future diff review before it fails anything else.
+      # future diff review before it fails anything else. First-party files
+      # only: vendor/ holds upstream code exactly as its authors shipped it
+      # (that is what makes it auditable), so reformatting it would defeat the
+      # pin and gofmt drift there is not this repository's defect.
       - name: gofmt
         run: |
-          UNFORMATTED=$(gofmt -l .)
+          UNFORMATTED=$(gofmt -l $(git ls-files '*.go' | grep -v '^vendor/'))
           if [ -n "${UNFORMATTED}" ]; then
             echo "::error::These files are not gofmt-clean:"
             echo "${UNFORMATTED}"
