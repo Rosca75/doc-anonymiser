@@ -633,10 +633,38 @@ rung 2 (F10); `RepairPDFText` stays and runs over the new extractor's output
 file from a scanned one so `ErrScannedPDF`'s wording is never shown for
 truncation damage, and keeps a cheap recover shield (F8).
 
-**Gate before it runs:** 13b's conditional GO becomes unconditional: the owner
-runs the deep tier (`task test:deep` with `DOC_ANONYMISER_REFERENCE_PDF` and
-`DOC_ANONYMISER_REFERENCE_DECK` set) and the G4/G7/G8 numbers land in the
-findings log first (F4). OQ2, OQ4 and OQ5 are already answered (§9).
+**Revisions forced by the owner's deep run (2026-08-22):** the ladder is
+FRAGMENT-AWARE or it does not work on a real deck. Two rules, and F19 and F20
+are why each exists.
+
+First, **extraction must not manufacture a value.** Reading-order grouping puts
+fragments that merely share a baseline on one extracted line, and the detector
+then reads text from opposite ends of a slide as one name. 13c splits an
+extracted line where the horizontal gap between two fragments exceeds a
+plausible word space, using the rectangles `ExtractTextWithLayout` already
+returns, so a value offered to detection is text that was actually adjacent.
+
+Second, **an occurrence is located by fragments, never by one string.**
+`SearchText` matches inside ONE text-showing operation, so a value split across
+two draw operations is invisible to it even on a single line and even with no
+wrap involved. The ladder gains a rung beneath the wrapped one: walk the page's
+fragments, match the value across consecutive fragments, and redact the union
+of their rectangles. That rung also covers F20's case, where the pipeline holds
+a spelling that no extraction contains verbatim, because it matches fragment by
+fragment rather than against the pipeline's string.
+
+Third, **D6's refusal counts only what the fragment walk cannot find.** A
+refusal that fires on a manufactured value refuses an export for a leak that
+does not exist, which is worse than not offering the feature.
+
+**Gate before it runs:** MET. The owner's deep run is done (2026-08-22) and its
+numbers are in the findings log: G4, G5 and G8 pass on the reference documents
+and G7 does not (§11, F17 to F21). The owner accepted the fragment-aware
+enlargement above on 2026-08-22, which was the remaining entry condition, and
+the order is written as `docs/change-13c.md`. OQ2, OQ4 and OQ5 are already
+answered (§9). F22's Windows build break is NOT an entry condition for writing
+the order, but it must be fixed before this batch's acceptance can be checked
+on the target platform.
 The removals carry their own second gate per D12: `ledongthuc/pdf`, `fpdf` and
 the regenerated-export code leave only after the owner has explicitly
 confirmed the tests are successful, with the owner's tag and release of the
@@ -689,8 +717,8 @@ obligation and not a suggestion.
 | Batch | State | Session | Outcome |
 |---|---|---|---|
 | 13 (this plan) | done | 2026-08-21 planning session | plan and 13b order written; owner answered OQ1 to OQ5 the same day (§9), 13b cleared to start |
-| 13b | done, CONDITIONAL GO | 2026-08-21 implementation session | every criterion measurable without the reference documents PASSES (G1, G2, G3, G9 hard requirements; G4, G5, G6 fixture halves; G7 prototyped); the reference-document halves (G4, G7, G8, G5-on-real-files) are packaged as the env-gated deep tests and MUST be run on the owner's machine before 13c starts. Full note in §11; findings F4 to F15 |
-| 13c | scoped, not written | | order to be written after the owner's deep-tier run confirms the reference halves; scope revised by 13b's findings (see §5) |
+| 13b | done, CONDITIONAL GO; reference halves measured 2026-08-22 | 2026-08-21 implementation session, 2026-08-22 owner's deep run | every criterion measurable without the reference documents PASSES (G1, G2, G3, G9 hard requirements; G4, G5, G6 fixture halves; G7 prototyped). On the reference documents G4, G5 and G8 PASS and G7 does NOT: 10 of 48 occurrences on the 15-slide deck are UNLOCATED, so the gate reopens on that criterion and 13c's ladder scope grows (§11, findings F17 to F21) |
+| 13c | scoped; order written 2026-08-22 (`docs/change-13c.md`) | | the owner accepted the fragment-aware ladder enlargement on 2026-08-22, which was this batch's entry condition (§5's revisions of that date, findings F19 and F20) |
 | 13d | scoped, not written | | order to be written after 13b's GO, revised after 13c; scope revised by 13b's findings (see §5) |
 
 ---
@@ -718,6 +746,12 @@ with the decision each finding forced. Measurements land here, as counts.
 | F14 | 13b, 2026-08-21 | two integration tests fail on pristine `main` (`TestDetectionAlwaysEndsWithATerminalEvent`, `TestDetectionProgressNeverGoesBackwards` in `backend/app_detect_integration_test.go`), reproduced in a clean worktree of HEAD with no 13b change present. Root cause, found while triaging this PR's CI: `runSmartPhase` (`backend/app_detect.go`) calls `report(...)` only inside its heuristic loop, so with heuristic discovery OFF (the shipped default) and only signal-based discovery on, PhaseRules runs SILENTLY: zero progress events, which is exactly what both tests assert against. Proposed one-event patch: before `DiscoverFromSignals`, `report(DetectionProgress{DocIndex: max(0, len(docs)-1), DocCount: len(docs)})`, positioned at the end of the phase's document walk so the fraction never rewinds after the heuristic loop's per-file events | pre-existing and OUTSIDE this batch's original scope: the fix changes user-visible progress behaviour, which criterion 8 forbids, so it was first reported with the proposed patch instead of pushed. The owner then explicitly approved applying it inside this batch's PR ("Ok to patch integration red", 2026-08-21), so the one-event patch landed in `runSmartPhase` (reporting the phase's last document, so the fraction never rewinds), and `llmOnlyApp` moved with it: its comment promised "the offline route off" while only heuristic was off, so the silent rules phase had been passing it by accident; it now switches the signal readings off too, matching its own contract |
 | F16 | 13b, 2026-08-21 | `ci.yml`'s gofmt step ran `gofmt -l .`, which walks the new `vendor/` tree, and vendored upstream files are not all gofmt-clean, so the unit job failed on files this repository does not own. This is step 2.3's tool-walking-vendor class, found by CI rather than the audit run because gofmt lives in `ci.yml`, not the audit layer | the step is scoped to first-party files (`git ls-files '*.go'` minus `vendor/`), with the reason in the workflow comment: vendor/ holds upstream code exactly as shipped, which is what makes it auditable, so reformatting it would defeat the pin |
 | F15 | 13b, 2026-08-21 | the wrapped value is confirmed NOT findable whole (`SearchText`'s documented single-line limit holds: 0 matches), and the two-fragment prototype works: head and tail located by single-line searches, both redacted, placeholder drawn over the head, neighbours intact, the scanner's concatenated view clean | the wrapped-match step of D5's ladder is implementable with the library's own primitives; how often it is NEEDED is the G7 census, which runs with the reference documents (F4) |
+| F17 | owner's deep run, 2026-08-22 | G4 on both reference documents shows NO regression. The 2-page PDF reaches exact per-category parity (7 categories, 33 values, every count identical). The 15-slide deck's extraction finds MORE: `person_names` 13 to 45, `identifier_names` 2 values found only by the library, `date` 1 to 1. The spacing repair changes no count on either document (33 before and after; 48 before and after) while D8's changed-line count is 12 and 24 | G4's reference half PASSES and F4's condition is met on this criterion. F11 is unchanged (the repair stays), with the refinement that the repair is not what carries the parity: it moves lines, not values |
+| F18 | owner's deep run, 2026-08-22 | the gate test measured two things it did not intend. G4 compared the incumbent's REPAIRED pages against the library's RAW extraction, so it scored the absence of the repair rather than the library. And G7 drew its needles from the library's own extraction: a value that extraction split across a line break is not one value there, so it is never a needle, and the census reported zero wrapped occurrences BY CONSTRUCTION rather than by measurement | `pdffoss_gate_deep_test.go` repairs both sides before counting, and runs the census over BOTH needle sources, naming each. The pipeline-text source (the incumbent's already-reassembled text) stands in for the post-13c pipeline text until 13c's own line reassembly exists |
+| F19 | owner's deep run, 2026-08-22 | G7 census with needles from the library's extraction: the 2-page PDF locates 33 of 33 literally (UNLOCATED 0), and the 15-slide deck locates 38 of 48 and leaves **10 UNLOCATED**. All 10 are `person_names`, all are present VERBATIM in the extraction yet unsearchable as one string, none is a ligature the fold rewrote, and none carries a non-ASCII character. Their longest searchable token run is 1 to 3 tokens out of 2 to 5, and the gap between their first two tokens, which share a baseline, measures 6.7, 6.7, 8.0, 8.2, 8.6, 42.9, 383.2, 384.8, 948.4 and 948.4 pt | UNLOCATED is NOT rare on a real deck (10 of 48, 21%), so §11's stated condition is NOT met and the gate REOPENS on this criterion. Two distinct causes, and 13c must answer both. `ExtractText`'s reading-order grouping concatenates fragments that merely share a baseline, so detection is offered strings that were never contiguous text (a 948 pt gap is opposite ends of a 960 pt landscape slide); and `SearchText` matches within ONE text-showing operation, so even a genuinely contiguous same-line value split across two draw operations is invisible to rungs 1 and 2 |
+| F20 | owner's deep run, 2026-08-22 | the 2-page PDF's census over the PIPELINE's text leaves 1 UNLOCATED, a 2-token `person_names` value. It is absent VERBATIM from the library's raw extraction, carries no ligature the fold would have rewritten, and its two tokens do not share a baseline | a value the pipeline holds can be one that NO extraction contains verbatim, because the reflow and the spacing repair rewrite the text detection runs on. So 13c's ladder cannot locate by string equality with the pipeline's spelling alone, and the wrapped rung's geometry rule (tail above head, within 3 line heights) does not catch this occurrence |
+| F22 | owner's deep run, 2026-08-22 | `main` does not build on WINDOWS from a clean clone. `go mod vendor` wrote `vendor/github.com/wailsapp/wails/v2/internal/webview2runtime/MicrosoftEdgeWebview2Setup.exe` and `.gitignore`'s `*.exe` rule stopped git tracking it, so the committed vendor tree is incomplete and `go build .` fails with `pattern MicrosoftEdgeWebview2Setup.exe: no matching files found`. Nothing catches it: the package is reached only through `internal/wv2installer`, which is Windows-only, so every Go job in `ci.yml` runs on `ubuntu-latest` and never builds it, and the one Windows job is tag-or-dispatch gated AND `continue-on-error`. `release.yml`'s `wails build -platform windows/amd64` would fail on the next tag. It is the ONLY file affected: the two other `.exe` files in the vendored modules' cached copies sit under `testdata/`, which `go mod vendor` never copies | F12's all-or-nothing vendoring has a second cost the batch did not see: the repository's own ignore rules can silently truncate the vendored tree, and the platform that catches it is the one CI does not run. The fix is one negation in `.gitignore` (`!vendor/**/*.exe`) plus committing the 1.8 MB file, and it is the OWNER's call because `*.exe` is ignored deliberately; the alternative is taking `vendor/` out of git, which contradicts D1's auditable-in-tree requirement. Until it is fixed, a Windows checkout needs the file copied in from the module cache by hand |
+| F21 | owner's deep run, 2026-08-22 | G8 and G5 on the reference documents. Import: 8.6 ms incumbent against 5.8 ms library on the 2-page PDF (the library is FASTER), 3.1 ms against 23.2 ms on the 15-slide deck. No-edit `WriteTo`: 4.5 ms and 31.1 ms. Rasterised round trip: 0 differing pixels on every page rendered (2 and 3) | G8 and G5's reference halves PASS with room to spare: the largest export measured is 31 ms against a 30 s budget. The order's "within 3x the incumbent" import guidance is exceeded on the deck (7.5x) at 23 ms absolute, which is exactly why the encoded budget carries a 2 s floor beneath the ratio; no action |
 
 ---
 
@@ -820,3 +854,40 @@ by test files and `exportfmt/pdfscan.go` only, `pdfscan.go` has no production
 caller yet, and the boundary guard holds the copilots, the timestamp lever and
 the file-path APIs out of everything. A PDF imports, anonymises and exports
 today exactly as before this batch.
+
+It did, however, change what a clean clone can BUILD: vendoring pulled in a
+file the repository's own `.gitignore` refuses to track, and the resulting
+Windows build failure is invisible to every CI job that runs on push (F22).
+
+### The reference-document halves — 2026-08-22
+
+The owner ran the deep tier on their own machine, over the 2-page PDF and the
+15-slide deck exported to PDF. The documents are confidential and stayed on
+that machine; everything below is a count, a duration or a distance.
+
+Running the test as packaged also showed it was measuring two things it did
+not intend, so it was corrected first and both runs are reported (F18): G4 now
+applies the spacing repair to BOTH extractions, and G7's census runs over two
+needle sources because the source decides the answer.
+
+| # | Criterion | Measured on the reference documents | Result |
+|---|---|---|---|
+| G4 | extraction parity | 2-page PDF: exact per-category parity, 7 categories and 33 values, every count identical. 15-slide deck: strictly MORE, `person_names` 13 to 45, `identifier_names` 2 library-only, `date` 1 to 1. The repair changes no count on either (F17) | **PASS** |
+| G5 | round-trip fidelity | 0 differing pixels on every page rendered, 2 of the PDF and 3 of the deck (F21) | **PASS** |
+| G7 | ladder coverage | 2-page PDF: 33 of 33 literal, UNLOCATED 0. 15-slide deck: 38 literal, **10 UNLOCATED of 48**, all `person_names`, all present verbatim in the extraction and unsearchable as one string (F19). Over the PIPELINE's text the PDF leaves 1 UNLOCATED, a value no extraction holds verbatim (F20) | **FAIL against the stated condition: UNLOCATED is not rare** |
+| G8 | wall clock | import 8.6 ms against 5.8 ms (the library is faster) and 3.1 ms against 23.2 ms; no-edit `WriteTo` 4.5 ms and 31.1 ms against a 30 s budget (F21) | **PASS** |
+
+**The condition is half met, and the note is amended as §11 said it would be.**
+G4, G5 and G8 pass on the real documents, so the three questions that could
+have rejected the library outright are answered in its favour: it reads a real
+deck better than the incumbent does, it rewrites a real file without moving a
+pixel, and it costs milliseconds.
+
+G7 does not pass, and the gate REOPENS on that criterion alone. It is not a
+verdict on the library: the 10 unlocated occurrences are a consequence of how
+extraction and search each treat a text FRAGMENT, and both halves are 13c's to
+answer (F19). Until they are answered, D6's refusal would fire on about a fifth
+of a real deck's values, and it would fire for strings that were never in the
+document, which is the worst of both outcomes: an export refused for a leak
+that does not exist. **13c cannot be written against the ladder as scoped**;
+the scope revision below is the entry condition now.

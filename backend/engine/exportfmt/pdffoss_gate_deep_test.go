@@ -54,6 +54,31 @@ func referenceBytes(t *testing.T, envVar string) []byte {
 	return raw
 }
 
+// repairEachLine applies the converter's own spacing repair line by line, the
+// way convert.PDFWithPages applies it to the incumbent's pages.
+//
+// The G4 comparison needs it on BOTH sides. The incumbent's pages arrive
+// already repaired, so comparing them against a raw library extraction
+// measures the absence of the repair rather than the library, and the repair
+// is not going away: it keeps running over whichever extractor feeds the
+// pipeline.
+func repairEachLine(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = convert.RepairPDFText(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// countAll totals a per-category count map.
+func countAll(counts map[string]int) int {
+	total := 0
+	for _, n := range counts {
+		total += n
+	}
+	return total
+}
+
 // detectionCounts runs the offline detection the gate compares: pass 1's
 // preview over every category plus heuristic discovery at defaults, over one
 // extraction, and returns values-found-per-category. Counts only.
@@ -117,9 +142,18 @@ func TestPDFFossGateReferenceDocuments(t *testing.T) {
 
 			// G4: detection counts per category over each extraction. The
 			// library must find at least what the incumbent finds, per
-			// category.
-			incumbentCounts := detectionCounts(t, ref.label+"_incumbent", strings.Join(incumbentPages, "\n\n"))
-			libCounts := detectionCounts(t, ref.label+"_library", strings.Join(libTexts, "\n\n"))
+			// category. Both sides carry the spacing repair (repairEachLine
+			// says why); the raw total is logged beside it so the repair's
+			// own contribution stays visible.
+			incumbentText := strings.Join(incumbentPages, "\n\n")
+			libraryText := repairEachLine(strings.Join(libTexts, "\n\n"))
+			t.Logf("G4 %s: values found in the library's extraction before the repair %d, after it %d",
+				ref.label,
+				countAll(detectionCounts(t, ref.label+"_library_raw", strings.Join(libTexts, "\n\n"))),
+				countAll(detectionCounts(t, ref.label+"_library_repaired", libraryText)))
+
+			incumbentCounts := detectionCounts(t, ref.label+"_incumbent", incumbentText)
+			libCounts := detectionCounts(t, ref.label+"_library", libraryText)
 			for cat, n := range incumbentCounts {
 				t.Logf("G4 %s category %s: incumbent %d, library %d", ref.label, cat, n, libCounts[cat])
 				if libCounts[cat] < n {
@@ -149,21 +183,38 @@ func TestPDFFossGateReferenceDocuments(t *testing.T) {
 			// which rung locates it: the literal search, the
 			// whitespace-tolerant pattern, the wrapped two-fragment step, or
 			// none (UNLOCATED, D6's refusal).
-			var literal, tolerant, wrapped, unlocated int
-			for _, m := range gatherNeedles(t, strings.Join(libTexts, "\n\n")) {
-				switch {
-				case searchCount(t, doc, m, asposepdf.SearchOptions{}) > 0:
-					literal++
-				case searchCount(t, doc, tolerantPattern(m), asposepdf.SearchOptions{Regex: true}) > 0:
-					tolerant++
-				case wrappedLocatable(t, doc, m):
-					wrapped++
-				default:
-					unlocated++
+			//
+			// WHICH EXTRACTION THE NEEDLES COME FROM DECIDES THE ANSWER, so
+			// the census runs over both and names each. Needles drawn from
+			// the library's own extraction can never be WRAPPED: a value that
+			// extraction split across a line break is not one value there to
+			// begin with, so it is never a needle, and the census reports
+			// zero wrapped occurrences by construction rather than by
+			// measurement. The needles the EXPORT ladder is actually handed
+			// are whatever the pipeline decided to replace, over a text with
+			// its wrapped lines reassembled; the incumbent's extraction
+			// already reads that way, so it stands in for the post-13c
+			// pipeline text until that reassembly exists.
+			for _, src := range []struct{ label, text string }{
+				{"pipeline text (line-reassembled)", incumbentText},
+				{"the library's own extraction", libraryText},
+			} {
+				var literal, tolerant, wrapped, unlocated int
+				for _, m := range gatherNeedles(t, src.text) {
+					switch {
+					case searchCount(t, doc, m, asposepdf.SearchOptions{}) > 0:
+						literal++
+					case searchCount(t, doc, tolerantPattern(m), asposepdf.SearchOptions{Regex: true}) > 0:
+						tolerant++
+					case wrappedLocatable(t, doc, m):
+						wrapped++
+					default:
+						unlocated++
+					}
 				}
+				t.Logf("G7 %s ladder census, needles from %s: literal %d, tolerant-pattern %d, wrapped %d, UNLOCATED %d",
+					ref.label, src.label, literal, tolerant, wrapped, unlocated)
 			}
-			t.Logf("G7 %s ladder census: literal %d, tolerant-pattern %d, wrapped %d, UNLOCATED %d",
-				ref.label, literal, tolerant, wrapped, unlocated)
 
 			// G5 on the real file: open, WriteTo, rasterise, count.
 			var buf bytes.Buffer
