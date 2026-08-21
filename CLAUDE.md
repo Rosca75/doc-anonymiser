@@ -270,14 +270,26 @@ doc-anonymiser/
 
   | Term | Definition | Output |
   |---|---|---|
-  | **Detection route** | A switchable user-facing feature group | Smart detection or Local AI |
-  | **Smart detection** | The built-in, non-AI route | Direct matches AND Suggestions |
-  | **Built-in pattern matching** | Application-provided patterns for structured signals | Direct matches |
+  | **Detection route** | A switchable user-facing mechanism, one switch each | Built-in patterns, Heuristic discovery, Signal-based discovery or Local LLM discovery |
+  | **Built-in pattern matching** | Application-provided patterns for structured signals. The rail names it **Built-in patterns** | Direct matches |
   | **Signal-based discovery** | Uses a direct signal match as EVIDENCE to find related text | Suggestions |
   | **Heuristic discovery** | Uses spelling, context, frequency and deterministic gazetteers | Suggestions |
-  | **Local AI** | The Ollama-backed route, used during Identify | Suggestions |
+  | **Local LLM discovery** | The Ollama-backed route, used during Identify | Suggestions |
   | **Custom pattern matching** | The user's own regular expressions | Direct matches |
   | **Manual Value declaration** | A Value the user typed | An accepted Value |
+
+  Two terms are RETIRED from the interface and survive only as engine
+  identifiers, because a label is a display string and an identifier is a
+  contract. **Smart detection** was one name over three unrelated mechanisms
+  (pattern matching, which acts without review, plus two discovery methods,
+  which do not), so it could never say which of them found what; it survives as
+  `PhaseSmart` and `smart_discovered`, which the interface labels "Heuristic
+  discovery". **Local AI** said nothing about what runs; it survives as
+  `local_ai` and `local_ai_discovered`, labelled "Local LLM discovery". The name
+  is LLM-specific rather than model-generic because an encoder-model route would
+  be its own section: a different dependency, different settings and different
+  failure modes. Guarded by `copy_guard_test.go` and `frontend/copy.test.js`,
+  which fail on either phrase in a user-facing string.
 
   Not every method produces Suggestions, and the difference is what the review
   gate is about. Pattern matching produces DIRECT MATCHES, applied without
@@ -317,7 +329,7 @@ doc-anonymiser/
   | `manual` | the user typed it |
   | `signal` | signal-based discovery |
   | `heuristic` | heuristic discovery |
-  | `local_ai` | Local AI discovery |
+  | `local_ai` | Local LLM discovery |
 
   The **match class** answers WHICH CLAIM WINS. It is derived from the methods by
   `engine.MatchClassForMethods`, which takes the STRONGEST: corroboration by a
@@ -329,7 +341,7 @@ doc-anonymiser/
   | `built_in_pattern` | 1 | pass 1 pattern matches, and an already-decided registry entry |
   | `user_defined` | 2 | a manual Value or a custom pattern: the same act by the same person |
   | `smart_discovered` | 3 | signal-based or heuristic discovery |
-  | `local_ai_discovered` | 4 | Local AI discovery |
+  | `local_ai_discovered` | 4 | Local LLM discovery |
 
   LOWER WINS. An unknown or empty class ranks with `user_defined` rather than
   last, so a producer that states none is trusted rather than silently demoted:
@@ -540,7 +552,7 @@ doc-anonymiser/
   act on and an empty result is not.
 
   No discovery method runs here. Discovery happens at Identify time
-  (`App.RunDetection`), every finding is a Suggestion, and every Local AI finding
+  (`App.RunDetection`), every finding is a Suggestion, and every local model finding
   passes a **hallucination filter** (dropped unless the exact string occurs in
   the source text) and the allowlist before the user ever sees it.
 - **Image anonymisation: the second half of the Anonymise step.** The pipeline
@@ -602,7 +614,7 @@ doc-anonymiser/
   (`backend/app_images.go`) from the decision store and the cached inventories.
   A decision does NOT gate the step 3 to step 4 move: the gate exists for
   unreviewed suggestions, and every picture starts with an answer.
-- **The local AI reads a document in slices aligned to its OWN units, never in
+- **The local model reads a document in slices aligned to its OWN units, never in
   one request.** `engine.ScanChunks` packs contiguous units (slides, pages, rows,
   lines: the same units `Document.PageCount` addresses) up to the size the user's
   detail level asks for, and a slice never spans a gap in a discontiguous scope.
@@ -654,7 +666,7 @@ doc-anonymiser/
   never a dead end.
 - **Value categories:** eleven, listed in `engine.AllValueCategories` and
   mirrored by `frontend/state.js`. Every one is reachable by manual declaration
-  and by the local AI; several are additionally reachable OFFLINE, by heuristic
+  and by the local model; several are additionally reachable OFFLINE, by heuristic
   or signal-based discovery, and the frontend label of the rest says where they
   come from, enforced by `identifyrail.test.js`.
 
@@ -724,19 +736,62 @@ doc-anonymiser/
   never-anonymise list, built-in pattern matches and custom patterns are its
   Review workspace.
 
-  The rail lists the DETECTION ROUTES as switchable sections: Smart detection, on
-  by default and owning the scope controls (document country, preset, the
-  detection categories, the match confidence) because they are that route's
-  scope; and Local AI, off by default. Detecting Ollama ENABLES the Local AI
-  switch, it never flips it. Smart detection's own state is DERIVED from its three
-  methods and never stored: a fourth persisted boolean can disagree with the three
-  it summarises. There is no cloud route.
+  The rail lists the DETECTION ROUTES as switchable sections, **one switch per
+  mechanism**, each switch bound to a REAL settings flag: **Built-in patterns**
+  (`useBuiltInPatterns`), on by default and owning its own scope (document
+  country, preset, the eight pattern category groups); **Heuristic discovery**
+  (`useHeuristicDiscovery`), on by default and owning the name categories and its
+  own strictness block; and **Local LLM discovery** (`useLocalAI`), off by
+  default. Detecting Ollama ENABLES that switch, it never flips it. There is no
+  cloud route.
 
-  Within the scope controls the categories are grouped by what FINDS them, not by
-  preset tier: contact details, technical identifiers, "Auto detected values"
-  (what a discovery method can emit) and "Your own patterns"
-  (`custom_patterns`, which is declarative and must never sit under the discovered
-  group).
+  A section switch must be the flag it claims to be. A section whose state is
+  derived from several methods can read "On" while nothing it names runs, and the
+  user has no way to tell, which is why no fourth summarising boolean exists on
+  either side of the bridge.
+
+  Below the routes sit two SWITCH-LESS panels, marked `.rail-panel` rather than
+  `.rail-section` so a utility panel is never counted as a route: **Detection
+  quality**, holding the match-confidence floor, and **Load profile**. The floor
+  governs every route that is on and decides what a run is allowed to REPLACE
+  rather than what discovery may suggest, so placing it inside one route would
+  mislabel it as that route's own knob. It is NOT the heuristic block's own
+  minimum confidence, which lives inside Heuristic discovery because nothing else
+  reads it.
+
+  Signal-based discovery has no section of its own: its readings hang off the
+  category row of the pattern that produces the evidence, inside Built-in
+  patterns. Switching Built-in patterns off must NOT disable those drill-downs.
+  Signal-based discovery is gated only by `signalSuggestionSources` and matches
+  its own evidence; `UseBuiltInPatterns` governs only whether the signal itself is
+  replaced. That asymmetry is the whole reason the separate setting exists, and a
+  wiring test holds it.
+
+  Within Built-in patterns the categories are grouped by CLASS, in eight groups,
+  broadest first and the contextual one last: contact details; locations and
+  addresses; financial accounts; government and tax identifiers; health
+  identifiers; network and device identifiers; credentials and secrets; dates and
+  monetary amounts. The classes are the ones the established PII tools converge
+  on, plus two deliberate departures: health identifiers are their own group
+  because health data is an Article 9 special category under the GDPR in this
+  market, and dates and monetary amounts are their own because this application
+  treats them as contextual identifiers rather than as PII. Grouping by class
+  rather than by preset tier is what gives a new recognizer an obvious home.
+  Every pattern category appears in exactly one group, guarded by
+  `frontend/identifyrail.test.js`.
+
+  `custom_patterns` has **no rail switch at all**. It is declarative, its editor
+  is the workspace's Custom patterns tab, and it is therefore permanently on
+  (`state.js ALWAYS_ON_CATEGORIES`, forced by `adoptCategories` on every adopted
+  category map and refused by `toggleCategory`): a category with no control and a
+  stored `false` is a pattern editor whose patterns never run, with nothing on
+  screen saying why.
+
+  A preset fills BOTH the pattern categories and the name categories, so a chip
+  pressed under Built-in patterns also changes the selection under Heuristic
+  discovery. That is a domain rule rather than a UI one, so the chip row carries a
+  live read-out naming what else the level switched on, which is dynamic
+  information and therefore allowed inline.
 
   The Configure panel keeps VISIBLE LABELS short and puts every explanation in a
   help tooltip. A paragraph under each control is read once and then occupies the

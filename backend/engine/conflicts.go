@@ -369,16 +369,16 @@ func (w *overlapWarnings) addOwnershipLosses(losses []ownershipLoss) {
 }
 
 // matchClassWord is the route named in a warning sentence. The engine's identifiers
-// are contracts, not prose, so a message that printed "ai" would read as jargon;
-// these are the same words the value card's matchClass chip uses.
+// are contracts, not prose, so a message that printed a class name would read as
+// jargon; these are the same words the value card's matchClass chip uses.
 func matchClassWord(matchClass string) string {
 	switch matchClass {
 	case MatchClassBuiltInPattern:
 		return "native detection"
 	case MatchClassSmartDiscovered:
-		return "Smart detection"
+		return "heuristic discovery"
 	case MatchClassLocalAIDiscovered:
-		return "the local AI"
+		return "local LLM discovery"
 	default:
 		return "your own values and patterns"
 	}

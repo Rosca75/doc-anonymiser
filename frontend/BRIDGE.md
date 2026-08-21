@@ -79,12 +79,12 @@ knows which form it needs. `"line"` is the common fallback, not an error: a page
 count can only come from what the writing application cached in
 `docProps/app.xml`, and that part is optional.
 
-`DocumentInfo` also carries `pageCount`: how many units the LOCAL AI scan scope
+`DocumentInfo` also carries `pageCount`: how many units the LOCAL LLM scan scope
 can address for this document (`PageRangeMarkdown` is 1-based inclusive over
 them). For PDF and DOCX it counts the explicit per-page texts held at ingestion;
 for a flat CSV/XLSX sheet it is the row count, for PPTX the slide count, for
 TXT/MD the line count; a complex sheet or a single-unit document reports 1. The
-Local AI section sizes its From/To range inputs from it.
+Local LLM discovery section sizes its From/To range inputs from it.
 
 ## Settings
 
@@ -92,11 +92,13 @@ Local AI section sizes its From/To range inputs from it.
 |---|---|---|
 | `applySettings(settings)` | settings object | the fresh probe result, in the same flat `{available, models, detail, model}` shape `probeOllama()` gives; rejects with an actionable message on bad input. It re-resolves the model because a settings write can change the PORT, so which models exist afterwards is not what the last probe saw |
 
-There are TWO detection routes, and the settings say so directly.
+There are THREE detection routes, and the settings say so directly: the WIRE
+CONTRACT is exactly three booleans plus the nested `signalSuggestionSources`, and
+there is no derived section flag on either side of the bridge.
 
-**Local AI** is one switch, `useLocalAI`. Off by default and additionally gated
-on the live Ollama probe, so a stale `true` can never start a model that is not
-running.
+**Local LLM discovery** is one switch, `useLocalAI`. Off by default and
+additionally gated on the live Ollama probe, so a stale `true` can never start a
+model that is not running.
 
 `aiStrictFormat` is the same route's reply-format choice, off by default: on, the
 DISCOVERY request asks the model to answer for every category (a JSON Schema in
@@ -122,28 +124,29 @@ There is deliberately no "whole document in one request" level: it measures zero
 values on every model tried, and a choice whose outcome is "finds nothing" is a
 broken switch rather than an option.
 
-**Smart detection** is THREE methods, each with its own setting, and no switch of
-its own:
+The two OFFLINE mechanisms are one setting each, and signal-based discovery is a
+nested map of readings:
 
 | Setting | What it does | Default |
 |---|---|---|
-| `useBuiltInPatterns` | MASTER over the structured signal categories (email, VAT, IBAN, amount, date, …). Off means pass 1 is skipped and no signal category is replaced, whatever `categories` selects; the selection is left intact. Produces DIRECT MATCHES, never Suggestions. | on |
-| `useHeuristicDiscovery` | Heuristic discovery: spelling, context, frequency and deterministic gazetteers. Produces SUGGESTIONS. | on |
+| `useBuiltInPatterns` | MASTER over the structured signal categories (email, VAT, IBAN, amount, date, …). Off means pass 1 is skipped and no signal category is replaced, whatever `categories` selects; the selection is left intact. Produces DIRECT MATCHES, never Suggestions. The rail labels it **Built-in patterns**. | on |
+| `useHeuristicDiscovery` | Heuristic discovery: spelling, context, frequency and deterministic gazetteers. Produces SUGGESTIONS. The rail labels it **Heuristic discovery**. | on |
 | `signalSuggestionSources` | `{email: {"email.person": bool, "email.organisation": bool}}`, keyed by `engine.AllSignalSources` and then by `engine.SignalDerivations[source]`. Which READINGS of which built-in signals may be used as EVIDENCE to derive Suggestions. Produces SUGGESTIONS. | every reading on |
 
-The section's on/off state is DERIVED (`state.js smartDetectionOn`): it is on when
-any of the three is on. There is deliberately no fourth persisted boolean, because
-a stored section flag can disagree with the three methods it claims to summarise,
-and a section reading "On" while every method is off lies about what a run does.
-The rail's header switch is a master that changes all three in one action.
+Each of the three route switches is its OWN persisted boolean, and the rail's
+three header switches write one each. There is deliberately no fourth boolean
+summarising them, because a stored section flag can disagree with the mechanisms
+it claims to summarise, and a section reading "On" while nothing it names runs
+lies about what a run does.
 
 `signalSuggestionSources` is keyed by source AND by DERIVATION, because one signal
 supports several readings through several mechanisms: an address's local part is
 evidence for a person (`email.person`), its domain for an organisation
 (`email.organisation`), and wanting one without the other is a reasonable thing to
 want. Each reading is switched on its own; a source has no boolean of its own, and
-the rail DERIVES the signal's master state from its readings (on when any is on) for
-the same reason the Smart detection section derives its own.
+the rail DERIVES the signal's master state from its readings (on when any is on),
+for the reason a route switch is a real flag rather than a summary: a summary that
+can disagree with what it summarises lies about what a run does.
 
 It does NOT govern whether a signal is matched and replaced. Clearing a reading
 stops the Suggestions THAT reading produces and leaves email anonymisation exactly
@@ -177,7 +180,7 @@ display choice: it decides which country-specific regex categories run.
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
-| `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, pages}` (null = every document whole; restricts the LOCAL AI route only; `pages` is a 1-based `number[]` over the document's own page/slide/row/line units, and an empty array means the whole selected document) | `DetectionResult {suggestions, phases, skipped, errors, cancelled, status, aiRequests, aiSilentRequests, aiTruncatedRequests, aiSecondsPerRequest, patternMatches, patternCategories, builtInPatternsOn}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
+| `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, pages}` (null = every document whole; restricts the LOCAL LLM route only; `pages` is a 1-based `number[]` over the document's own page/slide/row/line units, and an empty array means the whole selected document) | `DetectionResult {suggestions, phases, skipped, errors, cancelled, status, aiRequests, aiSilentRequests, aiTruncatedRequests, aiSecondsPerRequest, patternMatches, patternCategories, builtInPatternsOn}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
 | `estimateAIRequests(fileNames, aiScope)` | names, optional `AIScope` | how many model requests the current scope and DETAIL LEVEL imply, as a number. Reaches no model, probes nothing and mutates nothing, so it is safe to call on every edit. Go computes it with the SAME helper the run uses, which is what makes it equal to the request count the run then makes: a read-out predicting something else is worse than none. Rejects only when there is nothing to estimate (no matching documents); a scope naming pages that do not exist resolves to what the run would actually send, which for that document is zero |
 | `cancelDetection()` | — | aborts the in-flight run, reaching whichever route is running, including mid-file |
 | `expandSpellings(value)` | `{category, mainText, spellings, spellingPolicy}` | the forms this Value matches, longest first. `spellingPolicy: "curated"` means the list is the user's: Go derives nothing and returns the main text plus exactly the spellings it was given, so the chips on the card are what the run replaces |
@@ -214,9 +217,9 @@ it only when some unrelated switch happened to be on would make the answer
 depend on that switch. In that case `phases` is empty and `status` says where the
 matches are.
 
-### What the local AI did, and did not say
+### What the local model did, and did not say
 
-`DetectionResult` carries four numbers about the LOCAL AI route, and they exist
+`DetectionResult` carries four numbers about the LOCAL LLM route, and they exist
 because **"0 suggestions" means two different things and only one of them is about
 the document**. A model that answered nothing fifteen times reads exactly like a
 document with no names in it, and the user gets no hint that another model or a
@@ -233,7 +236,7 @@ Most requests returning nothing is NORMAL, so only an ALL-silent phase adds a
 message to `errors`, and that message names the MODEL, which is the actionable
 half. `status` names the request count whenever the route ran, so the one-line
 summary distinguishes the two cases by itself. The frontend keeps the four
-numbers in `state.lastAIScan` and shows them as the Local AI section's
+numbers in `state.lastAIScan` and shows them as the Local LLM discovery section's
 `.rail-readout`; the backward reset for Identify clears them, because they
 describe a run that reset discards.
 
@@ -279,7 +282,7 @@ default.
 
 One list, not one per route, and that is a data-integrity decision rather than a
 tidiness one: with a list per route the frontend had to map each into its own
-shape, and the mapping for the Local AI route rebuilt the row as
+shape, and the mapping for the local model route rebuilt the row as
 `{text, category}` and dropped the folded spellings on the floor. A row says which
 methods found it, so route membership is a property of the row.
 
@@ -298,7 +301,7 @@ methods found it, so route membership is a property of the row.
   the pipeline rather than two rivals, the shorter of which would fire inside the
   longer and leave the rest of the phrase in clear text.
 - `confidence` is a THIRD thing beside provenance and precedence, and it is what
-  the Configure rail's **Minimum confidence** acts on. A Local AI finding carries
+  the Configure rail's **Minimum confidence** acts on. A local model finding carries
   `engine.ConfidenceLLMDefault` (0.8), stamped at the Ollama boundary beside the
   `local_ai` method. `0` means NOT STATED, which the engine reads as a user
   declaration and scores at `ConfidenceManualDefault` (0.95). The number must
@@ -576,7 +579,7 @@ progress, computed in Go and non-decreasing across routes: never recompute a
 percentage per route in the frontend, that is what made the bar rewind when the
 second route started with a smaller file count.
 
-On the LOCAL AI route the model reads a document in slices aligned to the
+On the LOCAL LLM route the model reads a document in slices aligned to the
 document's own units, one request each, so `chunkIndex` and `chunkCount` are the
 request number and the request count for that document's scan. `unitFrom`,
 `unitTo` and `unitWord` say which of the document's OWN units the current request

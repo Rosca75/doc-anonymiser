@@ -100,7 +100,7 @@ func (ms *modelServer) port(t *testing.T) int {
 	return n
 }
 
-// modelApp is an App pointed at the given stand-in, with the Local AI route on
+// modelApp is an App pointed at the given stand-in, with Local LLM discovery on
 // and the offline route off so the only model traffic is the one under test.
 func modelApp(t *testing.T, ms *modelServer, stored string) *App {
 	t.Helper()

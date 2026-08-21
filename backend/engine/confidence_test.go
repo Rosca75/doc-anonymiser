@@ -5,7 +5,7 @@
 //  1. The DEFAULT changes nothing. A zero MinConfidence must keep replacing
 //     everything, because a setting that quietly removes replacements would be
 //     a data-leak bug, not a preference.
-//  2. Above the AI tier, values accepted from a Local AI Suggestion stop being
+//  2. Above the model tier, values accepted from a local model Suggestion stop being
 //     replaced while everything the user declared keeps being replaced.
 package engine
 
@@ -16,7 +16,7 @@ import (
 )
 
 // runWith is the shared harness: one document, one declared value, one value
-// accepted from a Local AI Suggestion, at the given confidence floor.
+// accepted from a local model Suggestion, at the given confidence floor.
 func runWith(t *testing.T, minConfidence float32) string {
 	t.Helper()
 	const text = "Marie Duval met Anouk Berger about the audit.\n"
@@ -25,7 +25,7 @@ func runWith(t *testing.T, minConfidence float32) string {
 		Values: []Value{
 			// A value the user declared themselves: high trust.
 			{Category: "person_names", MainText: "Marie Duval"},
-			// A value accepted from a Local AI Suggestion: lower trust.
+			// A value accepted from a local model Suggestion: lower trust.
 			{Category: "person_names", MainText: "Anouk Berger", DiscoveryMethods: []string{MethodLocalAI}, Confidence: ConfidenceLLMDefault},
 		},
 		Level:         LevelMedium,

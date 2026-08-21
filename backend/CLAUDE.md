@@ -150,8 +150,9 @@ be enforced anywhere else:
   so a new reading is one constant and one implementation rather than a new field,
   a new rail row and a new persisted flag. `SignalDerivationEnabled` is the leaf
   question the discovery pass asks; `SignalSourceEnabled` DERIVES the signal's own
-  state from its readings (on when any is on) and is never stored, for the reason
-  the Smart detection section's state is never stored either. It does NOT govern
+  state from its readings (on when any is on) and is never stored, for the reason a
+  rail route switch is a real settings flag rather than a summary: a summary that
+  can disagree with what it summarises lies about what a run does. It does NOT govern
   whether a signal is matched and replaced, and conflating the two is the mistake
   the separate setting exists to prevent. A nil selection, or a key missing at
   either level, reads as the defaults, never as "none". Mirrored by
@@ -232,7 +233,7 @@ to free.
 There is no discovery pass here, and that is the point. Discovery happens at
 Identify time (`App.RunDetection` over `engine/discover.go`,
 `engine/signaldiscovery.go` and `ollama`), every finding is a Suggestion, and
-every Local AI finding passes a **hallucination filter** (dropped unless the
+every local model finding passes a **hallucination filter** (dropped unless the
 exact string occurs in the source text) and the allowlist before the user ever
 sees it.
 

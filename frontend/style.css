@@ -795,7 +795,7 @@ input, select {
 /* --- Identify rail (BUILD-05 Phase 5) ------------------------------------ */
 
 /* BUILD-06: the rail's tab row is GONE. The four peer tabs presented Scope as
-   a thing of its own rather than the scope OF smart detection, and they hid
+   a thing of its own rather than the scope of the route that reads it, and they hid
    three quarters of the rail behind a click. The rail is now three route
    sections, stacked, each switchable in its own header. */
 
@@ -804,7 +804,7 @@ input, select {
 
    flex: none matters: the rail's .card-body is a flex column, which makes each
    section a flex item that would otherwise SHRINK to fit the card rather than
-   overflow it. When Smart detection is expanded its body is taller than the
+   overflow it. When a route section is expanded its body is taller than the
    rail, so a shrinking section clips its own content (the .cgroup has
    overflow: hidden) and squashes the sections below it into slivers, and the
    card never scrolls. Pinning the sections to their natural height lets the
@@ -816,7 +816,7 @@ input, select {
    still read what it WOULD do, which is what they need to decide. */
 .rail-section.route-off > .cgroup-body { opacity: 0.62; }
 
-/* The strictness block nested inside Smart detection. A nested group needs to
+/* The strictness block nested inside Heuristic discovery. A nested group needs to
    read as subordinate, so it loses the outer border and gains an indent. */
 .rail-subgroup { border-color: var(--gray-6); }
 .rail-subgroup > .cgroup-head { background: var(--surface-subtle); }

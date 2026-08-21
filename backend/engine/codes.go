@@ -76,7 +76,7 @@ var identifierCues = map[string]bool{
 
 // DetectCodes proposes the code-shaped values in text.
 //
-// It returns Suggestions, not Spans: like the rest of smart detection this is a
+// It returns Suggestions, not Spans: like the rest of heuristic discovery this is a
 // SUGGESTION for the user to accept or reject on step 2, not a replacement.
 // Accepting one turns it into a Value, and the Value pass replaces it.
 //

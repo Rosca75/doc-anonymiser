@@ -65,11 +65,19 @@ without the runtime. Preserve that behaviour.
   show/hide-spellings toggle, because a toggle that changes every card's height is
   the same failure wearing a switch.
 
-  The rail is TWO switchable DETECTION ROUTE sections, not tabs: **Smart
-  detection** (on by
-  default, and the owner of the scope controls, because the country, preset,
-  categories and confidence floor are the scope OF that route) and **Local AI**
-  (off by default). There is no cloud route.
+  The rail is THREE switchable DETECTION ROUTE sections, not tabs, one per
+  MECHANISM, each switch bound to a real settings flag: **Built-in patterns**
+  (`useBuiltInPatterns`, on by default, owning the document country, the preset
+  and the eight pattern category groups), **Heuristic discovery**
+  (`useHeuristicDiscovery`, on by default, owning the name categories and its own
+  strictness block) and **Local LLM discovery** (`useLocalAI`, off by default).
+  There is no cloud route.
+
+  Two SWITCH-LESS panels follow them, carrying `.rail-panel` rather than
+  `.rail-section` so a utility panel is never counted as a route: **Detection
+  quality**, holding the cross-route match-confidence floor, and **Load profile**.
+  The floor governs every route that is on, so it belongs to none of them; its
+  header states the live percentage while the panel is folded.
 
   The workspace has FIVE tabs, and the last two are the same subject split by
   AUTHOR: **Built-in patterns** is read-only and shows what the application's own
@@ -85,17 +93,26 @@ without the runtime. Preserve that behaviour.
   and "the patterns found nothing" are different sentences, and the tab's badge
   shows no count rather than a zero until a run has happened.
 
-  Smart detection is a route containing THREE methods, each with its own
-  control: built-in pattern matching (direct matches), signal-based discovery
-  and heuristic discovery (both Suggestions). Two of them are switches at the top
-  of the section; the third has no control of its own there, because it is a set
-  of readings OF particular signals and a signal is one of the categories below:
-  its readings hang off that category's own row, as a drill-down button beside the
-  label with the help icon after it (`ui.js signalDrillDown`). The section's own
-  state is DERIVED from the three (`state.js smartDetectionOn`) and never stored: a
-  fourth persisted boolean can disagree with the three it summarises, and a section
-  reading "On" while every method is off lies about what a run does. Its header
-  switch is a master that changes all three in one action.
+  ONE SWITCH, ONE MECHANISM. Each header switch writes ITS OWN settings flag and
+  touches nothing else, verified by a wiring test rather than by reading the code.
+  A section switch must be the flag it claims to be: a derived section state can
+  read "On" while nothing the section names actually runs, and the user has no way
+  to tell, so there is no fourth summarising boolean anywhere.
+
+  Signal-based discovery has no section of its own, because it is a set of
+  readings OF particular signals and a signal IS one of the pattern categories:
+  its readings hang off that category's own row inside Built-in patterns, as a
+  drill-down button beside the label with the help icon after it
+  (`ui.js signalDrillDown`). Switching Built-in patterns off greys that section's
+  checkboxes (`blockDisabled`) and leaves every `.signal-drill` and every reading
+  inside it LIVE: signal-based discovery is gated only by
+  `signalSuggestionSources` and matches its own evidence, while
+  `useBuiltInPatterns` governs only whether the signal itself is replaced.
+
+  `custom_patterns` has no rail switch at all: it is declarative, its editor is
+  the workspace's Custom patterns tab, and `state.js ALWAYS_ON_CATEGORIES` keeps
+  it on through `adoptCategories` (every adopted category map) and
+  `toggleCategory` (which refuses to clear it).
 
   Anonymise is the SECOND such screen. It carries two tabs, **TEXT** and
   **IMAGE**, over one document selection, because the two answer different
@@ -195,9 +212,10 @@ Windows it steals focus from the window it belongs to.
   (per signal, the READINGS it supports, in display order) and
   `CONFLICT_RESOLUTIONS` (the actions an interface can PERFORM, in one gesture, to
   clear a blocking conflict). A signal's own state
-  is DERIVED from its readings by `signalSourceOn`, never stored, for the same
-  reason `smartDetectionOn` is derived; `setSignalSource` is the MASTER that
-  writes them all, and `setSignalDerivation` writes one.
+  is DERIVED from its readings by `signalSourceOn`, never stored, for the reason a
+  route switch is a real flag: a summary that can disagree with what it summarises
+  lies about what a run does. `setSignalSource` is the MASTER that writes them all,
+  and `setSignalDerivation` writes one.
 
   A conflict's resolution is STATED by the engine and read here, never inferred
   from the conflict's refs: the refusal reaches the user on two screens (the

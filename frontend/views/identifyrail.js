@@ -1,18 +1,33 @@
 // views/identifyrail.js, the LEFT RAIL of wizard step 2, Identify
 //
 // The rail lists the DETECTION ROUTES, one switchable section each, in the
-// order they run. Scope is not a route of its own: it is the scope OF Smart
-// detection, so it is nested inside that section, and the two routes are
-// independent switches rather than alternatives.
+// order they run. ONE SWITCH, ONE MECHANISM: every section switch here is a
+// real stored settings flag, and each section holds the settings its own
+// mechanism reads. A switch governing several unrelated mechanisms cannot tell
+// the user which of them found what, and the review gate is exactly the
+// difference between them: a direct match is applied without review, a
+// suggestion is not.
 //
-//   Smart detection ON by default, switchable off. Built-in pattern matching,
-//                    signal-based discovery and heuristic discovery. Its SCOPE
-//                    (document country, preset, the detection categories, the
-//                    confidence floor) and its strictness are nested inside it,
-//                    because they are the settings this route reads.
-//   Local AI OFF by default. The Ollama port (host locked to loopback,
-//                    CLAUDE.md §8), the model and the context size. Detecting
-//                    Ollama enables the switch; it never flips it.
+//   Built-in patterns ON by default (useBuiltInPatterns). Application-provided
+//                    patterns for structured signals, which MATCH AND REPLACE
+//                    the signal itself. Its scope, the document country, the
+//                    preset and the eight category groups, is nested inside it.
+//   Heuristic discovery ON by default (useHeuristicDiscovery). Spelling,
+//                    context, frequency and deterministic gazetteers, producing
+//                    Suggestions. It owns the name categories and its own
+//                    strictness block.
+//   Local LLM discovery OFF by default (useLocalAI). The Ollama port (host
+//                    locked to loopback, CLAUDE.md §8), the model, the detail
+//                    level and the context size. Detecting Ollama enables the
+//                    switch; it never flips it.
+//
+// Below the routes sit two switch-less panels: Detection quality, holding the
+// match-confidence floor, which governs EVERY route that is on and therefore
+// belongs to none of them; and Load profile.
+//
+// Signal-based discovery has no section of its own. Its readings hang off the
+// category row of the pattern that produces the evidence, inside Built-in
+// patterns, because that is where the question belongs.
 //
 // Nothing here gates the deterministic PII pass: that is not a detection
 // route, it is what the Anonymise step always does.
@@ -21,9 +36,9 @@
 // Identify now (views/identifyworkspace.js, the "Never anonymise" tab), because
 // it is a list the user curates rather than a setting.
 //
-// Every AI-dependent control everywhere in the application gates on
-// llmEnabled(state) = useLocalAI AND ollama.available, so the deterministic pipeline
-// stays fully usable with Ollama absent.
+// Every model-dependent control everywhere in the application gates on
+// llmEnabled(state) = useLocalAI AND ollama.available, so the deterministic
+// pipeline stays fully usable with Ollama absent.
 
 import {
   applySettings, listOllamaModels, probeOllama, loadSession, saveSession,
@@ -33,7 +48,6 @@ import {
   getState, setState,
   applyPreset, toggleCategory, selectionPresetName, setUseLocalAI,
   setUseBuiltInPatterns, setUseHeuristicDiscovery,
-  setSmartDetection, smartDetectionOn,
   SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
   signalSourceOn, signalDerivationOn, enabledSignalDerivations,
   setSignalSource, setSignalDerivation,
@@ -46,7 +60,7 @@ import {
   parsePageSpec,
   buildRunRequest, setValueTables,
   ALL_CATEGORIES,
-  NAME_CATEGORIES, DECLARED_CATEGORIES,
+  NAME_CATEGORIES,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import {
@@ -85,23 +99,34 @@ export function llmGateTooltip(s) {
 // RAIL_SECTIONS is the rail's shape: [id, title, settings key that switches
 // the route on]. The order is the order the routes run in.
 //
-// Smart detection's third element is the sentinel "derived", not a settings key:
-// its section state is computed from its three methods and NOT stored, so a
-// settings key here would name a flag that does not exist. Local AI has a real
-// key, because it is one switch over one route.
+// Every third element is a REAL settings key. A section switch must be the flag
+// it claims to be: a derived or computed section state can read "On" while
+// nothing the section names actually runs, and the user has no way to tell.
 export const RAIL_SECTIONS = [
-  ["rail-smart", RAIL.tabSmart, "derived"],
-  ["rail-local", RAIL.tabLocalAI, "useLocalAI"],
+  ["rail-patterns", RAIL.tabPatterns, "useBuiltInPatterns"],
+  ["rail-heuristic", RAIL.tabHeuristic, "useHeuristicDiscovery"],
+  ["rail-local", RAIL.tabLocalLLM, "useLocalAI"],
 ];
+
+// SECTION_HELP is the explanation on each section header, keyed by section id.
+// It is separate from RAIL_SECTIONS so that list stays exactly what its name
+// says: the shape of the rail and the flag behind each switch.
+const SECTION_HELP = {
+  "rail-patterns": RAIL.tabPatternsHelp,
+  "rail-heuristic": RAIL.tabHeuristicHelp,
+  "rail-local": RAIL.tabLocalLLMHelp,
+};
 
 // Which sections and which category groups the user folded shut. A VIEW
 // preference rather than application state: nothing downstream reads it, it
 // must not travel in a session file, and putting it in the store would mean
 // every fold went through a reducer.
 //
-// Local AI starts folded: it is off, and an open panel of disabled fields is
-// noise above the settings that ARE in use.
-const collapsedGroups = new Set(["rail-local", "rail-profile"]);
+// Local LLM discovery starts folded: it is off, and an open panel of disabled
+// fields is noise above the settings that ARE in use. Detection quality and Load
+// profile start folded for the same reason: most sessions never touch either,
+// and the quality panel's header states its value while it is shut.
+const collapsedGroups = new Set(["rail-local", "rail-quality", "rail-profile"]);
 
 // Which signal rows are EXPANDED to show their individual readings. A VIEW
 // preference, like the folded sections: nothing downstream reads it, it must not
@@ -117,44 +142,72 @@ export const PRESETS = [
   ["advanced", "Thorough"],
 ];
 
-// CATEGORY_GROUPS is the rail's grouping of the engine categories:
-// [visible title, category keys]. It is a module constant so the select-all
-// buttons can address a group by INDEX rather than re-deriving the key list, and
-// so identifyrail.test.js can assert that every engine category the store knows
-// about is reachable from some group: a category in no group is a category the
-// user cannot switch, which reads as "not detected" and is not.
+// PATTERN_GROUPS is the built-in pattern categories, grouped by CLASS:
+// [visible title, category keys]. It renders inside the Built-in patterns
+// section, which is what matches them.
 //
-// The grouping is by TRIGGER, the user's own model of how a value is found, and
-// not by preset tier. The last two groups are the split that matters: a regex
-// the user wrote is DECLARATIVE, so custom_patterns must never sit under
-// "Auto detected values", and what is left in that group is, by construction,
-// exactly the set a detection route can emit.
-export const CATEGORY_GROUPS = [
-  [CONFIGURE.groupContact, ["email", "url", "iban", "bic", "vat", "matricule", "phone"]],
-  [CONFIGURE.groupTechnical, [
-    "credit_card", "uk_nhs", "ip_address", "mac_address",
-    "crypto", "database_uri", "de_steuer_id", "es_nif",
-  ]],
-  [CONFIGURE.groupThorough, ["amount", "date", "address", "postal_code"]],
-  [CONFIGURE.groupDetected, NAME_CATEGORIES],
-  [CONFIGURE.groupDeclared, DECLARED_CATEGORIES],
+// The classes are the ones the established PII tools converge on: financial
+// account numbers are their own class, government and tax identifiers are their
+// own class and are country-scoped (which engine.CategoryCountries already
+// models), and credentials are separated from network identifiers even though
+// both look "technical". Two departures are deliberate. Health identifiers get
+// their own group with one member today, because health data is an Article 9
+// special category under the GDPR in this application's market, so the split is
+// regulatory rather than taxonomic. Dates and monetary amounts get a group no
+// benchmark has, because this application treats them as contextual identifiers
+// rather than as PII.
+//
+// Order is broadest-first with the contextual group last, matching how the
+// presets escalate. Grouping by class rather than by preset tier is what gives a
+// new recognizer an obvious home: identifyrail.test.js asserts that every
+// pattern category the store knows about appears in exactly one group, because a
+// category in no group is a category the user cannot switch, which reads as "not
+// detected" and is not.
+export const PATTERN_GROUPS = [
+  [CONFIGURE.groupContact, ["email", "phone", "url"]],
+  [CONFIGURE.groupLocations, ["address", "postal_code"]],
+  [CONFIGURE.groupFinancial, ["iban", "bic", "credit_card", "crypto"]],
+  [CONFIGURE.groupGovernment, ["vat", "matricule", "de_steuer_id", "es_nif"]],
+  [CONFIGURE.groupHealth, ["uk_nhs"]],
+  [CONFIGURE.groupNetwork, ["ip_address", "mac_address"]],
+  [CONFIGURE.groupCredentials, ["database_uri"]],
+  [CONFIGURE.groupContextual, ["date", "amount"]],
 ];
 
-// The rail shows the regex groups only under Smart detection, because they are
-// that route's scope; the name groups apply to every route and to values typed
-// by hand, so they show under both.
-const REGEX_GROUPS = CATEGORY_GROUPS.slice(0, 3);
-const ENTITY_GROUPS = CATEGORY_GROUPS.slice(3);
+// NAME_GROUPS is the name categories a DISCOVERY method can emit. They render
+// inside the Heuristic discovery section, which is what discovers them offline,
+// and Local LLM discovery reads the same one selection rather than a second copy
+// of the boxes.
+//
+// custom_patterns is deliberately absent: a regex the user wrote is DECLARATIVE,
+// its editor is the workspace's Custom patterns tab, and it has no switch here at
+// all (state.js ALWAYS_ON_CATEGORIES keeps it on). What is left in this group is,
+// by construction, exactly the set a discovery method can emit.
+export const NAME_GROUPS = [
+  [CONFIGURE.groupDetected, NAME_CATEGORIES],
+];
+
+// CATEGORY_GROUPS is every group the rail renders, in render order. Both halves
+// are addressed BY NAME everywhere: nothing may go back to slicing this list by
+// position, because that arithmetic is what makes adding a group a two-place
+// edit and silently re-points the bulk buttons when a group moves.
+export const CATEGORY_GROUPS = [...PATTERN_GROUPS, ...NAME_GROUPS];
+
+// GROUPS_BY_TYPE is the lookup the bulk select-all buttons use: the data
+// attribute carries the type and the index, and this resolves them back to the
+// key list. Keyed by the same tokens the group ids are built from.
+const GROUPS_BY_TYPE = { pattern: PATTERN_GROUPS, name: NAME_GROUPS };
 
 // The category groups start FOLDED. The rail opens on what a user changes most:
-// the route switches and the scope summary (country, preset, confidence). A wall
-// of expanded category lists buries those above the fold and makes the panel
-// scroll for a setting most sessions never touch, so each group opens only when
-// its owner reaches for the categories inside it. The IDs match the ones
-// categoryGroups() builds, `cat-group-<type>-<index>`, and are derived from the
-// group lists so a group added or reordered folds by default too.
-REGEX_GROUPS.forEach((_g, index) => collapsedGroups.add(`cat-group-regex-${index}`));
-ENTITY_GROUPS.forEach((_g, index) => collapsedGroups.add(`cat-group-entity-${index}`));
+// the route switches and the scope summary (country, preset). A wall of expanded
+// category lists buries those above the fold and makes the panel scroll for a
+// setting most sessions never touch, so each group opens only when its owner
+// reaches for the categories inside it. The IDs match the ones categoryGroups()
+// builds, `cat-group-<type>-<index>`, and are derived from the group lists so a
+// group added or reordered folds by default too.
+for (const [type, groups] of Object.entries(GROUPS_BY_TYPE)) {
+  groups.forEach((_g, index) => collapsedGroups.add(`cat-group-${type}-${index}`));
+}
 
 /**
  * renderIdentifyRail(container) fills the rail card.
@@ -199,24 +252,36 @@ export function renderIdentifyRail(container) {
  */
 export function railBody(s) {
   const routes = RAIL_SECTIONS.map(([id, title, key]) => {
-    const on = key === "derived" ? smartRouteOn(s) : !!s.settings[key];
+    const on = !!s.settings[key];
     return collapsibleGroup(id, title, sectionBody(s, id), {
       open: !collapsedGroups.has(id),
       cls: `rail-section${on ? "" : " route-off"}`,
-      headRightHTML: routeSwitch(s, id, key, on),
+      // The explanation first, then the switch, so the icon that says what this
+      // section IS sits beside the control that turns it on.
+      headRightHTML: helpTooltip(SECTION_HELP[id], { label: title }) +
+        routeSwitch(s, id, key, on),
     });
   }).join("");
-  // The Load profile section sits AFTER the routes. It is not a detection route,
-  // so it has no header switch: it is a plain collapsible section, folded shut
-  // by default like the other off-by-default panels below Smart detection.
-  return routes + collapsibleGroup("rail-profile", RAIL.profileTitle, profileSection(s), {
-    open: !collapsedGroups.has("rail-profile"),
-    // NOT "rail-section": that class marks a detection ROUTE, and the render
-    // harness counts it to assert the rail is exactly two routes. Load profile
-    // is a switch-less utility panel, so it takes the parallel "rail-panel" class
-    // (same layout, no route semantics).
+
+  // Two switch-less panels follow the routes. They take the parallel
+  // "rail-panel" class rather than "rail-section": that class marks a detection
+  // ROUTE, and the render harness counts it to assert how many routes the rail
+  // has, so a utility panel wearing it would be counted as a route.
+  const quality = collapsibleGroup("rail-quality", RAIL.qualityTitle, qualitySection(s), {
+    open: !collapsedGroups.has("rail-quality"),
     cls: "rail-panel",
+    // The live value on the header, so the folded panel still states what the
+    // floor is set to: a shut panel hiding a setting that changes what a run
+    // replaces is a setting nobody knows is there.
+    countLabel: `${Math.round((s.settings.minConfidence ?? 0) * 100)}%`,
+    headRightHTML: helpTooltip(RAIL.qualityHelp, { label: RAIL.qualityTitle }),
   });
+
+  return routes + quality +
+    collapsibleGroup("rail-profile", RAIL.profileTitle, profileSection(s), {
+      open: !collapsedGroups.has("rail-profile"),
+      cls: "rail-panel",
+    });
 }
 
 /**
@@ -250,18 +315,6 @@ function profileSection(s) {
 }
 
 /**
- * smartRouteOn(s) is the Smart detection section's state, DERIVED from its
- * methods: the section counts as on when any of them is on.
- *
- * The header switch is a master over the methods, not a fourth flag beside them.
- * A stored section boolean can disagree with the methods it claims to summarise,
- * and a section reading "On" while every method is off lies about what a run does.
- */
-function smartRouteOn(s) {
-  return smartDetectionOn(s);
-}
-
-/**
  * routeSwitch(s, id, key, on) is the on/off control in a section header.
  */
 function routeSwitch(s, id, key, on) {
@@ -275,11 +328,14 @@ function routeSwitch(s, id, key, on) {
     `</label>`;
 }
 
-/** sectionBody(s, id) is the content of one route section. */
+/** sectionBody(s, id) is the content of one route section. One case per entry
+ *  in RAIL_SECTIONS: a section with no body would render as a switch with
+ *  nothing under it. */
 function sectionBody(s, id) {
   switch (id) {
     case "rail-local": return localAISection(s);
-    default: return smartSection(s);
+    case "rail-heuristic": return heuristicSection(s);
+    default: return patternsSection(s);
   }
 }
 
@@ -292,11 +348,14 @@ function wireSectionSwitches(container) {
     box.addEventListener("change", (ev) => {
       ev.stopPropagation();
       const on = ev.target.checked;
-      if (ev.target.dataset.route === "rail-local") setUseLocalAI(on);
-      // The Smart detection header is a MASTER over its three methods: switching
-      // it flips all of them in one action, through the one reducer that knows
-      // what "all of them" means.
-      else setSmartDetection(on);
+      // One switch, one flag: each section header writes ITS OWN settings key and
+      // touches nothing else. A wiring test asserts that, because "this switch
+      // changes only this" is exactly the property a reader of the code cannot
+      // verify by reading it.
+      const route = ev.target.dataset.route;
+      if (route === "rail-local") setUseLocalAI(on);
+      else if (route === "rail-patterns") setUseBuiltInPatterns(on);
+      else if (route === "rail-heuristic") setUseHeuristicDiscovery(on);
       // Turning a route on opens its section: the settings it reads are the
       // next thing the user wants.
       if (on) collapsedGroups.delete(ev.target.dataset.route);
@@ -308,20 +367,37 @@ function wireSectionSwitches(container) {
   }
 }
 
-// --- Smart detection: scope first, then strictness ------------------------
+// --- Built-in patterns: the scope of the pattern pass ---------------------
 
 /**
- * smartSection(s) is the whole offline route: what it looks for, then how
- * strict it is about what it finds.
+ * patternsSection(s) is what built-in pattern matching looks for: the document
+ * country, the preset, and the eight category groups.
  *
- * The scope (country, preset, categories, confidence floor) leads, because it
- * is the part a user came here to change; the four tuning fields follow, as
- * their own folded block, because they are the part a user changes when the
- * suggestions are wrong.
+ * There is no "Categories" label row over the groups. Under a section already
+ * titled "Built-in patterns" that label says nothing, and the panel's height is
+ * its scarcest resource; the explanation it carried is on the section header's
+ * own help tooltip instead.
  */
-function smartSection(s) {
-  return smartMethods(s) +
-    scopeBlocks(s) +
+function patternsSection(s) {
+  return countryBlock(s) + presetBlock(s) +
+    categoryGroups(s, PATTERN_GROUPS, "pattern", !s.settings.useBuiltInPatterns);
+}
+
+/**
+ * heuristicSection(s) is what heuristic discovery looks for and how strict it is
+ * about it: the name categories, then the strictness block as its own folded
+ * subgroup, because that is the part a user changes when the suggestions
+ * themselves are wrong rather than when the scope is.
+ *
+ * The name categories live HERE, under the route that discovers them offline.
+ * Local LLM discovery reads the same one selection (engine.CategorySelection is
+ * one setting) and says so rather than rendering a second copy of the boxes.
+ */
+function heuristicSection(s) {
+  return `<div class="rail-block">` +
+    labelWithHelp(RAIL.valuesAuto, RAIL.valuesAutoHelp) +
+    categoryGroups(s, NAME_GROUPS, "name") +
+    `</div>` +
     collapsibleGroup("rail-smart-tuning", RAIL.smartTuning, smartTuning(s), {
       open: !collapsedGroups.has("rail-smart-tuning"),
       cls: "rail-subgroup",
@@ -330,33 +406,23 @@ function smartSection(s) {
 }
 
 /**
- * smartMethods(s) is Smart detection's two plain method switches, at the top of
- * the section so they read as governing what follows. They share ONE row, side by
- * side: they carry the shortest labels in the rail and the panel's height is its
- * scarcest resource.
+ * qualitySection(s) is the match-confidence floor, and nothing else.
  *
- * The route's third method, signal-based discovery, is NOT here. It is a set of
- * readings OF particular signals, and a signal is a category in the list below, so
- * each signal's readings hang off that category's own row (signalCategoryRow):
- * one control per signal, where the signal is, rather than a block up here that
- * has to name the same categories again.
+ * The floor is the one genuinely cross-route control: it governs pass-1 pattern
+ * spans, declared Values, custom patterns and every discovery method's output
+ * alike, and it decides what a run is allowed to REPLACE rather than what
+ * discovery is allowed to suggest. Placing a control that governs three routes
+ * inside one of them would mislabel it as that route's own knob, so it gets a
+ * switch-less panel of its own.
+ *
+ * It is NOT the heuristic block's own minimum confidence, which is
+ * settings.heuristicDiscovery and lives inside Heuristic discovery because
+ * nothing else reads it.
  */
-function smartMethods(s) {
-  const row = (id, checked, label, help) =>
-    `<div class="rail-toggle">` +
-    `<label class="cat-row">` +
-    `<input type="checkbox" id="${id}"${checked ? " checked" : ""}/>` +
-    `<span class="cat-label">${escapeHTML(label)}</span>` +
-    `</label>` +
-    helpTooltip(help, { label }) +
-    `</div>`;
+function qualitySection(s) {
   return `<div class="rail-block">` +
-    `<div class="rail-toggle-pair">` +
-    row("smart-built-in", s.settings.useBuiltInPatterns !== false,
-      RAIL.builtInPatterns, RAIL.builtInPatternsHelp) +
-    row("smart-heuristic", s.settings.useHeuristicDiscovery !== false,
-      RAIL.heuristicDiscovery, RAIL.heuristicDiscoveryHelp) +
-    `</div>` +
+    labelWithHelp(CONFIGURE.confidenceTitle, CONFIGURE.confidenceHelp) +
+    confidenceControl(s) +
     `</div>`;
 }
 
@@ -377,7 +443,9 @@ function smartMethods(s) {
  * evidence for an organisation, through two separate mechanisms, and wanting one
  * without the other is a reasonable thing to want. So each reading is its own
  * switch and the panel's checkbox is a MASTER over them, derived for display (on
- * when any reading is on) exactly as the Smart detection section's is.
+ * when any reading is on) and never stored, for the same reason a route section
+ * switch is a real flag: a summary that can disagree with what it summarises
+ * lies about what a run does.
  *
  * Only sources and readings that ACTUALLY implement discovery appear
  * (SIGNAL_SOURCES and SIGNAL_DERIVATIONS mirror the engine's, guarded by
@@ -425,36 +493,42 @@ function signalCategoryRow(s, source, headHTML, tailHTML) {
   });
 }
 
-/** scopeBlocks(s) is the country, the preset, the REGEX categories, and the
-  *  confidence floor, in that order: broadest choice first.
-  *  The name categories appear after them, under "Auto detected values". */
-function scopeBlocks(s) {
-  // labelWithHelp keeps every block's heading to a SHORT visible label with its
-  // explanation one hover or one Tab away. A paragraph under each of these five
-  // is what made the panel taller than the window.
-  const labelWithHelp = (text, help) =>
-    `<div class="rail-label-row">` + sectionLabel(text) +
+/**
+ * labelWithHelp(text, help) keeps every block's heading to a SHORT visible label
+ * with its explanation one hover or one Tab away. A paragraph under each of these
+ * is what made the panel taller than the window.
+ */
+function labelWithHelp(text, help) {
+  return `<div class="rail-label-row">` + sectionLabel(text) +
     helpTooltip(help, { label: text }) + `</div>`;
+}
 
+/** countryBlock(s) is the document country: the broadest choice, so it leads. */
+function countryBlock(s) {
   return `<div class="rail-block">` +
     labelWithHelp(RAIL.country, RAIL.countryHelp) +
     countrySelect(s) +
-    `</div>` +
-    `<div class="rail-block">` +
+    `</div>`;
+}
+
+/**
+ * presetBlock(s) is the preset chips and the read-out under them.
+ *
+ * A preset fills BOTH the pattern categories here and the name categories under
+ * Heuristic discovery (CLAUDE.md §5, the anonymisation levels), so a chip pressed
+ * in this section reaches across into another one. That is a domain rule rather
+ * than a UI one, so the read-out makes it VISIBLE instead of the chip changing a
+ * selection the user cannot see from here.
+ */
+function presetBlock(s) {
+  const namesOn = NAME_CATEGORIES.filter((c) => s.settings.categories?.[c]).length;
+  return `<div class="rail-block">` +
     labelWithHelp(RAIL.preset, CONFIGURE.presetHelp) +
     presetChips(s) +
-    `</div>` +
-    `<div class="rail-block">` +
-    labelWithHelp(RAIL.categories, RAIL.categoriesHelp) +
-    categoryGroups(s, REGEX_GROUPS, "regex", !s.settings.useBuiltInPatterns) +
-    `</div>` +
-    `<div class="rail-block">` +
-    labelWithHelp(RAIL.valuesAuto, RAIL.valuesAutoHelp) +
-    categoryGroups(s, ENTITY_GROUPS, "entity") +
-    `</div>` +
-    `<div class="rail-block">` +
-    labelWithHelp(CONFIGURE.confidenceTitle, CONFIGURE.confidenceHelp) +
-    confidenceControl(s) +
+    // .rail-readout, not .hint: the count changes with the chip, so it is dynamic
+    // information rather than the static prose the panel does not carry.
+    `<p class="rail-readout" id="preset-also-sets">` +
+    `${escapeHTML(RAIL.presetAlsoSets(namesOn))}</p>` +
     `</div>`;
 }
 
@@ -488,15 +562,17 @@ function presetChips(s) {
  * overlaid on copy.js CATEGORY_LABELS at render time rather than stored five
  * times over.
  *
- * type is "regex" (built-in pattern categories) or "entity" (the name
- * categories a discovery method can emit).
+ * type is "pattern" (built-in pattern categories) or "name" (the name
+ * categories a discovery method can emit). It is the group id's prefix and the
+ * key GROUPS_BY_TYPE resolves the bulk buttons through, so nothing addresses a
+ * group by its position in CATEGORY_GROUPS.
  *
  * blockDisabled greys the whole block out without clearing the stored selection:
- * when Native detection is off, the regex categories still show (so the user
- * sees the scope) but cannot be edited, and the selection returns intact when
- * Native detection is switched back on.
+ * when Built-in patterns is off, its categories still show (so the user sees the
+ * scope) but cannot be edited, and the selection returns intact when the section
+ * is switched back on.
  */
-function categoryGroups(s, groups, type = "regex", blockDisabled = false) {
+function categoryGroups(s, groups, type = "pattern", blockDisabled = false) {
   const labels = categoryLabels(examplesFor(s.documentCountry));
 
   return groups.map(([title, keys], index) => {
@@ -521,9 +597,12 @@ function categoryGroups(s, groups, type = "regex", blockDisabled = false) {
       // example. The category checkbox in front of them is untouched, because it
       // answers a different question (is this signal replaced at all).
       //
-      // The drill-down is deliberately NOT gated on blockDisabled: which readings
-      // may derive Suggestions is its own setting, so switching Built-in patterns
-      // off must not silently take it away with them.
+      // The drill-down is deliberately NOT gated on blockDisabled, and this
+      // asymmetry is the whole reason the separate setting exists. Signal-based
+      // discovery is gated ONLY by signalSuggestionSources: it matches its own
+      // evidence, so it keeps producing Suggestions with Built-in patterns off,
+      // which governs only whether the signal ITSELF is replaced. Switching one
+      // off must never silently take the other with it. A wiring test holds it.
       if (SIGNAL_SOURCES.includes(key)) {
         return signalCategoryRow(s, key,
           `<label class="cat-row"${title}>${box}</label>`, exampleHTML);
@@ -557,12 +636,14 @@ function categoryGroups(s, groups, type = "regex", blockDisabled = false) {
 }
 
 /**
- * confidenceControl(s) renders the detection-confidence floor.
+ * confidenceControl(s) renders the match-confidence floor, inside the switch-less
+ * Detection quality panel.
  *
- * It is deliberately NOT gated on the local AI: every detection carries a score
- * whether or not Ollama is running. A slider in whole percent rather than a
- * number field, because the meaningful settings are ranges; the live read-out
- * names what the current position actually excludes.
+ * It is deliberately NOT gated on any route: every detection carries a score
+ * whether or not Ollama is running, and the floor applies to all of them. A
+ * slider in whole percent rather than a number field, because the meaningful
+ * settings are ranges; the live read-out names what the current position
+ * actually excludes.
  */
 function confidenceControl(s) {
   const percent = Math.round((s.settings.minConfidence ?? 0) * 100);
@@ -585,7 +666,7 @@ function confidenceControl(s) {
  * user reads what the setting DOES rather than a bare number.
  *
  *  rewrote this copy. The mock-up's version described a
- * source-tiered rule ("values that only the local AI suggested are skipped"),
+ * source-tiered rule ("values that only the local model suggested are skipped"),
  * which the engine does not implement: what the setting actually is is a FLOOR
  * on the confidence score every detection carries. The thresholds below mirror
  * where the engine's own scores sit (engine/pii.go: local-AI proposals score
@@ -638,9 +719,8 @@ function wireScope(container) {
       // The button lives in the group header, which is itself a toggle; stop
       // the click before wireGroups reads it as a request to fold the group.
       ev.stopPropagation();
-      const type = btn.dataset.groupType || "regex";
-      const groupArray = type === "entity" ? ENTITY_GROUPS : REGEX_GROUPS;
-      const group = groupArray[Number(btn.dataset.group)];
+      const type = btn.dataset.groupType || "pattern";
+      const group = (GROUPS_BY_TYPE[type] ?? [])[Number(btn.dataset.group)];
       if (!group) return;
       // ONE reducer call flips the whole group, so there is exactly one repaint
       // rather than one per category.
@@ -668,11 +748,13 @@ function wireScope(container) {
   }
 }
 
-// --- Smart detection ------------------------------------------------------
+// --- Heuristic discovery: its own strictness -----------------------------
 
-/** smartTuning(s) is the offline heuristic pass's strictness: the four fields a
- *  user changes when the suggestions themselves are wrong, rather than when the
- *  scope is. */
+/** smartTuning(s) is heuristic discovery's strictness: the four fields a user
+ *  changes when the suggestions themselves are wrong, rather than when the scope
+ *  is. Its minimum confidence is this route's own, read by
+ *  engine.HeuristicDiscoverContext and by nothing else; the cross-route floor is
+ *  the Detection quality panel's slider. */
 function smartTuning(s) {
   const opts = heuristicDiscoveryOptions(s);
   const fieldRow = (id, label, help, controlHTML) =>
@@ -772,18 +854,6 @@ function strictnessOption(value, label, current) {
 }
 
 function wireSmart(container) {
-  // The method switches at the top of the section. Each sets its own flag and
-  // pushes, so the disabled state of the pattern-category block and the derived
-  // section state update in the same round-trip.
-  container.querySelector("#smart-built-in")?.addEventListener("change", (ev) => {
-    setUseBuiltInPatterns(ev.target.checked);
-    pushSettings(container);
-  });
-  container.querySelector("#smart-heuristic")?.addEventListener("change", (ev) => {
-    setUseHeuristicDiscovery(ev.target.checked);
-    pushSettings(container);
-  });
-
   const numbers = [
     ["#smart-min-length", (v) => ({ minLength: Math.round(v) })],
     ["#smart-min-occurrences", (v) => ({ minOccurrences: Math.round(v) })],
@@ -795,7 +865,7 @@ function wireSmart(container) {
       if (Number.isNaN(value)) return;
       // setHeuristicDiscoveryOptions validates and IGNORES a bad value rather than
       // storing it, so a typo shows as the field snapping back rather than as
-      // smart detection quietly finding nothing.
+      // heuristic discovery quietly finding nothing.
       setHeuristicDiscoveryOptions(toPatch(value));
     });
   }
@@ -807,10 +877,10 @@ function wireSmart(container) {
   });
 }
 
-// --- Local AI -------------------------------------------------------------
+// --- Local LLM discovery --------------------------------------------------
 
 /**
- * scopeBlock(s, gated) is the "What to scan" control for the Local AI route: a
+ * scopeBlock(s, gated) is the "What to scan" control for Local LLM discovery: a
  * document picker plus, for a multi-unit document, a choice between scanning the
  * whole document or a set of its own pages/slides/rows/lines. It exists because
  * handing a whole document to a small local model is too much (the user's
@@ -888,7 +958,7 @@ function scopeBlock(s, gated) {
 }
 
 /**
- * lastScanReadout(s) reports what the local AI actually did on the last run:
+ * lastScanReadout(s) reports what the local model actually did on the last run:
  * how many requests it sent, how long each took on THIS machine, how many came
  * back with nothing, and how many ran out of room before they finished
  * answering.
@@ -897,7 +967,7 @@ function scopeBlock(s, gated) {
  * changes with every run rather than static prose. The seconds are the half no
  * tooltip could supply: how a scan feels depends on the model, the machine and
  * the document, and this is the only place the user sees all three combined.
- * Empty before the first local AI run, because a read-out with nothing to
+ * Empty before the first local model run, because a read-out with nothing to
  * report is a line that only ever teaches the reader to ignore it.
  */
 function lastScanReadout(s) {
@@ -980,8 +1050,8 @@ function localAISection(s) {
   // actually there. That IS dynamic, so it stays inline.
   return `<div class="rail-block">` +
     `<div class="rail-label-row">` +
-    `<span class="rail-field-label">${escapeHTML(RAIL.tabLocalAI)}</span>` +
-    helpTooltip(CONFIGURE.useAIHelp, { label: RAIL.tabLocalAI }) +
+    `<span class="rail-field-label">${escapeHTML(RAIL.tabLocalLLM)}</span>` +
+    helpTooltip(CONFIGURE.useAIHelp, { label: RAIL.tabLocalLLM }) +
     `</div>` +
     `<div class="rail-status">` +
     `<span class="state-tag${ollamaOK ? "" : " bad"}" title="${escapeHTML(s.ollama?.detail ?? "")}">` +
@@ -1178,8 +1248,8 @@ function wireProfile(container) {
 
 /**
  * settingsPayload(s, container) is the ONE definition of what a settings write
- * sends to Go: the store plus whatever the Local AI tab's inputs say when that
- * tab is on screen. Pure, so a test can read the payload a given state and DOM
+ * sends to Go: the store plus whatever the Local LLM discovery section's inputs
+ * say when that section is on screen. Pure, so a test can read the payload a given state and DOM
  * produce without a bridge to answer the call.
  *
  * A tab that is not rendered contributes nothing and its value comes from the
@@ -1201,12 +1271,12 @@ export function settingsPayload(s, container) {
     model: model?.value || s.settings.model,
     contextSize: ctxSize ? (parseInt(ctxSize.value, 10) || 0) : (s.settings.contextSize ?? 8192),
     useLocalAI: !!s.settings.useLocalAI,
-    // The reply format the Local AI's discovery call asks for. Sent EXPLICITLY as
+    // The reply format the local model's discovery call asks for. Sent EXPLICITLY as
     // a boolean, never left out: Go reads an absent value as off, so an omitted
     // key and a cleared checkbox would be the same thing on the wire and there
     // would be no way to say "on".
     aiStrictFormat: strictFormat ? strictFormat.checked : !!s.settings.aiStrictFormat,
-    // How much text one local AI request carries. Read from the element when the
+    // How much text one local model request carries. Read from the element when the
     // tab is on screen and from the store otherwise, exactly as the model is, so
     // switching tabs never resets it.
     aiDetailLevel: detailLevel?.value || s.settings.aiDetailLevel || AI_DETAIL_LEVELS[0],

@@ -98,7 +98,7 @@ func withRecorder(t *testing.T, a *App) *recorder {
 	return rec
 }
 
-// detectionApp is an App with three small documents and Smart detection on.
+// detectionApp is an App with three small documents and the offline routes on.
 func detectionApp() *App {
 	app := NewApp()
 	app.docs = []engine.Document{
@@ -130,7 +130,7 @@ func TestDetectionAlwaysEndsWithATerminalEvent(t *testing.T) {
 	}
 }
 
-// TestBuiltInPatternsAloneRunsNoSmartPhase: the Smart PHASE is Smart detection's
+// TestBuiltInPatternsAloneRunsNoSmartPhase: PhaseSmart is the two offline
 // two DISCOVERY methods. Built-in pattern matching is not one of them: it
 // produces direct matches at anonymisation time, so having it on must not, by
 // itself, make the detect button produce Suggestions.
@@ -154,6 +154,57 @@ func TestBuiltInPatternsAloneRunsNoSmartPhase(t *testing.T) {
 	}
 	if len(res.Suggestions) != 0 {
 		t.Errorf("no smart phase means no Suggestions, got %+v", res.Suggestions)
+	}
+}
+
+// TestBuiltInPatternsOffKeepsSignalDiscovery is the asymmetry the separate
+// setting exists for, asserted at the level where a user meets it.
+//
+// UseBuiltInPatterns governs whether a matched signal is REPLACED. Whether that
+// match may additionally be read as EVIDENCE about text written elsewhere is
+// SignalSuggestionSources, and nothing else. So with the pattern section off:
+// the preview is empty and says so, and signal-based discovery still produces
+// its Suggestions, because it matches its own evidence. Conflating the two is
+// the mistake the separate setting exists to prevent, and the rail relies on
+// this being true: it greys the pattern checkboxes out and leaves every signal
+// drill-down live.
+func TestBuiltInPatternsOffKeepsSignalDiscovery(t *testing.T) {
+	app := detectionApp()
+	app.settings.UseBuiltInPatterns = false
+	app.settings.UseHeuristicDiscovery = false // so any Suggestion here is the signal's
+	app.settings.UseLocalAI = false
+	app.settings.Categories = engine.CategorySelection{
+		engine.CatEmail: true, engine.CatEntityNames: true, engine.CatPersonNames: true,
+	}
+	app.docs = []engine.Document{
+		{Name: "a.txt", Format: engine.FormatTXT,
+			Markdown: "Contact marie.duval@alpinetrust.example for the file."},
+		{Name: "b.txt", Format: engine.FormatTXT,
+			Markdown: "Marie Duval signed on behalf of Alpinetrust."},
+	}
+
+	res, err := app.RunDetection([]string{"a.txt", "b.txt"}, nil, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+
+	if res.BuiltInPatternsOn || len(res.PatternMatches) != 0 {
+		t.Errorf("the pattern pass is off, so the preview must be empty and say so: on=%v, matches=%d",
+			res.BuiltInPatternsOn, len(res.PatternMatches))
+	}
+
+	var fromSignal int
+	for _, sug := range res.Suggestions {
+		for _, method := range sug.DiscoveryMethods {
+			if method == engine.MethodSignal {
+				fromSignal++
+			}
+		}
+	}
+	if fromSignal == 0 {
+		t.Errorf("signal-based discovery matches its own evidence, so switching the pattern "+
+			"pass off must not stop it; got %d suggestion(s): %+v",
+			len(res.Suggestions), res.Suggestions)
 	}
 }
 
@@ -453,7 +504,7 @@ func TestDetectionRefusesAConcurrentRun(t *testing.T) {
 }
 
 // scopeChatServer is an Ollama stand-in that records the user content of every
-// /api/chat call, so a test can prove exactly which document text the local AI
+// /api/chat call, so a test can prove exactly which document text the local model
 // was handed.
 func scopeChatServer(seen *[]string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -980,7 +1031,7 @@ func assertNoScopeProblem(t *testing.T, res *DetectionResult) {
 }
 
 // TestDetectionAIScopeLimitsToPageRange is the whole point of the feature: with
-// a scope set, the local AI must see ONLY the chosen document's chosen pages,
+// a scope set, the local model must see ONLY the chosen document's chosen pages,
 // never the rest, so a small model is not handed "too much".
 func TestDetectionAIScopeLimitsToPageRange(t *testing.T) {
 	var seen []string
@@ -1012,7 +1063,7 @@ func TestDetectionAIScopeLimitsToPageRange(t *testing.T) {
 
 	joined := strings.Join(seen, "\n")
 	if joined == "" {
-		t.Fatal("the local AI was never called")
+		t.Fatal("the local model was never called")
 	}
 	for _, want := range []string{"bravo", "charlie"} {
 		if !strings.Contains(joined, want) {
@@ -1057,7 +1108,7 @@ func TestDetectionAIScopeOutOfRangeReportsButFinishes(t *testing.T) {
 }
 
 // TestDetectionAIScopeDiscontiguousPages proves a discontiguous page set (the
-// CR3 feature, "1,3") reaches the local AI as exactly those pages, with the
+// CR3 feature, "1,3") reaches the local model as exactly those pages, with the
 // pages between them left out.
 func TestDetectionAIScopeDiscontiguousPages(t *testing.T) {
 	var seen []string
@@ -1103,7 +1154,7 @@ func TestDetectionAIScopeDiscontiguousPages(t *testing.T) {
 // TestClassifyRespectsTheAIScope is the scope-leak guard, and its absence is
 // what let the leak exist.
 //
-// The classification call is the LARGER of the two the Local AI route makes, so
+// The classification call is the LARGER of the two Local LLM discovery makes, so
 // scoping only the discovery call left the user's "just page 1" handing the
 // whole batch to the model: about half a scoped run's prompt tokens, spent on
 // text the user had explicitly excluded, while the interface promised otherwise.
@@ -1336,7 +1387,7 @@ func TestSignalDiscoveryRunsAsPartOfSmartDetection(t *testing.T) {
 		t.Fatalf("RunDetection: %v", err)
 	}
 	// The phase ran even with heuristic discovery off: signal-based discovery is a
-	// Smart detection method in its own right.
+	// offline discovery method in its own right.
 	if len(res.Phases) != 1 || res.Phases[0] != PhaseSmart {
 		t.Fatalf("the smart phase must run for the signal method alone, got %v", res.Phases)
 	}

@@ -64,25 +64,33 @@ Suggestion silently answers "reject" on your behalf.
 2. **Identify**: one screen with two halves. On the left you choose how the app
    looks; on the right you review what it found.
 
-   The left rail holds two switchable **detection routes**:
+   The left rail holds three switchable **detection routes**, one switch per
+   mechanism, so turning one off never turns off something unrelated:
 
-   - **Smart detection** (on, and needs nothing installed) has three parts.
-     *Built-in patterns* find structured signals: emails, phone numbers, VAT
-     numbers, IBANs. Those are matched and replaced directly, because a pattern
-     is not a guess. *Signal-based suggestions* use one of those matches as
-     EVIDENCE: an address like `pierre.dupont@tpps.com` says a person called
-     Pierre Dupont and a company whose name starts "Tpps" are involved, so if
-     either is written elsewhere in your files it is suggested for review.
-     *Heuristic discovery* finds recurring names by how they are written, with a
-     Luxembourg-aware legal-form gazetteer.
-   - **Local AI** (off by default) hands the documents to a model running on your
-     own machine and suggests what it finds.
+   - **Built-in patterns** (on, and needs nothing installed) finds structured
+     signals: emails, phone numbers, VAT numbers, IBANs. Those are matched and
+     replaced directly, because a pattern is not a guess. This section also holds
+     the scope every route reads: the document country, the preset (Soft,
+     Standard the default, or Thorough) and the categories, in eight groups from
+     contact details to credentials.
 
-     Smart detection also owns the scope both routes read: the document country,
-     the preset (Soft, Standard the default, or Thorough), the per-category
-     checkboxes, and the match-confidence floor. Every control explains itself
-     through a small information icon, on hover or by keyboard, so the panel stays
-     a list of controls rather than a wall of text.
+     *Signal-based suggestions* live on the row of the pattern that produces the
+     evidence, because that is what they read: an address like
+     `pierre.dupont@tpps.com` says a person called Pierre Dupont and a company
+     whose name starts "Tpps" are involved, so if either is written elsewhere in
+     your files it is suggested for review. They keep working with Built-in
+     patterns switched off, because they match their own evidence.
+   - **Heuristic discovery** (on, and needs nothing installed) finds recurring
+     names by how they are written, with a Luxembourg-aware legal-form
+     gazetteer. It owns the name categories and its own strictness settings.
+   - **Local LLM discovery** (off by default) hands the documents to a model
+     running on your own machine and suggests what it finds.
+
+     Below the three sits **Detection quality**, holding the one setting that
+     applies to all of them: the match-confidence floor, which decides what a run
+     is allowed to replace. Every control explains itself through a small
+     information icon, on hover or by keyboard, so the panel stays a list of
+     controls rather than a wall of text.
 
    The right half is the review workspace: **Suggestions** waiting for a decision
    and **My Values** already accepted, plus the never-anonymise list, the
@@ -158,7 +166,7 @@ happen, including when nothing will: "This copy keeps all 7 of the document's
 images, exactly as they are." The exported report says the same in full, naming
 each changed picture, where it appeared and what was done to it.
 
-## Optional: local AI assistance with Ollama
+## Optional: local model assistance with Ollama
 
 The app works out of the box with **no AI and no internet**: built-in patterns,
 signal-based suggestions and heuristic discovery all run offline. If you want a
@@ -169,9 +177,9 @@ model to look as well, you can optionally install
 ollama pull qwen3.5:0.8b
 ```
 
-- **With Ollama running:** the Local AI route becomes switchable on Identify. It
-  suggests Values it found, and it can also re-file what Smart detection found
-  into better categories. Everything it proposes is checked against the source
+- **With Ollama running:** the Local LLM discovery route becomes switchable on
+  Identify. It suggests Values it found, and it can also re-file what the offline
+  routes found into better categories. Everything it proposes is checked against the source
   text first, so a name the model invented is dropped rather than offered.
 - **Without Ollama:** that route is greyed out with a tooltip saying so.
   Everything else works exactly the same.

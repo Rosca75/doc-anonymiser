@@ -266,7 +266,7 @@ function wire(container) {
     goToScreen("wizard");
     notify(IMPORT.startOverDone, "info");
     // A clean sheet must match a FRESH BOOT: re-probe Ollama (resetState
-    // cleared the last probe) so the Local AI switch is not silently lost by
+    // cleared the last probe) so the Local LLM discovery switch is not silently lost by
     // starting over. The allowlist is NOT re-seeded: it starts empty on a
     // fresh boot too, so the reset already leaves it in the right state.
     // Best-effort and after the notice: a probe failure must not undo the reset.

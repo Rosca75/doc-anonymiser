@@ -47,7 +47,7 @@ type Span struct {
 	// text IS the mainText value).
 	MainText string `json:"mainText,omitempty"`
 	// Confidence in [0.0, 1.0]. Deterministic regex hits
-	// default to 1.0; a Local AI finding to ConfidenceLLMDefault; a declared
+	// default to 1.0; a local model finding to ConfidenceLLMDefault; a declared
 	// Value to ConfidenceManualDefault. Context-word boosting may nudge a
 	// value up (capped at 1.0). Zero means "not scored" and is treated as
 	// 1.0 by the threshold filter for back-compat.
@@ -633,7 +633,7 @@ const (
 	// literal occurrence of text derived from it, but the INFERENCE from evidence
 	// to Value is still a guess the user has to confirm.
 	ConfidenceSignalDerived float32 = 0.9
-	// ConfidenceLLMDefault is the fallback score for a Local AI finding that
+	// ConfidenceLLMDefault is the fallback score for a local model finding that
 	// carried no explicit confidence.
 	ConfidenceLLMDefault float32 = 0.8
 	// ConfidenceChecksumFailed is the score for a built-in pattern match whose
@@ -654,7 +654,7 @@ const (
 // with Confidence == 0 counts as 1.0, so a producer that states no confidence
 // is trusted rather than filtered away.
 //
-// Examples with the current scale: min 0.85 drops what only the local AI found
+// Examples with the current scale: min 0.85 drops what only the local model found
 // (0.8) and keeps signal-derived findings (0.9), declared Values (0.95) and
 // pattern matches (1.0); min 0.99 keeps only the pattern matches.
 func FilterByMinConfidence(spans []Span, min float32) []Span {

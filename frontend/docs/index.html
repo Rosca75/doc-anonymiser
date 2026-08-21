@@ -156,7 +156,7 @@
         missed Value declares it and the fast re-run applies it without starting
         over; every placeholder already handed out keeps its number.
         <br><br>
-        This step never contacts the local AI and runs no detection of its
+        This step never contacts the local model and runs no detection of its
         own. Nothing is replaced that you did not accept or declare yourself.
       </dd>
 
@@ -212,9 +212,9 @@
     </p>
     <p>
       This is a suggestion and never a replacement, and it is switched separately
-      from the pattern. In Configure, on the "Email addresses" row of "Contact and
-      account details", the "Signal-based suggestions" button opens what an address
-      can be read as: "Person names" from the part before the @, and "Organisation
+      from the pattern. In Configure, on the "Email addresses" row of "Contact
+      details" under Built-in patterns, the "Signal-based suggestions" button opens
+      what an address can be read as: "Person names" from the part before the @, and "Organisation
       names" from the domain. Each has its own tick box, so you can keep company
       names from domains without having "pierre.dupont" read as a person. The tick
       box at the head of that panel switches all of the readings at once, and the
@@ -224,7 +224,8 @@
     <p>
       Clearing any of them stops those suggestions and nothing else. Email
       addresses are still anonymised, because that is Built-in patterns and the
-      Email category doing their own job.
+      Email category doing their own job. These readings also keep working with
+      Built-in patterns switched off, because they match their own evidence.
     </p>
     <p>
       Two suggestions built on the same evidence are shown as RELATED, never
@@ -239,11 +240,12 @@
       such as S.A. or GmbH. It works entirely offline. Its settings, under
       Discovery strictness, let you make it stricter when it suggests too much.
     </p>
-    <h3>Local AI</h3>
+    <h3>Local LLM discovery</h3>
     <p>
       A language model running on this machine does the same job, and catches
-      names that no rule describes. It is only available when the local AI is
-      switched on and detected, and switching it on is always your decision.
+      names that no rule describes. It is only available when the route is
+      switched on and Ollama is detected, and switching it on is always your
+      decision.
       Everything it proposes is checked against the document text before you see
       it, so a name the model invented is dropped rather than shown. It never
       runs during the Anonymise step.
@@ -391,12 +393,11 @@
   <section id="trouble">
     <h2>If something goes wrong</h2>
     <dl>
-      <dt>An AI button is greyed out</dt>
+      <dt>A model control is greyed out</dt>
       <dd>
-        Either the local AI is switched off, on the Identify step in the Local
-        AI section, or
-        advanced settings tab, or Ollama was not detected on 127.0.0.1. Start
-        Ollama, then use Re-probe on that same tab.
+        Either Local LLM discovery is switched off, on the Identify step in the
+        Local LLM discovery section, or Ollama was not detected on 127.0.0.1.
+        Start Ollama, then use Re-probe in that same section.
       </dd>
 
       <dt>Detection suggests far too much</dt>

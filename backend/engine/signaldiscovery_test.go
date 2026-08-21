@@ -544,7 +544,7 @@ func TestSeveralMethodsReduceToTheStrongestClass(t *testing.T) {
 		{"manual", []string{MethodManual}, MatchClassUserDefined},
 		{"signal", []string{MethodSignal}, MatchClassSmartDiscovered},
 		{"heuristic", []string{MethodHeuristic}, MatchClassSmartDiscovered},
-		{"local AI", []string{MethodLocalAI}, MatchClassLocalAIDiscovered},
+		{"local model", []string{MethodLocalAI}, MatchClassLocalAIDiscovered},
 		{"signal and AI reduce to signal", []string{MethodLocalAI, MethodSignal}, MatchClassSmartDiscovered},
 		{"manual beats every discovery", []string{MethodLocalAI, MethodHeuristic, MethodManual}, MatchClassUserDefined},
 	}

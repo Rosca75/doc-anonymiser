@@ -221,9 +221,11 @@ func checkImportPreview(c *cdpClient, r *reporter, fx fixture) {
 type railResult struct {
 	Error                         string   `json:"error"`
 	Sections                      int      `json:"sections"`
+	Panels                        int      `json:"panels"`
 	RailTabs                      int      `json:"railTabs"`
 	Routes                        []string `json:"routes"`
-	SmartOn                       *bool    `json:"smartOn"`
+	PatternsOn                    *bool    `json:"patternsOn"`
+	HeuristicOn                   *bool    `json:"heuristicOn"`
 	LocalOn                       *bool    `json:"localOn"`
 	Categories                    int      `json:"categories"`
 	CategoriesWithSize            int      `json:"categoriesWithSize"`
@@ -248,26 +250,31 @@ type railResult struct {
 		Widths          string   `json:"widths"`
 		OptionsSelected []string `json:"optionsSelected"`
 	} `json:"detailLevelRow"`
-	MethodPairRow *struct {
-		BuiltInTop            int      `json:"builtInTop"`
-		HeuristicTop          int      `json:"heuristicTop"`
-		SameRow               *bool    `json:"sameRow"`
-		HeuristicIsToTheRight *bool    `json:"heuristicIsToTheRight"`
-		LabelWidths           []string `json:"labelWidths"`
-		LabelsFullyShown      *bool    `json:"labelsFullyShown"`
-	} `json:"methodPairRow"`
+	RouteHeaders []*struct {
+		Route              string `json:"route"`
+		Title              string `json:"title"`
+		SameRow            *bool  `json:"sameRow"`
+		SwitchIsToTheRight *bool  `json:"switchIsToTheRight"`
+		TitleFullyShown    *bool  `json:"titleFullyShown"`
+		TitleLines         int    `json:"titleLines"`
+		HasHelp            *bool  `json:"hasHelp"`
+		Widths             string `json:"widths"`
+		FitsTheRail        *bool  `json:"fitsTheRail"`
+	} `json:"routeHeaders"`
 }
 
-// checkConfigureRail asserts the rail is the two detection-route sections with
-// the documented default switch positions and every category on screen.
+// checkConfigureRail asserts the rail is the three detection-route sections with
+// the documented default switch positions, the two switch-less panels below them,
+// and every switchable category on screen.
 //
 // The Configure choices are the left rail of Identify, restructured as
 // switchable DETECTION ROUTES rather than peer tabs (root CLAUDE.md section 5,
-// frontend/CLAUDE.md discipline rules). Smart detection is on by default and
-// owns the scope controls; Local AI is off by default because handing the
+// frontend/CLAUDE.md discipline rules). One switch, one mechanism: Built-in
+// patterns and Heuristic discovery are on by default because neither needs
+// anything installed; Local LLM discovery is off by default because handing the
 // document to a model is the user's decision.
 func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
-	r.step("The Configure rail is the two detection routes")
+	r.step("The Configure rail is the three detection routes")
 
 	var got railResult
 	if err := c.eval("__uiProbes.configureRail()", &got); err != nil {
@@ -281,27 +288,46 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 		return
 	}
 
-	r.assert("the rail is two route sections", got.Sections == 2,
-		"2 .rail-section elements", fmt.Sprintf("%d, routes: %s", got.Sections, strings.Join(got.Routes, ", ")),
-		"views/identifyrail.js RAIL_SECTIONS defines Smart detection and Local AI.")
+	r.assert("the rail is three route sections", got.Sections == 3,
+		"3 .rail-section elements", fmt.Sprintf("%d, routes: %s", got.Sections, strings.Join(got.Routes, ", ")),
+		"views/identifyrail.js RAIL_SECTIONS defines Built-in patterns, Heuristic discovery "+
+			"and Local LLM discovery, each bound to its own settings flag.")
+
+	r.assert("each route section is named by its own id",
+		sameStrings(got.Routes, []string{"rail-patterns", "rail-heuristic", "rail-local"}),
+		"routes rail-patterns, rail-heuristic, rail-local",
+		strings.Join(got.Routes, ", "),
+		"views/identifyrail.js RAIL_SECTIONS is the rail's shape, in the order the routes run.")
+
+	r.assert("the two switch-less panels are panels, not routes", got.Panels == 2,
+		"2 .rail-panel elements (Detection quality and Load profile)",
+		fmt.Sprintf("%d", got.Panels),
+		"Detection quality holds the cross-route confidence floor and Load profile is a "+
+			"utility: neither is a detection route, so neither may wear .rail-section.")
 
 	r.assert("the old tab strip is gone", got.RailTabs == 0,
 		"0 [data-railtab] chips anywhere in the document", fmt.Sprintf("%d", got.RailTabs),
 		"The rail switches sections on and off; it does not tab between them.")
 
-	r.assert("Smart detection is on by default", boolIs(got.SmartOn, true),
-		"the rail-smart route switch checked", describeBool(got.SmartOn),
-		"Every Smart detection method defaults on, so the derived section state reads on.")
+	r.assert("Built-in patterns is on by default", boolIs(got.PatternsOn, true),
+		"the rail-patterns route switch checked", describeBool(got.PatternsOn),
+		"state.js settings.useBuiltInPatterns defaults to true: it needs nothing installed.")
 
-	r.assert("Local AI is off by default", boolIs(got.LocalOn, false),
+	r.assert("Heuristic discovery is on by default", boolIs(got.HeuristicOn, true),
+		"the rail-heuristic route switch checked", describeBool(got.HeuristicOn),
+		"state.js settings.useHeuristicDiscovery defaults to true: it needs nothing installed.")
+
+	r.assert("Local LLM discovery is off by default", boolIs(got.LocalOn, false),
 		"the rail-local route switch unchecked", describeBool(got.LocalOn),
-		"state.js settings.useAI defaults to false. Detecting Ollama ENABLES this switch, "+
+		"state.js settings.useLocalAI defaults to false. Detecting Ollama ENABLES this switch, "+
 			"it never flips it.")
 
 	r.assert("every category checkbox is present", got.Categories == fx.CategoryCount,
 		fmt.Sprintf("exactly %d .cat-toggle checkboxes", fx.CategoryCount),
 		fmt.Sprintf("%d", got.Categories),
-		"Every state.js ALL_CATEGORIES entry reaches the rail, and the rail invents none. "+
+		"Every SWITCHABLE state.js category reaches the rail, and the rail invents none. "+
+			"custom_patterns is excluded on purpose: it is declarative, permanently on, and "+
+			"edited on the workspace's Custom patterns tab. "+
 			"This is an equality, not a floor: with a floor, adding a category and leaving the "+
 			"fixture behind keeps the harness green, which is a test reporting safety it no "+
 			"longer provides.")
@@ -372,12 +398,12 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 				"scrolls sideways (the fixed-height layout contract).")
 	}
 
-	// The local AI's speed-versus-recall dial. It lives in a section that is FOLDED
+	// The local model's speed-versus-recall dial. It lives in a section that is FOLDED
 	// by default, so its controls are in the DOM at zero height and no string test
 	// can tell whether the user could ever read them: only a browser that opens the
 	// section can.
 	if row := got.DetailLevelRow; row == nil {
-		r.assert("the detail level renders in the Local AI section", false,
+		r.assert("the detail level renders in the Local LLM discovery section", false,
 			"#ai-detail-level with its label and help icon in a .rail-field-row",
 			"one of them is missing",
 			"views/identifyrail.js localAISection renders the dial between the model field "+
@@ -422,36 +448,57 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 				"option ordering instead of by the user.")
 	}
 
-	// "Side by side" is a claim about geometry, so geometry is what answers it.
-	// Markup order proves nothing here: a column-flex parent stacks the same
-	// markup, which is exactly how these two spent two full rows on two words.
-	if got.MethodPairRow == nil {
-		r.assert("the two plain method switches render", false,
-			"#smart-built-in and #smart-heuristic in the rail", "one of them is missing",
-			"views/identifyrail.js smartMethods renders both inside .rail-toggle-pair.")
-		return
+	// Each route's switch is ON that route's own header, beside its title and its
+	// help icon. That the three fit on one line each is a claim about geometry, so
+	// geometry answers it: a column-flex header stacks the same markup, and a title
+	// clipped by the controls beside it is a route whose name the user cannot read.
+	r.assert("every route section has a measurable header",
+		len(got.RouteHeaders) == 3 && allNonNil(got.RouteHeaders),
+		"3 headers, each carrying a .cgroup-title, a .route-toggle and a .route-state",
+		fmt.Sprintf("%d measured", len(got.RouteHeaders)),
+		"views/identifyrail.js railBody puts the help tooltip and routeSwitch in each "+
+			"section's headRightHTML.")
+	for _, head := range got.RouteHeaders {
+		if head == nil {
+			continue
+		}
+		r.assert(fmt.Sprintf("%s: title and switch share one row", head.Route),
+			boolIs(head.SameRow, true) && boolIs(head.SwitchIsToTheRight, true),
+			"the switch centred on the title's line and starting after it ends",
+			fmt.Sprintf("sameRow=%s, toTheRight=%s",
+				describeBool(head.SameRow), describeBool(head.SwitchIsToTheRight)),
+			"style.css .cgroup-head is a flex row with the head-right group at its end.")
+
+		r.assert(fmt.Sprintf("%s: the route name is not clipped", head.Route),
+			boolIs(head.TitleFullyShown, true) && head.TitleLines == 1 &&
+				boolIs(head.FitsTheRail, true),
+			"the whole title on one line, no horizontal overflow",
+			fmt.Sprintf("%s, lines=%d, fits=%s (%s)", describeBool(head.TitleFullyShown),
+				head.TitleLines, describeBool(head.FitsTheRail), head.Widths),
+			"copy.js RAIL.tabPatterns, tabHeuristic and tabLocalLLM stay short precisely "+
+				"because the rail is the narrowest column and each title shares its row "+
+				"with a help icon and an On/Off switch.")
+
+		r.assert(fmt.Sprintf("%s: the switch is explained beside it", head.Route),
+			boolIs(head.HasHelp, true),
+			"a help tooltip on the section header",
+			describeBool(head.HasHelp),
+			"The switch says whether the mechanism runs; the tooltip says what it is. "+
+				"The panel carries no explanatory prose, so the tooltip is the only place "+
+				"that explanation can live.")
 	}
-	pair := got.MethodPairRow
+}
 
-	r.assert("Built-in patterns and Heuristic discovery share one row",
-		boolIs(pair.SameRow, true),
-		"the two checkboxes at the same y (within 2px)",
-		fmt.Sprintf("built-in at y=%d, heuristic at y=%d", pair.BuiltInTop, pair.HeuristicTop),
-		"style.css .rail-toggle-pair is a two-column grid. The rail's height is its scarcest "+
-			"resource and these are its shortest labels.")
-
-	r.assert("they are ordered left to right, not overlapping",
-		boolIs(pair.HeuristicIsToTheRight, true),
-		"Heuristic discovery starting after Built-in patterns ends",
-		describeBool(pair.HeuristicIsToTheRight),
-		"Two switches at the same y that overlap are one unreadable control.")
-
-	r.assert("halving the row did not truncate either label",
-		boolIs(pair.LabelsFullyShown, true),
-		"both .cat-label elements showing their whole text",
-		fmt.Sprintf("%s (%s)", describeBool(pair.LabelsFullyShown), strings.Join(pair.LabelWidths, "; ")),
-		"A pair of ellipses is worse than two rows. Below the rail's measure the pair stacks "+
-			"instead, under the @media block beside the rule.")
+// allNonNil reports whether every measured header came back. A nil entry means
+// the probe found a .rail-section missing one of the three parts it measures,
+// which is a header the user cannot operate rather than a probe failure.
+func allNonNil[T any](items []*T) bool {
+	for _, item := range items {
+		if item == nil {
+			return false
+		}
+	}
+	return true
 }
 
 // --- A value card's actions actually reach the store ------------------------
@@ -1160,12 +1207,12 @@ func checkStrictnessFields(c *cdpClient, r *reporter) {
 	var got strictnessResult
 	if err := c.eval("__uiProbes.strictnessFields()", &got); err != nil {
 		r.assert("the strictness probe runs", false, "a rendered strictness block", err.Error(),
-			"views/identifyrail.js smartTuning renders it as a .rail-subgroup inside Smart detection.")
+			"views/identifyrail.js smartTuning renders it as a .rail-subgroup inside Heuristic discovery.")
 		return
 	}
 	if got.Error != "" {
 		r.assert("the strictness probe runs", false, "the Discovery strictness block in the rail",
-			got.Error, "views/identifyrail.js smartSection nests it under Smart detection.")
+			got.Error, "views/identifyrail.js heuristicSection nests it under Heuristic discovery.")
 		return
 	}
 

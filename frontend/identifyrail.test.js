@@ -1,33 +1,77 @@
-// identifyrail.test.js, tests for the Identify rail's category grouping and
-// confidence read-out.
+// identifyrail.test.js, tests for the Identify rail's route sections, its
+// category grouping and its read-outs.
 //
 // views/identifyrail.js imports api.js, which only touches `window` inside
 // its functions, so the module imports cleanly here. Only the PURE exports are
-// exercised: the group table, the tab set and preset table
-// and the sentence that explains the confidence slider
-// Everything else in the view is wiring and
-// belongs to the manual pass.
+// exercised: the group tables, the section table, the preset table and the
+// sentence that explains the confidence slider. Everything else in the view is
+// wiring and belongs to the manual pass.
+//
+// Sections are addressed BY ID through sectionById() below, never by position in
+// the rendered list. An index makes a test silently assert about its neighbour
+// the moment a section is added or reordered, which is how a passing suite can
+// stop covering the thing it names.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  CATEGORY_GROUPS, RAIL_SECTIONS, PRESETS, confidenceEffect, llmGateTooltip,
+  CATEGORY_GROUPS, PATTERN_GROUPS, NAME_GROUPS, RAIL_SECTIONS, PRESETS,
+  confidenceEffect, llmGateTooltip,
   llmDisabledTooltip, railBody, settingsPayload,
 } from "./views/identifyrail.js";
 import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
 import {
-  ALL_CATEGORIES, NAME_CATEGORIES, resetState, getState, setState, setUseLocalAI,
+  ALL_CATEGORIES, NAME_CATEGORIES, HARD_PII_CATEGORIES, EXTENDED_PII_CATEGORIES,
+  ADVANCED_PII_CATEGORIES, ALWAYS_ON_CATEGORIES,
+  resetState, getState, setState, setUseLocalAI,
   setAIScope, setCategoryGroup, setUseBuiltInPatterns, setUseHeuristicDiscovery,
-  setSmartDetection, setSignalSource, setSignalDerivation,
+  setSignalSource, setSignalDerivation, applyPreset,
   SIGNAL_SOURCES, SIGNAL_DERIVATIONS, AI_DETAIL_LEVELS,
 } from "./state.js";
+import { renderIdentifyRail } from "./views/identifyrail.js";
 import { textOf, stripTags, all, one, exists } from "./testhtml.js";
-import { container } from "./testdom.js";
+import { container, fire } from "./testdom.js";
+
+// PATTERN_CATEGORIES is every built-in pattern category the store knows, which
+// is what the eight groups of the Built-in patterns section must cover exactly.
+const PATTERN_CATEGORIES = [
+  ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES, ...ADVANCED_PII_CATEGORIES,
+];
+
+/**
+ * sectionById(html, id) returns one rail section's outer HTML, found by the id
+ * its own header carries. A section's markup contains its nested subgroups'
+ * headers too, so the match is on the FIRST title inside it, which is its own.
+ *
+ * Addressing a section by id rather than by index is the point: with an index, a
+ * new section silently re-points every test after it.
+ */
+function sectionById(html, id) {
+  const sec = all(html, "section.cgroup").find((candidate) =>
+    all(candidate.outer, "span.cgroup-title")[0]?.attrs["data-group-toggle"] === id);
+  assert.ok(sec, `no rail section with id ${id}`);
+  return sec.outer;
+}
+
+/** sectionAttrs(html, id) is the same lookup, returning the parsed section. */
+function sectionAttrs(html, id) {
+  const sec = all(html, "section.cgroup").find((candidate) =>
+    all(candidate.outer, "span.cgroup-title")[0]?.attrs["data-group-toggle"] === id);
+  assert.ok(sec, `no rail section with id ${id}`);
+  return sec;
+}
+
+/** routeToggle(html, id) is one route section's header switch. */
+function routeToggle(html, id) {
+  const box = all(html, "input.route-toggle").find((t) => t.attrs["data-route"] === id);
+  assert.ok(box, `no route switch for ${id}`);
+  return box;
+}
 
 // --- every category is reachable from some group -------------------------
 
-test("every category the store knows belongs to exactly one group", () => {
+test("every switchable category belongs to exactly one group", () => {
   const seen = new Map();
   for (const [title, keys] of CATEGORY_GROUPS) {
     for (const key of keys) {
@@ -35,7 +79,12 @@ test("every category the store knows belongs to exactly one group", () => {
       seen.set(key, title);
     }
   }
-  const missing = ALL_CATEGORIES.filter((key) => !seen.has(key));
+  // ALWAYS_ON_CATEGORIES are deliberately outside the groups: they have no switch
+  // anywhere in the rail, so a group row for them would be a control that does
+  // nothing.
+  const missing = ALL_CATEGORIES
+    .filter((key) => !ALWAYS_ON_CATEGORIES.includes(key))
+    .filter((key) => !seen.has(key));
   assert.deepEqual(missing, [],
     `these categories have no group, so the rail cannot show them: ${missing.join(", ")}`);
 });
@@ -48,15 +97,59 @@ test("the group table invents no category", () => {
   }
 });
 
-test("the BUILD-03 recognizers have their own named group (CR9)", () => {
-  const group = CATEGORY_GROUPS.find(([, keys]) => keys.includes("credit_card"));
-  assert.ok(group, "the payment card recognizer must belong to a group");
-  const [title, keys] = group;
-  assert.ok(title.length > 5, "the group needs a readable title");
-  for (const key of ["uk_nhs", "ip_address", "mac_address", "crypto",
-    "database_uri", "de_steuer_id", "es_nif"]) {
-    assert.ok(keys.includes(key), `${key} belongs in the same group as credit_card`);
+test("every pattern category appears exactly once, in one of the eight groups", () => {
+  // The Built-in patterns section is the ONLY place a pattern category has a
+  // switch, and PATTERN_GROUPS is the only way in. A category in no group is a
+  // category the user cannot switch, which reads as "not detected" and is not; a
+  // category in two groups is two controls for one setting.
+  assert.equal(PATTERN_GROUPS.length, 8, "eight classes, one group each");
+  const seen = new Map();
+  for (const [title, keys] of PATTERN_GROUPS) {
+    for (const key of keys) {
+      assert.ok(!seen.has(key), `${key} is in both "${seen.get(key)}" and "${title}"`);
+      seen.set(key, title);
+    }
   }
+  assert.deepEqual([...seen.keys()].sort(), PATTERN_CATEGORIES.slice().sort());
+});
+
+test("the pattern groups are grouped by class, not by preset tier", () => {
+  // A group named after a UI shorthand tells nobody where a new recognizer
+  // belongs. These are the classes the established PII tools converge on, so the
+  // membership is the claim each title makes and is worth pinning.
+  const byTitle = Object.fromEntries(PATTERN_GROUPS);
+  assert.deepEqual(byTitle[CONFIGURE.groupFinancial],
+    ["iban", "bic", "credit_card", "crypto"],
+    "financial account numbers are their own class");
+  assert.deepEqual(byTitle[CONFIGURE.groupGovernment],
+    ["vat", "matricule", "de_steuer_id", "es_nif"],
+    "government and tax identifiers are their own class, and are country-scoped");
+  assert.deepEqual(byTitle[CONFIGURE.groupHealth], ["uk_nhs"],
+    "health data is an Article 9 special category, so it is split on regulation "
+    + "rather than on taxonomy, one member or not");
+  assert.deepEqual(byTitle[CONFIGURE.groupCredentials], ["database_uri"],
+    "credentials are separated from network identifiers even though both look technical");
+  assert.deepEqual(byTitle[CONFIGURE.groupNetwork], ["ip_address", "mac_address"]);
+  // The contextual group is last, matching how the presets escalate.
+  assert.equal(PATTERN_GROUPS[PATTERN_GROUPS.length - 1][0], CONFIGURE.groupContextual);
+});
+
+test("the name groups hold what a discovery method can emit, and no declaration", () => {
+  assert.equal(NAME_GROUPS.length, 1);
+  const [title, keys] = NAME_GROUPS[0];
+  assert.equal(title, CONFIGURE.groupDetected);
+  assert.deepEqual(keys, NAME_CATEGORIES);
+  for (const key of ALWAYS_ON_CATEGORIES) {
+    assert.ok(!keys.includes(key),
+      `${key} is declarative and has no switch: it must not sit under a detected group`);
+  }
+});
+
+test("CATEGORY_GROUPS is the two halves in render order, and nothing else", () => {
+  // Both halves are addressed BY NAME everywhere. Nothing may go back to slicing
+  // this list by position: that arithmetic is what makes adding a group a
+  // two-place edit and silently re-points the bulk buttons when a group moves.
+  assert.deepEqual(CATEGORY_GROUPS, [...PATTERN_GROUPS, ...NAME_GROUPS]);
 });
 
 test("every category group renders folded by default", () => {
@@ -65,13 +158,10 @@ test("every category group renders folded by default", () => {
   // scroll for a setting most sessions never touch, so each category group opens
   // only when its owner reaches for the categories inside it. The render harness
   // proves the folded body has no laid-out checkboxes; this proves the markup the
-  // harness measures, and that all five groups are present to fold.
+  // harness measures, and that every group is present to fold.
   resetState();
   const html = railBody(getState());
-  const catTitles = [
-    CONFIGURE.groupContact, CONFIGURE.groupTechnical, CONFIGURE.groupThorough,
-    CONFIGURE.groupDetected, CONFIGURE.groupDeclared,
-  ];
+  const catTitles = CATEGORY_GROUPS.map(([title]) => title);
   const seen = new Set();
   for (const sec of all(html, "section.cgroup")) {
     const title = all(sec.outer, "span.cgroup-title")[0];
@@ -82,7 +172,7 @@ test("every category group renders folded by default", () => {
     assert.equal(sec.attrs["data-open"], "false", `the "${name}" group must be folded by default`);
   }
   assert.deepEqual([...seen].sort(), [...catTitles].sort(),
-    "all five category groups render and each is checked for its folded state");
+    "every category group renders and each is checked for its folded state");
 });
 
 test("every group has a title and at least one category (CR10)", () => {
@@ -96,22 +186,37 @@ test("every group has a title and at least one category (CR10)", () => {
 
 // --- The rail's route sections -------------------------------------------
 //
-// The rail is the two user-operable detection routes, in the order they run.
-// Scope is not a peer of them: it is the scope OF Smart detection.
+// The rail is the three user-operable detection routes, in the order they run,
+// each named after the MECHANISM it is. Scope is not a peer of them: each route
+// holds the settings its own mechanism reads.
 
-test("the rail is two route sections, in the order the routes run", () => {
-  assert.deepEqual(RAIL_SECTIONS.map(([id]) => id), ["rail-smart", "rail-local"]);
+test("the rail is three route sections, in the order the routes run", () => {
+  assert.deepEqual(RAIL_SECTIONS.map(([id]) => id),
+    ["rail-patterns", "rail-heuristic", "rail-local"]);
+  assert.deepEqual(RAIL_SECTIONS.map(([, label]) => label),
+    [RAIL.tabPatterns, RAIL.tabHeuristic, RAIL.tabLocalLLM]);
   for (const [id, label] of RAIL_SECTIONS) {
     assert.ok(label.trim().length > 0, `${id} has no label`);
   }
 });
 
-test("each route section names what switches it on", () => {
+test("every route section names a REAL settings flag, and none names a sentinel", () => {
+  // A section switch must be the flag it claims to be: a derived section state
+  // can read "On" while nothing the section names actually runs, and the user has
+  // no way to tell.
   const keys = Object.fromEntries(RAIL_SECTIONS.map(([id, , key]) => [id, key]));
-  // Smart detection's state is DERIVED from its three methods and not stored, so
-  // it names the sentinel rather than a settings key that does not exist.
-  assert.equal(keys["rail-smart"], "derived");
-  assert.equal(keys["rail-local"], "useLocalAI");
+  assert.deepEqual(keys, {
+    "rail-patterns": "useBuiltInPatterns",
+    "rail-heuristic": "useHeuristicDiscovery",
+    "rail-local": "useLocalAI",
+  });
+  resetState();
+  const stored = getState().settings;
+  for (const [id, , key] of RAIL_SECTIONS) {
+    assert.notEqual(key, "derived", `${id} must not name a sentinel`);
+    assert.equal(typeof stored[key], "boolean",
+      `${id} names ${key}, which must be a stored boolean`);
+  }
 });
 
 test("Scope is no longer a section: it is nested in the route it scopes", () => {
@@ -148,7 +253,7 @@ test("the gate tooltip tells the two reasons apart", () => {
 // --- the confidence read-out, rewritten by -------------------------------
 //
 // The mock-up's copy described a SOURCE-TIERED rule ("values that only the local
-// AI suggested are skipped"), which the engine does not implement. What the
+// model suggested are skipped"), which the engine does not implement. What the
 // setting actually is is a FLOOR on the confidence score every detection
 // carries, so the copy describes the floor. These tests pin that it does not
 // drift back into promising the rule the engine does not have.
@@ -160,7 +265,7 @@ test("the confidence read-out says nothing is skipped at the default", () => {
 test("the confidence read-out describes a floor, not a rule about sources", () => {
   for (let percent = 0; percent <= 100; percent += 5) {
     const sentence = confidenceEffect(percent);
-    assert.ok(!/only the local AI suggested/i.test(sentence),
+    assert.ok(!/only the local model suggested/i.test(sentence),
       `${percent}: the engine has no source-tiered rule (decision 3): ${sentence}`);
     assert.ok(!/you listed yourself/i.test(sentence),
       `${percent}: the floor does not know who listed a value: ${sentence}`);
@@ -198,94 +303,117 @@ function railHTML(patch = {}) {
   return railBody(getState());
 }
 
-test("the rail renders the three routes plus the Load profile section", () => {
+test("the rail renders three routes plus the two switch-less panels", () => {
   const html = railHTML();
-  // Exactly two DETECTION ROUTE sections carry .rail-section; the render
-  // harness (scripts/uitest/probes.js) counts the same class. Load profile is a
-  // switch-less panel with its own .rail-panel class, so it must NOT be counted.
+  // Exactly three DETECTION ROUTE sections carry .rail-section; the render
+  // harness (scripts/uitest/probes.js) counts the same class. Detection quality
+  // and Load profile are switch-less panels with their own .rail-panel class, so
+  // they must NOT be counted as routes.
   const sections = all(html, "section.rail-section");
-  assert.equal(sections.length, 2);
+  assert.equal(sections.length, 3);
   const titles = sections.map((sec) =>
     stripTags(all(sec.outer, "span.cgroup-title")[0].inner).trim());
-  assert.deepEqual(titles, [RAIL.tabSmart, RAIL.tabLocalAI]);
-  // The Load profile panel sits after the routes as its own .rail-panel section.
-  const panel = all(html, "section.rail-panel");
-  assert.equal(panel.length, 1);
-  assert.equal(
-    stripTags(all(panel[0].outer, "span.cgroup-title")[0].inner).trim(), RAIL.profileTitle);
+  assert.deepEqual(titles, [RAIL.tabPatterns, RAIL.tabHeuristic, RAIL.tabLocalLLM]);
+  // The two panels sit after the routes, in this order.
+  const panels = all(html, "section.rail-panel").map((sec) =>
+    stripTags(all(sec.outer, "span.cgroup-title")[0].inner).trim());
+  assert.deepEqual(panels, [RAIL.qualityTitle, RAIL.profileTitle]);
+  assert.ok(html.indexOf(RAIL.qualityTitle) > html.indexOf(RAIL.tabLocalLLM),
+    "the panels come after the last route");
 });
 
-test("Smart detection is ON by default, and switchable", () => {
+test("each route section carries its own help beside its switch", () => {
+  // The switch says whether the mechanism runs; the tooltip says what it is. A
+  // section with a switch and no explanation is a control nobody can evaluate.
   const html = railHTML();
-  const smart = all(html, "input.route-toggle")[0];
-  assert.equal(smart.attrs["data-route"], "rail-smart");
-  assert.ok("checked" in smart.attrs, "Smart detection runs unless the user says otherwise");
-  assert.ok(!("disabled" in smart.attrs), "and the user can say otherwise");
+  for (const [id, label] of RAIL_SECTIONS) {
+    // The section's OWN header is the first .cgroup-head inside it: the ones
+    // after it belong to the category groups nested in its body.
+    const head = all(sectionById(html, id), ".cgroup-head")[0].outer;
+    assert.ok(exists(head, "span.help"), `${label} has no help tooltip on its header`);
+    assert.ok(exists(head, "input.route-toggle"), `${label} has no switch on its header`);
+    assert.ok(head.indexOf('class="help"') < head.indexOf("route-switch"),
+      `${label}: the explanation comes before the switch it explains`);
+  }
 });
 
-test("Local AI is OFF by default even when Ollama is detected", () => {
+test("the two offline routes are ON by default, and switchable", () => {
+  const html = railHTML();
+  for (const id of ["rail-patterns", "rail-heuristic"]) {
+    const box = routeToggle(html, id);
+    assert.ok("checked" in box.attrs, `${id} runs unless the user says otherwise`);
+    assert.ok(!("disabled" in box.attrs), "and the user can say otherwise");
+  }
+});
+
+test("Local LLM discovery is OFF by default even when Ollama is detected", () => {
   const html = railHTML({ ollama: { available: true, models: [], detail: "" } });
-  const local = all(html, "input.route-toggle")[1];
-  assert.equal(local.attrs["data-route"], "rail-local");
+  const local = routeToggle(html, "rail-local");
   assert.ok(!("checked" in local.attrs),
     "detecting Ollama enables the switch, it does not flip it");
   assert.ok(!("disabled" in local.attrs));
 });
 
-test("the scope controls live inside the Smart detection section", () => {
-  // This is the whole point of the restructure: scope is the scope OF smart
-  // detection, not a peer of it.
-  const smart = all(railHTML(), "section.rail-section")[0].outer;
-  assert.ok(exists(smart, "#document-country"), "the document country");
-  assert.ok(exists(smart, "[data-preset]"), "the presets");
-  assert.ok(exists(smart, ".cat-toggle"), "the category checkboxes");
-  assert.ok(exists(smart, "#min-confidence"), "the confidence floor");
-  assert.ok(exists(smart, "#smart-min-length"), "and the strictness fields");
+test("Built-in patterns owns the document country and the preset", () => {
+  // They are the scope of the pattern pass, so they sit in the section whose
+  // switch decides whether that pass runs at all.
+  const patterns = sectionById(railHTML(), "rail-patterns");
+  assert.ok(exists(patterns, "#document-country"), "the document country");
+  assert.ok(exists(patterns, "[data-preset]"), "the presets");
+  assert.ok(exists(patterns, "#preset-also-sets"),
+    "and the read-out naming what else the level switched on");
+  // No stray label row over the groups: under a section already titled "Built-in
+  // patterns", a "Categories" heading says nothing and costs a row.
+  assert.ok(!patterns.includes("Categories"), "the Categories label row is gone");
 });
 
-test("Smart detection's two plain methods lead the section", () => {
-  const smart = all(railHTML(), "section.rail-section")[0].outer;
-  const builtIn = one(smart, "#smart-built-in");
-  const heuristic = one(smart, "#smart-heuristic");
-  assert.ok(builtIn, "the built-in pattern switch renders");
-  assert.ok(heuristic, "the heuristic discovery switch renders");
-  assert.ok("checked" in builtIn.attrs, "built-in patterns default on");
-  assert.ok("checked" in heuristic.attrs, "heuristic discovery defaults on");
-  // Both lead the section: each appears before the first category checkbox.
-  const firstCat = smart.indexOf('class="cat-toggle"');
-  for (const marker of ['id="smart-built-in"', 'id="smart-heuristic"']) {
-    const at = smart.indexOf(marker);
-    assert.ok(at >= 0, `${marker} renders`);
-    assert.ok(at < firstCat, `${marker} comes before the category block it governs`);
-  }
-  assert.ok(smart.includes(RAIL.builtInPatterns), "the Built-in patterns label renders");
-  assert.ok(smart.includes(RAIL.heuristicDiscovery), "the Heuristic discovery label renders");
-  // The route's third method has no switch of its own up here: it is a set of
-  // readings OF particular signals, so it hangs off those signals' own rows.
-  assert.ok(smart.indexOf(RAIL.signalSuggestions) > firstCat,
-    "signal-based suggestions live in the category list, not above it");
+test("Built-in patterns owns every pattern category and no name category", () => {
+  const patterns = sectionById(railHTML(), "rail-patterns");
+  const keys = all(patterns, "input.cat-toggle").map((b) => b.attrs["data-category"]);
+  assert.deepEqual(keys.slice().sort(), PATTERN_CATEGORIES.slice().sort());
 });
 
-test("the two plain method switches share one row, and nothing else joins them", () => {
-  // The panel's height is its scarcest resource and these two carry the shortest
-  // labels in the rail, so they are one row of two rather than two rows of one.
-  const smart = all(railHTML(), "section.rail-section")[0].outer;
-  const pairs = all(smart, ".rail-toggle-pair");
-  assert.equal(pairs.length, 1, "exactly one pair, so nothing else is quietly folded into it");
+test("Heuristic discovery owns the name categories and exactly one subgroup", () => {
+  const heuristic = sectionById(railHTML(), "rail-heuristic");
+  const keys = all(heuristic, "input.cat-toggle").map((b) => b.attrs["data-category"]);
+  assert.deepEqual(keys.slice().sort(), NAME_CATEGORIES.slice().sort());
+  const subgroups = all(heuristic, ".rail-subgroup");
+  assert.equal(subgroups.length, 1, "the strictness block, and nothing else nested");
+  assert.ok(exists(subgroups[0].outer, "#smart-strictness"),
+    "and it is the one holding the strictness lever");
+  assert.ok(exists(heuristic, "#smart-min-length"), "its strictness fields render");
+});
 
-  const pair = pairs[0].outer;
-  assert.ok(exists(pair, "#smart-built-in"), "Built-in patterns is one half of the pair");
-  assert.ok(exists(pair, "#smart-heuristic"), "Heuristic discovery is the other");
-  assert.equal(all(pair, ".rail-toggle").length, 2,
-    "two halves and no third: a drill-down opening under one of them would shove "
-    + "the other half's label off its line");
+test("Detection quality is a switch-less panel carrying the cross-route floor", () => {
+  // The floor governs every route that is on, so placing it inside one of them
+  // would mislabel it as that route's own knob.
+  const html = railHTML();
+  const quality = sectionAttrs(html, "rail-quality");
+  assert.match(quality.attrs.class, /rail-panel/);
+  assert.ok(!/rail-section/.test(quality.attrs.class),
+    ".rail-section marks a detection ROUTE, which this is not");
+  assert.ok(!exists(quality.outer, "input.route-toggle"), "and it has no switch");
+  assert.ok(exists(quality.outer, "#min-confidence"), "the floor lives here");
+  assert.ok(exists(quality.outer, "output#min-confidence-value"));
+  // Folded by default, so its header has to state the value it is holding.
+  assert.equal(quality.attrs["data-open"], "false");
+  assert.equal(stripTags(one(quality.outer, "span.cgroup-count").inner).trim(), "0%");
 
-  // Each half keeps its own help icon: pairing them is a layout change, not a
-  // reason for either to stop explaining itself.
-  for (const half of all(pair, ".rail-toggle")) {
-    assert.ok(exists(half.outer, "span.help"),
-      `a paired method switch with no help tooltip: ${stripTags(half.inner).trim()}`);
+  // And it is nowhere else: one setting, one control.
+  assert.equal(all(html, "#min-confidence").length, 1);
+  for (const id of ["rail-patterns", "rail-heuristic", "rail-local"]) {
+    assert.ok(!exists(sectionById(html, id), "#min-confidence"),
+      `the cross-route floor must not render inside ${id}`);
   }
+});
+
+test("the heuristic block's own minimum confidence is not the cross-route floor", () => {
+  // Two different settings that are easy to read as one: this one is read by
+  // heuristic discovery alone, the slider decides what a run replaces.
+  const html = railHTML();
+  const heuristic = sectionById(html, "rail-heuristic");
+  assert.ok(exists(heuristic, "#smart-min-confidence"), "the route's own strictness field");
+  assert.ok(!exists(heuristic, "#min-confidence"), "and not the cross-route floor");
 });
 
 test("every signal that derives Suggestions has a category row to hang off", () => {
@@ -304,8 +432,8 @@ test("a signal's readings hang off its own category row, collapsed", () => {
   // signals and readings are added, and puts them beside the signal they read
   // rather than in a block of their own that has to name it again.
   resetState();
-  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  const rows = all(smart, ".signal-row");
+  const patterns = sectionById(railBody(getState()), "rail-patterns");
+  const rows = all(patterns, ".signal-row");
   assert.deepEqual(rows.map((r) => r.attrs["data-signal-source"]), SIGNAL_SOURCES,
     "one drill-down per signal that implements discovery, and no other");
 
@@ -323,8 +451,8 @@ test("a signal's readings hang off its own category row, collapsed", () => {
 
 test("the help icon sits after the drill-down that opens what it explains", () => {
   resetState();
-  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  const head = one(all(smart, ".signal-row")[0].outer, ".signal-row-head").outer;
+  const patterns = sectionById(railBody(getState()), "rail-patterns");
+  const head = one(all(patterns, ".signal-row")[0].outer, ".signal-row-head").outer;
   assert.ok(head.indexOf('class="cat-label"') < head.indexOf('class="signal-drill"'),
     "the category label comes first");
   assert.ok(head.indexOf('class="signal-drill"') < head.indexOf('class="help"'),
@@ -338,8 +466,8 @@ test("a signal's readings are its implemented ones, each individually switchable
   // does not, so the readings come from SIGNAL_DERIVATIONS, which the Go parity
   // guard holds to the engine's own producers.
   resetState();
-  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  const boxes = all(smart, "input.signal-box");
+  const patterns = sectionById(railBody(getState()), "rail-patterns");
+  const boxes = all(patterns, "input.signal-box");
   assert.deepEqual(boxes.map((b) => b.attrs["data-derivation"]),
     SIGNAL_SOURCES.flatMap((source) => SIGNAL_DERIVATIONS[source]));
   assert.ok(boxes.every((b) => "checked" in b.attrs),
@@ -347,7 +475,7 @@ test("a signal's readings are its implemented ones, each individually switchable
     + "is why the feature exists");
 
   // And the master is keyed by SOURCE, so the two levels cannot be confused.
-  const master = all(smart, "input.signal-master");
+  const master = all(patterns, "input.signal-master");
   assert.deepEqual(master.map((b) => b.attrs["data-source"]), SIGNAL_SOURCES);
 });
 
@@ -355,8 +483,8 @@ test("every reading explains itself through a tooltip", () => {
   // "Person names" alone does not say that clearing it leaves the address itself
   // anonymised, which is the distinction the whole setting exists for.
   resetState();
-  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  const rows = all(smart, ".signal-reading");
+  const patterns = sectionById(railBody(getState()), "rail-patterns");
+  const rows = all(patterns, ".signal-reading");
   assert.equal(rows.length,
     SIGNAL_SOURCES.reduce((n, source) => n + SIGNAL_DERIVATIONS[source].length, 0));
   for (const row of rows) {
@@ -370,7 +498,7 @@ test("the drill-down's own checkbox is a DERIVED master over its readings", () =
   // fourth flag beside the readings it summarises could disagree with them, and a
   // master reading "on" over readings that are all off lies about what a run does.
   resetState();
-  const railFor = () => all(railBody(getState()), "section.rail-section")[0].outer;
+  const railFor = () => sectionById(railBody(getState()), "rail-patterns");
 
   // Scoped to the email row: the rail carries one master per signal source, and
   // this is a question about ONE source's master over ITS readings.
@@ -389,8 +517,8 @@ test("the drill-down's own checkbox is a DERIVED master over its readings", () =
 test("the panel's read-out reads Off once every reading is cleared", () => {
   resetState();
   for (const source of SIGNAL_SOURCES) setSignalSource(source, false);
-  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  for (const count of all(smart, "span.signal-count")) {
+  const patterns = sectionById(railBody(getState()), "rail-patterns");
+  for (const count of all(patterns, "span.signal-count")) {
     assert.equal(stripTags(count.inner).trim(), RAIL.signalSourcesOff);
   }
 });
@@ -400,8 +528,8 @@ test("clearing ONE reading leaves the other producing its own Suggestions", () =
   // engine honours each on its own (backend/engine/signaldiscovery_test.go).
   resetState();
   setSignalDerivation("email", "email.person", false);
-  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  const boxes = all(smart, "input.signal-box");
+  const patterns = sectionById(railBody(getState()), "rail-patterns");
+  const boxes = all(patterns, "input.signal-box");
   const person = boxes.find((b) => b.attrs["data-derivation"] === "email.person");
   const org = boxes.find((b) => b.attrs["data-derivation"] === "email.organisation");
   assert.ok(!("checked" in person.attrs), "the cleared reading is off");
@@ -414,8 +542,8 @@ test("the drill-down stays usable while Built-in patterns is off", () => {
   // readings away with them.
   resetState();
   setUseBuiltInPatterns(false);
-  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  const row = all(smart, ".signal-row")[0].outer;
+  const patterns = sectionById(railBody(getState()), "rail-patterns");
+  const row = all(patterns, ".signal-row")[0].outer;
   assert.ok("disabled" in one(row, "input.cat-toggle").attrs,
     "the pattern category itself is greyed out");
   for (const box of all(row, "input.signal-box")) {
@@ -428,45 +556,61 @@ test("clearing a signal source does not disable the signal's own category", () =
   // and the control must not quietly do both.
   resetState();
   setSignalSource("email", false);
-  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  const email = all(smart, "input.cat-toggle").find((b) => b.attrs["data-category"] === "email");
+  const patterns = sectionById(railBody(getState()), "rail-patterns");
+  const email = all(patterns, "input.cat-toggle").find((b) => b.attrs["data-category"] === "email");
   assert.ok("checked" in email.attrs, "the email category stays on");
   assert.ok(!("disabled" in email.attrs), "and stays editable");
-  assert.ok("checked" in one(smart, "#smart-built-in").attrs, "built-in patterns stay on");
+  assert.ok("checked" in routeToggle(railBody(getState()), "rail-patterns").attrs,
+    "and the Built-in patterns section stays on");
 });
 
 test("turning built-in patterns off disables the pattern category block only", () => {
   resetState();
   setUseBuiltInPatterns(false);
-  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
+  const html = railBody(getState());
   // The structured signal categories (email, vat, ...) go disabled; the name
-  // categories (person_names, ...) stay editable, because heuristic discovery is
-  // still on.
-  const email = all(smart, "input.cat-toggle").find((b) => b.attrs["data-category"] === "email");
-  const person = all(smart, "input.cat-toggle").find((b) => b.attrs["data-category"] === "person_names");
+  // categories (person_names, ...) are in another section, governed by another
+  // switch, and stay editable.
+  const boxIn = (id, key) => all(sectionById(html, id), "input.cat-toggle")
+    .find((b) => b.attrs["data-category"] === key);
+  const email = boxIn("rail-patterns", "email");
+  const person = boxIn("rail-heuristic", "person_names");
   assert.ok("disabled" in email.attrs,
     "the pattern category is disabled while Built-in patterns is off");
-  assert.ok(!("disabled" in person.attrs), "name categories stay editable");
+  assert.ok(!("disabled" in person.attrs),
+    "a name category belongs to Heuristic discovery, which is still on");
   // The selection is not cleared: the checkbox keeps its checked state.
   assert.ok("checked" in email.attrs, "the stored selection is preserved, not cleared");
 });
 
-test("the Smart detection header switch is a master over its three methods", () => {
-  // Off only when EVERY method is off; on when any one is. The section state is
-  // derived, so it cannot disagree with the methods it summarises.
+test("each header switch renders its OWN flag, and no other section's", () => {
+  // One switch, one mechanism. This is the render half of that claim: the switch
+  // shown for a section follows only the flag that section names, so a user
+  // reading the rail sees three independent answers rather than one summary.
   resetState();
-  setSmartDetection(false);
-  let smart = all(railBody(getState()), "input.route-toggle")[0];
-  assert.ok(!("checked" in smart.attrs), "every method off means the section reads off");
-
-  setUseBuiltInPatterns(true);
-  smart = all(railBody(getState()), "input.route-toggle")[0];
-  assert.ok("checked" in smart.attrs, "one method on means the section reads on");
-
   setUseBuiltInPatterns(false);
-  setSignalSource("email", true);
-  smart = all(railBody(getState()), "input.route-toggle")[0];
-  assert.ok("checked" in smart.attrs, "a signal source alone also reads on");
+  let html = railBody(getState());
+  assert.ok(!("checked" in routeToggle(html, "rail-patterns").attrs),
+    "the pattern section follows useBuiltInPatterns");
+  assert.ok("checked" in routeToggle(html, "rail-heuristic").attrs,
+    "and its neighbour is untouched");
+
+  resetState();
+  setUseHeuristicDiscovery(false);
+  html = railBody(getState());
+  assert.ok(!("checked" in routeToggle(html, "rail-heuristic").attrs));
+  assert.ok("checked" in routeToggle(html, "rail-patterns").attrs);
+});
+
+test("a switched-off section is marked as off, and its section still renders", () => {
+  // .route-off is the CSS hook that greys a section down. The section stays on
+  // screen because its selection is still visible and still restored when the
+  // switch comes back.
+  resetState();
+  setUseBuiltInPatterns(false);
+  const patterns = sectionAttrs(railBody(getState()), "rail-patterns");
+  assert.match(patterns.attrs.class, /route-off/);
+  assert.ok(exists(patterns.outer, "input.cat-toggle"), "the scope is still shown");
 });
 
 // --- The Load profile section (CR7) --------------------------------------
@@ -478,7 +622,7 @@ test("the Load profile section renders AFTER the routes", () => {
   // route's title, so the section sits at the foot of the rail.
   assert.ok(html.includes(RAIL.profileTitle), "the Load profile section renders");
   assert.ok(html.indexOf(RAIL.profileTitle) > html.indexOf(RAIL.tabLocalAI),
-    "Load profile is below the Local AI route");
+    "Load profile is below the last route");
 });
 
 test("the Load profile section has a Load and a Save button", () => {
@@ -513,8 +657,8 @@ test("the profile Save gate closes again once the registry empties, e.g. after s
 });
 
 test("the strictness lever is a select of the three levels, balanced by default", () => {
-  const smart = all(railHTML(), "section.rail-section")[0].outer;
-  const select = one(smart, "#smart-strictness");
+  const heuristic = sectionById(railHTML(), "rail-heuristic");
+  const select = one(heuristic, "#smart-strictness");
   const values = all(select.outer, "option").map((o) => o.attrs.value);
   assert.deepEqual(values, ["lenient", "balanced", "strict"],
     "the three engine strictness levels, in order");
@@ -528,9 +672,9 @@ test("the strictness block is a nested subgroup, so CSS can inset it", () => {
   // being a .rail-subgroup would silently sit flush against its border again,
   // hanging left of every label above it. The pixels are the harness's job; the
   // hook the rule needs is this one's.
-  const smart = all(railHTML(), "section.rail-section")[0].outer;
-  const subgroups = all(smart, ".rail-subgroup");
-  assert.equal(subgroups.length, 1, "Smart detection nests exactly one subgroup");
+  const heuristic = sectionById(railHTML(), "rail-heuristic");
+  const subgroups = all(heuristic, ".rail-subgroup");
+  assert.equal(subgroups.length, 1, "Heuristic discovery nests exactly one subgroup");
   assert.ok(exists(subgroups[0].outer, "#smart-strictness"),
     "and it is the one holding the strictness lever");
 });
@@ -540,8 +684,8 @@ test("every strictness field explains itself through a tooltip", () => {
   // with no tooltip is a control whose only explanation would have to be a
   // paragraph, and a paragraph is what put the controls at the foot of the panel
   // out of reach.
-  const smart = all(railHTML(), "section.rail-section")[0].outer;
-  const block = all(smart, ".rail-subgroup")[0].outer;
+  const heuristic = sectionById(railHTML(), "rail-heuristic");
+  const block = all(heuristic, ".rail-subgroup")[0].outer;
   const rows = all(block, ".rail-field-row");
   assert.ok(rows.length >= 4, `the block has its four fields, got ${rows.length}`);
   for (const row of rows) {
@@ -559,23 +703,47 @@ test("the strictness select reflects a non-default stored value", () => {
   resetState();
   setState({ settings: { ...getState().settings,
     heuristicDiscovery: { ...getState().settings.heuristicDiscovery, strictness: "strict" } } });
-  const smart = all(railBody(getState()), "section.rail-section")[0].outer;
-  const selected = all(one(smart, "#smart-strictness").outer, "option")
+  const heuristic = sectionById(railBody(getState()), "rail-heuristic");
+  const selected = all(one(heuristic, "#smart-strictness").outer, "option")
     .find((o) => "selected" in o.attrs);
   assert.equal(selected.attrs.value, "strict");
 });
 
-test("every category checkbox is reachable without switching anything", () => {
-  // With tabs, three quarters of the rail was one click away and invisible.
-  // Every category is now rendered ONCE, in the Smart detection section: one
-  // setting, one control. A second copy inside Local AI would be folded shut by
-  // default and therefore not reachable at all, which is what this test is for.
+test("every switchable category is reachable without switching anything", () => {
+  // One setting, one control. A second copy of a category inside another section
+  // would be folded shut by default and therefore not reachable at all, which is
+  // what this test is for.
   const boxes = all(railHTML(), "input.cat-toggle").map((b) => b.attrs["data-category"]);
-  assert.deepEqual(boxes.slice().sort(), ALL_CATEGORIES.slice().sort(),
-    "every category exactly once, with no duplicate checkbox for the same setting");
+  const expected = ALL_CATEGORIES.filter((c) => !ALWAYS_ON_CATEGORIES.includes(c));
+  assert.deepEqual(boxes.slice().sort(), expected.slice().sort(),
+    "every switchable category exactly once, with no duplicate checkbox for one setting");
 });
 
-test("the Local AI fields are disabled while the route is off", () => {
+test("a category with no switch renders no checkbox anywhere in the rail", () => {
+  // custom_patterns is declarative: its editor is the workspace's Custom patterns
+  // tab. A switch here would be a second control for a setting that must stay on,
+  // and clearing it would leave a pattern editor whose patterns never run.
+  const html = railHTML();
+  const rendered = all(html, "input.cat-toggle").map((b) => b.attrs["data-category"]);
+  for (const key of ALWAYS_ON_CATEGORIES) {
+    assert.ok(!rendered.includes(key), `${key} must have no checkbox in the rail`);
+  }
+});
+
+test("the active count still counts a switch-less category as on", () => {
+  // The heading's read-out is over ALL_CATEGORIES, so a category with no switch
+  // must be counted rather than silently dropped from the denominator.
+  resetState();
+  for (const level of ["soft", "medium", "advanced"]) {
+    applyPreset(level);
+    for (const key of ALWAYS_ON_CATEGORIES) {
+      assert.equal(getState().settings.categories[key], true,
+        `${key} is on at ${level}, so the "N of M categories on" read-out counts it`);
+    }
+  }
+});
+
+test("the Local LLM fields are disabled while the route is off", () => {
   const off = railHTML({ ollama: { available: true, models: ["m"], detail: "" } });
   assert.ok("disabled" in one(off, "#ollama-model").attrs);
   const on = railHTML({ ollama: { available: true, models: ["m"], detail: "" }, useLocalAI: true });
@@ -587,14 +755,14 @@ test("the Local AI fields are disabled while the route is off", () => {
 
 // --- The Local-AI scan scope ---------------------------------------------
 
-/** localAIHTML renders the Local AI section with documents and an optional
+/** localAIHTML renders the Local LLM discovery section with documents and an optional
  *  scope, the route switched on and Ollama present so the fields are live. */
 function localAIHTML({ documents = [], scope = null, useLocalAI = true } = {}) {
   resetState();
   setState({ ollama: { available: true, models: ["m"], detail: "" }, documents });
   if (useLocalAI) setUseLocalAI(true);
   if (scope) setAIScope(scope);
-  return all(railBody(getState()), "section.rail-section")[1].outer;
+  return sectionById(railBody(getState()), "rail-local");
 }
 
 test("the scan-scope picker defaults to all documents with no page controls", () => {
@@ -602,7 +770,7 @@ test("the scan-scope picker defaults to all documents with no page controls", ()
     documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
   });
   const select = one(html, "#ai-scope-doc");
-  assert.ok(select, "the Local AI section offers a document picker");
+  assert.ok(select, "the Local LLM discovery section offers a document picker");
   const selected = all(select.outer, "option").find((o) => "selected" in o.attrs);
   assert.equal(selected.attrs.value, "", "all documents is the default");
   assert.ok(!exists(html, "input.ai-scope-mode"),
@@ -674,10 +842,17 @@ test("the detected group holds exactly what a detector can emit", () => {
     "a regex the user wrote is declared, not detected");
 });
 
-test("the user's own patterns are a group of their own", () => {
-  const declared = CATEGORY_GROUPS.find(([title]) => title === CONFIGURE.groupDeclared);
-  assert.ok(declared, "custom_patterns needs a group that says what it is");
-  assert.deepEqual(declared[1], ["custom_patterns"]);
+test("the user's own patterns have left the rail entirely", () => {
+  // A regex the user wrote is declarative, permanently on, and edited on the
+  // workspace's Custom patterns tab. A rail group for it would be a switch with
+  // nothing to decide.
+  for (const [title, keys] of CATEGORY_GROUPS) {
+    for (const key of ALWAYS_ON_CATEGORIES) {
+      assert.ok(!keys.includes(key), `${key} must not be in the "${title}" group`);
+    }
+  }
+  assert.ok(!CATEGORY_GROUPS.some(([title]) => /your own pattern/i.test(title)),
+    "and there is no group left over that used to hold them");
 });
 
 test("a category only a detection route or manual entry can produce says so", () => {
@@ -733,12 +908,10 @@ function bulkButton(html, title, on) {
  *  the path the bug corrupted. ENTITY_GROUPS/REGEX_GROUPS are private to the
  *  view, so they are re-derived here the same way the view slices them. */
 function clickBulk(btn) {
-  const REGEX_GROUPS = CATEGORY_GROUPS.slice(0, 3);
-  const ENTITY_GROUPS = CATEGORY_GROUPS.slice(3);
+  const groupsByType = { pattern: PATTERN_GROUPS, name: NAME_GROUPS };
   const ds = datasetOf(btn.attrs);
-  const type = ds.groupType || "regex";
-  const groupArray = type === "entity" ? ENTITY_GROUPS : REGEX_GROUPS;
-  const group = groupArray[Number(ds.group)];
+  const type = ds.groupType || "pattern";
+  const group = (groupsByType[type] ?? [])[Number(ds.group)];
   assert.ok(group, "the button's data-group index must resolve to a real group");
   setCategoryGroup(group[1], ds.on === "1");
 }
@@ -757,32 +930,111 @@ test("the name group's select-all toggles the NAME categories, not the pattern o
     assert.equal(cats[name], true,
       `${name} is a NAME category, so the Auto detected values select-all must switch it on`);
   }
-  // The Contact regex group is REGEX_GROUPS[0], which the bug's "regex" fallback
+  // The Contact details group is PATTERN_GROUPS[0], which the bug's fallback
   // would have toggled by mistake. These must stay exactly as they were.
-  for (const regex of ["email", "url", "iban", "vat"]) {
-    assert.equal(cats[regex], false,
-      `${regex} belongs to the Contact regex group and must be left untouched`);
+  for (const pattern of ["email", "url", "iban", "vat"]) {
+    assert.equal(cats[pattern], false,
+      `${pattern} belongs to a pattern group and must be left untouched`);
   }
 });
 
-test("the entity select-all carries the hyphenated data key so dataset reads it back (CR11)", () => {
+test("the name select-all carries the hyphenated data key so dataset reads it back (CR11)", () => {
   resetState();
   const btn = bulkButton(railBody(getState()), CONFIGURE.groupDetected, "1");
   // The literal attribute must be hyphenated: a camelCase key is lowercased by
   // the browser and dataset.groupType comes back undefined.
   assert.ok("data-group-type" in btn.attrs,
     "the bulk button must emit data-group-type, not a camelCase data-groupType");
-  assert.equal(datasetOf(btn.attrs).groupType, "entity",
-    "the entity group's button must resolve to the entity route");
+  assert.equal(datasetOf(btn.attrs).groupType, "name",
+    "the name group's button must resolve to the name group list");
 });
 
-// --- What the local AI actually did last time -----------------------------
+test("every group's bulk buttons resolve back to that group's own keys", () => {
+  // The bug this covers pointed one group's buttons at another group's keys. The
+  // guard is exhaustive rather than a spot check, because the arithmetic that
+  // broke was per group.
+  resetState();
+  const html = railBody(getState());
+  const groupsByType = { pattern: PATTERN_GROUPS, name: NAME_GROUPS };
+  for (const [type, groups] of Object.entries(groupsByType)) {
+    groups.forEach(([title, keys], index) => {
+      for (const on of ["1", "0"]) {
+        const ds = datasetOf(bulkButton(html, title, on).attrs);
+        assert.equal(ds.groupType, type, `"${title}" names the wrong group type`);
+        assert.equal(Number(ds.group), index, `"${title}" names the wrong group index`);
+        assert.deepEqual(groupsByType[ds.groupType][Number(ds.group)][1], keys,
+          `"${title}" resolves to another group's keys`);
+      }
+    });
+  }
+});
+
+// --- WIRING: one switch writes one flag ----------------------------------
+//
+// "This switch changes only this" is exactly the property a reader of the code
+// cannot verify by reading it, so it is driven through the rendered checkbox.
+
+/** railRoot() renders the whole rail, wiring included, into a fake DOM. */
+function railRoot() {
+  const root = container();
+  // pushSettings reaches api.js, which has no bridge here; the reducer has
+  // already run by then and the rejection is what the view itself tolerates.
+  try { renderIdentifyRail(root); } catch { /* no bridge: the wiring still ran */ }
+  return root;
+}
+
+/** flipRoute(root, id, on) clicks one section's header switch. */
+async function flipRoute(root, id, on) {
+  const box = [...root.querySelectorAll(".route-toggle")]
+    .find((t) => t.getAttribute("data-route") === id);
+  assert.ok(box, `no route switch for ${id}`);
+  box.checked = on;
+  await fire(box, "change");
+}
+
+test("the Built-in patterns switch writes its own flag and no other", async () => {
+  resetState();
+  await flipRoute(railRoot(), "rail-patterns", false);
+  const s = getState().settings;
+  assert.equal(s.useBuiltInPatterns, false, "its own flag moved");
+  assert.equal(s.useHeuristicDiscovery, true, "the heuristic route is untouched");
+  assert.equal(s.useLocalAI, false, "and the local route is untouched");
+  // And the signal readings survive it: signal-based discovery matches its own
+  // evidence, so the pattern pass being off must not silently clear them.
+  for (const source of SIGNAL_SOURCES) {
+    for (const derivation of SIGNAL_DERIVATIONS[source]) {
+      assert.equal(getState().settings.signalSuggestionSources?.[source]?.[derivation] ?? true,
+        true, `${derivation} must survive the pattern pass being switched off`);
+    }
+  }
+});
+
+test("the Heuristic discovery switch writes its own flag and no other", async () => {
+  resetState();
+  await flipRoute(railRoot(), "rail-heuristic", false);
+  const s = getState().settings;
+  assert.equal(s.useHeuristicDiscovery, false, "its own flag moved");
+  assert.equal(s.useBuiltInPatterns, true, "the pattern route is untouched");
+  assert.equal(s.useLocalAI, false, "and the local route is untouched");
+});
+
+test("the Local LLM discovery switch writes its own flag and no other", async () => {
+  resetState();
+  setState({ ollama: { available: true, models: ["m"], detail: "" } });
+  await flipRoute(railRoot(), "rail-local", true);
+  const s = getState().settings;
+  assert.equal(s.useLocalAI, true, "its own flag moved");
+  assert.equal(s.useBuiltInPatterns, true, "the pattern route is untouched");
+  assert.equal(s.useHeuristicDiscovery, true, "and the heuristic route is untouched");
+});
+
+// --- What the local model actually did last time --------------------------
 //
 // "0 values found" means two different things and only one of them is about the
 // document. The read-out is what separates them, and its numbers are measured on
 // the user's own machine, which is the half no tooltip can supply.
 
-test("the rail says nothing about a local AI scan that has not happened", () => {
+test("the rail says nothing about a local model scan that has not happened", () => {
   resetState();
   setUseLocalAI(true);
   const html = railBody(getState());
@@ -889,7 +1141,7 @@ test("the detail level is a select of exactly the two levels Go validates", () =
   resetState();
   const rail = railBody(getState());
   const select = one(rail, "#ai-detail-level");
-  assert.ok(select, "the dial must be in the Local AI section, or the trade-off has no control");
+  assert.ok(select, "the dial must be in the Local LLM discovery section, or the trade-off has no control");
   assert.deepEqual(all(select.outer, "option").map((o) => o.attrs.value), AI_DETAIL_LEVELS,
     "the rail must offer the levels the engine sizes and no third one it would refuse");
   assert.ok("disabled" in select.attrs,
@@ -943,7 +1195,7 @@ test("the detail level reaches the settings payload", () => {
   assert.equal(settingsPayload(getState(), root).aiDetailLevel, "faster",
     "choosing a level must reach Go, or the control is decoration");
 
-  // A rail rendered without the Local AI body contributes no element, and the
+  // A rail rendered without the Local LLM body contributes no element, and the
   // store's value is what travels: switching tabs must not reset the choice.
   setState({ settings: { ...getState().settings, aiDetailLevel: "faster" } });
   assert.equal(settingsPayload(getState(), container()).aiDetailLevel, "faster",
@@ -951,7 +1203,7 @@ test("the detail level reaches the settings payload", () => {
 });
 
 test("the request estimate is a read-out beside the dial, never a paragraph", () => {
-  // The rail carries no p.hint at all and the Local AI section is in the DOM
+  // The rail carries no p.hint at all and the Local LLM section is in the DOM
   // even when folded, so a read-out added as a hint turns the structural guard
   // red for a reason that reads as unrelated to this control.
   resetState();
@@ -1022,7 +1274,7 @@ test("the reply-format choice reaches the settings payload", () => {
   assert.equal(settingsPayload(getState(), root).aiStrictFormat, true,
     "ticking the box must reach Go, or the control is decoration");
 
-  // A rail rendered without the Local AI body contributes no element, and the
+  // A rail rendered without the Local LLM body contributes no element, and the
   // store's value is what travels: switching tabs must not reset the choice.
   setState({ settings: { ...getState().settings, aiStrictFormat: true } });
   assert.equal(settingsPayload(getState(), container()).aiStrictFormat, true,
@@ -1030,7 +1282,7 @@ test("the reply-format choice reaches the settings payload", () => {
 });
 
 test("the last scan read-out is a read-out, never an explanatory paragraph", () => {
-  // The rail carries no p.hint at all, and the Local AI section is in the DOM
+  // The rail carries no p.hint at all, and the Local LLM section is in the DOM
   // even when folded, so a read-out added as a hint turns the structural guard
   // above red for a reason that reads as unrelated.
   resetState();

@@ -43,8 +43,8 @@ export const DEFAULT_SUGGESTION_FILTER = {
  *
  * The method filter matches a row that carries the method AMONG others, not one
  * that carries only it: a Suggestion found by both heuristic discovery and the
- * local AI belongs under either filter, because the user asking "what did the
- * local AI find?" means "which of these did it find", not "which did only it
+ * local model belongs under either filter, because the user asking "what did the
+ * local model find?" means "which of these did it find", not "which did only it
  * find".
  *
  * @param {Array} suggestions state.suggestions

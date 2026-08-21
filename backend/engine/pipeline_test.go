@@ -420,7 +420,7 @@ func TestUserDefinedBeatsSmartDiscovered(t *testing.T) {
 		}},
 		// The user's own regex...
 		Patterns: []CustomPattern{{Expr: `PRJ-[0-9]+`}},
-		// ...and the same string as something Smart detection discovered.
+		// ...and the same string as something heuristic discovery discovered.
 		Values: []Value{{
 			Category: CatProjectNames, MainText: "PRJ-4471", DiscoveryMethods: []string{MethodHeuristic},
 		}},

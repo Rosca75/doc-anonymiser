@@ -12,7 +12,7 @@
 //     placeholder, everywhere.
 //
 // Anonymise is DETERMINISTIC end to end. No discovery method runs here, and no
-// value is created by the run itself: the local AI is an Identify-time
+// value is created by the run itself: the local model is an Identify-time
 // discovery route whose findings the user accepts as Suggestions first. A run
 // that could mint a value the user never saw would walk past the review gate.
 //
@@ -182,7 +182,7 @@ func detectedCategoriesFromCounts(counts map[string]int) []string {
 // renamed to follow a display label. The labels live on the frontend
 // (copy.js CATEGORY_LABELS), cross-checked by ../category_parity_test.go.
 //
-// Every one of them is reachable by manual entry and by the local AI. The
+// Every one of them is reachable by manual entry and by the local model. The
 // annotated ones are additionally reachable OFFLINE, by a heuristic detector;
 // the rest need the AI or a value the user types, and the frontend label says
 // so.
@@ -613,7 +613,7 @@ type ownershipLoss struct {
 //
 // This is the structural half of the precedence rule. Without it, resolution
 // happens per region, so the same string can be won by a native regex in one
-// document and by the local AI in another; Registry.Assign's byOriginal index
+// document and by the local model in another; Registry.Assign's byOriginal index
 // then gives the string to whichever claim was ASSIGNED first, and assignment
 // order is byte offset within document order. Which route owned a value
 // therefore depended on the order the files were imported in, which is what

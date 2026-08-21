@@ -34,7 +34,7 @@ var placeholderLabels = map[string]string{
 	CatOtherNames:      "OTHER",
 	CatCustomPatterns:  "CUSTOM",
 	// Context values: a country or jurisdiction, a nationality, a line of
-	// business. Reachable by manual declaration and Local AI only.
+	// business. Reachable by manual declaration and Local LLM discovery only.
 	CatCountryNames:        "COUNTRY",
 	CatNationalityNames:    "NATIONALITY",
 	CatBusinessSectorNames: "BUSINESS_SECTOR",

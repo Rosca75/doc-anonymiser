@@ -39,7 +39,7 @@ type expectedPlaceholder struct {
 	Originals   []expectedOriginal `json:"originals"`
 	// Reachable is HOW this build can find it without help: "pattern" (pass 1),
 	// "smart" (a discovery method suggests it) or "manual" (only a declaration or
-	// Local AI). It is what keeps the assertions honest about which of them are
+	// local LLM discovery). It is what keeps the assertions honest about which of them are
 	// claims about recall and which are claims about the pipeline.
 	Reachable string `json:"reachable"`
 }
@@ -145,7 +145,7 @@ func TestFrameworkAgreementPatternsFindEveryPatternReachableValue(t *testing.T) 
 }
 
 // TestFrameworkAgreementRecall is the criterion that matters most to a user:
-// both parties of the contract are SUGGESTED by Smart detection, with no Local
+// both parties of the contract are SUGGESTED offline, with no local
 // AI and nothing typed by hand.
 //
 // Neither was suggested before the legal-form comma rule. "Contoso, Societe
@@ -156,7 +156,7 @@ func TestFrameworkAgreementPatternsFindEveryPatternReachableValue(t *testing.T) 
 func TestFrameworkAgreementRecall(t *testing.T) {
 	for _, want := range []string{"Contoso", "Northstar"} {
 		if !containsSuggestion(fixtureSuggestions(t), CatEntityNames, want) {
-			t.Errorf("Smart detection does not suggest %q, so the user has to know to type "+
+			t.Errorf("offline discovery does not suggest %q, so the user has to know to type "+
 				"one of the document's own two parties by hand", want)
 		}
 	}
@@ -211,7 +211,7 @@ func TestFrameworkAgreementPrecision(t *testing.T) {
 }
 
 // fixtureSuggestions is what a user actually reviews for this document with
-// Smart detection alone: heuristic discovery plus signal-based discovery, merged
+// The offline routes alone: heuristic discovery plus signal-based discovery, merged
 // and folded, under the shipped tuning.
 func fixtureSuggestions(t *testing.T) []Suggestion {
 	t.Helper()
@@ -229,7 +229,7 @@ func fixtureSuggestions(t *testing.T) []Suggestion {
 	}
 
 	allow := fixtureAllowlist()
-	// The suppressor is part of Smart detection's answer, not a separate step: a
+	// The suppressor is part of the offline answer, not a separate step: a
 	// defined term is the document's own statement that a phrase is its own
 	// vocabulary.
 	ApplyDefinedTerms(allow, DiscoverDefinedTerms("framework_agreement.docx", text.String()))

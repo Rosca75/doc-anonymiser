@@ -221,7 +221,7 @@ export async function saveAllowlistTemplate() {
  * it, a set of its own units (page/slide/row/line): {docName, pages}, where
  * pages is a 1-based number[]. An empty pages array means the whole selected
  * document; null (the default) means every document, whole. It never affects
- * the Smart detection route, which always reads everything.
+ * the offline routes, which always read everything.
  *
  * A cancelled run RESOLVES with the partial findings and cancelled: true;
  * only a failure to start (no matching documents, a run already in flight)

@@ -1,7 +1,7 @@
 // engine/pagescope.go — addressable sub-units of a document for the
 // page-scoped local-AI scan (CLAUDE.md §5).
 //
-// The reported problem was that handing a whole document to the local AI is
+// The reported problem was that handing a whole document to the local model is
 // "too much": a small model on a laptop chokes on a large file. The fix is to
 // let the user aim the scan at ONE document and, within it, a page/segment
 // range. This file is the engine half of that: it turns a Document into a
@@ -27,7 +27,7 @@ import (
 )
 
 // PageCount reports how many addressable sub-units (pages/slides/rows/lines)
-// the local AI can be scoped to for this document. It is always >= 1: even a
+// the local model can be scoped to for this document. It is always >= 1: even a
 // document with no internal boundaries is one scannable unit.
 func (d Document) PageCount() int {
 	if n := len(d.Pages); n > 0 {

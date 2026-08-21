@@ -49,7 +49,7 @@
       "occurrences": 4,
       "originals": [{ "text": "Française", "occurrences": 4 }],
       "reachable": "manual",
-      "note": "An ordinary French adjective that happens to sit inside a legal name here. A pattern or gazetteer for nationalities would fire on running prose constantly, so this category is reachable by manual declaration and Local AI only."
+      "note": "An ordinary French adjective that happens to sit inside a legal name here. A pattern or gazetteer for nationalities would fire on running prose constantly, so this category is reachable by manual declaration and Local LLM discovery only."
     },
     {
       "placeholder": "BUSINESS_SECTOR_1",
@@ -212,7 +212,7 @@
   "outOfScope": [
     {
       "what": "GFS LU999",
-      "why": "The reference leaves it in clear text and replaces only the TVA number beside it. It is a good example of a value only a human or the Local AI finds, and manual declaration already covers it."
+      "why": "The reference leaves it in clear text and replaces only the TVA number beside it. It is a good example of a value only a human or the local model finds, and manual declaration already covers it."
     },
     {
       "what": "23 July 2016 and 27 April 2016",

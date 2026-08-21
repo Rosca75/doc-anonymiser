@@ -78,7 +78,7 @@ type Value struct {
 	// "not stated", which DetectValues reads as ConfidenceManualDefault: a Value
 	// the USER declared is a high-trust Value.
 	//
-	// A Value accepted from a Local AI Suggestion carries ConfidenceLLMDefault
+	// A Value accepted from a local model Suggestion carries ConfidenceLLMDefault
 	// instead. That is what gives the Configure panel's minimum-confidence
 	// setting something real to act on: raising the minimum above the AI level
 	// stops replacing Values only the model suggested, while everything the user
