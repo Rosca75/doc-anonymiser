@@ -391,7 +391,7 @@ func decodePDFLiteralString(data []byte, start int) ([]byte, int) {
 // returns the decoded bytes and the index just past the closing '>'.
 func decodePDFHexString(data []byte, start int) ([]byte, int) {
 	var out []byte
-	var hi = -1
+	hi := -1
 	i := start + 1
 	for ; i < len(data); i++ {
 		c := data[i]
@@ -399,7 +399,7 @@ func decodePDFHexString(data []byte, start int) ([]byte, int) {
 			i++
 			break
 		}
-		v := -1
+		var v int
 		switch {
 		case c >= '0' && c <= '9':
 			v = int(c - '0')
