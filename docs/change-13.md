@@ -621,7 +621,22 @@ D12 (`ledongthuc/pdf`, and `fpdf` subject to OQ5); every implied document edit
 (`CLAUDE.md` §5's PDF rules and §7's table, both charters, `BRIDGE.md`,
 `README.md`, `frontend/docs/index.html`).
 
-**Gate before it runs:** 13b's GO (OQ2, OQ4 and OQ5 are already answered, §9).
+**Revisions forced by 13b's findings (2026-08-21):** the export's save is
+`RemoveUnusedObjects()` then `WriteTo`, never `WriteTo` alone, and the
+naked-`WriteTo` pin stays in the suite (F5); rung 2 constructs the redact
+annotation, `Add`s it to the page's annotation collection and draws the
+placeholder through `SetOverlayText` with an explicit white colour, all one
+gesture (F6, F7); rung 1 accepts an occurrence only after measuring the
+replacement's grown width against the line's other fragments, else falls to
+rung 2 (F10); `RepairPDFText` stays and runs over the new extractor's output
+(F11, D8 resolved); the import distinguishes a 0-page salvage of a damaged
+file from a scanned one so `ErrScannedPDF`'s wording is never shown for
+truncation damage, and keeps a cheap recover shield (F8).
+
+**Gate before it runs:** 13b's conditional GO becomes unconditional: the owner
+runs the deep tier (`task test:deep` with `DOC_ANONYMISER_REFERENCE_PDF` and
+`DOC_ANONYMISER_REFERENCE_DECK` set) and the G4/G7/G8 numbers land in the
+findings log first (F4). OQ2, OQ4 and OQ5 are already answered (§9).
 The removals carry their own second gate per D12: `ledongthuc/pdf`, `fpdf` and
 the regenerated-export code leave only after the owner has explicitly
 confirmed the tests are successful, with the owner's tag and release of the
@@ -648,6 +663,14 @@ image tests moving with it; the export review panel's `images` field and the
 report's picture section covering PDF; `SessionVersion` 13 to 14 with its
 reason line (D16); every implied document edit.
 
+**Revisions forced by 13b's findings (2026-08-21):** the twice-placed asset
+question is settled with evidence: `ImageInfos()` lists per PLACEMENT and the
+shared object decodes identically from both, so the content-hash identity (D9)
+carries unchanged. Inline images ARE listed (`Inline: true`), so 13d must
+either verify `ReplaceFromStream`/`Remove` semantics on an inline image or
+give inline occurrences a warning code with disabled treatments, per Q4's
+`unreadable_part` pattern (F9).
+
 **Gate before it runs:** 13c finished and reconciled; 13b's measurements on
 `ImageInfos` coverage (inline images, exotic filters) folded into its steps.
 **Acceptance (to be sharpened):** both suites green; the parity guards moved;
@@ -666,9 +689,9 @@ obligation and not a suggestion.
 | Batch | State | Session | Outcome |
 |---|---|---|---|
 | 13 (this plan) | done | 2026-08-21 planning session | plan and 13b order written; owner answered OQ1 to OQ5 the same day (§9), 13b cleared to start |
-| 13b | planned | | |
-| 13c | scoped, not written | | order to be written after 13b's GO |
-| 13d | scoped, not written | | order to be written after 13b's GO, revised after 13c |
+| 13b | done, CONDITIONAL GO | 2026-08-21 implementation session | every criterion measurable without the reference documents PASSES (G1, G2, G3, G9 hard requirements; G4, G5, G6 fixture halves; G7 prototyped); the reference-document halves (G4, G7, G8, G5-on-real-files) are packaged as the env-gated deep tests and MUST be run on the owner's machine before 13c starts. Full note in §11; findings F4 to F15 |
+| 13c | scoped, not written | | order to be written after the owner's deep-tier run confirms the reference halves; scope revised by 13b's findings (see §5) |
+| 13d | scoped, not written | | order to be written after 13b's GO, revised after 13c; scope revised by 13b's findings (see §5) |
 
 ---
 
@@ -682,6 +705,18 @@ with the decision each finding forced. Measurements land here, as counts.
 | F1 | planning, 2026-08-21 | `frontend/BRIDGE.md`'s session-file paragraph still says "schema version 9" while `SessionVersion` is 13 (`backend/engine/session.go`, `CLAUDE.md` §5) | the correction rides with 13d's `BRIDGE.md` edits, which touch that section anyway for the version bump; no separate batch |
 | F2 | planning, 2026-08-21 | `WriteTo` full-rewrite behaviour and the copilots' exact configuration symbols could not be verified from documentation | both became 13b measurements: G1 proves the save with bytes, and the Q7 symbol table is generated from the vendored source rather than from the README |
 | F3 | owner review, 2026-08-21 | the owner answered OQ1 to OQ5 (§9) and added a constraint the plan did not have: a tag and a release of the pre-change application exist as the rollback point, and the old PDF path may be decommissioned only after the owner explicitly confirms the tests are successful | D12 and the 13c scope amended: the dependency removals and the deletion of the regenerated export are gated on that confirmation, shipping the new path beside the old code until it arrives |
+| F4 | 13b, 2026-08-21 | the implementing session's environment does not hold the reference documents (the env variables are unset there), so step 1's baseline and step 9's measurements could not run in-session | the deep test measures the INCUMBENT's baseline in the same run as the library's numbers, so the G4/G8 comparison is same-machine by construction; the G8 budgets are encoded in the test (import within 3x the incumbent; export within 30 s per document); the owner runs `task test:deep` with `DOC_ANONYMISER_REFERENCE_PDF` and `DOC_ANONYMISER_REFERENCE_DECK` set, and that run is 13c's entry gate |
+| F5 | 13b, 2026-08-21 | `WriteTo` is a full rewrite of a SINGLE body (no second `%%EOF`, no `/Prev` chain), but it serialises every object in the document's table, INCLUDING one an edit orphaned: after `ReplaceText` the old content stream survives unreferenced and readable. `RemoveUnusedObjects()` (a documented library API; it removed 1 to 3 objects per edited fixture) clears it, and the leak scanner then finds nothing | the save discipline is `RemoveUnusedObjects()` before every `WriteTo`; D2's escape clause is satisfied (a documented save path that passes the leak test). BOTH halves are pinned by test: the discipline's output is scanned clean, and a naked `WriteTo` is asserted to still retain the orphan, so neither the discipline nor the library behaviour can drift unnoticed. Recorded in the `CLAUDE.md` §7 pin row |
+| F6 | 13b, 2026-08-21 | `NewRedactAnnotation` builds an UNBOUND annotation; `ApplyRedactions` silently does nothing for one that was only constructed. It applies only after `page.Annotations().Add(...)` | 13c's rung 2 must keep construct-and-Add as one gesture; the gate tests do |
+| F7 | 13b, 2026-08-21 | a placeholder drawn over the redaction box with `AddText` in the default colour is extractable but INVISIBLE (black on the black box; measured on the rasterised artefact). The annotation's own `OverlayText` is applied by `ApplyRedactions`, but the APPLY path draws it black unless the style names a colour (only the mark-mode preview defaults to a contrasting one) | rung 2 draws the placeholder through `SetOverlayText` with an EXPLICIT white `TextStyle.Color`, in the same gesture as the redaction; the committed artefacts `backend/testdata/golden/pdf_gate_redact_before.png` / `_after.png` show the result (OQ2's evidence) |
+| F8 | 13b, 2026-08-21 | a truncated file never panics and never invents content: the library reconstructs the xref and salvage-opens with the pages still intact in the bytes (3/2/1/0 of 3 pages at 90/60/30/10% cuts); a non-PDF errors (`parse PDF: startxref not found`); an encrypted file errors distinguishably (`PDF is encrypted; use OpenWithPassword`) and opens with the password | G9 PASSES. Two 13c consequences: keep a cheap recover shield anyway (the incumbent's precedent), and distinguish a 0-page salvage of a DAMAGED file from a scanned one, because `ErrScannedPDF`'s wording would mislead there |
+| F9 | 13b, 2026-08-21 | `ImageInfos()` lists images per PLACEMENT (the shared JPEG object appears on both pages), decodes to identical bytes from both placements, and DOES list inline images (`Inline: true`). `Extract()` output feeds `imaging.Treat` unchanged; `ReplaceFromStream` and `Remove()` leave none of the original stream bytes in the produced file (probed with a 64-byte chunk) | D9 confirmed: asset identity must be the content hash, exactly as decided. 13d gains a decision: inline images are LISTED, but `ReplaceFromStream`/`Remove` operate on XObjects, so 13d must verify the same operations on an inline image or give it a warning code and disabled treatments (the `unreadable_part` pattern) |
+| F10 | 13b, 2026-08-21 | `ReplaceText` redraws the longer placeholder at the SAME size and grows RIGHTWARD (59.0 pt to 123.5 pt on the fixture); it does not shrink to fit, and nothing outside the grown rectangle changed (0 differing pixels) | rung 1 is safe only when the grown rectangle stays clear of same-line neighbours: 13c's ladder must measure the replacement's width against the line's other fragments BEFORE accepting rung 1, and fall to rung 2 otherwise. Silent overlap was not observed on the fixture, but the fixture's value sits at line end; the check is the guarantee, not the observation |
+| F11 | 13b, 2026-08-21 | D8 resolved: the library's extraction reproduces the SAME interleaved-capitals artefact on the kerning fixture (2 repairable lines in both extractors), and `RepairPDFText` is idempotent and harmless over the library's output | the spacing repair does NOT retire: it keeps running over the new extractor's output in 13c, unchanged, exactly as D8's second branch says |
+| F12 | 13b, 2026-08-21 | Go vendoring is all-or-nothing: `go mod vendor` vendored the WHOLE dependency graph (~32 MB: Wails, excelize and their transitive deps beside the PDF library), and builds now run in vendor mode. The library's `ai` subpackage is NOT vendored, because nothing imports it, and the boundary guard asserts that absence | accepted as the cost of D1's auditable-in-tree requirement; the audit layer is unaffected (`./...` never expands into `vendor/`, golangci-lint skips it by default, deadexports walks `frontend/` only), so step 2.3 needed no configuration edit |
+| F13 | 13b, 2026-08-21 | `deadcode` (which deliberately runs without `-test`) will flag `exportfmt/pdfscan.go`'s exported functions until 13c wires them into the export path | the recorded exemption path is the audit layer's own: dismiss the code-scanning alert with a comment naming `docs/change-13.md` (the `docs/audit.md` procedure); no tool configuration is edited, and the alert disappears when 13c lands |
+| F14 | 13b, 2026-08-21 | two integration tests fail on pristine `main` (`TestDetectionAlwaysEndsWithATerminalEvent`, `TestDetectionProgressNeverGoesBackwards` in `backend/app_detect_integration_test.go`), reproduced in a clean worktree of HEAD with no 13b change present | pre-existing and OUTSIDE this batch's scope (the mock-Ollama detection flow; 13b touches no production code it reads). Reported to the owner rather than fixed here: fixing it inside an unrelated batch would hide the regression's origin. Every package 13b touches is green |
+| F15 | 13b, 2026-08-21 | the wrapped value is confirmed NOT findable whole (`SearchText`'s documented single-line limit holds: 0 matches), and the two-fragment prototype works: head and tail located by single-line searches, both redacted, placeholder drawn over the head, neighbours intact, the scanner's concatenated view clean | the wrapped-match step of D5's ladder is implementable with the library's own primitives; how often it is NEEDED is the G7 census, which runs with the reference documents (F4) |
 
 ---
 
@@ -741,3 +776,46 @@ substance and folded into the decisions they touch (D4, D6, D11, D12, D15).
     fallback note, §5 PDF rules and the image format table, §7 pins),
     `backend/CLAUDE.md`, `frontend/CLAUDE.md`, `frontend/BRIDGE.md`,
     `README.md`, `frontend/docs/index.html`.
+
+---
+
+## 11. The 13b GO/NO-GO note — 2026-08-21
+
+**Verdict: CONDITIONAL GO.** Every criterion measurable without the owner's
+confidential reference documents PASSES, including all four hard requirements
+(G1, G2, G3, G9). The reference-document halves (G4's real-document counts,
+G7's ladder census, G8's wall clocks, G5 on real files) could not run in the
+implementing session, because that environment does not hold the documents
+(F4); they are packaged as the env-gated deep tests and the owner's
+`task test:deep` run is 13c's entry gate. The condition is a measurement to
+take, not a doubt to argue: if that run shows a G4 regression or a G7 census
+where UNLOCATED is not rare, the gate reopens and this note is amended.
+
+| # | Criterion | Measured | Result |
+|---|---|---|---|
+| G1 | `WriteTo` is a full rewrite | single body (1 `%%EOF`), no `/Prev` chain; sentinel absent after `ReplaceText` + the F5 save discipline (`RemoveUnusedObjects()` first). A NAKED `WriteTo` retains the orphaned pre-edit stream (1 to 3 objects per edited fixture), so the discipline is load-bearing and both halves are pinned by test | **PASS**, with the discipline recorded in `CLAUDE.md` §7 |
+| G2 | the whole-file leak scanner exists and finds every planted sentinel | found in all 5 surfaces of `pdf_gate_surfaces.pdf` (content stream, Info, XMP, annotation, outline), in a hand-appended incremental body (named as such), and in 7 string encodings (escaped literal, octal, hex, UTF-16BE, split Tj segments, flate-compressed content, line continuation); 0 findings for an absent needle; DCTDecode streams reported unscannable by name | **PASS** |
+| G3 | the boundary guard exists, red-green demonstrated, inventory committed | red on a scratch `NewOpenAIClient` reference (failure named file, line, symbol and reason), green after removal; committed network inventory = [`pkcs7_timestamp.go`]; the `ai` copilot package is asserted ABSENT from `vendor/`; the engine path ban forbids `Open`/`OpenWithPassword`/`.Save(` under `backend/` and pins the one import alias | **PASS** |
+| G4 | extraction parity | fixture half: 9 of 9 planted names (English, French, an email, a 9 pt value, both wrapped-value halves) present in BOTH extractors; page shape 3 = 3 | **PASS on fixtures; reference half pending the owner's deep run (F4)** |
+| G5 | round-trip fidelity | page count, per-page text and image inventory preserved on all three fixtures; rasterised difference **0 pixels on all 6 pages** | **PASS on fixtures; real files pending (F4)** |
+| G6 | `ReplaceText` behaviour | original absent (scanner), placeholder extractable; redrawn at the SAME size, growing rightward 59.0 pt to 123.5 pt, no shrink; **0 pixels changed outside the replaced region**. Consequence F10: rung 1 needs a fits-check against same-line neighbours | **PASS**, with F10's condition on rung 1 |
+| G7 | ladder coverage | prototyped on fixtures: single-line limit confirmed (wrapped value not found whole), two-fragment wrapped redaction works with neighbours intact (F15); rung 2 (redact + overlay placeholder) proven with the committed before/after artefacts | **prototype PASS; census pending the owner's deep run (F4)** |
+| G8 | wall clock | budgets encoded in the deep test from the order's recommendation: import within 3x the incumbent, export within 30 s per document, incumbent baseline measured in the same run | **pending the owner's deep run (F4)** |
+| G9 | failure behaviour | no panic at any truncation depth (salvage-opens 3/2/1/0 of 3 pages, never invents content); non-PDF errors actionably; encrypted file distinguishable (`PDF is encrypted; use OpenWithPassword`) and opens with the password; `scanned.pdf` extracts as textless through the library, so `ErrScannedPDF` fires byte-identically | **PASS**, with F8's two 13c consequences |
+
+**The rasterised evidence (OQ2):** `backend/testdata/golden/pdf_gate_redact_before.png`
+and `pdf_gate_redact_after.png`, regenerated by the rung-2 gate test: the
+original name replaced by a black redaction box carrying `[PERSON_3]` in
+white, neighbours pixel-identical.
+
+**Consequences folded into the batch scopes (§5):** the save discipline and
+its pin (F5), rung 2's Add-plus-OverlayText gesture (F6, F7), rung 1's
+fits-check (F10), `RepairPDFText` stays (F11, resolving D8), the damaged-vs-
+scanned distinction (F8), inline images listed and needing a 13d decision
+(F9), and D9's content-hash identity confirmed by per-placement evidence (F9).
+
+**What 13b did NOT change:** no production behaviour. The module is imported
+by test files and `exportfmt/pdfscan.go` only, `pdfscan.go` has no production
+caller yet, and the boundary guard holds the copilots, the timestamp lever and
+the file-path APIs out of everything. A PDF imports, anonymises and exports
+today exactly as before this batch.
