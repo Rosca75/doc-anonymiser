@@ -24,7 +24,7 @@ import {
   renderIdentifyWorkspace, spellingsPopupHTML, applySpellingsSearchFilter,
 } from "./views/identifyworkspace.js";
 import { container, fire } from "./testdom.js";
-import { all, one, exists, textOf, stripTags } from "./testhtml.js";
+import { all, one, textOf, stripTags } from "./testhtml.js";
 import { WORKSPACE } from "./copy.js";
 
 /** seed(category, mainText, spellings) adds one accepted value with a settled
@@ -75,7 +75,7 @@ function rowFor(layer, spelling) {
 
 // --- What the popup shows -------------------------------------------------
 
-test("the popup lists every spelling and counts the whole list", () => {
+test("nothing renders while no popup is open", () => {
   resetState();
   seed("entity_names", "Meridian", ["Meridian Consulting", "Meridian Group", "MC"]);
   const { root, stop } = workspace();
@@ -88,7 +88,7 @@ test("the popup lists every spelling and counts the whole list", () => {
   } finally { stop(); }
 });
 
-test("the popup shows the main text and every spelling, and counts the spellings", async () => {
+test("the popup lists the spellings, and only the spellings", async () => {
   resetState();
   seed("entity_names", "Meridian", ["Meridian Consulting", "Meridian Group", "MC"]);
   const { root, stop } = workspace();
@@ -97,36 +97,34 @@ test("the popup shows the main text and every spelling, and counts the spellings
     await openPopup(root, "Meridian");
 
     const html = spellingsPopupHTML(getState());
+    // The family is named in the title, which is why the list needs no row for
+    // its head: the main text is not a spelling and neither row action applies
+    // to it, so such a row carried nothing but the reason it was unusable.
     assert.match(textOf(html, "div.modal-head"), /Spellings for Meridian/);
-    // The count is the WHOLE list, never the filtered view: a count that shrank
-    // as you typed in the search would read as deletion.
-    assert.ok(stripTags(html).includes(WORKSPACE.spellingsPopupCount(3)),
-      "three spellings are counted");
     const rows = all(html, "div.spelling-list-row");
-    assert.equal(rows.length, 4, "the three spellings plus the main text");
-    assert.ok(exists(html, "div.main-row"), "the family is shown with its head, not without it");
+    assert.equal(rows.length, 3, "one row per spelling, and nothing else");
+    for (const row of rows) {
+      assert.ok(row.attrs["data-spelling-row"], "every row is a spelling with actions on it");
+    }
+    // No count line either: it said what the rows already say, and it made the
+    // search look like it had deleted something.
+    assert.ok(!/spellings?<\/p>/.test(html), "the list is not counted above itself");
   } finally { stop(); }
 });
 
-test("the main-text row offers no Delete and says why", async () => {
-  // Deleting the main text is meaningless: renaming it is a card action, and
-  // removing it means removing the whole Value.
+test("the list carries no ROLE column", async () => {
+  // Every row is a spelling now, so a column saying so said it three times.
   resetState();
-  seed("entity_names", "Meridian", ["MC"]);
+  seed("entity_names", "Meridian", ["Meridian Consulting", "MC"]);
   const { root, stop } = workspace();
   try {
     await openValuesTab(root);
-    const layer = await openPopup(root, "Meridian");
+    await openPopup(root, "Meridian");
 
-    const main = layer.querySelectorAll(".spelling-list-row").find((r) => !r.dataset.spellingRow);
-    assert.ok(main, "the main text is listed");
-    assert.equal(main.querySelector(".spelling-delete"), null, "no live delete on it");
-    assert.equal(main.querySelector(".spelling-move"), null, "and moving it is not a spelling move");
-    const mainRow = one(spellingsPopupHTML(getState()), "div.main-row").inner;
-    assert.match(mainRow, /disabled/,
-      "the control is shown disabled rather than absent, so its absence is explained");
-    assert.match(mainRow, /not a spelling\. Rename it on the card/,
-      "and the title says why, so the disabled state is not a dead end");
+    const html = spellingsPopupHTML(getState());
+    assert.equal(all(html, "span.spelling-list-role").length, 0, "no role cell on any row");
+    const head = stripTags(one(html, "div.spelling-list-head").inner);
+    assert.ok(!/ROLE/.test(head), `no role caption over the list, got ${head}`);
   } finally { stop(); }
 });
 
@@ -366,6 +364,6 @@ test("the popup search's ✕ clears the filter and shows every row again", async
       "the very same input node: clearing filters in place, exactly as typing does");
     const visible = layer.querySelectorAll(".spelling-list-row")
       .filter((r) => r.style.display !== "none");
-    assert.equal(visible.length, 4, "every row is back, the three spellings plus the main text");
+    assert.equal(visible.length, 3, "every row is back, all three spellings");
   } finally { stop(); }
 });

@@ -145,6 +145,19 @@ class FakeNode {
 
   select() { this.selected = true; }
 
+  /** appendChild(node) moves an existing node to the end of this element's child
+   *  list, or adopts a new one. Moving rather than copying is the property the
+   *  code under test depends on: a re-sorted picker keeps the checkbox states of
+   *  the rows it reorders. */
+  appendChild(node) {
+    if (node.parentNode) {
+      node.parentNode.children = node.parentNode.children.filter((c) => c !== node);
+    }
+    this.children.push(node);
+    node.parentNode = this;
+    return node;
+  }
+
   /** replaceWith(node) swaps this element for another in its parent's child
    *  list, which is how the inline rename input takes the name button's place. */
   replaceWith(node) {

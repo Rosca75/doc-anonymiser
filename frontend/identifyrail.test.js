@@ -630,49 +630,33 @@ test("a switched-off section is marked as off, and its section still renders", (
   assert.ok(exists(patterns.outer, "input.cat-toggle"), "the scope is still shown");
 });
 
-// --- The Load profile section (CR7) --------------------------------------
+// --- The Profile panel ---------------------------------------------------
 
-test("the Load profile section renders AFTER the routes", () => {
+test("the Profile panel renders AFTER the routes", () => {
   resetState();
   const html = railBody(getState());
   // Ordering by first appearance: the profile title must come after the last
   // route's title, so the section sits at the foot of the rail.
-  assert.ok(html.includes(RAIL.profileTitle), "the Load profile section renders");
+  assert.ok(html.includes(RAIL.profileTitle), "the Profile panel renders");
   const lastRoute = RAIL_SECTIONS[RAIL_SECTIONS.length - 1][1];
   assert.ok(html.includes(lastRoute), "the last route renders");
   assert.ok(html.indexOf(RAIL.profileTitle) > html.indexOf(lastRoute),
-    "Load profile is below the last route");
+    "Profile is below the last route");
 });
 
-test("the Load profile section has a Load and a Save button", () => {
+test("the rail's Profile panel offers LOAD and no Save", () => {
+  // Save is gated on Go holding a placeholder registry. Only a run mints one and
+  // moving back from Anonymise discards it, so a Save on this step is a button
+  // that can never be pressed. It lives on step 3 instead, and its gate is
+  // tested there (anonymise.test.js).
   resetState();
   const html = railBody(getState());
   assert.ok(exists(html, "#profile-load"), "Load button present");
-  assert.ok(exists(html, "#profile-save"), "Save button present");
-});
-
-test("the profile Save is disabled until Go actually holds a registry", () => {
-  resetState();
-  // Fresh session: no run yet, so Save is disabled with the reason.
-  let save = one(railBody(getState()), "#profile-save");
-  assert.ok("disabled" in save.attrs, "Save is disabled before any run");
-  assert.ok((save.attrs.title || "").includes(RAIL.profileSaveDisabled),
-    "the disabled Save says why in its tooltip");
-  // A run producing a registry opens the gate.
+  assert.ok(!exists(html, "#profile-save"),
+    "a control that can never be used is not offered here");
   setState({ replacedValues: [{ original: "Alpine Trust", placeholder: "[ENTITY_1]", category: "entity_names", count: 1 }] });
-  save = one(railBody(getState()), "#profile-save");
-  assert.ok(!("disabled" in save.attrs), "Save is enabled once a run has produced a registry");
-});
-
-test("the profile Save gate closes again once the registry empties, e.g. after stepping back from Anonymise", () => {
-  resetState();
-  setState({ replacedValues: [{ original: "Alpine Trust", placeholder: "[ENTITY_1]", category: "entity_names", count: 1 }] });
-  assert.ok(!("disabled" in one(railBody(getState()), "#profile-save").attrs));
-  // STEP_RESETS.anonymise() clears replacedValues on a backward move; a
-  // "detection ran" latch would stay on and silently offer to save nothing.
-  setState({ replacedValues: [] });
-  const save = one(railBody(getState()), "#profile-save");
-  assert.ok("disabled" in save.attrs, "Save must close again once the registry is gone");
+  assert.ok(!exists(railBody(getState()), "#profile-save"),
+    "not even with a registry in the store: this step cannot have produced one");
 });
 
 test("the strictness lever is a select of the three levels, balanced by default", () => {
@@ -1402,4 +1386,67 @@ test("the dynamic read-outs stay inline, where the user is watching them", () =>
   assert.ok(/\d+\/\d+/.test(html), "the per-group active counts");
   assert.ok(all(html, "span.cgroup-count").length > 0,
     "each carried on its group's own header, where the user is looking");
+});
+
+test("the scan-scope picker sits on the heading row, with no second label", () => {
+  // The block holds ONE control, and the heading already names it: a "Document"
+  // label under "Scan scope" was a row spent saying the same thing twice.
+  const html = localLLMHTML({
+    documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
+  });
+  const field = all(html, ".rail-field").find((f) => exists(f.outer, "#ai-scope-doc"));
+  assert.ok(field, "the picker is a field, so it shares the section's control column");
+  assert.match(stripTags(field.inner), new RegExp(RAIL.scopeHeading),
+    "and the heading is the field's own label");
+  assert.equal(all(field.outer, ".rail-field-label").length, 1,
+    "one label for one control");
+  assert.ok(exists(field.outer, "span.help"),
+    "the explanation stays a tooltip on the heading");
+});
+
+test("the request estimate shares the Detail row, at the column's right edge", () => {
+  // A live read-out under its own control is a row the panel cannot spare, and
+  // the number only means anything beside the dial that changes it.
+  resetState();
+  setUseLocalLLM(true);
+  setState({ llmRequestEstimate: 6 });
+  const html = railBody(getState());
+  const field = all(html, ".rail-field").find((f) => exists(f.outer, "#ai-detail-level"));
+  assert.ok(exists(field.outer, "#ai-request-estimate"),
+    "the estimate lives in the Detail field, not in a row of its own");
+});
+
+test("the page spec shares the radio pair's row", () => {
+  // The choice and the box that answers it are one question, so they are one
+  // row: the radios in the field's label column, the spec in its control column.
+  const html = localLLMHTML({
+    documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
+    scope: { docName: "a.pdf", mode: "pages", pages: "2-3" },
+  });
+  const field = all(html, ".rail-field").find((f) => exists(f.outer, "input.ai-scope-mode"));
+  assert.ok(field, "the radio pair sits in a field, not in a row of its own");
+  assert.ok(exists(field.outer, "#ai-pages"),
+    "and the page spec is that field's control");
+});
+
+test("the two connection fields carry the help icon the fields below them do", () => {
+  // A form where some rows explain themselves and others do not reads as
+  // unfinished, and these two are the rows a user reaches for first.
+  const html = localLLMHTML({});
+  for (const id of ["#ollama-port", "#ollama-model"]) {
+    const row = all(html, ".rail-field-row").find((r) => exists(r.outer, id));
+    assert.ok(row, `${id} sits in a field row`);
+    assert.ok(exists(row.outer, "span.help"), `${id} explains itself in a tooltip`);
+  }
+});
+
+test("Auto detected values reports how many categories it reads", () => {
+  // The block used to be a label and a tooltip with nothing between them, which
+  // reads as a control that failed to render. The count is DERIVED from the one
+  // category selection, so it cannot disagree with what a run reads.
+  const html = localLLMHTML({});
+  const readout = one(html, "#llm-name-categories");
+  assert.ok(readout, "the block says what it is reading");
+  assert.match(stripTags(readout.inner), /categor/,
+    "and it says it as a count rather than as prose");
 });

@@ -74,8 +74,11 @@ without the runtime. Preserve that behaviour.
   There is no cloud route.
 
   ONE switch-less panel follows them, carrying `.rail-panel` rather than
-  `.rail-section` so a utility panel is never counted as a route: **Load
-  profile**. There is no cross-route quality panel, because there is no
+  `.rail-section` so a utility panel is never counted as a route: **Profile**,
+  offering LOAD alone. Save lives on the Anonymise step, where the placeholder
+  registry a profile carries actually exists; `views/profile.js` renders both
+  screens' controls, so the gate on Save has one definition
+  (`canSaveProfile`). There is no cross-route quality panel, because there is no
   cross-route control left: the one genuine question the confidence percentage
   asked is the "Only replace when the checksum matches" checkbox
   (`setRequireChecksum`), and it renders inside Built-in patterns, under the

@@ -55,11 +55,12 @@ import { findHits, MAX_HITS } from "../panesearch.js";
 import { valueSpans, renderOriginWithSpans } from "../valuespans.js";
 import {
   button, card, statTile, collapsibleGroup, wireGroups, icon, sectionLabel,
-  searchBox, wireSearchBox, tabbar,
+  searchBox, wireSearchBox, tabbar, wireHelpTooltips,
 } from "../ui.js";
 import { imageCount, imageTabHTML, wireImageTab } from "./anonymiseimages.js";
 import { categorySelect, conflictMessage } from "./identifyworkspace.js";
 import { stepFooterHTML, wireStepFooter } from "../nav.js";
+import { profileControlsHTML, wireProfileControls } from "./profile.js";
 import { notify, wireNotice } from "../toast.js";
 import { CARDS, ANONYMISE, CATEGORY_LABELS, IMPORT, WORKSPACE, VALUES, IMAGES } from "../copy.js";
 import { toastHTML } from "../ui.js";
@@ -239,9 +240,26 @@ function textWorkspaceHTML(s, doc) {
           ${s.results && !blocked ? valuesCard(s) : ""}
           ${s.results && !blocked ? reportCard(s) : ""}
           ${s.results ? missedCard(s) : ""}
+          ${profileCard(s)}
         </div>
         ${compareCard(s, doc)}
       </div>`;
+}
+
+/**
+ * profileCard(s) is the Profile card: load a saved setup, or save this one.
+ *
+ * This is where SAVE belongs, and the reason is the registry. A profile carries
+ * the placeholder registry so a follow-up batch reuses the same placeholders;
+ * only a run mints one, and moving back from this step discards it. On Identify
+ * the same button could therefore never be used, so that screen offers Load
+ * alone. Both screens render the one shared control (views/profile.js), so the
+ * gate on Save cannot differ between them.
+ */
+function profileCard(s) {
+  return `<section class="card profile-card">` +
+    profileControlsHTML(s, { withSave: true }) +
+    `</section>`;
 }
 
 /** continueBlockedTitle(s) is the disabled CONTINUE button's tooltip: it names
@@ -1150,6 +1168,10 @@ function wire(container, s, doc) {
     wireMissed(container);
   }
   wireCompare(container, doc);
+  wireProfileControls(container);
+  // The Profile card's help icon is the only hover surface on this screen, and
+  // an unwired tooltip is a bubble that never opens.
+  wireHelpTooltips(container);
   wireNotice(container);
   wireStepFooter(container);
 }

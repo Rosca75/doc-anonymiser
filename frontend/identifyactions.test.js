@@ -393,3 +393,95 @@ test("valueKey stays the identity the handlers agree on", () => {
   assert.equal(valueKey("person_names", "Marie Duval"), valueKey("person_names", "Marie Duval"));
   assert.notEqual(valueKey("person_names", "Marie"), valueKey("entity_names", "Marie"));
 });
+
+
+test("the group picker sorts by either column and keeps the ticks it already has", async () => {
+  // A re-sort must not answer "no" on the user's behalf: it reorders the SAME
+  // row nodes rather than repainting, so a tick made before the sort survives it.
+  resetState();
+  seed("entity_names", "Nimbus");
+  seed("person_names", "Zora Blake");
+  seed("entity_names", "Meridian");
+  const w = workspace();
+  try {
+    await openValuesTab(w.root);
+    const cardEl = card(w.root, "entity_names", "Nimbus");
+    await fire(cardEl.querySelector(".value-group"), "click");
+
+    const names = () => [...card(w.root, "entity_names", "Nimbus")
+      .querySelectorAll(".group-pick")].map((cb) => cb.dataset.mainText);
+    const sortBtn = (column) => [...card(w.root, "entity_names", "Nimbus")
+      .querySelectorAll(".sort-btn")].find((b) => b.dataset.sort === column);
+    assert.deepEqual(names(), ["Meridian", "Zora Blake"], "value ascending is the default order");
+
+    card(w.root, "entity_names", "Nimbus").querySelectorAll(".group-pick")[0].checked = true;
+
+    await fire(sortBtn("value"), "click");
+    assert.deepEqual(names(), ["Zora Blake", "Meridian"], "a second click reverses the column");
+    const kept = [...card(w.root, "entity_names", "Nimbus").querySelectorAll(".group-pick")]
+      .find((cb) => cb.dataset.mainText === "Meridian");
+    assert.equal(kept.checked, true, "the tick travelled with its row");
+
+    await fire(sortBtn("category"), "click");
+    assert.deepEqual(names(), ["Meridian", "Zora Blake"], "by category, ENTITY sorts before PERSON");
+  } finally {
+    w.stop();
+  }
+});
+
+test("the group picker's filter hides the rows that do not match", async () => {
+  resetState();
+  seed("entity_names", "Pinnacle");
+  seed("entity_names", "Meridian");
+  seed("person_names", "Zora Blake");
+  const w = workspace();
+  try {
+    await openValuesTab(w.root);
+    await fire(card(w.root, "entity_names", "Pinnacle").querySelector(".value-group"), "click");
+
+    const shown = () => [...card(w.root, "entity_names", "Pinnacle").querySelectorAll(".group-row")]
+      .filter((r) => r.style.display !== "none")
+      .map((r) => r.querySelector(".group-pick").dataset.mainText);
+
+    const input = card(w.root, "entity_names", "Pinnacle").querySelector("#group-filter");
+    input.value = "zora";
+    await fire(input, "input");
+    assert.deepEqual(shown(), ["Zora Blake"], "only the matching row stays visible");
+
+    input.value = "nothing here";
+    await fire(input, "input");
+    assert.deepEqual(shown(), [], "a filter matching nothing empties the grid");
+    assert.equal(card(w.root, "entity_names", "Pinnacle").querySelector(".group-no-match").hidden, false,
+      "and the empty grid says why it is empty");
+
+    // The (x) is the same handler as typing, so clearing brings every row back.
+    await fire(card(w.root, "entity_names", "Pinnacle")
+      .querySelector('[data-clears="group-filter"]'), "click");
+    assert.equal(shown().length, 2, "clearing the filter restores every row");
+  } finally {
+    w.stop();
+  }
+});
+
+test("the picker explains itself in a help bubble, not in a paragraph", async () => {
+  // The panel opens inside a card in a scrolling list, so the explanation is one
+  // hover away and the grid keeps the line the sentence used to cost.
+  resetState();
+  seed("entity_names", "Halcyon");
+  seed("entity_names", "Meridian");
+  const w = workspace();
+  try {
+    await openValuesTab(w.root);
+    await fire(card(w.root, "entity_names", "Halcyon").querySelector(".value-group"), "click");
+
+    const panel = card(w.root, "entity_names", "Halcyon").querySelector(".group-panel");
+    const bubbles = [...panel.querySelectorAll(".help-bubble")].map((b) => b.textContent.trim());
+    assert.ok(bubbles.includes(WORKSPACE.groupWithHint), "the hint is the bubble's text");
+    for (const p of panel.querySelectorAll(".hint")) {
+      assert.notEqual(p.textContent.trim(), WORKSPACE.groupWithHint,
+        "and it is not also a paragraph above the grid");
+    }
+  } finally {
+    w.stop();
+  }
+});

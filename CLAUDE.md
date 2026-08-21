@@ -839,8 +839,13 @@ doc-anonymiser/
   either side of the bridge.
 
   Below the routes sits ONE switch-less panel, marked `.rail-panel` rather than
-  `.rail-section` so a utility panel is never counted as a route: **Load
-  profile**. There is no cross-route quality panel, because there is no
+  `.rail-section` so a utility panel is never counted as a route: **Profile**,
+  which offers LOAD alone. Saving a profile lives on the Anonymise step instead,
+  because a profile carries the placeholder registry: only a run mints one, and
+  moving back from Anonymise discards it, so a Save on Identify is a control that
+  can never be used. Both screens render the one shared block
+  (`frontend/views/profile.js`), so the gate on Save cannot differ between them.
+  There is no cross-route quality panel, because there is no
   cross-route control left to hold: the one genuine question the confidence
   percentage was asking is the checksum checkbox, and that lives on Built-in
   patterns, which owns the check digits it is about. The only confidence control

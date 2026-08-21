@@ -160,10 +160,6 @@ let openValuePanel = { key: null, kind: null };
 // survive a RENAME, which changes the key, and dropping the selection there is
 // the honest answer: the card the user picked is not the card that is now shown.
 let selectedValueKeys = new Set();
-// The suggestions search's debounce timer. That search re-renders (its result
-// is the bulk-action scope), so it cannot filter in place like the My values
-// search; debouncing keeps the input alive through a burst of keystrokes.
-let workspaceSearchTimer = null;
 // The draft text of the add rows, kept across repaints so a state change
 // elsewhere does not empty a half-typed value.
 const drafts = {
@@ -257,15 +253,9 @@ function intersectionSignature(s) {
   ]);
 }
 
-/** head(s, busy) is the card header: the title, the live counts, the search box
- *  and the one Run detection button. */
+/** head(s, busy) is the card header: the title and the one Run detection
+ *  button. */
 function head(s, busy) {
-  const search = searchBox({
-    id: "workspace-search", value: suggestionFilter.search,
-    placeholder: VALUES.searchPlaceholder, label: VALUES.searchPlaceholder,
-    clearLabel: VALUES.clearSearch,
-  });
-
   // The run button says what it will DO, which depends on which detection
   // ROUTES are switched on in the rail. With every route off there
   // is nothing to run, and the button says so rather than running an empty
@@ -284,18 +274,10 @@ function head(s, busy) {
     });
 
   return `<div class="card-head with-controls">` +
-    `<div class="card-head-left"><h2>${escapeHTML(CARDS.identify.title)}</h2>` +
-    `<span class="card-sub">${escapeHTML(subtitle(s))}</span></div>` +
-    `<div class="card-head-right">${search}${run}</div>` +
+    `<div class="card-head-left"><h2>${escapeHTML(CARDS.identify.title)}</h2></div>` +
+    `<div class="card-head-right">${run}</div>` +
     `</div>` +
     progressStrip(s);
-}
-
-/** subtitle(s) is the live count beside the heading. */
-function subtitle(s) {
-  const waiting = s.suggestions.length;
-  const accepted = s.values.filter((e) => e.status === "accepted").length;
-  return WORKSPACE.subtitle(waiting, accepted);
 }
 
 /**
@@ -986,7 +968,7 @@ function valueCard(e, conflict, s, overlap) {
     `<span class="hint">${escapeHTML(WORKSPACE.derivedSpellings)}</span>` +
     `${chips}${spellingNote}${more}` +
     button(WORKSPACE.addSpelling, {
-      kind: "ghost", cls: "chip-add spelling-add", icon: "add",
+      kind: "ghost", cls: "chip-add spelling-add",
       title: WORKSPACE.moreSpellingsTitle,
     }) +
     `</div>`;
@@ -1017,28 +999,106 @@ function valueCard(e, conflict, s, overlap) {
     `</div>`;
 }
 
-/** groupPanel(e, s) is the inline picker for "Group with": the other values,
- *  each a checkbox, folded into this one on Apply. */
-function groupPanel(e, s) {
+/* GROUP_COLUMNS is the picker grid's shape: the value takes the room left over
+ * (it carries the checkbox and can be long) and the category is a fixed column,
+ * so the badges line up down the list. */
+const GROUP_COLUMNS = "minmax(0,1fr) 9rem";
+
+/* The picker's sort key, module-level so it survives the repaint a merge or a
+ * type change causes. It is view state for the same reason valuesFilter is:
+ * nothing downstream reads it and it must never travel in a session file.
+ *
+ * There is no filter text beside it, deliberately: the filter hides rows IN
+ * PLACE (see wireGroupPanel), so the live query is the input's own value and
+ * cannot disagree with what is on screen. */
+let groupSort = "value-asc";
+
+/** groupRowsFor(e, s) is the picker's row data: every value except this card's
+ *  own, in the order the current sort asks for. */
+function groupRowsFor(e, s) {
   const selfKey = valueKey(e.category, e.mainText);
-  const others = s.values.filter((o) => valueKey(o.category, o.mainText) !== selfKey);
-  if (others.length === 0) {
+  const rows = s.values
+    .filter((o) => valueKey(o.category, o.mainText) !== selfKey)
+    .map((o) => ({ category: o.category, mainText: o.mainText, label: categoryLabel(o.category) }));
+  return sortGroupRows(rows, groupSort);
+}
+
+/** sortGroupRows(rows, sort) orders the picker by one of its two columns.
+ *
+ *  The other column is always the tie-breaker, so two values of one category
+ *  keep a stable, readable order instead of the order the store happens to
+ *  hold them in. */
+function sortGroupRows(rows, sort) {
+  const dir = sort.endsWith("-desc") ? -1 : 1;
+  const byValue = (a, b) => a.mainText.localeCompare(b.mainText, undefined, { sensitivity: "base" });
+  const byCategory = (a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" });
+  return [...rows].sort(sort.startsWith("category")
+    ? (a, b) => (byCategory(a, b) || byValue(a, b)) * dir
+    : (a, b) => (byValue(a, b) || byCategory(a, b)) * dir);
+}
+
+/** groupSortButton(column, label, title) draws one of the picker's two column
+ *  headings as a sort control, with the arrow showing the live direction. */
+function groupSortButton(column, label, title) {
+  const active = groupSort.startsWith(column);
+  const asc = groupSort.endsWith("-asc");
+  return `<button class="sort-btn${active ? " active" : ""}" data-sort="${escapeHTML(column)}"` +
+    ` title="${escapeHTML(title)}">${escapeHTML(label)}` +
+    `<span class="icon sort-arrow${active && asc ? " asc" : ""}" aria-hidden="true">` +
+    icon("expand_more").replace(/^<span class="icon" aria-hidden="true">|<\/span>$/g, "") +
+    `</span></button>`;
+}
+
+/** groupPanel(e, s) is the inline picker for "Group with": the other values as a
+ *  two-column grid (the value and its category), each row a checkbox, folded
+ *  into this one on Apply.
+ *
+ *  It is a GRID rather than a plain list because the list is as long as the
+ *  session's value count: sorting by either column and filtering by text are
+ *  what make picking one row out of eighty possible. Both act on the rendered
+ *  rows in place (wireGroupPanel), never through a repaint, so a tick already
+ *  made survives a re-sort or a change of filter. */
+function groupPanel(e, s) {
+  const rows = groupRowsFor(e, s);
+  if (rows.length === 0) {
     return `<div class="value-panel"><p class="hint">${escapeHTML(WORKSPACE.groupNone)}</p>` +
       `<div class="panel-actions">` +
       button(WORKSPACE.groupCancel, { kind: "ghost", cls: "panel-cancel" }) +
       `</div></div>`;
   }
-  const rows = others.map((o) =>
-    `<label class="group-option">` +
+  const body = rows.map((o) =>
+    `<label class="grid-row group-row" style="grid-template-columns:${GROUP_COLUMNS}"` +
+    ` data-search="${escapeHTML(`${o.mainText} ${o.label}`.toLowerCase())}">` +
+    `<span class="group-cell">` +
     `<input type="checkbox" class="group-pick"` +
     ` data-category="${escapeHTML(o.category)}" data-main-text="${escapeHTML(o.mainText)}"/>` +
     `<span class="group-option-name">${escapeHTML(o.mainText)}</span>` +
-    `<span class="fmt-badge">${escapeHTML(categoryLabel(o.category))}</span>` +
+    `</span>` +
+    `<span class="group-cat">${escapeHTML(o.label)}</span>` +
     `</label>`).join("");
+  // The heading keeps its explanation one hover (or one Tab) away instead of in
+  // a paragraph above the grid: the panel opens INSIDE a card in a scrolling
+  // list, and a sentence read once then costs a line of the picker forever.
   return `<div class="value-panel group-panel">` +
+    `<div class="rail-label-row">` +
     `<p class="section-label">${escapeHTML(WORKSPACE.groupWithHeading)}</p>` +
-    `<p class="hint">${escapeHTML(WORKSPACE.groupWithHint)}</p>` +
-    `<div class="group-options">${rows}</div>` +
+    helpTooltip(WORKSPACE.groupWithHint, { label: WORKSPACE.groupWithHeading }) +
+    `</div>` +
+    searchBox({
+      id: "group-filter", value: "",
+      placeholder: WORKSPACE.groupFilterPlaceholder,
+      label: WORKSPACE.groupFilterLabel,
+      clearLabel: VALUES.clearSearch,
+      cls: "group-filter",
+    }) +
+    `<div class="grid-box group-grid">` +
+    `<div class="grid-head" style="grid-template-columns:${GROUP_COLUMNS}">` +
+    groupSortButton("value", WORKSPACE.groupColValue, WORKSPACE.groupSortValueHint) +
+    groupSortButton("category", WORKSPACE.groupColCategory, WORKSPACE.groupSortCategoryHint) +
+    `</div>` +
+    `<div class="group-options">${body}</div>` +
+    `</div>` +
+    `<p class="hint group-no-match" hidden>${escapeHTML(WORKSPACE.groupNoMatch)}</p>` +
     `<div class="panel-actions">` +
     button(WORKSPACE.groupApply, { kind: "secondary", cls: "group-apply" }) +
     button(WORKSPACE.groupCancel, { kind: "ghost", cls: "panel-cancel" }) +
@@ -1117,9 +1177,10 @@ function popupValue(s) {
 /**
  * spellingsPopupHTML(s) renders the popup, or nothing when none is open.
  *
- * The count line reports the WHOLE list, never the filtered view: the search
- * narrows what is on screen and removes nothing, and a count that shrank as you
- * typed would read as deletion.
+ * The list holds the SPELLINGS and nothing else. The main text is the head of
+ * the family rather than one of its spellings, and neither row action applies to
+ * it, so a row for it carried nothing but the reason it could not be used. The
+ * popup's title is where the family is named.
  *
  * Exported for the render test.
  */
@@ -1133,21 +1194,6 @@ export function spellingsPopupHTML(s) {
   const spellings = [...(e.derivedSpellings ?? []), ...(e.spellings ?? [])];
   const query = spellingsPopupSearch.trim().toLowerCase();
   const matches = (text) => !query || text.toLowerCase().includes(query);
-
-  // The main text is listed so the surface shows the whole family rather than
-  // the family minus its head. It is NOT a spelling, so the two row actions do
-  // not apply to it: deleting it is meaningless (renaming it is a card action)
-  // and moving it is not a spelling move.
-  const mainRow =
-    `<div class="spelling-list-row main-row" data-spelling-row="" data-search="${escapeHTML(e.mainText.toLowerCase())}"` +
-    `${matches(e.mainText) ? "" : ` style="display:none"`}>` +
-    `<span class="spelling-list-text">${escapeHTML(e.mainText)}</span>` +
-    `<span class="fmt-badge">${escapeHTML(WORKSPACE.spellingsPopupMainRow)}</span>` +
-    `<span class="spelling-list-actions">` +
-    button(WORKSPACE.spellingsPopupDelete, {
-      kind: "ghost", disabled: true, title: WORKSPACE.spellingsPopupMainNotDeletable,
-    }) +
-    `</span></div>`;
 
   const rows = spellings.map((v) =>
     `<div class="spelling-list-row" data-spelling-row="${escapeHTML(v)}"` +
@@ -1174,7 +1220,7 @@ export function spellingsPopupHTML(s) {
   // needs has to be in the DOM already.
   const noMatch =
     `<p class="hint" id="spellings-popup-nomatch"` +
-    `${query && !spellings.some(matches) && !matches(e.mainText) ? "" : ` style="display:none"`}>` +
+    `${query && !spellings.some(matches) ? "" : ` style="display:none"`}>` +
     `${escapeHTML(WORKSPACE.spellingsPopupNoMatch)}</p>`;
 
   return `<div class="modal-layer spellings-layer" role="presentation">` +
@@ -1188,7 +1234,6 @@ export function spellingsPopupHTML(s) {
     }) +
     `</div>` +
     `<div class="modal-body">` +
-    `<p class="hint">${escapeHTML(WORKSPACE.spellingsPopupCount(spellings.length))}</p>` +
     `<div class="add-row">` +
     `<input id="spelling-draft" class="grow" value="${escapeHTML(drafts.spelling)}"` +
     ` placeholder="${escapeHTML(WORKSPACE.spellingsPopupAddPlaceholder)}"` +
@@ -1201,7 +1246,11 @@ export function spellingsPopupHTML(s) {
       label: WORKSPACE.spellingsPopupSearchLabel,
       clearLabel: VALUES.clearSearch,
     }) +
-    `<div class="spelling-list" id="spellings-popup-list">${mainRow}${rows}</div>` +
+    `<div class="spelling-list" id="spellings-popup-list">` +
+    `<div class="spelling-list-head">` +
+    `<span>${escapeHTML(WORKSPACE.colSpelling)}</span>` +
+    `<span>${escapeHTML(WORKSPACE.colActions)}</span>` +
+    `</div>${rows}</div>` +
     empty + noMatch +
     `<p class="hint">${escapeHTML(WORKSPACE.spellingsPopupLive)}</p>` +
     `</div></div></div>`;
@@ -1311,7 +1360,7 @@ function wireSpellingsPopup(container) {
 
   for (const row of layer.querySelectorAll(".spelling-list-row")) {
     const spelling = row.dataset.spellingRow;
-    if (!spelling) continue; // the main-text row: neither action applies to it
+    if (!spelling) continue; // no spelling behind the row, so no action to wire
 
     row.querySelector(".spelling-list-edit")?.addEventListener("click", (ev) => {
       revealSpellingRowInput(ev.currentTarget, cat, mainText);
@@ -1574,28 +1623,6 @@ function wire(container, s, shown) {
       setState({}); // repaint; the tab is view state
     });
   }
-
-  // Typing and clearing both arrive here, so the ✕ cannot drift from the field
-  // it empties.
-  wireSearchBox(container, "workspace-search", (value, search) => {
-    // Debounced repaint. Unlike the My values search (which filters cards in
-    // place), this one feeds the bulk-action scope and the rows' shown set, so
-    // it has to re-render. Debouncing keeps the input alive through a burst of
-    // keystrokes so focus is not lost mid-type; the caret is restored on the
-    // repaint that lands.
-    suggestionFilter = { ...suggestionFilter, search: value };
-    const caret = search.selectionStart;
-    if (workspaceSearchTimer) clearTimeout(workspaceSearchTimer);
-    workspaceSearchTimer = setTimeout(() => {
-      workspaceSearchTimer = null;
-      setState({});
-      const again = container.querySelector("#workspace-search");
-      if (again) {
-        again.focus();
-        again.setSelectionRange?.(caret, caret);
-      }
-    }, 150);
-  });
 
   wireDetection(container);
   wireNotice(container);
@@ -2046,6 +2073,7 @@ export function wireValuesToolbar(container) {
  *  asks (askChoice) which participating value becomes the main one, then folds
  *  the rest into it. Cancelling the pick abandons the merge. */
 function wireGroupPanel(cardEl, cat, mainText) {
+  wireGroupPickerGrid(cardEl);
   cardEl.querySelector(".group-apply")?.addEventListener("click", async () => {
     const sources = [...cardEl.querySelectorAll(".group-pick:checked")].map((cb) => ({
       category: cb.dataset.category, mainText: cb.dataset.mainText,
@@ -2083,6 +2111,61 @@ function wireGroupPanel(cardEl, cat, mainText) {
   cardEl.querySelector(".panel-cancel")?.addEventListener("click", () => {
     openValuePanel = { key: null, kind: null };
     setState({});
+  });
+}
+
+/** wireGroupPickerGrid(cardEl) wires the picker grid's two sort buttons and its
+ *  filter field.
+ *
+ *  Both work on the rendered rows IN PLACE, with no setState: a repaint rebuilds
+ *  the checkboxes and would silently drop the ticks the user has already made,
+ *  which is the one thing a merge picker must not do. It also keeps the filter
+ *  input alive mid-type, so there is no caret to restore. */
+function wireGroupPickerGrid(cardEl) {
+  const list = cardEl.querySelector(".group-options");
+  if (!list) return;
+
+  // Re-sorting is a reorder of the SAME row nodes (appendChild moves a node
+  // rather than copying it), which is what preserves their checked state.
+  const reorder = () => {
+    const rows = [...list.querySelectorAll(".group-row")];
+    const keyed = rows.map((row) => ({
+      row,
+      mainText: row.querySelector(".group-pick")?.dataset.mainText ?? "",
+      label: row.querySelector(".fmt-badge")?.textContent ?? "",
+    }));
+    for (const item of sortGroupRows(keyed, groupSort)) list.appendChild(item.row);
+    for (const btn of cardEl.querySelectorAll(".sort-btn")) {
+      const active = groupSort.startsWith(btn.dataset.sort);
+      btn.classList.toggle("active", active);
+      btn.querySelector(".sort-arrow")?.classList.toggle("asc", active && groupSort.endsWith("-asc"));
+    }
+  };
+
+  for (const btn of cardEl.querySelectorAll(".sort-btn")) {
+    btn.addEventListener("click", (ev) => {
+      // The label is inside a <label> wrapping nothing clickable here, but the
+      // button still sits in a panel whose card selects on click: stop both.
+      ev.preventDefault();
+      ev.stopPropagation();
+      const column = btn.dataset.sort;
+      groupSort = groupSort === `${column}-asc` ? `${column}-desc` : `${column}-asc`;
+      reorder();
+    });
+  }
+
+  wireSearchBox(cardEl, "group-filter", (value) => {
+    const q = (value ?? "").trim().toLowerCase();
+    let visible = 0;
+    for (const row of list.querySelectorAll(".group-row")) {
+      const match = !q || (row.dataset?.search ?? "").includes(q);
+      // An inline display, not [hidden]: .grid-row declares display:grid, which
+      // would win over the hidden attribute's UA rule.
+      row.style.display = match ? "" : "none";
+      if (match) visible++;
+    }
+    const empty = cardEl.querySelector(".group-no-match");
+    if (empty) empty.hidden = visible !== 0;
   });
 }
 

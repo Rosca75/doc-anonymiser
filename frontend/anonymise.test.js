@@ -25,7 +25,7 @@ import {
   NAME_CATEGORIES, addAllowTerm, valueKey,
 } from "./state.js";
 import { readFileSync } from "node:fs";
-import { ANONYMISE, WORKSPACE } from "./copy.js";
+import { ANONYMISE, WORKSPACE, RAIL } from "./copy.js";
 import { textOf, all, attr, exists } from "./testhtml.js";
 import { container, fire } from "./testdom.js";
 
@@ -1413,4 +1413,39 @@ test("wireOriginLink is a no-op when there is no result to compare", () => {
   const c = container();
   c.innerHTML = compareCard({ documents: [], sourceCache: {}, results: null }, null);
   assert.doesNotThrow(() => wireOriginLink(c));
+});
+
+// --- The Profile card -----------------------------------------------------
+//
+// Save lives HERE and not on Identify, and the reason is the registry: a profile
+// carries the placeholder registry so a follow-up batch reuses the same
+// placeholders, only a run mints one, and stepping back from this step discards
+// it. On Identify the same button could never be pressed.
+
+test("step 3 offers a Profile card with Load and Save", () => {
+  resetState();
+  const html = renderColumn();
+  assert.ok(exists(html, "#profile-load"), "a profile can be loaded here");
+  assert.ok(exists(html, "#profile-save"), "and this is the step that can save one");
+  assert.ok(html.includes(RAIL.profileTitle), "the card names itself");
+});
+
+test("the profile Save is disabled until Go actually holds a registry", () => {
+  resetState();
+  // No run yet: disabled, and saying why rather than vanishing, so the control
+  // that will become available is visible before it does.
+  assert.equal(attr(renderColumn(), "#profile-save", "disabled"), "",
+    "Save is disabled before any run");
+  assert.ok((attr(renderColumn(), "#profile-save", "title") || "")
+    .includes(RAIL.profileSaveDisabled), "the disabled Save says why");
+
+  setState({ replacedValues: CR9_VALUES });
+  assert.equal(attr(renderColumn(), "#profile-save", "disabled"), undefined,
+    "a run that produced a registry opens the gate");
+
+  // The registry emptying closes it again: a "detection ran" latch would stay on
+  // and silently offer to save nothing.
+  setState({ replacedValues: [] });
+  assert.equal(attr(renderColumn(), "#profile-save", "disabled"), "",
+    "Save closes again once the registry is gone");
 });

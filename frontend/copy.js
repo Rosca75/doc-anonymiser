@@ -363,6 +363,11 @@ export const RAIL = {
   valuesAutoHelp: "The names Heuristic discovery and Local LLM discovery look for. Both routes read this one selection.",
   // What the Local LLM discovery section says INSTEAD of a second copy of the
   // checkboxes.
+  /** localValuesCount(n) is the live half of the Auto detected values block: how
+   *  many name categories the two discovery routes are currently reading. */
+  localValuesCount(n) {
+    return `${n} categor${n === 1 ? "y" : "ies"} selected`;
+  },
   localValuesHelp: "Local LLM discovery looks for the same categories chosen under Heuristic discovery above. Switching this route on adds a model pass over them; it does not change what is selected.",
 
   /** activeCount(n, total) is the rail heading's read-out. */
@@ -373,6 +378,11 @@ export const RAIL = {
   ollamaDetected: "Ollama detected",
   ollamaMissing: "Ollama not detected",
   hostLocked: "The host is locked to 127.0.0.1; only the port can be changed.",
+  // Every field in this section carries its explanation in a tooltip, so the two
+  // connection fields do too: a form where some rows have a help icon and others
+  // do not reads as an unfinished form.
+  portHelp: "The port Ollama listens on, on this machine. 11434 is its default; change it only if you started the server on another port.",
+  modelHelp: "Which installed model runs the pass. The list is what Ollama reports it has pulled. A smaller model is quicker, a larger one finds a little more.",
   port: "Port",
   model: "Model",
   contextSize: "Context",
@@ -444,7 +454,6 @@ export const RAIL = {
   scopeHeading: "Scan scope",
   scopeHelp: "The local model reads only what you point it at. Scanning one document, or a few pages of one, keeps a small model focused and the pass quick.",
   scopeAllDocs: "All documents (whole)",
-  scopeDoc: "Document",
   scopeEntireDoc: "Entire document",
   scopeSpecificPages: "Specific pages",
   scopePagesPlaceholder: "14, 12-15, 18-20",
@@ -481,10 +490,11 @@ export const RAIL = {
     return `${name} (${count} ${u}${count === 1 ? "" : "s"})`;
   },
 
-  // The Load profile section: a plain (switch-less) section at the foot of the
-  // rail. Load restores a saved profile; Save writes one, but only once a run
-  // has produced a registry worth preserving.
-  profileTitle: "Load profile",
+  // The Profile section, in two places. At the foot of the rail on Identify it
+  // offers LOAD alone: a profile carries the placeholder registry, only a run
+  // mints one, so Save there could never be used. Step 3 offers both, next to
+  // the registry Save writes.
+  profileTitle: "Profile",
   profileHelp: "Reuse a saved setup: Values, the never anonymise list, patterns and the placeholder registry, so a follow-up batch reuses the same placeholders.",
   profileLoad: "Load",
   profileSave: "Save",
@@ -513,10 +523,9 @@ export const VALUES = {
   smartStrictnessBalanced: "Balanced (recommended)",
   smartStrictnessStrict: "Strict: strong evidence only",
 
-  // The suggestions table's search box and its two sort tooltips. The column
-  // HEADINGS moved to WORKSPACE, where they are upper-case
-  // because they sit in a header strip rather than above a form.
-  searchPlaceholder: "search values",
+  // The suggestions table's two sort tooltips. The column HEADINGS moved to
+  // WORKSPACE, where they are upper-case because they sit in a header strip
+  // rather than above a form.
   // The ✕ inside every search field. One string for all three, because it is one
   // control: a field the user can fill and cannot empty in one gesture is the
   // same oversight repeated. It is deliberately NOT the values toolbar's
@@ -594,13 +603,6 @@ export const WORKSPACE = {
     // application and are read-only, the custom ones are the user's own.
     builtin: "Built-in patterns",
     patterns: "Custom patterns",
-  },
-
-  /** subtitle(waiting, accepted) is the live count beside the heading. */
-  subtitle(waiting, accepted) {
-    const w = `${waiting} suggestion${waiting === 1 ? "" : "s"} waiting`;
-    const a = `${accepted} value${accepted === 1 ? "" : "s"} accepted`;
-    return `${w}, ${a}`;
   },
 
   // Run detection. One button now, so its tooltip has to say what the run will
@@ -912,11 +914,6 @@ export const WORKSPACE = {
   spellingsPopupTitle(mainText) {
     return `Spellings for ${mainText}`;
   },
-  /** spellingsPopupCount(n) counts the WHOLE list, never the filtered view: the
-   *  search narrows what is shown, it does not remove anything. */
-  spellingsPopupCount(n) {
-    return `${n} spelling${n === 1 ? "" : "s"}`;
-  },
   spellingsPopupAddPlaceholder: "a new spelling",
   spellingsPopupAddLabel: "Add a spelling to this value",
   spellingsPopupAdd: "Add",
@@ -928,11 +925,10 @@ export const WORKSPACE = {
   // Said in the popup because the popup has no OK button and its absence is the
   // thing to explain: every action here has already happened.
   spellingsPopupLive: "Changes are reflected immediately in the compact card.",
-  spellingsPopupMainRow: "Main text",
-  // The main text is shown so the list is the whole family rather than the
-  // family minus its head, but it is not a spelling and the two actions that
-  // apply to spellings do not apply to it.
-  spellingsPopupMainNotDeletable: "This is the value's main text, not a spelling. Rename it on the card, or remove the whole value.",
+  // The popup's list is a two-column grid, so it carries captions. There is no
+  // ROLE column because every row is a spelling: the main text is named in the
+  // popup's title rather than listed as a row it owns no action on.
+  colSpelling: "SPELLING",
   spellingsPopupDelete: "Delete",
   spellingsPopupDeleteTitle: "Stop replacing this spelling",
   spellingsPopupMove: "Move to",
@@ -976,8 +972,19 @@ export const WORKSPACE = {
   // Group with: fold other values (and their spellings) into this one.
   groupWith: "Group with",
   groupWithTitle: "Merge other values into this one",
-  groupWithHeading: "Merge into this value:",
+  groupWithHeading: "Merge with",
   groupWithHint: "The values you tick become spellings of this one, and one placeholder then covers them all.",
+  // The picker is a two-column grid (the value and its category), so it needs a
+  // caption per column, a hint per sort button and its own search field. The
+  // sort hints name the COLUMN rather than the direction: one button carries
+  // both directions and the arrow says which one is live.
+  groupColValue: "VALUE",
+  groupColCategory: "CATEGORY",
+  groupSortValueHint: "Sort by value",
+  groupSortCategoryHint: "Sort by category",
+  groupFilterPlaceholder: "Filter values",
+  groupFilterLabel: "Filter the values to merge with",
+  groupNoMatch: "No value matches that filter.",
   groupApply: "Group selected",
   groupCancel: "Cancel",
   groupNone: "There are no other values to group with yet.",

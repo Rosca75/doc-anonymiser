@@ -40,8 +40,7 @@
 // pipeline stays fully usable with Ollama absent.
 
 import {
-  applySettings, listOllamaModels, probeOllama, loadSession, saveSession,
-  valuePlaceholders, listRemovedValues, estimateLLMRequests,
+  applySettings, listOllamaModels, probeOllama, estimateLLMRequests,
 } from "../api.js";
 import {
   getState, setState,
@@ -57,7 +56,6 @@ import {
   adoptProbe,
   LLM_DETAIL_LEVELS,
   parsePageSpec,
-  buildRunRequest, setValueTables,
   ALL_CATEGORIES,
   NAME_CATEGORIES,
   PRESET_SCOPE_PATTERNS, PRESET_SCOPE_NAMES, presetFamilies, presetsFor,
@@ -71,10 +69,9 @@ import { CARDS, CONFIGURE, RAIL, VALUES, categoryLabels } from "../copy.js";
 import { examplesFor, countryOptions } from "../countries.js";
 import { categoryAppliesTo, CATEGORY_COUNTRIES } from "../countries.js";
 import { notify } from "../toast.js";
-// applySession lives in export.js (it is the load half of the same save/load
-// pair the Export step owns). Importing it here is a one-way edge: export.js
-// never imports the rail, so the module graph stays acyclic.
-import { applySession } from "./export.js";
+// The Profile controls are shared with step 3, which offers Save as well. This
+// is a one-way edge: profile.js never imports the rail.
+import { profileControlsHTML, wireProfileControls } from "./profile.js";
 
 /**
  * llmDisabledTooltip(port) is what every disabled LLM control says when Ollama
@@ -266,33 +263,15 @@ export function railBody(s) {
 }
 
 /**
- * profileSection(s) is the Load/Save profile body. Load restores a saved setup;
- * Save writes one, but only once Go actually holds a placeholder registry
- * (s.replacedValues, the same mirror of App.ValuePlaceholders the Anonymise
- * step reads), because a profile without a registry behind it saves an empty
- * key. Detection completing is NOT that fact: detection mints no placeholders,
- * only a run does, so gating on a "detection ran" latch left Save enabled
- * right after a detection and, worse, after stepping back from Anonymise
- * (which discards the registry but left the old latch on). The disabled Save
- * says why in its tooltip rather than vanishing, so the control that will
- * become available is visible before it does.
+ * profileSection(s) is the rail's Profile panel: LOAD, and nothing else.
+ *
+ * Save is not offered here because it could never be used here. A profile
+ * carries the placeholder registry, only a RUN mints one, and moving back from
+ * Anonymise to Identify discards it, so a Save on this step is a permanently
+ * disabled button. It lives on step 3, next to the registry it writes.
  */
 function profileSection(s) {
-  const canSave = (s.replacedValues?.length ?? 0) > 0;
-  return `<div class="rail-block">` +
-    `<div class="rail-label-row">` +
-    `<span class="rail-field-label">${escapeHTML(RAIL.profileTitle)}</span>` +
-    helpTooltip(RAIL.profileHelp, { label: RAIL.profileTitle }) +
-    `</div>` +
-    `<div class="button-pair">` +
-    button(RAIL.profileLoad, { kind: "secondary", id: "profile-load" }) +
-    button(RAIL.profileSave, {
-      kind: "secondary",
-      id: "profile-save",
-      disabled: !canSave,
-      title: canSave ? "" : RAIL.profileSaveDisabled,
-    }) +
-    `</div></div>`;
+  return profileControlsHTML(s);
 }
 
 /**
@@ -893,32 +872,37 @@ function scopeBlock(s, gated) {
       `<span>${escapeHTML(RAIL.scopeSpecificPages)}</span></label>` +
       `</div>`;
 
-    let pagesField = "";
+    let pagesInput = "";
+    let readout = "";
     if (pagesMode) {
       const parsed = parsePageSpec(scope.pages, count);
-      const readout = parsed.error
+      readout = parsed.error
         ? `<p class="hint warn" id="ai-pages-error">${escapeHTML(RAIL.scopePagesError(parsed.error))}</p>`
         : `<p class="hint" id="ai-pages-readout">${escapeHTML(RAIL.scopeReadout(parsed.pages.length, unit))}</p>`;
-      pagesField =
-        `<label class="rail-field" for="ai-pages">` +
-        `<span class="rail-field-label">${escapeHTML(RAIL.scopePagesLabel(unit))}</span>` +
+      pagesInput =
         `<input id="ai-pages" type="text" ` +
+          `aria-label="${escapeHTML(RAIL.scopePagesLabel(unit))}" ` +
+          `title="${escapeHTML(RAIL.scopePagesLabel(unit))}" ` +
           `placeholder="${escapeHTML(RAIL.scopePagesPlaceholder)}" ` +
-          `value="${escapeHTML(scope.pages || "")}"${gated}/>` +
-        `</label>` + readout;
+          `value="${escapeHTML(scope.pages || "")}"${gated}/>`;
     }
-    range = modeControl + pagesField;
+    // One row: the radio pair in the label column, the page spec in the control
+    // column. The field is empty until "Specific pages" is the live choice, so
+    // the row never shows a box that answers nothing.
+    range = `<div class="rail-field">${modeControl}${pagesInput}</div>` + readout;
   }
 
+  // A div rather than a <label>: the heading cell holds the help button, and
+  // inside a label every click on that button would open the select instead.
+  // The select names itself with aria-label for the same reason.
   return `<div class="rail-block">` +
-    `<div class="rail-label-row">` +
+    `<div class="rail-field">` +
+    `<span class="rail-label-row">` +
     `<span class="rail-field-label">${escapeHTML(RAIL.scopeHeading)}</span>` +
     helpTooltip(RAIL.scopeHelp, { label: RAIL.scopeHeading }) +
-    `</div>` +
-    `<label class="rail-field" for="ai-scope-doc">` +
-    `<span class="rail-field-label">${escapeHTML(RAIL.scopeDoc)}</span>` +
-    `<select id="ai-scope-doc"${gated}>${options}</select>` +
-    `</label>` + range +
+    `</span>` +
+    `<select id="ai-scope-doc" aria-label="${escapeHTML(RAIL.scopeHeading)}"${gated}>${options}</select>` +
+    `</div>` + range +
     `</div>`;
 }
 
@@ -995,9 +979,16 @@ function detailLevelOptions(s) {
 function scanEstimateReadout(s) {
   const requests = s.llmRequestEstimate;
   if (!(requests > 0)) return "";
-  return `<div class="rail-status">` +
-    `<span class="hint" id="ai-request-estimate">${escapeHTML(RAIL.scanEstimate(requests))}</span>` +
-    `</div>`;
+  return `<span class="hint" id="ai-request-estimate">${escapeHTML(RAIL.scanEstimate(requests))}</span>`;
+}
+
+/** selectedNameCategories(s) counts the name categories the two discovery routes
+ *  are reading. It is DERIVED from the one selection rather than stored, for the
+ *  reason every other summary in this rail is: a count beside the set it counts
+ *  can disagree with it. */
+function selectedNameCategories(s) {
+  const on = s.settings?.categories ?? {};
+  return NAME_CATEGORIES.filter((c) => on[c]).length;
 }
 
 function localLLMSection(s) {
@@ -1021,27 +1012,35 @@ function localLLMSection(s) {
     `<div class="rail-status">` +
     `<span class="state-tag${ollamaOK ? "" : " bad"}" title="${escapeHTML(s.ollama?.detail ?? "")}">` +
     `${escapeHTML(ollamaOK ? RAIL.ollamaDetected : RAIL.ollamaMissing)}</span>` +
-    `<span class="hint">${escapeHTML(RAIL.hostLocked)}</span>` +
+    helpTooltip(RAIL.hostLocked, { label: RAIL.ollamaDetected }) +
     `</div>` +
+    `<div class="rail-field-row">` +
     `<label class="rail-field" for="ollama-port">` +
     `<span class="rail-field-label">${escapeHTML(RAIL.port)}</span>` +
     `<input id="ollama-port" type="number" min="1" max="65535" value="${escapeHTML(String(s.settings.ollamaPort))}"/>` +
     `</label>` +
+    helpTooltip(RAIL.portHelp, { label: RAIL.port }) +
+    `</div>` +
+    `<div class="rail-field-row">` +
     `<label class="rail-field" for="ollama-model">` +
     `<span class="rail-field-label">${escapeHTML(RAIL.model)}</span>` +
     `<select id="ollama-model"${gated}>${models || `<option value="">${escapeHTML(RAIL.noModels)}</option>`}</select>` +
     `</label>` +
+    helpTooltip(RAIL.modelHelp, { label: RAIL.model }) +
+    `</div>` +
     // The speed-versus-recall dial sits with the two other settings about how
     // much the model reads, and before Context, because it is the one that
     // decides the size of a request; Context only bounds it.
     `<div class="rail-field-row">` +
     `<label class="rail-field" for="ai-detail-level">` +
     `<span class="rail-field-label">${escapeHTML(RAIL.detailLevel)}</span>` +
+    `<span class="rail-field-control detail-control">` +
     `<select id="ai-detail-level"${gated}>${detailLevelOptions(s)}</select>` +
+    scanEstimateReadout(s) +
+    `</span>` +
     `</label>` +
     helpTooltip(CONFIGURE.detailLevelHelp, { label: RAIL.detailLevel }) +
     `</div>` +
-    scanEstimateReadout(s) +
     `<div class="rail-field-row">` +
     `<label class="rail-field" for="context-size">` +
     `<span class="rail-field-label">${escapeHTML(RAIL.contextSize)}</span>` +
@@ -1070,9 +1069,13 @@ function localLLMSection(s) {
     // tick them at all (the rendering harness fails on exactly that). The route
     // says which list it reads instead.
     `<div class="rail-block">` +
-    `<div class="rail-label-row">` +
+    `<div class="rail-field">` +
+    `<span class="rail-label-row">` +
     `<span class="rail-field-label">${escapeHTML(RAIL.valuesAuto)}</span>` +
     helpTooltip(RAIL.localValuesHelp, { label: RAIL.valuesAuto }) +
+    `</span>` +
+    `<span class="rail-readout" id="llm-name-categories">` +
+    `${escapeHTML(RAIL.localValuesCount(selectedNameCategories(s)))}</span>` +
     `</div>` +
     `</div>`;
 }
@@ -1169,44 +1172,12 @@ function wireLocalLLM(container) {
   }
 }
 
-// --- Load profile ---------------------------------------------------------
+// --- Profile --------------------------------------------------------------
 
-/**
- * wireProfile(container) wires the Load/Save profile buttons. Load restores a
- * saved session with applySession (export.js owns the load half of the pair),
- * then refreshes the registry mirror: a loaded session can carry its own
- * placeholder registry in Go, ready to re-save immediately, and the mirror
- * would otherwise still show whatever it held before the load. Save is
- * guarded on the same fact as the disabled attribute (profileSection), here
- * too, so a click that slips through a stale DOM cannot save an empty
- * registry.
- */
+/** wireProfile(container) hands the rail's Load button to the shared wiring,
+ *  which also serves step 3's Load and Save. */
 function wireProfile(container) {
-  container.querySelector("#profile-load")?.addEventListener("click", async () => {
-    try {
-      const session = await loadSession();
-      if (!session) return; // cancelled
-      applySession(session);
-      try {
-        const [replaced, removed] = await Promise.all([valuePlaceholders(), listRemovedValues()]);
-        setValueTables(replaced, removed);
-      } catch { /* no bridge: the gate stays as it was */ }
-      notify(RAIL.profileLoadDone, "ok");
-    } catch (err) {
-      // A refused session file (a version this build does not read) lands here
-      // with Go's actionable message, and the user needs the whole of it.
-      notify(String(err?.message ?? err), "warn");
-    }
-  });
-  container.querySelector("#profile-save")?.addEventListener("click", async () => {
-    if ((getState().replacedValues?.length ?? 0) === 0) return; // guard: matches the disabled attribute
-    try {
-      await saveSession(buildRunRequest());
-      notify(RAIL.profileSaveDone, "ok");
-    } catch (err) {
-      notify(String(err?.message ?? err), "warn");
-    }
-  });
+  wireProfileControls(container);
 }
 
 // --- Shared: push settings to Go -----------------------------------------

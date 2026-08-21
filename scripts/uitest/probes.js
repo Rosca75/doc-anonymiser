@@ -413,8 +413,8 @@
      * The Configure choices are switchable DETECTION ROUTE sections rather than
      * peer tabs, one section per mechanism: Built-in patterns on, Heuristic
      * discovery on, Local LLM discovery off. ONE switch-less panel follows them,
-     * Load profile, and it carries .rail-panel rather than .rail-section so a
-     * utility panel is never counted as a route.
+     * Profile, and it carries .rail-panel rather than .rail-section so a utility
+     * panel is never counted as a route.
      *
      * The category groups start FOLDED, so the rail opens on the route switches
      * and the scope summary rather than a wall of category lists; this probe
