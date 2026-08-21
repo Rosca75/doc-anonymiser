@@ -261,6 +261,7 @@ function Invoke-DevChecks {
                 Test-ConfigureRail $cdp
                 Test-ValueCardActions $cdp
                 Test-ValuesTabLayout $cdp
+                Test-BuiltInPatternsTab $cdp
                 Test-ValueCardGeometry $cdp
                 Test-SpellingsPopup $cdp
                 Test-SignalDerivations $cdp
@@ -592,6 +593,47 @@ function Test-ValuesTabLayout([CdpSession]$cdp) {
         -Expected 'nothing selected, button back to "Clear all"' `
         -Actual "$($r.selectedAfterUndo) selected, button $($r.clearLabelUndone)" `
         -Hint 'Ctrl+click toggles. A selection with no way back turns a mis-click into a destroyed list.'
+}
+
+# The read-only Built-in patterns tab, with a match long enough to threaten the
+# card's width. A URL with no spaces in it and a full street address are the
+# NORMAL content of this tab, not an edge case, and both are what widens a card
+# past the window. The grouping is covered by the frontend suite; what needs a
+# renderer is whether the row fits and whether the occurrence note beside it is
+# still on screen.
+function Test-BuiltInPatternsTab([CdpSession]$cdp) {
+    Write-Step 'Built-in patterns is read-only, and a long match still fits the card'
+    $r = $cdp.Eval('__uiProbes.builtInPatternsTabLayout()')
+    if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
+        Assert-That -Name 'the Built-in patterns probe runs' -Condition $false `
+            -Expected 'a section per active category' -Actual $r.error `
+            -Hint 'views/identifyworkspace.js builtInPatternsTab renders one .builtin-group per active category.'
+        return
+    }
+    Assert-That -Name 'one section per ACTIVE category, empty ones included' `
+        -Condition ($r.groups -eq 3 -and $r.emptyGroups -eq 1) `
+        -Expected '3 sections, 1 of them empty' -Actual "$($r.groups) sections, $($r.emptyGroups) empty" `
+        -Hint 'The sections come from the categories that RAN: one that ran and matched nothing must not look like one that never ran.'
+    Assert-That -Name 'no row offers an accept, a reject or an edit' `
+        -Condition ($r.actions -eq 0) `
+        -Expected '0 controls on the rows' -Actual "$($r.actions) controls" `
+        -Hint 'A built-in pattern produces DIRECT matches, applied without review: a control here promises a decision the tab cannot take.'
+    Assert-That -Name 'a long match does not scroll the page sideways' `
+        -Condition ($r.pageScrollsSideways -eq $false) `
+        -Expected 'no horizontal page scroll' -Actual 'the page scrolls sideways' `
+        -Hint 'style.css .builtin-text wraps with overflow-wrap: anywhere. A URL is one long unbreakable word until something says otherwise.'
+    Assert-That -Name 'the row stays inside the card that holds it' `
+        -Condition ($r.widestRowRight -le ($r.cardRight + 1)) `
+        -Expected "every row within $($r.cardRight)px" -Actual "the widest row reaches $($r.widestRowRight)px" `
+        -Hint 'The card body is the scroller; a row wider than it is content that escaped.'
+    Assert-That -Name 'the occurrence note stays on its row' `
+        -Condition ($r.noteInside -eq $true) `
+        -Expected 'the note inside the row' -Actual 'the note pushed past the row right edge' `
+        -Hint 'style.css .builtin-where is flex: none beside a wrapping text, so the note keeps its place.'
+    Assert-That -Name 'the rows scroll inside the card body, not sideways' `
+        -Condition ($r.bodyScrollsSideways -eq $false) `
+        -Expected 'vertical scrolling only' -Actual 'the card body scrolls sideways' `
+        -Hint 'The layout contract is that scrolling happens inside a card body, downwards.'
 }
 
 # A value card keeps its HEIGHT whatever its data, and the list keeps its place.

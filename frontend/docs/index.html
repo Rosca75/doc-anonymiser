@@ -122,9 +122,20 @@
         On the right you review what was found. Suggestions wait for a decision
         and you accept or reject each one, singly or in bulk; My Values holds the
         ones you accepted, and you can also type a Value in yourself. The same
-        half holds the never anonymise list and your own patterns. A Value can be
+        half holds the never anonymise list, the built-in patterns and your own
+        patterns. A Value can be
         expanded to show its spellings, the other forms that will also be
         replaced, and you can add your own or drag one to a different Value.
+        <br><br>
+        The Built-in patterns tab is read only. It lists what the signal
+        categories you switched on matched the last time you ran detection,
+        grouped by category, so you can check the categories you chose before
+        anything is anonymised. A category that you switched on and that matched
+        nothing still gets its heading, so you can tell "found nothing" apart from
+        "not switched on". There is nothing to accept there: a built-in pattern is
+        a rule you chose, so its matches are applied without review. To change
+        what it finds, tick or untick the categories on the left and run
+        detection again.
         <br><br>
         You cannot move on to Anonymise while a Suggestion is still waiting.
         Walking past one would silently answer "reject" for you.
@@ -177,7 +188,8 @@
       numbers, payment card numbers, network addresses and more. Where a
       number carries a check digit, for example a payment card, the check is
       verified so that an ordinary long number is not mistaken for one. These
-      patterns need no AI and no network connection.
+      patterns need no AI and no network connection. What they matched is listed
+      on the Built-in patterns tab of the Identify step after you run detection.
     </p>
     <h3>Values you declare</h3>
     <p>

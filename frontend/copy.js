@@ -558,7 +558,11 @@ export const WORKSPACE = {
     suggestions: "Suggestions",
     values: "My values",
     allow: "Never anonymise",
-    patterns: "Patterns",
+    // The two pattern tabs are named after WHO wrote the pattern, because that
+    // is the whole difference between them: the built-in ones ship with the
+    // application and are read-only, the custom ones are the user's own.
+    builtin: "Built-in patterns",
+    patterns: "Custom patterns",
   },
 
   /** subtitle(waiting, accepted) is the live count beside the heading. */
@@ -984,6 +988,47 @@ export const WORKSPACE = {
   solveRemoveFromAllowlist: "Remove it from the never-anonymise list",
 
   // Patterns.
+  // --- Built-in patterns tab (read-only) ---
+  //
+  // The tab answers one question: what did the signal categories I switched on
+  // actually match. Every string here is written to keep that question separate
+  // from the review gate: these are DIRECT matches, so there is nothing to
+  // accept and no way to reject one from here, and the copy says where the
+  // levers are instead of implying there are levers on the rows.
+  builtInHint: "These are the matches the built-in patterns found the last time you ran detection. They are applied without review, so there is nothing to accept here. To change what is found, tick or untick the categories under Smart detection and run detection again.",
+  builtInNeverRan: "Run detection to see what the built-in patterns match in your files.",
+  builtInSwitchedOff: "Built-in patterns were switched off when detection last ran, so no signal was matched. Turn Built-in patterns on under Smart detection and run detection again.",
+  builtInNoCategories: "None of the selected signal categories applies to the document country you chose, so no built-in pattern ran. Choose a category under Smart detection, or change the document country.",
+  builtInNoMatchesAtAll: "The built-in patterns matched nothing in these files.",
+  /** builtInNoneInCategory is the empty line under a category that ran and found nothing. */
+  builtInNoneInCategory: "Nothing matched.",
+  /** builtInSummary(values, categories) is the count line above the list. */
+  builtInSummary(values, categories) {
+    const v = `${values} match${values === 1 ? "" : "es"}`;
+    const c = `${categories} categor${categories === 1 ? "y" : "ies"}`;
+    return `${v} across ${c}`;
+  },
+  /** builtInOccurrences(count, documents) is one row's "how often, where" note. */
+  builtInOccurrences(count, documents) {
+    const c = `${count} occurrence${count === 1 ? "" : "s"}`;
+    const d = `${documents} file${documents === 1 ? "" : "s"}`;
+    return `${c} in ${d}`;
+  },
+  /** builtInInFiles(names) names the files a match occurs in, for the row title. */
+  builtInInFiles(names) {
+    return `Found in ${names.join(", ")}`;
+  },
+  /**
+   * builtInLowConfidence(confidence) is the badge on a match whose corroborating
+   * checksum failed. It is shown rather than hidden: a bank identifier that does
+   * not check out is still replaced, and a mistyped or synthetic one is exactly
+   * what a template document holds.
+   */
+  builtInLowConfidence(confidence) {
+    return `Confidence ${confidence.toFixed(2)}, a corroborating check did not pass`;
+  },
+  builtInLowConfidenceBadge: "Check failed",
+
   patternsHint: "Regular expressions are matched in addition to the categories you selected. A pattern that does not compile is kept but never used.",
   addPattern: "Add pattern",
   addPatternPlaceholder: "add an expression, e.g. INV-\\d{6}",

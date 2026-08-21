@@ -639,6 +639,89 @@
     },
 
     /**
+     * builtInPatternsTabLayout() measures the read-only Built-in patterns tab
+     * with a match long enough to threaten the card's width.
+     *
+     * Three pixel claims a markup test cannot reach:
+     *
+     *   1. a long matched text (a URL, a street address) does not widen the page.
+     *      The layout contract is that the page body never scrolls horizontally,
+     *      and a monospaced string with no spaces in it is the classic way to
+     *      break that.
+     *
+     *   2. the occurrence note stays ON the row rather than being pushed out of
+     *      the card by the text beside it. The note is the answer to "where is
+     *      this", so a note off the right edge is a note nobody reads.
+     *
+     *   3. the rows scroll INSIDE the card body, like every other list on this
+     *      screen, rather than growing the card.
+     *
+     * It also reports the row and section counts, so the harness can confirm the
+     * tab renders a section per ACTIVE category, empty ones included: that is the
+     * whole reason the tab exists, and an empty section dropped by a repaint
+     * would look exactly like a category that never ran.
+     */
+    async builtInPatternsTabLayout() {
+      const s = await store();
+      await seed("identify");
+      s.setState({
+        builtInPatterns: {
+          on: true,
+          // Postal codes are ACTIVE and match nothing here: the section must
+          // still be drawn.
+          categories: ["url", "address", "postal_code"],
+          matches: [
+            {
+              category: "url",
+              text: "https://intranet.meridian-consulting.example.com/engagements/2026/framework-agreement-schedule-4?revision=17",
+              count: 4, documents: [DOC_NAME], confidence: 1,
+            },
+            {
+              category: "address",
+              text: "12, Avenue de l'Innovation et du Developpement Economique",
+              count: 2, documents: [DOC_NAME], confidence: 1,
+            },
+          ],
+        },
+      });
+      await settle();
+
+      const tab = document.querySelector('[data-wstab="builtin"]');
+      if (!tab) return { error: "no [data-wstab=builtin] tab rendered in the Identify workspace" };
+      tab.click();
+      await settle();
+
+      const rows = [...document.querySelectorAll(".builtin-row")];
+      if (rows.length === 0) return { error: "the Built-in patterns tab rendered no .builtin-row" };
+      const groups = [...document.querySelectorAll(".builtin-group")];
+      const body = rows[0].closest(".card-body") ?? rows[0].parentElement;
+
+      // The widest row against the card that holds it: a row wider than its own
+      // container is the overflow, whether or not the page has scrolled yet.
+      let widest = 0;
+      let noteInside = true;
+      for (const row of rows) {
+        const r = rect(row);
+        widest = Math.max(widest, r.right);
+        const note = row.querySelector(".builtin-where");
+        if (note && rect(note).right > r.right + 1) noteInside = false;
+      }
+
+      return {
+        rows: rows.length,
+        groups: groups.length,
+        emptyGroups: groups.filter((g) => g.querySelector(".grid-empty")).length,
+        actions: document.querySelectorAll(".builtin-row button, .builtin-row input").length,
+        pageScrollsSideways: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+        widestRowRight: Math.round(widest),
+        cardRight: rect(body).right,
+        noteInside,
+        bodyScrolls: body.scrollHeight > body.clientHeight,
+        bodyScrollsSideways: body.scrollWidth > body.clientWidth + 1,
+      };
+    },
+
+    /**
      * valuesTabLayout() measures the My values tab's two captioned blocks and its
      * Ctrl+click selection.
      *

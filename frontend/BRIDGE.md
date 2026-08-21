@@ -177,7 +177,7 @@ display choice: it decides which country-specific regex categories run.
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
-| `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, pages}` (null = every document whole; restricts the LOCAL AI route only; `pages` is a 1-based `number[]` over the document's own page/slide/row/line units, and an empty array means the whole selected document) | `DetectionResult {suggestions, phases, skipped, errors, cancelled, status, aiRequests, aiSilentRequests, aiTruncatedRequests, aiSecondsPerRequest}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
+| `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, pages}` (null = every document whole; restricts the LOCAL AI route only; `pages` is a 1-based `number[]` over the document's own page/slide/row/line units, and an empty array means the whole selected document) | `DetectionResult {suggestions, phases, skipped, errors, cancelled, status, aiRequests, aiSilentRequests, aiTruncatedRequests, aiSecondsPerRequest, patternMatches, patternCategories, builtInPatternsOn}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
 | `estimateAIRequests(fileNames, aiScope)` | names, optional `AIScope` | how many model requests the current scope and DETAIL LEVEL imply, as a number. Reaches no model, probes nothing and mutates nothing, so it is safe to call on every edit. Go computes it with the SAME helper the run uses, which is what makes it equal to the request count the run then makes: a read-out predicting something else is worse than none. Rejects only when there is nothing to estimate (no matching documents); a scope naming pages that do not exist resolves to what the run would actually send, which for that document is zero |
 | `cancelDetection()` | — | aborts the in-flight run, reaching whichever route is running, including mid-file |
 | `expandSpellings(value)` | `{category, mainText, spellings, spellingPolicy}` | the forms this Value matches, longest first. `spellingPolicy: "curated"` means the list is the user's: Go derives nothing and returns the main text plus exactly the spellings it was given, so the chips on the card are what the run replaces |
@@ -185,6 +185,34 @@ display choice: it decides which country-specific regex categories run.
 | `checkIntersections(request)` | `{values, patterns, allowTerms, categories, suppressRegexPII}` | `{intersections: [{value, category, matchClass, winnerValue, winnerCategory, winnerMatchClass, occurrences, totalOccurrences, documents, matchedTexts}]}`. The Values another method claims in EVERY place they occur, so a card can warn BEFORE the run rather than the user finding out on the results screen. Only FULL coverage is reported, so `occurrences == totalOccurrences` always holds: a value covered in some places and free in others still gets its own placeholder where nothing covers it, which is neither a leak nor an action. `matchedTexts` is the literal text the winner actually covered, in document order, and is ABSENT when that is the value's own text; it exists because `value` is the canonical main text, and a person covered inside `pierre.dupont@coca.us` is covered as the fragments `pierre` and `dupont`, which the full name's spelling never matches there. `matchClass` is the engine-internal precedence input; the frontend turns it into the NAME of the winning method (`copy.js WORKSPACE.matchClassLabel`) and never prints a rank. Mutates nothing (no placeholder minted, registry untouched), so it is safe to call on every edit. An empty list is the normal answer, not an error |
 | `validatePattern(expr)` | regex | `""` (valid) or the error message |
 | `patternMatches(expr)` | regex | up to 20 sample matches across the loaded documents, shown live under the pattern field: a regex that compiles and matches nothing is the common mistake |
+
+### What the built-in patterns matched (read-only)
+
+`DetectionResult` also carries built-in pattern matching's **preview**, which is
+the answer to a question the review list cannot answer: a built-in pattern
+produces DIRECT matches, applied without review, so its findings never appear as
+Suggestions and until this preview existed the only way to check which signal
+categories were actually on was to anonymise the whole batch and read the result.
+
+| Field | Meaning |
+|---|---|
+| `patternMatches` | `[{category, text, count, documents, confidence}]`, one entry per DISTINCT matched text, aggregated over the whole batch. `documents` names the files it occurs in, without repeats; `confidence` is the LOWEST any occurrence scored, so a failed corroborating checksum shows instead of being averaged away |
+| `patternCategories` | the signal categories that actually ran: switched on AND applicable to the document country, in the engine's own order. It is reported beside the matches because "found nothing" and "never ran" are different facts and only the second is actionable |
+| `builtInPatternsOn` | the Built-in patterns master switch as it stood when the run started. Off means every signal category was silent whatever the category switches said |
+
+These are NOT Suggestions and must never be turned into any: nothing here enters
+the review list, and nothing here affects the Identify to Anonymise gate, which
+exists for unreviewed suggestions. The frontend keeps them in
+`state.builtInPatterns` (null before the first run, which is a different sentence
+for the tab to show than an empty list) and renders them on the read-only
+**Built-in patterns** tab, with no accept, no reject and no edit on a row. The run
+detects again for itself, so the preview is never an input to anonymisation.
+
+The preview runs even when every DISCOVERY route is off, because ticking "street
+addresses" and pressing Run detection is a complete question in itself; answering
+it only when some unrelated switch happened to be on would make the answer
+depend on that switch. In that case `phases` is empty and `status` says where the
+matches are.
 
 ### What the local AI did, and did not say
 

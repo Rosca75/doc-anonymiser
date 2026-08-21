@@ -1,6 +1,6 @@
 // views/identifyworkspace.js, the WORKSPACE of wizard step 2, Identify
 //
-// Four tabs, each with its item count in the tab itself:
+// Five tabs, each with its item count in the tab itself:
 //
 //   Suggestions the review gate. Everything any detection method proposes
 //                    waits here until the user accepts it: NOTHING reaches the
@@ -20,7 +20,17 @@
 //                    step 3 action: there is nothing to rename until a run has
 //                    assigned one.
 //   Never anonymise the allowlist, which wins over every pass.
-//   Patterns user regular expressions, with a valid / error badge.
+//   Built-in patterns READ-ONLY: what the application's own patterns matched
+//                    the last time detection ran, grouped by signal category,
+//                    including the categories that ran and matched nothing.
+//                    There is nothing to accept here, because a built-in
+//                    pattern produces DIRECT matches rather than Suggestions;
+//                    the tab exists so the one decision the user does make
+//                    about them, which categories are on, is checkable before
+//                    the whole batch is anonymised.
+//   Custom patterns the user's own regular expressions, with a valid / error
+//                    badge. Named for its author, which is the only difference
+//                    between it and the tab above.
 //
 // One structural change beyond the layout: "Run detection" is
 // ONE button in the card header. It used to be a panel with a per-file checkbox
@@ -46,7 +56,7 @@ import {
   getState, setState, llmEnabled, detectionRoutesOn,
   addValues, deleteValue, deleteValues, valueKey,
   setValueSpellings, setValueSpellingError, addSpelling,
-  addSuggestions, acceptSuggestion, rejectSuggestion,
+  addSuggestions, acceptSuggestion, rejectSuggestion, setBuiltInPatterns,
   acceptAllShown, rejectAllShown, moveSpelling,
   addPattern, removePattern, NAME_CATEGORIES,
   renameValue, renameSpelling, changeValueCategory, changeSuggestionCategory,
@@ -111,8 +121,11 @@ export function categorySelect(selected, opts = {}) {
     `</select>`;
 }
 
-// WORKSPACE_TABS is the tab set, in order.
-export const WORKSPACE_TABS = ["suggestions", "values", "allow", "patterns"];
+// WORKSPACE_TABS is the tab set, in order. The two pattern tabs sit together at
+// the end and are split by AUTHOR: "builtin" is read-only and shows what the
+// application's own patterns matched, "patterns" is where the user writes their
+// own. Built-in comes first because it is the one that is already running.
+export const WORKSPACE_TABS = ["suggestions", "values", "allow", "builtin", "patterns"];
 
 // --- View-local state -----------------------------------------------------
 //
@@ -333,6 +346,9 @@ function tabs(s) {
     suggestions: s.suggestions.length,
     values: s.values.length,
     allow: s.allowlist.length,
+    // Null rather than 0 before the first run: a "0" badge states that the
+    // patterns found nothing, which is not what "detection has not run" means.
+    builtin: s.builtInPatterns ? s.builtInPatterns.matches.length : null,
     patterns: s.patterns.length,
   };
   return tabbar(WORKSPACE_TABS.map((id) => ({
@@ -344,6 +360,7 @@ function tabBody(s, shown) {
   switch (activeTab) {
     case "values": return valuesTab(s);
     case "allow": return allowTab(s);
+    case "builtin": return builtInPatternsTab(s);
     case "patterns": return patternsTab(s);
     default: return suggestionsTab(s, shown);
   }
@@ -1407,6 +1424,98 @@ function allowTab(s) {
   return renderAllowlistChips(s, drafts.allow);
 }
 
+// --- Built-in patterns (read-only) ----------------------------------------
+
+/**
+ * builtInPatternsTab(s) shows what the built-in patterns matched the last time
+ * detection ran, grouped by signal category.
+ *
+ * It is READ-ONLY, and that is the design rather than an omission. A built-in
+ * pattern produces DIRECT matches: the pattern is a rule the user chose, so its
+ * findings are applied without review and there is nothing on a row to accept or
+ * reject. What the user does decide is which categories are on, and this tab is
+ * the only place that decision can be CHECKED before the batch is anonymised. So
+ * the copy points at the rail's category switches instead of offering per-row
+ * actions this tab must not have.
+ *
+ * Every category that RAN gets a section, including the ones that matched
+ * nothing. An empty section is the point of the tab in the workflow it was asked
+ * for: tick "street addresses", run detection, and see either the addresses or
+ * an explicit "nothing matched" under that heading. Dropping empty sections
+ * would make a category that ran and found nothing indistinguishable from one
+ * that never ran at all.
+ */
+export function builtInPatternsTab(s) {
+  const preview = s.builtInPatterns;
+  // Never run in this batch. Not the same as "found nothing", so it says so.
+  if (!preview) {
+    return `<div class="grid-empty">${escapeHTML(WORKSPACE.builtInNeverRan)}</div>`;
+  }
+  if (!preview.on) {
+    return `<p class="hint">${escapeHTML(WORKSPACE.builtInSwitchedOff)}</p>`;
+  }
+  if (preview.categories.length === 0) {
+    return `<p class="hint">${escapeHTML(WORKSPACE.builtInNoCategories)}</p>`;
+  }
+
+  // Grouped by category, in the order Go reported the ACTIVE categories, which
+  // is the engine's own stable order (engine.AllPIICategories). Rendering from
+  // that list rather than from the matches is what puts the empty sections in.
+  const byCategory = new Map(preview.categories.map((key) => [key, []]));
+  for (const match of preview.matches) {
+    // A match under a category the run did not report as active cannot happen,
+    // but rendering it in its own section rather than dropping it means a
+    // mismatch between the two lists shows up instead of hiding a finding.
+    if (!byCategory.has(match.category)) byCategory.set(match.category, []);
+    byCategory.get(match.category).push(match);
+  }
+
+  const summary =
+    `<p class="hint">${escapeHTML(
+      WORKSPACE.builtInSummary(preview.matches.length, preview.categories.length))}</p>`;
+
+  const sections = [...byCategory.entries()].map(([key, matches]) => {
+    const body = matches.length
+      ? matches.map(builtInRow).join("")
+      : `<div class="grid-empty">${escapeHTML(WORKSPACE.builtInNoneInCategory)}</div>`;
+    return `<div class="builtin-group" data-builtin-category="${escapeHTML(key)}">` +
+      sectionLabel(`${categoryLabel(key)} (${matches.length})`) +
+      `<div class="grid-box">${body}</div>` +
+      `</div>`;
+  }).join("");
+
+  return `<p class="hint">${escapeHTML(WORKSPACE.builtInHint)}</p>` +
+    (preview.matches.length === 0
+      ? `<p class="hint">${escapeHTML(WORKSPACE.builtInNoMatchesAtAll)}</p>`
+      : summary) +
+    sections;
+}
+
+/**
+ * builtInRow(match) is one matched text: what it says, how often and where, and
+ * a badge when a corroborating checksum did not pass.
+ *
+ * The failed check is SHOWN rather than hidden, because the span is replaced
+ * either way (CLAUDE.md §5: a checksum failure lowers confidence, it never
+ * vetoes) and a mistyped, partly-redacted or synthetic bank identifier is
+ * exactly what a template document holds. The user's lever over it is Minimum
+ * confidence in the rail, not this row.
+ */
+function builtInRow(match) {
+  const files = match.documents ?? [];
+  const weak = match.confidence > 0 && match.confidence < 1;
+  return `<div class="builtin-row" data-builtin-text="${escapeHTML(match.text)}">` +
+    `<span class="mono builtin-text">${escapeHTML(match.text)}</span>` +
+    (weak
+      ? `<span class="state-tag bad" title="${escapeHTML(WORKSPACE.builtInLowConfidence(match.confidence))}">` +
+        `${escapeHTML(WORKSPACE.builtInLowConfidenceBadge)}</span>`
+      : "") +
+    `<span class="spacer"></span>` +
+    `<span class="hint builtin-where" title="${escapeHTML(WORKSPACE.builtInInFiles(files))}">` +
+    `${escapeHTML(WORKSPACE.builtInOccurrences(match.count, files.length))}</span>` +
+    `</div>`;
+}
+
 // --- Patterns -------------------------------------------------------------
 
 function patternsTab(s) {
@@ -1545,6 +1654,11 @@ function wireDetection(container) {
       // Local AI route's folded spellings used to be lost in exactly such a step.
       const added = addSuggestions(result?.suggestions ?? []);
 
+      // The built-in patterns' read-only preview, replaced wholesale: it
+      // describes the categories that were on for THIS run, so a merge with an
+      // older run would show matches from a category since switched off.
+      setBuiltInPatterns(result);
+
       // What the local AI actually did, kept for the rail's read-out. A run
       // that found nothing is not the same fact as a document that holds
       // nothing, and the request count is what separates them.
@@ -1578,11 +1692,28 @@ function wireDetection(container) {
       // Belt and braces: the terminal event already clears this (main.js), so
       // a lost event cannot strand the bar, and a lost promise cannot either.
       setState({ discovery: null });
-      // Land the user on the fresh suggestion list, which is what they ran for.
-      activeTab = "suggestions";
+      // Land the user on the fresh suggestion list, which is what they ran for,
+      // unless no discovery route ran at all: then there IS no suggestion list
+      // and what the run produced is the built-in pattern preview, so that is
+      // the tab to land on rather than an empty one.
+      activeTab = builtInOnlyRun(getState()) ? "builtin" : "suggestions";
       setState({});
     }
   });
+}
+
+/**
+ * builtInOnlyRun(s) reports whether the last run's only visible product was the
+ * built-in pattern preview: no suggestion is waiting, and the patterns matched
+ * something.
+ *
+ * It reads the STORE rather than the result, because "no suggestion is waiting"
+ * is a fact about the review list the user is looking at (a run can find nothing
+ * new while rows from an earlier run still wait), and landing on an empty tab is
+ * exactly what this avoids.
+ */
+function builtInOnlyRun(s) {
+  return s.suggestions.length === 0 && (s.builtInPatterns?.matches.length ?? 0) > 0;
 }
 
 // --- Suggestions wiring ---------------------------------------------------

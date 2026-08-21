@@ -1309,6 +1309,26 @@ input, select {
 .pattern-row:hover { background: var(--surface-subtle); }
 .pattern-row .spacer { flex: 1; }
 
+/* The Built-in patterns tab: one group per signal category, each a section
+   label over a box of matched texts. Read-only, so a row carries no action and
+   no hit target: the hover tint below is there to help the eye track a long
+   line across to its occurrence count, not to suggest the row is clickable. */
+.builtin-group { margin-bottom: 1.4rem; }
+.builtin-group .section-label { margin-bottom: 0.4rem; }
+.builtin-row {
+  display: flex; align-items: center; gap: 0.85rem;
+  padding: 0.6rem 1rem;
+  border-top: 1px solid var(--gray-6);
+  font-size: 0.85rem;
+}
+.builtin-row:first-child { border-top: none; }
+.builtin-row:hover { background: var(--surface-subtle); }
+.builtin-row .spacer { flex: 1; }
+/* The matched text may be long (a URL, an address line): it wraps rather than
+   pushing the occurrence count off the card. */
+.builtin-text { min-width: 0; overflow-wrap: anywhere; }
+.builtin-where { flex: none; white-space: nowrap; }
+
 /* The worked-example catalogue under the add box: eight clickable starter
    expressions that teach the syntax to a non-expert. Each row is a full-width
    button so the whole strip is a target and reachable by keyboard. */

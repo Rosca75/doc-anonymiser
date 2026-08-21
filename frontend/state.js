@@ -244,6 +244,25 @@ const initialState = {
   // {source: "smart"|"local-ai", text, category, count, contexts}.
   suggestions: [],
 
+  // Built-in pattern matching's READ-ONLY preview, as the last detection run
+  // reported it: {matches, categories, on}.
+  //
+  //   matches     [{category, text, count, documents, confidence}], the direct
+  //               matches the switched-on signal categories claim in the batch
+  //   categories  the signal categories that actually ran (switched on AND
+  //               applicable to the document country)
+  //   on          the Built-in patterns master switch as it stood at run time
+  //
+  // These are DIRECT MATCHES, not suggestions: they carry no accept or reject,
+  // they never enter the review list, and they never gate the step 2 to 3 move.
+  // They are here so the one decision the user does make about them, which
+  // categories are on, is checkable before the whole batch is anonymised.
+  //
+  // NULL means "detection has not run in this batch", which is a different
+  // sentence for the tab to show than an empty match list, and is why this is
+  // one nullable object rather than three loose fields.
+  builtInPatterns: null,
+
   // The values another detection route also claims, as Go last answered
   // (api.js checkIntersections). They are WARNINGS, never blocking: the
   // precedence rule always has an answer, so refusing the run would punish the
@@ -1432,6 +1451,7 @@ export const STEP_RESETS = {
     },
     values: [],
     suggestions: [],
+    builtInPatterns: null,
     intersections: [],
     patterns: [],
     discovery: null,
@@ -1947,6 +1967,40 @@ function evidenceKey(e) {
 /** suggestionKey(text), case-insensitive identity of a suggestion row. */
 export function suggestionKey(text) {
   return (text ?? "").trim().toLowerCase();
+}
+
+/**
+ * setBuiltInPatterns(result) records built-in pattern matching's read-only
+ * preview from ONE detection result.
+ *
+ * It REPLACES rather than merges, which is the opposite of what addSuggestions
+ * does, and deliberately so. A suggestion is a row the user is working on, so a
+ * second run must not throw away the methods and spellings already gathered
+ * against it. A pattern match is not a row anybody works on: it is what the
+ * currently switched-on categories claim right now, so the answer to "what do my
+ * patterns find" is the LAST answer and never the union of every answer since
+ * the batch was imported. Merging would leave matches from a category the user
+ * has since switched off sitting in the list as though it were still on.
+ *
+ * @param {object} result a DetectionResult from api.js runDetection
+ */
+export function setBuiltInPatterns(result) {
+  setState({
+    builtInPatterns: {
+      matches: (result?.patternMatches ?? []).map((m) => ({
+        category: m.category ?? "",
+        text: m.text ?? "",
+        count: m.count ?? 0,
+        documents: [...(m.documents ?? [])],
+        confidence: typeof m.confidence === "number" ? m.confidence : 1,
+      })),
+      categories: [...(result?.patternCategories ?? [])],
+      // Absent reads as ON, matching the setting's own default: a preview that
+      // claimed the master switch was off because a field was missing would tell
+      // the user their patterns are not running when they are.
+      on: result?.builtInPatternsOn !== false,
+    },
+  });
 }
 
 /**
@@ -2884,6 +2938,7 @@ export function startNewBatch() {
     sourceCache: {},
     values: [],
     suggestions: [],
+    builtInPatterns: null,
     intersections: [],
     patterns: [],
     discovery: null,

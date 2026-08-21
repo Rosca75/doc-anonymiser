@@ -71,6 +71,20 @@ without the runtime. Preserve that behaviour.
   categories and confidence floor are the scope OF that route) and **Local AI**
   (off by default). There is no cloud route.
 
+  The workspace has FIVE tabs, and the last two are the same subject split by
+  AUTHOR: **Built-in patterns** is read-only and shows what the application's own
+  patterns matched the last time detection ran, grouped by signal category and
+  keeping the sections of categories that ran and matched nothing; **Custom
+  patterns** is where the user writes their own. The read-only one comes first
+  because it is the one already running. It carries no accept, no reject and no
+  edit on a row, because a built-in pattern produces DIRECT matches: there is
+  nothing to review, and a control implying one would lie about what the tab does.
+  It exists so the one decision the user does make about those patterns, which
+  categories are on, is checkable before the whole batch is anonymised. Its state
+  is `state.builtInPatterns`, NULL before the first run: "detection has not run"
+  and "the patterns found nothing" are different sentences, and the tab's badge
+  shows no count rather than a zero until a run has happened.
+
   Smart detection is a route containing THREE methods, each with its own
   control: built-in pattern matching (direct matches), signal-based discovery
   and heuristic discovery (both Suggestions). Two of them are switches at the top
