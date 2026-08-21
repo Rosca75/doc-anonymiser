@@ -85,9 +85,15 @@ Suggestion silently answers "reject" on your behalf.
      a list of controls rather than a wall of text.
 
    The right half is the review workspace: **Suggestions** waiting for a decision
-   and **My Values** already accepted, plus the never-anonymise list and your own
-   patterns. Each Suggestion says which methods found it and why, so you can judge
-   it rather than take it on trust. Manual entries show a live "Found N times in M
+   and **My Values** already accepted, plus the never-anonymise list, the
+   read-only **Built-in patterns** list and your own **Custom patterns**. Each
+   Suggestion says which methods found it and why, so you can judge
+   it rather than take it on trust. The Built-in patterns tab shows what the
+   signal categories you switched on matched the last time you ran detection,
+   grouped by category and keeping the heading of a category that matched
+   nothing, so ticking a category is something you can check before anything is
+   anonymised. It offers no accept or reject, because a built-in pattern is a rule
+   you chose and its matches are applied without review. Manual entries show a live "Found N times in M
    documents" preview, and spellings can be dragged between Values to regroup
    them.
 3. **Anonymise**: two tabs over the same document. **TEXT** runs the pipeline

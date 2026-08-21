@@ -159,11 +159,16 @@ func TestBuiltInPatternsAloneRunsNoSmartPhase(t *testing.T) {
 
 // TestDetectionWithNoRouteOnStillEnds: with every switch off there is nothing
 // to run, and that has to be said, not left as a spinning bar.
+//
+// "Every switch off" now includes the Built-in patterns master, because with it
+// ON the run still produces the read-only pattern preview: that is a run that
+// did something, so it must not report itself as a dead end.
 func TestDetectionWithNoRouteOnStillEnds(t *testing.T) {
 	app := detectionApp()
 	app.settings.UseHeuristicDiscovery = false
 	app.settings.SignalSuggestionSources = allSignalReadingsOff()
 	app.settings.UseLocalAI = false
+	app.settings.UseBuiltInPatterns = false
 	rec := withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"a.txt"}, nil, nil)
@@ -176,8 +181,82 @@ func TestDetectionWithNoRouteOnStillEnds(t *testing.T) {
 	if !strings.Contains(res.Status, "no detection route") {
 		t.Errorf("the status must say why nothing happened, got %q", res.Status)
 	}
+	if len(res.PatternMatches) != 0 || res.BuiltInPatternsOn {
+		t.Errorf("the built-in patterns are off, so the preview must be empty and say so: %+v", res)
+	}
 	if rec.count("detection:done") != 1 {
 		t.Error("even a run with nothing to do ends with its terminal event")
+	}
+}
+
+// TestBuiltInPreviewNeedsNoDiscoveryRoute is the workflow the preview exists
+// for: tick a signal category, press Run detection, and SEE what it matched.
+//
+// It must not depend on a discovery route being on, because ticking "street
+// addresses" is a complete question in itself and answering it only when some
+// unrelated switch happens to be on would be indefensible. The matches are
+// still NOT Suggestions: nothing about them reaches the review list.
+func TestBuiltInPreviewNeedsNoDiscoveryRoute(t *testing.T) {
+	app := detectionApp()
+	app.settings.UseHeuristicDiscovery = false
+	app.settings.SignalSuggestionSources = allSignalReadingsOff()
+	app.settings.UseLocalAI = false
+	app.settings.UseBuiltInPatterns = true
+	app.settings.Categories = engine.CategorySelection{engine.CatEmail: true}
+	app.docs = []engine.Document{
+		{Name: "a.txt", Format: engine.FormatTXT,
+			Markdown: "Alpine Trust S.A. wrote to marie.duval@example.com twice: marie.duval@example.com"},
+	}
+	rec := withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"a.txt"}, nil, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	if len(res.Phases) != 0 {
+		t.Errorf("no discovery route is on, so no phase may run: %v", res.Phases)
+	}
+	if len(res.Suggestions) != 0 {
+		t.Errorf("a built-in pattern match is a direct match, never a Suggestion: %+v", res.Suggestions)
+	}
+	if !res.BuiltInPatternsOn {
+		t.Error("the master switch was on, so the result must say so")
+	}
+	if len(res.PatternCategories) != 1 || res.PatternCategories[0] != engine.CatEmail {
+		t.Errorf("want email reported as the one active category, got %v", res.PatternCategories)
+	}
+	if len(res.PatternMatches) != 1 || res.PatternMatches[0].Count != 2 {
+		t.Fatalf("want the address previewed once with two occurrences, got %+v", res.PatternMatches)
+	}
+	if !strings.Contains(res.Status, "Built-in patterns tab") {
+		t.Errorf("the status must point at where the matches are, got %q", res.Status)
+	}
+	if rec.count("detection:done") != 1 {
+		t.Error("a preview-only run ends with its terminal event like any other")
+	}
+}
+
+// TestBuiltInPreviewObeysTheRemovalList: a removed value is enforced through the
+// allowlist, and the preview consults the run's own allowlist for exactly that
+// reason. A preview showing a value the user removed reads as the removal undone.
+func TestBuiltInPreviewObeysTheRemovalList(t *testing.T) {
+	app := detectionApp()
+	app.settings.UseBuiltInPatterns = true
+	app.settings.Categories = engine.CategorySelection{engine.CatEmail: true}
+	app.docs = []engine.Document{
+		{Name: "a.txt", Format: engine.FormatTXT,
+			Markdown: "info@example.com and marie.duval@example.com"},
+	}
+	withRecorder(t, app)
+
+	res, err := app.RunDetection([]string{"a.txt"}, []string{"info@example.com"}, nil)
+	if err != nil {
+		t.Fatalf("RunDetection: %v", err)
+	}
+	for _, m := range res.PatternMatches {
+		if m.Text == "info@example.com" {
+			t.Errorf("an allowlisted address must not be previewed: %+v", res.PatternMatches)
+		}
 	}
 }
 

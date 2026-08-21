@@ -115,6 +115,29 @@ type DetectionResult struct {
 	// on their OWN document and their own machine, which no fixed guidance in a
 	// tooltip can do. Zero when the route did not run.
 	AISecondsPerRequest float64 `json:"aiSecondsPerRequest"`
+
+	// PatternMatches and PatternCategories are built-in pattern matching's
+	// READ-ONLY preview: what the switched-on signal categories claim in the
+	// batch as it stands, and which of those categories actually ran.
+	//
+	// They are not Suggestions and must never become any: a built-in pattern
+	// produces DIRECT matches, which pass 1 applies without review because the
+	// pattern is a rule the user chose. What the user does decide is which
+	// categories are on, and until this preview existed there was no way to
+	// check that decision short of anonymising the whole batch and reading the
+	// result. So the run reports the matches and the Identify step SHOWS them.
+	//
+	// PatternCategories is reported beside the matches because "found nothing"
+	// and "never ran" are different facts and only the second is actionable: a
+	// category switched off, or outside the document country, is absent from
+	// this list and its section says so.
+	PatternMatches    []engine.PatternMatch `json:"patternMatches"`
+	PatternCategories []string              `json:"patternCategories"`
+	// BuiltInPatternsOn is the master switch as it stood when the run started.
+	// Off means every signal category is silent whatever the category switches
+	// say, which is a different sentence for the user to read than "none of the
+	// categories you chose applies here".
+	BuiltInPatternsOn bool `json:"builtInPatternsOn"`
 }
 
 // AIScope narrows the local-AI route to one document and, within it, an
@@ -212,8 +235,24 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 	}
 
 	res := &DetectionResult{Phases: phases, Suggestions: []engine.Suggestion{}}
+
+	// The built-in pattern preview, taken from the settings as they stand NOW.
+	// It runs before the phases and outside them, because it is not a phase: it
+	// is a read of a deterministic rule set, it emits no Suggestion, and it must
+	// be available even when every discovery route is off. A user who ticks
+	// "street addresses" and presses Run detection is asking exactly this
+	// question, and answering it only when some OTHER route happens to be on
+	// would make the answer depend on an unrelated switch.
+	a.previewBuiltInPatterns(docs, settings, allow, res)
+
 	if len(phases) == 0 {
-		res.Status = "no detection route is switched on, turn on Smart detection or Local AI in Configure"
+		// With the patterns on, the run still did something the user can see, so
+		// it is not the dead end the message below describes.
+		if res.BuiltInPatternsOn {
+			res.Status = builtInOnlyStatus(res)
+		} else {
+			res.Status = "no detection route is switched on, turn on Smart detection or Local AI in Configure"
+		}
 		a.emit("detection:done", res)
 		return res, nil
 	}
@@ -281,6 +320,55 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 	emitted = true
 	a.emit("detection:done", res)
 	return res, nil
+}
+
+// previewBuiltInPatterns fills the result's read-only built-in pattern preview.
+//
+// It reuses the run's OWN allowlist, so a session exclusion and a defined term
+// suppress a previewed match exactly as they suppress a replaced one: a preview
+// that showed a value the user had removed would read as the removal having been
+// undone. The category selection and the confidence floor come from the stored
+// settings for the same reason the pipeline takes them from there.
+//
+// A nil or empty selection means "use the preset", which is the pipeline's own
+// reading of the field (engine.Run): the preview must not report a different set
+// of categories from the one a run would use.
+func (a *App) previewBuiltInPatterns(docs []engine.Document, settings Settings,
+	allow *engine.Allowlist, res *DetectionResult,
+) {
+	res.PatternMatches = []engine.PatternMatch{}
+	res.PatternCategories = []string{}
+	res.BuiltInPatternsOn = settings.UseBuiltInPatterns
+	if !settings.UseBuiltInPatterns {
+		return
+	}
+	sel := settings.Categories
+	if len(sel) == 0 {
+		sel = engine.PresetSelection(engine.Level(settings.Level))
+	}
+	res.PatternCategories = engine.ActivePatternCategories(sel, settings.Country)
+	if len(res.PatternCategories) == 0 {
+		return
+	}
+	res.PatternMatches = engine.PreviewPatternMatches(
+		docs, sel, settings.Country, settings.MinConfidence, allow)
+}
+
+// builtInOnlyStatus is the status line for a run in which built-in pattern
+// matching was the only thing switched on. It exists so that run reads as a run
+// that did something, which it did: the matches are on the Built-in patterns
+// tab.
+func builtInOnlyStatus(res *DetectionResult) string {
+	if len(res.PatternCategories) == 0 {
+		return "built-in pattern matching is on but none of the selected categories applies to the document country, " +
+			"choose categories in Configure or turn on Smart detection or Local AI"
+	}
+	if len(res.PatternMatches) == 0 {
+		return "no discovery route is switched on, and the built-in patterns matched nothing in these files"
+	}
+	return fmt.Sprintf(
+		"no discovery route is switched on; the built-in patterns matched %d value(s), see the Built-in patterns tab",
+		len(res.PatternMatches))
 }
 
 // rememberDefinedTerms reads every document's own vocabulary and stores it, so

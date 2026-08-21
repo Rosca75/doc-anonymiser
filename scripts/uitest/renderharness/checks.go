@@ -515,6 +515,90 @@ func checkValueCardActions(c *cdpClient, r *reporter) {
 		"The .value-remove handler calls deleteValue(category, mainText) from the card's dataset.")
 }
 
+// --- The Built-in patterns tab: read-only, and it fits ----------------------
+
+type builtInPatternsResult struct {
+	Error               string `json:"error"`
+	Rows                int    `json:"rows"`
+	Groups              int    `json:"groups"`
+	EmptyGroups         int    `json:"emptyGroups"`
+	Actions             int    `json:"actions"`
+	PageScrollsSideways bool   `json:"pageScrollsSideways"`
+	WidestRowRight      int    `json:"widestRowRight"`
+	CardRight           int    `json:"cardRight"`
+	NoteInside          bool   `json:"noteInside"`
+	BodyScrolls         bool   `json:"bodyScrolls"`
+	BodyScrollsSideways bool   `json:"bodyScrollsSideways"`
+}
+
+// checkBuiltInPatternsTab asserts what the read-only Built-in patterns tab looks
+// like once a long match is in it.
+//
+// The tab shows what the application's own patterns matched, so its content is
+// whatever the document held: a URL with no spaces in it and a full street
+// address are the normal case, not an edge one, and both are exactly what widens
+// a card past the window. The string tests cover the grouping; only a renderer
+// can answer whether the row fits and whether the occurrence note is still on
+// screen beside it.
+//
+// The read-only claim is measured here too. It is a markup fact, but it is the
+// tab's whole contract (a built-in pattern produces DIRECT matches, so there is
+// nothing to accept) and a control added by accident is invisible in a diff of
+// the store.
+func checkBuiltInPatternsTab(c *cdpClient, r *reporter) {
+	r.step("Built-in patterns is read-only, and a long match still fits the card")
+
+	var got builtInPatternsResult
+	if err := c.eval("__uiProbes.builtInPatternsTabLayout()", &got); err != nil {
+		r.assert("the Built-in patterns probe runs", false,
+			"the tab rendered", err.Error(),
+			"views/identifyworkspace.js builtInPatternsTab must render one .builtin-group "+
+				"per active category, each holding .builtin-row entries.")
+		return
+	}
+	if got.Error != "" {
+		r.assert("the Built-in patterns probe runs", false,
+			"a section per active category", got.Error,
+			"The probe seeds state.builtInPatterns and clicks [data-wstab=builtin].")
+		return
+	}
+
+	r.assert("one section per ACTIVE category, empty ones included",
+		got.Groups == 3 && got.EmptyGroups == 1,
+		"3 sections, 1 of them empty", fmt.Sprintf("%d sections, %d empty", got.Groups, got.EmptyGroups),
+		"The sections come from the categories that RAN, not from the matches: a category "+
+			"that ran and matched nothing must not look like one that never ran.")
+
+	r.assert("no row offers an accept, a reject or an edit",
+		got.Actions == 0,
+		"0 controls on the rows", fmt.Sprintf("%d controls", got.Actions),
+		"A built-in pattern produces DIRECT matches, applied without review. A control here "+
+			"would promise a decision the tab cannot take.")
+
+	r.assert("a long match does not scroll the page sideways",
+		!got.PageScrollsSideways,
+		"no horizontal page scroll", "the page scrolls sideways",
+		"style.css .builtin-text wraps with overflow-wrap: anywhere. A URL is one long "+
+			"unbreakable word until something says otherwise.")
+
+	r.assert("the row stays inside the card that holds it",
+		got.WidestRowRight <= got.CardRight+1,
+		fmt.Sprintf("every row within %dpx", got.CardRight),
+		fmt.Sprintf("the widest row reaches %dpx", got.WidestRowRight),
+		"The card body is the scroller; a row wider than it is content that escaped.")
+
+	r.assert("the occurrence note stays on its row",
+		got.NoteInside,
+		"the note inside the row", "the note pushed past the row's right edge",
+		"style.css .builtin-where is flex: none beside a wrapping text, so the note keeps "+
+			"its place: it is the answer to \"where is this\".")
+
+	r.assert("the rows scroll inside the card body, not sideways",
+		!got.BodyScrollsSideways,
+		"vertical scrolling only", "the card body scrolls sideways",
+		"The layout contract is that scrolling happens inside a card body, downwards.")
+}
+
 // --- The My values tab: two captioned blocks, and the Ctrl+click selection --
 
 type valuesLayoutResult struct {

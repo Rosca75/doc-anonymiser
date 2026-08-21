@@ -119,6 +119,9 @@ doc-anonymiser/
 │   │   ├── signaldiscovery.go # signal-based discovery: a match used as evidence
 │   │   ├── evidence.go        # WHY a discovery method produced a Suggestion
 │   │   ├── pii.go             # Pass 1: built-in pattern matching
+│   │   ├── patternpreview.go # what pass 1 WOULD match, read-only, so Identify
+│   │                          #   can SHOW it: a direct match has no review gate,
+│   │                          #   which left the category switches uncheckable
 │   │   ├── country.go         # Document-country model; which regex categories apply where
 │   │   ├── conflicts.go       # ValidateValues: blocking conflicts + warnings, before pass 1
 │   │   ├── intersections.go   # what two routes both claim, answered BEFORE a run
@@ -517,6 +520,25 @@ doc-anonymiser/
   3. Post-pass: registry re-application across ALL loaded documents so the same
      real-world subject maps to the same placeholder everywhere.
 
+  **The matches are PREVIEWED on Identify, read-only.** A direct match needs no
+  review gate, which left the one thing the user does decide about pass 1
+  (which signal categories are on) uncheckable until the whole batch had been
+  anonymised: ticking "street addresses" changed nothing anybody could see.
+  `engine.PreviewPatternMatches` answers it with pass 1's OWN detector through
+  pass 1's own gates (the allowlist first, so a session exclusion suppresses a
+  previewed match exactly as it suppresses a replaced one, then the confidence
+  floor, then overlap resolution) over the same regions pass 1 reads, so the
+  preview cannot promise a match the run does not make. `RunDetection` reports it
+  beside the Suggestions (`patternMatches`, `patternCategories`,
+  `builtInPatternsOn`) and it runs even when every DISCOVERY route is off, because
+  the question is complete in itself. It is a READ and nothing else: it produces
+  no Suggestion, mints no placeholder, is never an input to `engine.Run` (the run
+  detects again for itself), and does not touch the Identify to Anonymise gate,
+  which exists for unreviewed suggestions. `ActivePatternCategories` travels with
+  it so the tab can say "that category never ran" rather than "it found nothing":
+  a category switched off, or outside the document country, is a fact the user can
+  act on and an empty result is not.
+
   No discovery method runs here. Discovery happens at Identify time
   (`App.RunDetection`), every finding is a Suggestion, and every Local AI finding
   passes a **hallucination filter** (dropped unless the exact string occurs in
@@ -699,7 +721,8 @@ doc-anonymiser/
   **four** steps, and both their tokens and their visible labels are:
   1 **Import**, 2 **Identify**, 3 **Anonymise**, 4 **Export**. Identify owns two
   halves: the Configure choices are its left rail and the Values, Suggestions,
-  never-anonymise list and custom patterns are its Review workspace.
+  never-anonymise list, built-in pattern matches and custom patterns are its
+  Review workspace.
 
   The rail lists the DETECTION ROUTES as switchable sections: Smart detection, on
   by default and owning the scope controls (document country, preset, the
