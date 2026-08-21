@@ -15,6 +15,7 @@ package convert
 import (
 	"archive/zip"
 	"bytes"
+	"compress/zlib"
 	"fmt"
 	"image"
 	"image/color"
@@ -41,6 +42,7 @@ import (
 var allFixtures = []string{
 	"report.docx", "deck.pptx", "images.docx", "images.pptx",
 	"workbook.xlsx", "textlayer.pdf", "scanned.pdf",
+	"pdf_gate_text.pdf", "pdf_gate_surfaces.pdf", "pdf_gate_images.pdf",
 }
 
 // fixture returns the named testdata file, generating it first if missing.
@@ -81,6 +83,12 @@ func generateFixture(t *testing.T, name string) []byte {
 		// An "image-only" page: the content stream draws a rectangle and
 		// contains no text operators at all — the scanned-PDF shape.
 		return buildImageOnlyPDF()
+	case "pdf_gate_text.pdf":
+		return buildPDFGateText()
+	case "pdf_gate_surfaces.pdf":
+		return buildPDFGateSurfaces(t)
+	case "pdf_gate_images.pdf":
+		return buildPDFGateImages(t)
 	default:
 		t.Fatalf("unknown fixture %q", name)
 		return nil
@@ -545,4 +553,195 @@ func buildImagesDocxFixture(t *testing.T) []byte {
 		"word/media/image4.png":        texturedPNG(t, 300, 200, color.RGBA{R: 40, G: 180, B: 90, A: 255}),
 		"word/media/image5.png":        texturedPNG(t, 600, 100, color.RGBA{R: 10, G: 10, B: 10, A: 255}),
 	})
+}
+
+// --- PDF gate fixtures (docs/change-13b.md step 3) -------------------------
+//
+// Three hand-constructed PDFs for the aspose-pdf-foss adoption gate. They are
+// raw PDF syntax with a programmatically computed xref, like the two PDF
+// fixtures above, because the gate MEASURES the library: a fixture the
+// library itself wrote would test the library against its own output. Every
+// name in them is invented; none comes from any real document.
+//
+// rawPDFObject is one numbered object of such a file: Body is the
+// dictionary (or bare value) text, and Stream, when non-nil, appends a
+// stream whose /Length the assembler fills in.
+type rawPDFObject struct {
+	Body   string
+	Stream []byte
+}
+
+// assembleRawPDF serialises the objects (numbered from 1, in order) with a
+// correct xref table. trailerExtra is spliced into the trailer dictionary
+// after /Size and /Root, so a fixture can add /Info.
+func assembleRawPDF(objects []rawPDFObject, trailerExtra string) []byte {
+	var buf bytes.Buffer
+	buf.WriteString("%PDF-1.5\n%\xe2\xe3\xcf\xd3\n")
+	offsets := make([]int, len(objects)+1)
+	for i, obj := range objects {
+		offsets[i+1] = buf.Len()
+		fmt.Fprintf(&buf, "%d 0 obj\n", i+1)
+		if obj.Stream == nil {
+			buf.WriteString(obj.Body)
+		} else {
+			// The assembler owns /Length so a builder cannot get it wrong:
+			// the body is written with its closing >> re-opened.
+			body := strings.TrimSpace(obj.Body)
+			body = strings.TrimSuffix(body, ">>")
+			fmt.Fprintf(&buf, "%s /Length %d >>\nstream\n", body, len(obj.Stream))
+			buf.Write(obj.Stream)
+			buf.WriteString("\nendstream")
+		}
+		buf.WriteString("\nendobj\n")
+	}
+	xrefPos := buf.Len()
+	fmt.Fprintf(&buf, "xref\n0 %d\n", len(objects)+1)
+	buf.WriteString("0000000000 65535 f \n")
+	for i := 1; i <= len(objects); i++ {
+		fmt.Fprintf(&buf, "%010d 00000 n \n", offsets[i])
+	}
+	fmt.Fprintf(&buf, "trailer\n<< /Size %d /Root 1 0 R %s>>\nstartxref\n%d\n%%%%EOF\n",
+		len(objects)+1, trailerExtra, xrefPos)
+	return buf.Bytes()
+}
+
+// pdfTextLine emits one positioned text line for a content stream.
+func pdfTextLine(font string, size, x, y int, text string) string {
+	esc := strings.NewReplacer(`\`, `\\`, `(`, `\(`, `)`, `\)`).Replace(text)
+	return fmt.Sprintf("BT /%s %d Tf %d %d Td (%s) Tj ET\n", font, size, x, y, esc)
+}
+
+// zlibCompress deflates data the way a /FlateDecode stream expects.
+func zlibCompress(data []byte) []byte {
+	var buf bytes.Buffer
+	zw := zlib.NewWriter(&buf)
+	_, _ = zw.Write(data)
+	_ = zw.Close()
+	return buf.Bytes()
+}
+
+// buildPDFGateText: three pages of English and French prose carrying invented
+// names, one value wrapped across a line break (Victor / Beaulieu, pages
+// cannot rejoin it: SearchText's single-line limit is exactly what the gate
+// measures), and one value in a smaller font size (Quentin Marsh at 9 pt).
+func buildPDFGateText() []byte {
+	page1 := pdfTextLine("F1", 12, 72, 720, "Engagement summary for the Ostrell Group account.") +
+		pdfTextLine("F1", 12, 72, 700, "Prepared by Harriet Volkmer, senior reviewer.") +
+		pdfTextLine("F1", 12, 72, 680, "Contact harriet.volkmer@ostrell.example for any follow-up.") +
+		pdfTextLine("F1", 9, 72, 660, "Countersigned by Quentin Marsh.")
+	page2 := pdfTextLine("F1", 12, 72, 720, "La Societe Miradour confirme la mission convenue.") +
+		pdfTextLine("F1", 12, 72, 700, "Le rapport est signe par Jean-Baptiste Ferrand.") +
+		pdfTextLine("F1", 12, 72, 680, "Une reunion de suivi est prevue au Luxembourg.")
+	page3 := pdfTextLine("F1", 12, 72, 720, "The renewal was approved by Victor") +
+		pdfTextLine("F1", 12, 72, 704, "Beaulieu on behalf of the supervisory board.")
+
+	const pageDict = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 9 0 R >> >> /Contents %d 0 R >>"
+	return assembleRawPDF([]rawPDFObject{
+		{Body: "<< /Type /Catalog /Pages 2 0 R >>"},
+		{Body: "<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R] /Count 3 >>"},
+		{Body: fmt.Sprintf(pageDict, 4)},
+		{Body: "<< >>", Stream: []byte(page1)},
+		{Body: fmt.Sprintf(pageDict, 6)},
+		{Body: "<< >>", Stream: []byte(page2)},
+		{Body: fmt.Sprintf(pageDict, 8)},
+		{Body: "<< >>", Stream: []byte(page3)},
+		{Body: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"},
+	}, "")
+}
+
+// buildPDFGateSurfaces: one body page plus every non-content surface a value
+// can hide in (docs/change-13.md Q1's table): an Info dictionary, an XMP
+// metadata packet, a text annotation, an outline title, and a page thumbnail.
+// The planted name is Nadia Okonkwo in every surface, so the leak scanner's
+// test can prove each surface is read by planting ONE needle.
+func buildPDFGateSurfaces(t *testing.T) []byte {
+	t.Helper()
+	body := pdfTextLine("F1", 12, 72, 720, "Quarterly note for the Halvorsen account.") +
+		pdfTextLine("F1", 12, 72, 700, "The body text mentions Nadia Okonkwo exactly once.")
+
+	// The XMP packet is a real, minimal one: an uncompressed /Metadata
+	// stream, as writers emit it (ISO 32000-1 requires XMP uncompressed so
+	// tools can find it without a PDF parser).
+	xmp := `<?xpacket begin="` + "\ufeff" + `" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">
+   <dc:creator><rdf:Seq><rdf:li>Nadia Okonkwo</rdf:li></rdf:Seq></dc:creator>
+   <dc:title><rdf:Alt><rdf:li xml:lang="x-default">Confidential Halvorsen review</rdf:li></rdf:Alt></dc:title>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>`
+
+	// The thumbnail is a real (tiny) grayscale raster: 8x8, flate-compressed,
+	// exactly the shape a /Thumb entry carries.
+	thumbPixels := make([]byte, 64)
+	for i := range thumbPixels {
+		thumbPixels[i] = byte(i * 4)
+	}
+
+	return assembleRawPDF([]rawPDFObject{
+		{Body: "<< /Type /Catalog /Pages 2 0 R /Metadata 9 0 R /Outlines 10 0 R >>"},
+		{Body: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"},
+		{Body: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R /Annots [6 0 R] /Thumb 7 0 R >>"},
+		{Body: "<< >>", Stream: []byte(body)},
+		{Body: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"},
+		{Body: "<< /Type /Annot /Subtype /Text /Rect [100 700 120 720] /Contents (Reviewed by Nadia Okonkwo before release.) >>"},
+		{Body: "<< /Subtype /Image /Width 8 /Height 8 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode >>", Stream: zlibCompress(thumbPixels)},
+		{Body: "<< /Title (Section on Nadia Okonkwo) /Parent 10 0 R /Dest [3 0 R /Fit] >>"},
+		{Body: "<< /Type /Metadata /Subtype /XML >>", Stream: []byte(xmp)},
+		{Body: "<< /Type /Outlines /First 8 0 R /Last 8 0 R /Count 1 >>"},
+		{Body: "<< /Title (Confidential Halvorsen review) /Author (Nadia Okonkwo) /Producer (fixture generator) >>"},
+	}, "/Info 11 0 R ")
+}
+
+// buildPDFGateImages: a JPEG XObject placed on BOTH pages through one shared
+// object (one asset embedded once, used twice: what D9's hash identity must
+// treat as one picture), a flate raster the extractor returns as PNG, and an
+// inline image (BI..ID..EI) on page 2, which the gate records as listed or
+// not listed.
+func buildPDFGateImages(t *testing.T) []byte {
+	t.Helper()
+	jpegBytes := []byte(texturedJPEG(t, 120, 90, color.RGBA{R: 200, G: 60, B: 40, A: 255}))
+
+	// The flate raster: 40x30 DeviceRGB, the deterministic gradient the other
+	// image fixtures use.
+	const rw, rh = 40, 30
+	rgb := make([]byte, rw*rh*3)
+	img := texturedImage(rw, rh, color.RGBA{R: 31, G: 119, B: 180, A: 255})
+	i := 0
+	for y := 0; y < rh; y++ {
+		for x := 0; x < rw; x++ {
+			c := img.RGBAAt(x, y)
+			rgb[i], rgb[i+1], rgb[i+2] = c.R, c.G, c.B
+			i += 3
+		}
+	}
+
+	// The inline image: 8x8 grayscale, raw bytes between ID and EI.
+	inline := make([]byte, 64)
+	for i := range inline {
+		inline[i] = byte(255 - i*3)
+	}
+	var page2 bytes.Buffer
+	page2.WriteString("q 120 0 0 90 72 500 cm /ImJ Do Q\n")
+	page2.WriteString("q 32 0 0 32 300 300 cm\nBI /W 8 /H 8 /CS /G /BPC 8 ID ")
+	page2.Write(inline)
+	page2.WriteString(" EI\nQ\n")
+	page2.WriteString(pdfTextLine("F1", 12, 72, 720, "Second page reuses the same photograph."))
+
+	page1 := "q 200 0 0 150 72 500 cm /ImJ Do Q\nq 100 0 0 75 300 300 cm /ImP Do Q\n" +
+		pdfTextLine("F1", 12, 72, 720, "First page places the photograph and the chart.")
+
+	return assembleRawPDF([]rawPDFObject{
+		{Body: "<< /Type /Catalog /Pages 2 0 R >>"},
+		{Body: "<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>"},
+		{Body: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 9 0 R >> /XObject << /ImJ 7 0 R /ImP 8 0 R >> >> /Contents 4 0 R >>"},
+		{Body: "<< >>", Stream: []byte(page1)},
+		{Body: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 9 0 R >> /XObject << /ImJ 7 0 R >> >> /Contents 6 0 R >>"},
+		{Body: "<< >>", Stream: page2.Bytes()},
+		{Body: "<< /Type /XObject /Subtype /Image /Width 120 /Height 90 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode >>", Stream: jpegBytes},
+		{Body: fmt.Sprintf("<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode >>", rw, rh), Stream: zlibCompress(rgb)},
+		{Body: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"},
+	}, "")
 }
