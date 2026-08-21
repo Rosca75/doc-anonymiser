@@ -195,6 +195,15 @@ const (
 	CatIdentifierNames = "identifier_names" // + heuristic: reference and contract codes
 	CatOtherNames      = "other_names"      // AI or manual: "a name, and none of the above"
 	CatCustomPatterns  = "custom_patterns"  // the user's own regexes
+	// CatCountryNames is a country or jurisdiction named in the document. It has
+	// its own category because in a two-party contract between two entities of
+	// one country the jurisdiction is part of the identity, and filing it under
+	// other_names loses that distinction in the mapping CSV.
+	CatCountryNames = "country_names" // AI or manual: a gazetteer would fire in prose
+	// CatNationalityNames is a nationality or demonym ("Française").
+	CatNationalityNames = "nationality_names" // AI or manual: an ordinary adjective
+	// CatBusinessSectorNames is an industry or line of business ("Transport").
+	CatBusinessSectorNames = "business_sector_names" // AI or manual: an ordinary noun
 )
 
 // CategorySelection is the granular per-category switch set the pipeline
@@ -214,6 +223,9 @@ var AllPIICategories = []string{
 	// Extended — hard PII, enabled at every preset.
 	CatCreditCard, CatNHS, CatIPAddress, CatMACAddress, CatCrypto,
 	CatDatabaseURI, CatDESteuerID, CatESNIF,
+	// A bank identifier, and the two location shapes. Appended so an existing UI
+	// ordering is preserved and new categories arrive at the tail.
+	CatBIC, CatPostalCode, CatAddress,
 }
 
 // AllValueCategories lists the value categories in a stable order, mirrored
@@ -221,6 +233,9 @@ var AllPIICategories = []string{
 var AllValueCategories = []string{
 	CatEntityNames, CatProjectNames, CatProductNames, CatBrandNames,
 	CatPersonNames, CatIdentifierNames, CatOtherNames, CatCustomPatterns,
+	// Appended after the original eight so an existing UI ordering is preserved
+	// and any consumer iterating this list sees new categories at the tail.
+	CatCountryNames, CatNationalityNames, CatBusinessSectorNames,
 }
 
 // isValueCategory reports whether category is one of AllValueCategories. It
@@ -274,6 +289,9 @@ func PresetSelection(level Level) CategorySelection {
 		CatCreditCard: true, CatNHS: true, CatIPAddress: true,
 		CatMACAddress: true, CatCrypto: true, CatDatabaseURI: true,
 		CatDESteuerID: true, CatESNIF: true,
+		// A BIC identifies a bank account's institution and travels beside the
+		// IBAN it belongs to, so it is hard PII and fires at every level.
+		CatBIC:         true,
 		CatEntityNames: true, CatProjectNames: true, CatIdentifierNames: true,
 		CatCustomPatterns: true,
 	}
@@ -286,6 +304,15 @@ func PresetSelection(level Level) CategorySelection {
 		sel[CatAmount] = true
 		sel[CatDate] = true
 		sel[CatOtherNames] = true
+		// Locations, and the context values that read like locations. CLAUDE.md
+		// §5 puts location names at advanced, and a street address, a postal code
+		// and a country are all locations; a nationality and a business sector
+		// are the same kind of context value, identifying only in combination.
+		sel[CatAddress] = true
+		sel[CatPostalCode] = true
+		sel[CatCountryNames] = true
+		sel[CatNationalityNames] = true
+		sel[CatBusinessSectorNames] = true
 	}
 	return sel
 }

@@ -269,6 +269,7 @@ export const RAIL = {
   // render as a checkbox named after a JSON key.
   signalSourceLabel: {
     email: "Email addresses",
+    url: "Web addresses",
   },
   // One label, one "where it reads it from" and one explanation per engine
   // DERIVATION, enforced by the same guard. The label says WHAT is suggested and
@@ -277,14 +278,17 @@ export const RAIL = {
   signalDerivationLabel: {
     "email.person": "Person names",
     "email.organisation": "Organisation names",
+    "url.organisation": "Organisation names",
   },
   signalDerivationFinds: {
     "email.person": "from the part before the @",
     "email.organisation": "from the domain",
+    "url.organisation": "from the website domain",
   },
   signalDerivationHelp: {
     "email.person": "Reads the part before the @ as a person's name, and suggests that name where it appears in prose elsewhere in the batch. Role mailboxes such as info@ and single-token handles derive nothing. Switching this off stops those suggestions and does not stop the address itself being anonymised.",
     "email.organisation": "Reads the domain as an organisation's name, and suggests that name where it appears in prose elsewhere in the batch. Public mail providers and public-suffix labels derive nothing. Switching this off stops those suggestions and does not stop the address itself being anonymised.",
+    "url.organisation": "Reads a website's domain as an organisation's name, and suggests that name where it appears in prose elsewhere in the batch. A document that carries no email address often still prints its parties' websites, and the domain is frequently the short form of the name. The page path derives nothing. Switching this off stops those suggestions and does not stop the website itself being anonymised.",
   },
   signalSourcesOff: "Off",
   /**
@@ -523,6 +527,27 @@ export const ALLOWLIST = {
     return `${read} term${read === 1 ? "" : "s"} read, ${added} new.`;
   },
   templateSaved: "Template saved. Fill in one term per row and import it back.",
+
+  // The terms the DOCUMENTS define about themselves. They are shown here, and
+  // not merged into the list above, because they are a different kind of entry:
+  // the user typed the list above, and the application read these out of a file.
+  // Showing them is the point. A suppression the user cannot see is one they
+  // cannot lift, and this is the largest thing standing between a review list
+  // and a usable one.
+  definedTitle: "Terms your documents define",
+  definedHint: "A contract that introduces a phrase as its own vocabulary is telling you the phrase is not a client identity, so these are not suggested. Remove any entry to have it suggested again.",
+  definedEmpty: "None yet. Run detection and any phrase your documents define will be listed here.",
+  /** definedIdiom(idiom) names the drafting shape that introduced a term. */
+  definedIdiom(idiom) {
+    if (idiom === "means") return "defined with \u201cmeans\u201d";
+    if (idiom === "parenthetical") return "defined in brackets";
+    return "defined by the document";
+  },
+  definedRemove: "Stop suppressing this term",
+  /** definedForgotten(t) reports the result of removing one. */
+  definedForgotten(t) {
+    return `${t} can be suggested again.`;
+  },
 };
 
 // Identify WORKSPACE copy: the four tabs, the suggestions
@@ -666,6 +691,7 @@ export const WORKSPACE = {
   evidenceKindLabel: {
     email_local_part: "an email address naming this person",
     email_domain: "an email domain naming this organisation",
+    website_domain: "a website domain naming this organisation",
   },
   evidenceTitle: "Why this was suggested",
   /**
@@ -1592,4 +1618,10 @@ export const CATEGORY_LABELS = {
   database_uri: ["Database connection strings", "For example postgres://user:password@host/db, which carries a password"],
   de_steuer_id: ["German tax identification numbers", "The 11 digit Steueridentifikationsnummer"],
   es_nif: ["Spanish tax numbers", "The NIF, 8 digits and a letter, for example 12345678Z"],
+  bic: ["Bank identifier codes", "The BIC or SWIFT code beside an account, for example BGLLLULL"],
+  postal_code: ["Postal codes", "The Luxembourg form, for example L-1855"],
+  address: ["Street addresses", "For example 12, rue des Tilleuls"],
+  country_names: ["Country names", "A country or jurisdiction, added by you or found by the AI review"],
+  nationality_names: ["Nationalities", "For example Française, added by you or found by the AI review"],
+  business_sector_names: ["Business sectors", "An industry or line of business, for example Transport"],
 };

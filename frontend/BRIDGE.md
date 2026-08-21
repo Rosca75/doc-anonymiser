@@ -170,6 +170,8 @@ display choice: it decides which country-specific regex categories run.
 | `defaultAllowlist()` | — | the suggested never-anonymise terms. NOT added to the list automatically: the allowlist starts empty and the user chooses its terms. Kept as the source for the downloadable template. |
 | `importAllowlistCSV()` | — | parsed terms, or `null` when the user cancels the dialog |
 | `saveAllowlistTemplate()` | — | saves the downloadable CSV template |
+| `definedTerms()` | — | `DefinedTerm[]`, rows of `{term, idiom, document}`: the vocabulary the imported documents DECLARE about themselves, read at detection time and enforced through the allowlist. `idiom` is `"means"` (the dictionary form, `"Work Order" means ...`) or `"parenthetical"` (the inline form, `(the "Dedicated Advisors")`). It is a SEPARATE list from the user's own terms, because deleting a term the user typed is not the same gesture as dropping a definition the application read out of a file, and it is SHOWN because a suppression the user cannot see is one they cannot lift |
+| `forgetDefinedTerm(term)` | the term | the `DefinedTerm[]` that remains. Stops honouring ONE definition, so the value it was hiding can be suggested again. Matching is case-insensitive, which is how the allowlist matches it |
 
 ## Identify: detection and the Value surface
 

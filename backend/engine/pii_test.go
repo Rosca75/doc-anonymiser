@@ -35,7 +35,11 @@ func TestDetectPIICategories(t *testing.T) {
 		// --- iban --------------------------------------------------------------
 		{"iban positive spaced", "account LU28 0019 4006 4475 0000 please", LevelSoft, CountryLU, CatIBAN, "LU28 0019 4006 4475 0000"},
 		{"iban positive compact", "send to DE89370400440532013000 now", LevelSoft, CountryLU, CatIBAN, "DE89370400440532013000"},
-		{"iban negative: mutated digit fails checksum", "account LU28 0019 4006 4475 0001 please", LevelSoft, CountryLU, CatIBAN, ""},
+		// A failed mod-97 check no longer vetoes the span; it lowers the
+		// confidence (TestChecksumFailureScoresRatherThanVetoes below). Leaving a
+		// mistyped or synthetic bank identifier in the document is the harm the
+		// old veto caused, so the match is expected here.
+		{"iban positive despite failed checksum", "account LU28 0019 4006 4475 0001 please", LevelSoft, CountryLU, CatIBAN, "LU28 0019 4006 4475 0001"},
 		{"iban negative: country word", "LUXEMBOURG is not an IBAN", LevelSoft, CountryLU, CatIBAN, ""},
 		// --- vat ---------------------------------------------------------------
 		{"vat positive LU", "VAT number LU12345678 on file", LevelSoft, CountryLU, CatVAT, "LU12345678"},
@@ -274,6 +278,104 @@ func TestRegistryStability(t *testing.T) {
 	for _, e := range export {
 		if e.Placeholder == "[EMAIL_1]" && e.Count != 2 {
 			t.Errorf("[EMAIL_1] count = %d, want 2", e.Count)
+		}
+	}
+}
+
+// TestChecksumFailureScoresRatherThanVetoes is the checksum policy: a
+// corroborating checksum that fails LOWERS the span's confidence and never
+// removes it.
+//
+// The fixture is the shape a template or test document actually contains: a
+// synthetic IBAN whose mod-97 remainder is 74 rather than 1. Vetoing it left the
+// country code and the check digits in clear text, and let the credit-card
+// recognizer claim the 16-digit interior instead, so the mapping asserted the
+// document held a card that never existed.
+func TestChecksumFailureScoresRatherThanVetoes(t *testing.T) {
+	const text = "IBAN LU88 0055 6600 4321 6501 - BIC/SWIFT: BABAAXIL"
+	spans := DetectPIISelected(text, PresetSelection(LevelAdvanced), CountryLU)
+
+	var iban *Span
+	for i := range spans {
+		if spans[i].Category == CatIBAN {
+			iban = &spans[i]
+		}
+		if spans[i].Category == CatCreditCard {
+			t.Errorf("the IBAN interior was claimed as a credit card (%q): the mapping would state the document held a card that does not exist", spans[i].Original)
+		}
+	}
+	if iban == nil {
+		t.Fatalf("no iban span for a checksum-invalid IBAN, all spans: %+v", spans)
+	}
+	if iban.Original != "LU88 0055 6600 4321 6501" {
+		t.Errorf("the iban span is %q, want the whole identifier %q", iban.Original, "LU88 0055 6600 4321 6501")
+	}
+	if iban.Confidence != ConfidenceChecksumFailed {
+		t.Errorf("confidence %v, want ConfidenceChecksumFailed (%v): a failed checksum scores the span, it does not veto it",
+			iban.Confidence, ConfidenceChecksumFailed)
+	}
+
+	// A checksum-VALID IBAN keeps the full deterministic score, so the reduced
+	// score means "the digits did not add up" and nothing else.
+	valid := DetectPIISelected("account LU28 0019 4006 4475 0000 please", PresetSelection(LevelSoft), CountryLU)
+	for _, sp := range valid {
+		if sp.Category == CatIBAN && sp.Confidence != ConfidenceDeterministic {
+			t.Errorf("a valid IBAN scored %v, want ConfidenceDeterministic (%v)", sp.Confidence, ConfidenceDeterministic)
+		}
+	}
+}
+
+// TestLUPhoneAcceptsTheAllocatedRange: Luxembourg numbers are not fixed length.
+// A six-digit base plus a PBX extension is 7 or 10 national significant digits,
+// and an exactly-nine rule left both in the document, which is the direction
+// that leaks.
+func TestLUPhoneAcceptsTheAllocatedRange(t *testing.T) {
+	cases := []struct {
+		text string
+		want string
+	}{
+		{"call +352 29 19 19 5 for the desk", "+352 29 19 19 5"},
+		{"switchboard +352 29 19 19 2100 please", "+352 29 19 19 2100"},
+		{"call +352 621 000 111 today", "+352 621 000 111"},
+		{"dial 00352 26 12 34 56 now", "00352 26 12 34 56"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.want, func(t *testing.T) {
+			spans := DetectPIISelected(tc.text, PresetSelection(LevelSoft), CountryLU)
+			for _, sp := range spans {
+				if sp.Category == CatPhone && sp.Original == tc.want {
+					return
+				}
+			}
+			t.Errorf("no phone span %q, all spans: %+v", tc.want, spans)
+		})
+	}
+}
+
+// TestBareWWWURLsAreMatched: a "www." label is a host name and nothing else, so
+// requiring a scheme missed every website in a document that writes them the way
+// documents do. Longest-match-first is what keeps a path from being split off.
+func TestBareWWWURLsAreMatched(t *testing.T) {
+	const text = "see www.nstar.lu and www.nstar.lu/privacy and www.statistiques.public.lu"
+	spans := ResolveOverlaps(DetectPIISelected(text, PresetSelection(LevelSoft), CountryLU))
+	got := map[string]bool{}
+	for _, sp := range spans {
+		if sp.Category == CatURL {
+			got[sp.Original] = true
+		}
+	}
+	for _, want := range []string{"www.nstar.lu", "www.nstar.lu/privacy", "www.statistiques.public.lu"} {
+		if !got[want] {
+			t.Errorf("no url span %q, got %v", want, got)
+		}
+	}
+
+	// A bare "word.word" stays untouched: that is the false-positive class the
+	// scheme requirement exists for, and the www. label is the exception to it.
+	bare := DetectPIISelected("visit example.com sometime", PresetSelection(LevelSoft), CountryLU)
+	for _, sp := range bare {
+		if sp.Category == CatURL {
+			t.Errorf("a bare domain was matched as a url: %q", sp.Original)
 		}
 	}
 }

@@ -270,7 +270,7 @@
       docName: DOC_NAME,
       placeholderPattern: PLACEHOLDER_RE.source,
       tooltipOriginal: "Marie Duval",
-      categoryCount: 24,
+      categoryCount: 30,
     }),
 
     /**
@@ -414,6 +414,9 @@
      * are folded by default and that opening a group lays its checkboxes out.
      */
     async configureRail() {
+      // The store is read for the lists the rail is meant to RENDER, so an
+      // expectation is never written twice.
+      const s = await store();
       await seed("identify");
       const railOf = () => document.querySelector("#identify-rail");
       if (!railOf()) return { error: "no #identify-rail rendered on the Identify screen" };
@@ -532,6 +535,10 @@
         // has to click.
         signalRows: [...rail.querySelectorAll(".signal-row")]
           .map((r) => r.dataset.signalSource),
+        // The store's own list, so the harness compares the rail against what it
+        // is meant to render rather than against a number written in the harness:
+        // a hardcoded count is left behind by the next signal source.
+        signalSources: [...s.SIGNAL_SOURCES],
         signalMasters: [...rail.querySelectorAll(".signal-master")]
           .map((b) => b.dataset.source),
         signalRowLine,
@@ -812,29 +819,65 @@
       const scrollAfterEdit = document
         .querySelector("#identify-workspace .card-body").scrollTop;
 
-      // 2. Renaming the value, which is the case with the most teeth: it sends
-      // derivedSpellings back to null, so the card has nothing settled to draw
-      // and the chip row falls back to one line of "working out the other
-      // spellings...". That swap is what used to shrink the card and lose the
-      // position; it must now happen INSIDE the row.
-      let pending = null;
-      if (afterEdit) {
-        afterEdit.querySelector(".value-name")?.click();
-        await settle(80);
-        const nameInput = afterEdit.querySelector(".value-name-input");
-        if (nameInput) {
-          nameInput.value = RENAMED_VALUE;
+      // 2. Renaming, which is really two cases, because the sentinel a rename
+      // writes depends on the row's spelling POLICY (valuemodel.js repend).
+      //
+      // 2a. The row edited in step 1 is now CURATED, and amending a curated row
+      // SETTLES it: its chips are its list, so there is nothing for Go to derive.
+      // Sending it back to pending instead is the stuck card, because
+      // pendingExpansions skips curated rows and no expansion ever arrives to
+      // clear the sentinel.
+      const renameCard = (card, to) => {
+        card.querySelector(".value-name")?.click();
+        return settle(80).then(() => {
+          const nameInput = card.querySelector(".value-name-input");
+          if (!nameInput) return false;
+          nameInput.value = to;
           nameInput.dispatchEvent(new Event("blur"));
-          await settle();
-          pending = s.getState().values.some((v) =>
-            v.mainText === RENAMED_VALUE && v.derivedSpellings === null);
-        }
+          return settle().then(() => true);
+        });
+      };
+
+      let curatedSettled = null;
+      if (afterEdit && await renameCard(afterEdit, RENAMED_VALUE)) {
+        const row = s.getState().values.find((v) => v.mainText === RENAMED_VALUE);
+        curatedSettled = !!row && row.spellingPolicy === "curated" &&
+          Array.isArray(row.derivedSpellings);
       }
       const renamed = cardFor(RENAMED_VALUE);
       const heightRenamed = renamed
         ? Math.round(renamed.getBoundingClientRect().height) : 0;
       const scrollRenamed = document
         .querySelector("#identify-workspace .card-body").scrollTop;
+
+      // 2b. An AUTOMATIC row is where the pending state lives, and it is the case
+      // with the most teeth for the layout: with nothing settled to draw, the chip
+      // row falls back to one line of "working out the other spellings...", and
+      // that swap is what used to shrink the card and lose the scroll position. It
+      // must happen INSIDE the row.
+      let pending = null;
+      let heightAutoBefore = 0;
+      let heightAutoPending = 0;
+      let scrollAutoPending = scrollRenamed;
+      const auto = [...document.querySelectorAll(".value-card")]
+        .find((c) => {
+          const row = s.getState().values
+            .find((v) => v.mainText === c.dataset.mainText);
+          return row && row.spellingPolicy !== "curated";
+        });
+      if (auto) {
+        const from = auto.dataset.mainText;
+        heightAutoBefore = Math.round(auto.getBoundingClientRect().height);
+        if (await renameCard(auto, `${from} Renamed`)) {
+          pending = s.getState().values.some((v) =>
+            v.mainText === `${from} Renamed` && v.derivedSpellings === null);
+          const after = cardFor(`${from} Renamed`);
+          heightAutoPending = after
+            ? Math.round(after.getBoundingClientRect().height) : 0;
+          scrollAutoPending = document
+            .querySelector("#identify-workspace .card-body").scrollTop;
+        }
+      }
 
       // 3. A warning appearing. It must be an icon on a row that already exists,
       // never a row of its own.
@@ -874,7 +917,8 @@
         .querySelector("#identify-workspace .card-body").scrollTop;
 
       return {
-        overflowsChips, listScrolls, deleted, pending, hasWarningIcon,
+        overflowsChips, listScrolls, deleted, pending, curatedSettled,
+        heightAutoBefore, heightAutoPending, scrollAutoPending, hasWarningIcon,
         heightBefore, heightAfterEdit, heightRenamed, heightWarned,
         scrollBefore, scrollAfterEdit, scrollRenamed, scrollWarned,
         cardHeight, scrollBeforeDelete, scrollAfterDelete,

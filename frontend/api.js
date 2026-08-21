@@ -232,6 +232,30 @@ export async function runDetection(fileNames, allowTerms, aiScope = null) {
 }
 
 /**
+ * definedTerms() resolves to the vocabulary the imported documents declare about
+ * themselves: rows of {term, idiom, document}.
+ *
+ * Go reads them at detection time and enforces them through the allowlist, so
+ * this is a READ of a suppression already in force. It is fetched rather than
+ * carried on the detection result because the never-anonymise tab shows it even
+ * when the user has not run detection again.
+ */
+export async function definedTerms() {
+  return bridge().DefinedTerms();
+}
+
+/**
+ * forgetDefinedTerm(term) stops honouring ONE definition, so the value it was
+ * hiding can be suggested again. It resolves to the list that remains.
+ *
+ * The user can undo any entry, exactly as a session exclusion can be restored: a
+ * negative rule they cannot see or lift is a rule they cannot argue with.
+ */
+export async function forgetDefinedTerm(term) {
+  return bridge().ForgetDefinedTerm(term);
+}
+
+/**
  * estimateAIRequests(fileNames, aiScope) resolves to how many model requests the
  * current scope and detail level imply, so the rail can show the cost of a
  * choice before the user pays it.

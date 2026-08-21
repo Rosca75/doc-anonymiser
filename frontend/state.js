@@ -13,6 +13,10 @@
 import {
   COUNTRIES, DEFAULT_COUNTRY, countryIDCategories, COUNTRY_ID_CATEGORIES,
 } from "./countries.js";
+// repend lives beside pendingExpansions, which is the half that READS the
+// sentinel it writes. Keeping the two in one module is what makes the invariant
+// checkable: a change to either has to face the other.
+import { repend } from "./valuemodel.js";
 
 // WIZARD_STEPS defines the fixed wizard order (CLAUDE.md wizard flow).
 //
@@ -130,6 +134,7 @@ const initialState = {
     // source or reading needs no new field here.
     signalSuggestionSources: {
       email: { "email.person": true, "email.organisation": true },
+      url: { "url.organisation": true },
     },
     minConfidence: 0,
     // heuristicDiscovery is the tuning for the offline Smart
@@ -163,6 +168,19 @@ const initialState = {
 
   // Allowlist terms (display spellings).
   allowlist: [],
+
+  // definedTerms is the vocabulary the IMPORTED DOCUMENTS declare about
+  // themselves: the phrases a contract introduces as `"Work Order" means ...` or
+  // `(the "Dedicated Advisors")`. Go reads them at detection time and enforces
+  // them through the allowlist, which is the one veto every producer consults.
+  //
+  // They are a SEPARATE list from `allowlist` above, mirroring the engine, for
+  // the reason the removals are separate: deleting a term the user typed is not
+  // the same gesture as telling the application to stop honouring a definition it
+  // read out of a document. They are SHOWN rather than applied in silence,
+  // because a negative rule the user cannot see is a rule they cannot undo.
+  //   definedTerms [{term, idiom, document}]
+  definedTerms: [],
 
   // Custom regex patterns: array of {expr, error} (error = compile
   // message or null).
@@ -312,7 +330,9 @@ const initialState = {
 
 // Category keys, split by preset tier. Must stay in sync with the Go side
 // (engine/pipeline.go AllPIICategories / AllEntityCategories).
-export const HARD_PII_CATEGORIES = ["email", "url", "iban", "vat", "matricule", "phone"];
+export const HARD_PII_CATEGORIES = [
+  "email", "url", "iban", "bic", "vat", "matricule", "phone",
+];
 // COUNTRIES_BY_CODE is the membership check setDocumentCountry needs: a Set
 // rather than a repeated find(), and built once at module load.
 const COUNTRIES_BY_CODE = new Set(COUNTRIES.map((c) => c.code));
@@ -326,13 +346,19 @@ export const EXTENDED_PII_CATEGORIES = [
   "credit_card", "uk_nhs", "ip_address", "mac_address",
   "crypto", "database_uri", "de_steuer_id", "es_nif",
 ];
-export const ADVANCED_PII_CATEGORIES = ["amount", "date"];
+// The advanced regex categories: amounts, dates, and the two LOCATION shapes a
+// pattern can anchor (CLAUDE.md §5 puts location names at advanced). A street
+// address and a postal code are country-scoped in engine/country.go, so outside
+// their countries the row renders DISABLED rather than hidden.
+export const ADVANCED_PII_CATEGORIES = ["amount", "date", "address", "postal_code"];
 // The categories a DETECTOR or a manual entry can produce, split by the preset
 // tier that first switches them on. Together they mirror
 // engine.AllEntityCategories, enforced by ../category_parity_test.go.
 export const SOFT_NAME_CATEGORIES = ["entity_names", "project_names", "identifier_names"];
 export const MEDIUM_NAME_CATEGORIES = ["person_names", "product_names", "brand_names"];
-export const ADVANCED_NAME_CATEGORIES = ["other_names"];
+export const ADVANCED_NAME_CATEGORIES = [
+  "other_names", "country_names", "nationality_names", "business_sector_names",
+];
 export const NAME_CATEGORIES = [
   ...SOFT_NAME_CATEGORIES, ...MEDIUM_NAME_CATEGORIES, ...ADVANCED_NAME_CATEGORIES,
 ];
@@ -356,6 +382,18 @@ export const ALL_CATEGORIES = [
 // they find is ever a Value with provenance to record.
 export const DISCOVERY_METHODS = ["manual", "signal", "heuristic", "local_ai"];
 
+// CONFLICT_RESOLUTIONS mirrors engine.AllConflictResolutions exactly and is
+// checked by ../detection_parity_test.go. Each entry is an action an interface
+// can PERFORM, in one gesture, to clear a blocking conflict.
+//
+// The engine STATES the resolution on the conflict rather than each screen
+// inferring it from the conflict's refs, because the refusal reaches the user on
+// two screens (the value's own card on Identify, the refused-run panel on
+// Anonymise) and two inferences can disagree. A conflict with no resolution is
+// one no single gesture clears, which is honest: an ambiguity is cleared by
+// deleting one of two Values, and only the user can say which.
+export const CONFLICT_RESOLUTIONS = ["drop_allow_term"];
+
 // MATCH_CLASSES mirrors engine.AllMatchClasses exactly, in PRECEDENCE order
 // (lower index wins), and is checked by ../detection_parity_test.go.
 //
@@ -373,7 +411,7 @@ export const MATCH_CLASSES = [
 // Suggestions, and the checklist in the rail is built from this list, so adding
 // a source is one constant here and one implementation in Go rather than a new
 // row, a new field and a new persisted flag.
-export const SIGNAL_SOURCES = ["email"];
+export const SIGNAL_SOURCES = ["email", "url"];
 
 // AI_DETAIL_LEVELS mirrors engine.AllDetailLevels exactly, in the order the rail
 // offers them, and is checked by ../detection_parity_test.go. The dropdown is
@@ -392,6 +430,7 @@ export const AI_DETAIL_LEVELS = ["thorough", "faster"];
 // reading is one entry here and one producer in Go.
 export const SIGNAL_DERIVATIONS = {
   email: ["email.person", "email.organisation"],
+  url: ["url.organisation"],
 };
 
 // --- Pictures, as the Anonymise step's second half ------------------------
@@ -1790,9 +1829,11 @@ export function addSpelling(category, mainText, spelling) {
     values: state.values.map((e) => {
       if (valueKey(e.category, e.mainText) !== valueKey(category, mainText)) return e;
       if (e.spellings.some((m) => m.toLowerCase() === v.toLowerCase())) return e;
-      // Adding a spelling re-expands ONLY this row (derivedSpellings back to
-      // pending null, Phase 7a).
-      return { ...e, spellings: [...e.spellings, v], derivedSpellings: null, spellingsError: null };
+      // Adding a spelling hands ONLY this row back for its spellings to be
+      // settled. repend picks the sentinel from the policy: an automatic row goes
+      // pending and Go re-derives, a curated row is settled the moment it is
+      // amended, because its chips already ARE its list.
+      return repend({ ...e, spellings: [...e.spellings, v] });
     }),
   });
 }
@@ -2168,19 +2209,25 @@ export function rejectAllShown(texts) {
  * two values would claim it again, which is the collision conflict. The target
  * gains it as a manual spelling and re-expands.
  *
- * Pure reducer; the drag-and-drop wiring only calls it. Returns false for
- * self-drops, unknown rows, or a spelling the source does not actually carry.
+ * Pure reducer; the drag-and-drop wiring only calls it.
+ *
+ * @returns {string} "" on success, or a reason ("empty" | "self" | "not found" |
+ *   "absent") the caller can turn into feedback. It shares the convention of
+ *   renameValue, renameSpelling and changeValueCategory deliberately: with a
+ *   boolean here, `if (moveSpelling(...)) showError()` reads correctly and does
+ *   the opposite, and the falsy-on-success neighbours make exactly that mistake
+ *   natural.
  */
 export function moveSpelling(fromCategory, fromMainText, toCategory, toMainText, spelling) {
   const v = (spelling ?? "").trim();
-  if (!v) return false;
+  if (!v) return "empty";
   const fromKey = valueKey(fromCategory, fromMainText);
   const toKey = valueKey(toCategory, toMainText);
-  if (fromKey === toKey) return false; // cannot drop onto self
+  if (fromKey === toKey) return "self"; // cannot drop onto self
 
   const from = state.values.find((e) => valueKey(e.category, e.mainText) === fromKey);
   const to = state.values.find((e) => valueKey(e.category, e.mainText) === toKey);
-  if (!from || !to) return false;
+  if (!from || !to) return "not found";
 
   // The spelling must actually belong to the source row (expanded list or
   // manual additions); otherwise this is a stale drop.
@@ -2188,7 +2235,7 @@ export function moveSpelling(fromCategory, fromMainText, toCategory, toMainText,
   const carried =
     (from.derivedSpellings ?? []).some((x) => x.toLowerCase() === lower) ||
     (from.spellings ?? []).some((x) => x.toLowerCase() === lower);
-  if (!carried) return false;
+  if (!carried) return "absent";
 
   setState({
     values: state.values.map((e) => {
@@ -2204,12 +2251,12 @@ export function moveSpelling(fromCategory, fromMainText, toCategory, toMainText,
         // A target that is already curated keeps its curated list plus the new
         // spelling: re-deriving it would undo an explicit choice.
         if (e.spellingPolicy === "curated") return curate(e, [...(e.derivedSpellings ?? []), ...spellings]);
-        return { ...e, spellings, derivedSpellings: null, spellingsError: null };
+        return repend({ ...e, spellings });
       }
       return e;
     }),
   });
-  return true;
+  return "";
 }
 
 // --- Value editing (the My values tab) -----------------------------------
@@ -2223,11 +2270,21 @@ export function moveSpelling(fromCategory, fromMainText, toCategory, toMainText,
 /**
  * renameValue(category, mainText, newMainText) changes a value's name.
  *
- * The expansion depends on the name, so the row goes back to pending and Go
- * re-derives the spellings. A rename onto a name the same category already
- * holds is refused rather than silently merged: two values with one name would
- * be exactly the ambiguity conflict detection exists to prevent, and merging is
- * a separate, explicit gesture (groupValues).
+ * The expansion depends on the name, so the row is handed back for its spellings
+ * to be settled (repend). A rename onto a name ANOTHER value in the same
+ * category holds is refused rather than silently merged: two values with one
+ * name would be exactly the ambiguity conflict detection exists to prevent, and
+ * merging is a separate, explicit gesture (groupValues).
+ *
+ * Renaming onto one of the row's OWN spellings is a PROMOTION, not a rename, and
+ * it is handled as one. Treated as an ordinary rename it is a silent LEAK: the
+ * new name overwrites the old one, the old name lived in derivedSpellings, and
+ * clearing that cache drops it, so a Value that replaced both "Northstar" and
+ * "NStar" quietly starts replacing only "NStar" while the call reports success.
+ * Promoting keeps every form: the old main text becomes a spelling, the promoted
+ * spelling becomes the main text, and the row CURATES so nothing can re-derive
+ * the pair back apart. It is also the gesture the user is actually asking for, so
+ * it needs no control of its own.
  *
  * @returns {string} "" on success, or a reason ("empty" | "duplicate" |
  *   "not found") the caller can turn into feedback
@@ -2240,13 +2297,34 @@ export function renameValue(category, mainText, newMainText) {
   if (!next) return "empty";
   if (next === cur.mainText) return ""; // unchanged
   const newKey = valueKey(category, next);
+  // The duplicate check comes FIRST, and it excludes this row: another value
+  // already owning the name is a refusal whether or not this row spells it.
   if (newKey !== key && state.values.some((e) => valueKey(e.category, e.mainText) === newKey)) {
     return "duplicate";
   }
+
+  // Every form this row currently replaces, main text and spellings alike. It is
+  // read BEFORE anything is written, because it is what must survive.
+  const forms = [...spellingsOf(cur).values()];
+  const nextLower = next.toLowerCase();
+  const promoting = forms.some((x) => x.toLowerCase() === nextLower);
+  if (promoting) {
+    // The promoted form leaves the spelling list because it becomes the main
+    // text; every other form, the old main text included, stays.
+    const kept = forms.filter((x) => x.toLowerCase() !== nextLower);
+    setState({
+      values: state.values.map((e) =>
+        valueKey(e.category, e.mainText) === key
+          ? { ...curate(e, kept), mainText: next }
+          : e),
+    });
+    return "";
+  }
+
   setState({
     values: state.values.map((e) =>
       valueKey(e.category, e.mainText) === key
-        ? { ...e, mainText: next, derivedSpellings: null, spellingsError: null }
+        ? repend({ ...e, mainText: next })
         : e),
   });
   return "";
@@ -2317,7 +2395,7 @@ export function changeValueCategory(fromCategory, mainText, toCategory) {
   setState({
     values: state.values.map((e) =>
       valueKey(e.category, e.mainText) === fromKey
-        ? { ...e, category: toCategory, derivedSpellings: null, spellingsError: null }
+        ? repend({ ...e, category: toCategory })
         : e),
     settings: {
       ...state.settings,
@@ -2367,21 +2445,27 @@ export function changeSuggestionCategory(text, toCategory) {
  *
  * @param {{category, mainText}} target the value to keep
  * @param {Array<{category, mainText}>} sources the values to fold in
- * @returns {number} how many source values were merged
+ * @returns {string} "" on success, or a reason ("not found" | "nothing to
+ *   merge"). It shares the convention of the four reducers beside it rather than
+ *   returning the count in the same slot: a number is the family's failure slot
+ *   filled with something that is not a failure, so `if (groupValues(...))`
+ *   reads as an error check and fires on success. A caller that needs the count
+ *   takes it from the store, `state.values.length` before and after, which is
+ *   the idiom the allowlist's add already uses.
  */
 export function groupValues(target, sources) {
   const targetKey = valueKey(target?.category, target?.mainText ?? "");
   const keep = state.values.find((e) => valueKey(e.category, e.mainText) === targetKey);
-  if (!keep) return 0;
+  if (!keep) return "not found";
 
   const sourceKeys = new Set(
     (sources ?? [])
       .map((sc) => valueKey(sc.category, sc.mainText ?? ""))
       .filter((k) => k !== targetKey));
-  if (sourceKeys.size === 0) return 0;
+  if (sourceKeys.size === 0) return "nothing to merge";
 
   const folded = state.values.filter((e) => sourceKeys.has(valueKey(e.category, e.mainText)));
-  if (folded.length === 0) return 0;
+  if (folded.length === 0) return "nothing to merge";
 
   // Collect every spelling the sources brought, deduplicated and never equal to
   // the target's own name (that spelling is already the target).
@@ -2419,10 +2503,10 @@ export function groupValues(target, sources) {
         // If any participant was curated, the survivor is curated: a merge must
         // not silently re-derive a list the user set by hand.
         if (curatedMerge) return curate(e, [...(e.derivedSpellings ?? []), ...spellings]);
-        return { ...e, spellings, derivedSpellings: null, spellingsError: null };
+        return repend({ ...e, spellings });
       }),
   });
-  return folded.length;
+  return "";
 }
 
 /** clearAllValues() empties the value list. Returns how many it removed, so a
@@ -2531,7 +2615,13 @@ export function valueConflicts(s = state) {
     for (const e of active) {
       if (!allow.has(e.mainText.trim().toLowerCase())) continue;
       const entry = ensure(valueKey(e.category, e.mainText));
-      const conflict = { kind: "allowlist", value: e.mainText, spelling: e.mainText };
+      const conflict = {
+        kind: "allowlist", value: e.mainText, spelling: e.mainText,
+        // The same shape the engine states (engine/conflicts.go
+        // ConflictResolution), so the card and a refused run describe the fix in
+        // one vocabulary rather than two.
+        resolution: { action: "drop_allow_term", term: e.mainText },
+      };
       entry.nameConflicts.push(conflict);
       entry.list.push(conflict);
     }
@@ -2809,6 +2899,10 @@ export function startNewBatch() {
     metaReview: {},
     exportDir: state.exportDir,
     notice: null,
+    // The defined terms were read out of the documents, and a cleared batch has
+    // none: a term with no document behind it would go on suppressing a value
+    // nothing defines.
+    definedTerms: [],
     // The pictures belong to the documents, and a cleared batch has none.
     ...forgetImages(),
   });
@@ -3138,6 +3232,17 @@ export function addAllowTerm(term) {
 
 export function removeAllowTerm(term) {
   setState({ allowlist: state.allowlist.filter((x) => x.toLowerCase() !== term.toLowerCase()) });
+}
+
+/**
+ * setDefinedTerms(terms) replaces the list Go read out of the documents. It is
+ * the whole list, never a merge: the list describes the documents currently
+ * imported, so a term from a document that has since been removed must go with
+ * it.
+ * @param {Array<object>} terms rows of {term, idiom, document}
+ */
+export function setDefinedTerms(terms) {
+  setState({ definedTerms: Array.isArray(terms) ? terms : [] });
 }
 
 /** clearAllowlist() empties the never-anonymise list in one action and returns

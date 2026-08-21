@@ -524,12 +524,17 @@ test("an allowlist collision offers to take the term off the never-anonymise lis
   resetState();
   addValues([{ category: "entity_names", mainText: "Meridian" }]);
   addAllowTerm("Meridian");
+  // The action comes from the conflict's own STATED resolution
+  // (engine/conflicts.go ConflictResolution), not from a ref kind this panel
+  // interprets: the value card on Identify reads the same field, so the two
+  // screens cannot offer different ways out of one refusal.
   const html = blockedPanel(blockedFor({
     kind: "collision", message: "conflict", fix: "fix it", value: "Meridian",
     refs: [
       { kind: "value", category: "entity_names", mainText: "meridian" },
       { kind: "allowlist", mainText: "meridian" },
     ],
+    resolution: { action: "drop_allow_term", term: "Meridian" },
   }));
   assert.equal(all(html, "button.blocked-allow-remove").length, 1);
   assert.equal(all(html, "button.blocked-delete-value").length, 0,
@@ -563,6 +568,7 @@ test("the blocked panel's actions clear the conflict, through the real wiring", 
             { kind: "value", category: "entity_names", mainText: "meridian" },
             { kind: "allowlist", mainText: "meridian" },
           ],
+          resolution: { action: "drop_allow_term", term: "Meridian" },
         }],
       },
     },

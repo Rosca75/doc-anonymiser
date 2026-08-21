@@ -15,13 +15,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  subscribe, resetState, getState, addValues, setValueSpellings,
+  subscribe, resetState, getState, addValues, setValueSpellings, setState,
+  addSpelling, renameValue, changeValueCategory, curate, spellingsOf,
 } from "./state.js";
 import {
   progressStrip, detectionCaption,
   applyValuesSearchFilter, wireValuesToolbar, valuesTab,
 } from "./views/identifyworkspace.js";
 import { attr, textOf } from "./testhtml.js";
+import { WORKSPACE } from "./copy.js";
 import { container, fire } from "./testdom.js";
 
 /** running(patch) is a detection state as main.js builds it from an event. */
@@ -243,4 +245,77 @@ test("the ✕ restores cards a re-render hid while the search was active", async
   await fire(c.querySelector('[data-clears="values-search"]'), "click");
   assert.equal(c.querySelector("#values-search").value, "", "the ✕ empties the field");
   assert.equal(visible(), 3, "and every card is shown again");
+});
+
+// --- The card of a CURATED Value, read as the user reads it -------------------
+//
+// These assertions are on the RENDERED TEXT of the card, through the minimal DOM,
+// because that is where the bug was visible and nowhere else: the store held the
+// right chips, the reducers ran, ninety-six spelling and value tests passed, and
+// the card still said "working out the other spellings..." forever. The absence
+// of a test at this level is what let it live, so the test is as much of the fix
+// as the code change (docs/TESTING.md: a wiring test when the question is what a
+// control DOES).
+
+/** curatedCard(spellings) seeds ONE curated Value and returns its rendered card. */
+function seedCurated(category, mainText, spellings) {
+  resetState();
+  addValues([{ category, mainText }]);
+  setValueSpellings(category, mainText, spellings);
+  setState({
+    values: getState().values.map((e) =>
+      e.mainText === mainText ? curate(e, spellings) : e),
+  });
+}
+
+/** cardText() is the text of the one value card currently rendered. */
+function cardText() {
+  const c = container();
+  c.innerHTML = valuesTab(getState());
+  return c.querySelector(".value-card").textContent;
+}
+
+test("amending a curated Value leaves its card showing chips and NO pending hint", async () => {
+  const gestures = [
+    ["addSpelling", () => addSpelling("entity_names", "Northstar", "NStar 2")],
+    ["renameValue", () => renameValue("entity_names", "Northstar", "Northstar Group")],
+    ["changeValueCategory", () => changeValueCategory("entity_names", "Northstar", "brand_names")],
+  ];
+  for (const [name, gesture] of gestures) {
+    seedCurated("entity_names", "Northstar", ["Northstar", "NStar"]);
+    gesture();
+    const text = cardText();
+    assert.ok(!text.includes(WORKSPACE.spellingsPending),
+      `after ${name} the card still claims to be working, and no expansion will ever `
+      + `arrive to clear it:\n${text}`);
+    assert.ok(text.includes("NStar"),
+      `after ${name} the card lost the chips it is meant to be showing:\n${text}`);
+  }
+});
+
+test("renaming a MainText onto the row's own spelling loses no form", () => {
+  // Data loss, not a cosmetic bug: the old main text lived in derivedSpellings,
+  // an ordinary rename cleared that cache, and the Value that replaced both
+  // "Northstar" and "NStar" quietly began replacing only "NStar" while the call
+  // reported success.
+  resetState();
+  addValues([{ category: "entity_names", mainText: "Northstar" }]);
+  setValueSpellings("entity_names", "Northstar", ["Northstar", "NStar"]);
+
+  const before = new Set([...spellingsOf(getState().values[0]).keys()]);
+  assert.equal(renameValue("entity_names", "Northstar", "NStar"), "",
+    "the promotion succeeds; refusing it would be defensible, losing a form is not");
+
+  const row = getState().values[0];
+  assert.equal(row.mainText, "NStar", "the promoted spelling becomes the main text");
+  assert.equal(row.spellingPolicy, "curated",
+    "the row curates, so nothing can re-derive the pair back apart");
+  assert.deepEqual([...spellingsOf(row).keys()].sort(), [...before].sort(),
+    "the set of forms this Value replaces is unchanged: a promotion moves the "
+    + "main text, it does not drop one");
+
+  const text = cardText();
+  assert.ok(text.includes("Northstar"), `the old name is still on the card:\n${text}`);
+  assert.ok(!text.includes(WORKSPACE.spellingsPending),
+    `a promoted row is settled, so it must not read as still working:\n${text}`);
 });

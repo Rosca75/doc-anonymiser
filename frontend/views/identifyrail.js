@@ -130,12 +130,12 @@ export const PRESETS = [
 // "Auto detected values", and what is left in that group is, by construction,
 // exactly the set a detection route can emit.
 export const CATEGORY_GROUPS = [
-  [CONFIGURE.groupContact, ["email", "url", "iban", "vat", "matricule", "phone"]],
+  [CONFIGURE.groupContact, ["email", "url", "iban", "bic", "vat", "matricule", "phone"]],
   [CONFIGURE.groupTechnical, [
     "credit_card", "uk_nhs", "ip_address", "mac_address",
     "crypto", "database_uri", "de_steuer_id", "es_nif",
   ]],
-  [CONFIGURE.groupThorough, ["amount", "date"]],
+  [CONFIGURE.groupThorough, ["amount", "date", "address", "postal_code"]],
   [CONFIGURE.groupDetected, NAME_CATEGORIES],
   [CONFIGURE.groupDeclared, DECLARED_CATEGORIES],
 ];
@@ -400,7 +400,14 @@ function signalCategoryRow(s, source, headHTML, tailHTML) {
     label: RAIL.signalSuggestions,
     headHTML,
     tailHTML,
-    helpHTML: helpTooltip(RAIL.signalSuggestionsHelp, { label: RAIL.signalSuggestions }),
+    // The bubble's id is scoped by SOURCE. helpTooltip derives an id from the
+    // text, and every signal row carries the same explanation, so two sources
+    // would render two bubbles with one id and aria-describedby would point at
+    // whichever the browser saw first.
+    helpHTML: helpTooltip(RAIL.signalSuggestionsHelp, {
+      id: `help-signal-${source}`,
+      label: RAIL.signalSuggestions,
+    }),
     title: RAIL.signalDerivedFrom(RAIL.signalSourceLabel[source] ?? source),
     summary: RAIL.signalDerivationCount(enabledSignalDerivations(s, source).length),
     checked: signalSourceOn(s, source),

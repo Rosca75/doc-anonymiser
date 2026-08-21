@@ -66,7 +66,18 @@ import (
 //	    borderline case the paragraph above describes: an added field the loader
 //	    can ignore is normally not a bump, and this one IS one, because what the
 //	    old reader ignores is a redaction.
-const SessionVersion = 9
+//	v10: three value categories were added (country_names, nationality_names,
+//	    business_sector_names) along with three pattern categories. This is a
+//	    bump for a REVERSE-compatibility reason rather than a forward one:
+//	    Registry.Assign PANICS on a category with no placeholderLabels row, so a
+//	    v9 file written by this build carrying a country_names Value would be
+//	    accepted by an older v9 binary and crash it on the next run. The bump
+//	    turns that crash into the clear "written by a different version" refusal.
+//	    The file also carries definedTerms, the vocabulary the imported documents
+//	    declare about themselves, which is enforced through the allowlist: a v9
+//	    reader ignoring it would restore a session and start suggesting every
+//	    defined term again.
+const SessionVersion = 10
 
 // SessionSettings mirrors the app settings worth persisting. The engine does not
 // interpret them: they round-trip for app.go.
@@ -151,6 +162,16 @@ type Session struct {
 	// decisions that CHANGE a picture are stored, because keep is recorded as the
 	// absence of a decision everywhere else too.
 	ImageDecisions map[string]map[string]imaging.Decision `json:"imageDecisions,omitempty"`
+	// DefinedTerms is the vocabulary the imported documents declare about
+	// themselves (allowlist.go). It is stored SEPARATELY from AllowTerms, exactly
+	// as RemovedValues is, because the two are different gestures: deleting a
+	// term the user typed is not the same act as telling the application to stop
+	// honouring a definition it read out of a document.
+	//
+	// It is restored rather than re-derived on load, because the user may have
+	// deleted individual entries and a re-derivation would bring them straight
+	// back.
+	DefinedTerms []DefinedTerm `json:"definedTerms,omitempty"`
 }
 
 // SaveSession serialises a session to pretty-printed JSON (stable key

@@ -88,6 +88,9 @@ export const CATEGORY_COUNTRIES = {
   database_uri: ["LU", "FR", "DE", "ES", "UK"],
   de_steuer_id: ["DE"],
   es_nif: ["ES"],
+  bic: ["LU", "FR", "DE", "ES", "UK"],
+  postal_code: ["LU"],
+  address: ["LU", "FR"],
 };
 
 export const COUNTRY_ID_CATEGORIES = ["matricule", "de_steuer_id", "es_nif", "uk_nhs"];

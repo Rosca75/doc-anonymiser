@@ -65,6 +65,7 @@ test("applySession with every method off leaves the section reading off", () => 
       level: "medium", useBuiltInPatterns: false, useHeuristicDiscovery: false,
       signalSuggestionSources: {
         email: { "email.person": false, "email.organisation": false },
+        url: { "url.organisation": false },
       },
     },
   });
@@ -79,6 +80,7 @@ test("applySession restores each signal READING the user switched off", () => {
       level: "medium",
       signalSuggestionSources: {
         email: { "email.person": false, "email.organisation": false },
+        url: { "url.organisation": false },
       },
     },
   });
@@ -101,7 +103,7 @@ test("applySession restores ONE reading off and leaves the other on", () => {
     "the reading the file cleared comes back cleared");
   assert.equal(signalDerivationOn(getState(), "email", "email.organisation"), true,
     "and the one it says nothing about lands on its default, not on off");
-  assert.deepEqual(enabledSignalSources(getState()), ["email"],
+  assert.deepEqual(enabledSignalSources(getState()), ["email", "url"],
     "so the signal still derives something, and its master still reads on");
 });
 

@@ -217,6 +217,22 @@ type App struct {
 	// because Allowlist.Contains is the single veto every span producer already
 	// consults and a second veto is a seventh caller somebody forgets.
 	removed []engine.RemovedValue
+	// definedTerms is the vocabulary the IMPORTED DOCUMENTS declare about
+	// themselves: the phrases a contract introduces as `"Work Order" means ...`
+	// or `(the "Dedicated Advisors")`. A defined term is the strongest "do not
+	// anonymise" signal a document can offer, because the document says the
+	// phrase is part of its own machinery.
+	//
+	// It lives here, beside a.removed, for the reason a.removed lives here: it is
+	// ENFORCED through allowlistFor, so detection, the run and every export
+	// cannot disagree about it. And it is a SEPARATE list from the user's
+	// never-anonymise terms, so "stop suppressing this term" is not the same
+	// gesture as "delete a term I typed".
+	//
+	// It is filled by detection and dropped wherever the documents behind it can
+	// change, because a term read out of a file the user has replaced would go on
+	// suppressing a value that file no longer defines.
+	definedTerms []engine.DefinedTerm
 	// imageScans caches one image inventory per imported document
 	// (app_images.go). The Anonymise step's IMAGE half asks on every repaint,
 	// and re-walking a sixty-slide archive per repaint is a cost the user feels.
@@ -239,7 +255,8 @@ type App struct {
 
 // allowlistFor builds the allowlist every pass and every export must obey: the
 // user's never-anonymise terms, plus the main text and spellings of every
-// removed value (engine.ApplyRemovals).
+// removed value (engine.ApplyRemovals), plus the terms the documents define
+// about themselves (engine.ApplyDefinedTerms).
 //
 // It exists so a removal cannot be honoured by the run and forgotten by the
 // export. Every caller that used to build its own `NewEmptyAllowlist()` and add
@@ -256,9 +273,22 @@ func (a *App) allowlistFor(terms []string) *engine.Allowlist {
 	a.mu.Lock()
 	removed := make([]engine.RemovedValue, len(a.removed))
 	copy(removed, a.removed)
+	defined := make([]engine.DefinedTerm, len(a.definedTerms))
+	copy(defined, a.definedTerms)
 	a.mu.Unlock()
 	engine.ApplyRemovals(allow, removed)
+	engine.ApplyDefinedTerms(allow, defined)
 	return allow
+}
+
+// definedTermsSnapshot returns a copy of the terms the documents define, for the
+// callers that need the list itself rather than the veto it produces.
+func (a *App) definedTermsSnapshot() []engine.DefinedTerm {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]engine.DefinedTerm, len(a.definedTerms))
+	copy(out, a.definedTerms)
+	return out
 }
 
 // removedValues returns a copy of the session's removed values, for the callers
@@ -362,6 +392,7 @@ func (a *App) ResetSession() error {
 	a.results = nil
 	a.lastReq = nil
 	a.removed = nil
+	a.definedTerms = nil
 	a.forgetImageScansLocked()
 	// A clean sheet drops the picture decisions too. They deliberately survive a
 	// re-import, because an asset ID is stable across one, and just as
@@ -599,6 +630,11 @@ func (a *App) importPaths(paths []string) ImportResult {
 // Caller holds a.mu.
 func (a *App) upsertDocLocked(doc engine.Document) {
 	a.forgetImageScansLocked()
+	// The defined terms were read out of the documents. A new or replaced
+	// document changes what is defined, so the list is rebuilt by the next
+	// detection rather than carried across: a term read out of a file the user
+	// has replaced would go on suppressing a value that file no longer defines.
+	a.definedTerms = nil
 	for i, existing := range a.docs {
 		if existing.Name == doc.Name {
 			a.docs[i] = doc
@@ -621,6 +657,7 @@ func (a *App) RemoveDocument(name string) ImportResult {
 	}
 	a.docs = kept
 	a.forgetImageScansLocked()
+	a.definedTerms = nil
 	return ImportResult{Documents: a.documentInfosLocked()}
 }
 

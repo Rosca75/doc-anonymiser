@@ -171,3 +171,81 @@ func TestPptxSoftLineBreaks(t *testing.T) {
 		}
 	})
 }
+
+// TestDocxCoalescesRunsSharingAFormattingState: adjacent <w:r> elements that
+// declare the SAME formatting are wrapped once, so the emphasis markers in the
+// working form describe the document's formatting and not Word's run
+// bookkeeping.
+//
+// Word splits a paragraph into runs for reasons that have nothing to do with
+// formatting: proofing state, language tagging, revision ids, and simply which
+// editing session typed which characters. Wrapping each run on its own turns a
+// bold date into "**0****1****.01.20****01**": the date is intact in the
+// document and unmatchable in the working form, which breaks every multi-token
+// pattern (dates, phones, IBANs, VAT numbers) and every adjacency heuristic.
+func TestDocxCoalescesRunsSharingAFormattingState(t *testing.T) {
+	// One bold run per formatting state.
+	bold := func(text string) string {
+		return `<w:r><w:rPr><w:b/></w:rPr><w:t>` + text + `</w:t></w:r>`
+	}
+	plain := func(text string) string {
+		return `<w:r><w:t>` + text + `</w:t></w:r>`
+	}
+
+	t.Run("extraction/a_split_token_survives_whole", func(t *testing.T) {
+		// The exact fragmentation the fixture document carries.
+		raw := docxWithBody(t, `<w:p>`+
+			plain(`dated `)+bold(`0`)+bold(`1`)+bold(`.01.20`)+bold(`01`)+
+			plain(` (the end)`)+`</w:p>`)
+		md, _, err := Docx(raw)
+		if err != nil {
+			t.Fatalf("Docx: %v", err)
+		}
+		if !strings.Contains(md, "**01.01.2001**") {
+			t.Errorf("the date did not survive as one token: got %q, want it to contain %q",
+				md, "**01.01.2001**")
+		}
+		if strings.Contains(md, "****") {
+			t.Errorf("an emphasis marker was emitted between two runs of the same state: %q", md)
+		}
+	})
+
+	t.Run("extraction/a_real_formatting_change_still_wraps", func(t *testing.T) {
+		// Coalescing must not lose a boundary that IS a formatting change: the
+		// working form has to stay a faithful markdown of the formatting.
+		raw := docxWithBody(t, `<w:p>`+plain(`plain `)+bold(`bold`)+plain(` plain`)+`</w:p>`)
+		md, _, err := Docx(raw)
+		if err != nil {
+			t.Fatalf("Docx: %v", err)
+		}
+		if !strings.Contains(md, "plain **bold** plain") {
+			t.Errorf("the bold stretch lost its markers: got %q", md)
+		}
+	})
+
+	t.Run("extraction/a_split_name_is_not_glued_to_its_neighbour", func(t *testing.T) {
+		// Coalescing joins text that was already adjacent; it must not remove the
+		// space between two words the document separated.
+		raw := docxWithBody(t, `<w:p>`+bold(`PIERRE`)+bold(` `)+bold(`DUPONT`)+`</w:p>`)
+		md, _, err := Docx(raw)
+		if err != nil {
+			t.Fatalf("Docx: %v", err)
+		}
+		if !strings.Contains(md, "**PIERRE DUPONT**") {
+			t.Errorf("the name did not come through as written: got %q", md)
+		}
+	})
+}
+
+// docxWithBody wraps a WordprocessingML body fragment in the smallest valid
+// .docx archive, so a converter assertion can be about ONE paragraph rather
+// than about a whole fixture document.
+func docxWithBody(t *testing.T, body string) []byte {
+	t.Helper()
+	const nsDecl = `xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"`
+	return buildZip(t, map[string]string{
+		"[Content_Types].xml": `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>`,
+		"word/document.xml": `<?xml version="1.0"?><w:document ` + nsDecl + `><w:body>` +
+			body + `</w:body></w:document>`,
+	})
+}

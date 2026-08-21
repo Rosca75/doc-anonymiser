@@ -412,10 +412,12 @@ function Test-ConfigureRail([CdpSession]$cdp) {
     # One drill-down per signal, one master per drill-down.
     $signalRows = @($r.signalRows)
     $signalMasters = @($r.signalMasters)
-    Assert-That -Name 'each signal has a drill-down on its own category row' -Condition ($signalRows.Count -eq 1) `
-        -Expected '1 .signal-row (one implemented signal source)' `
+    $signalSources = @($r.signalSources)
+    Assert-That -Name 'each signal has a drill-down on its own category row' `
+        -Condition ($signalSources.Count -gt 0 -and ($signalRows -join ',') -eq ($signalSources -join ',')) `
+        -Expected "one .signal-row per signal source: $($signalSources -join ', ')" `
         -Actual "$($signalRows.Count): $($signalRows -join ', ')" `
-        -Hint 'views/identifyrail.js hangs a signalDrillDown off the category row of every state.js SIGNAL_SOURCES entry.'
+        -Hint 'views/identifyrail.js hangs a signalDrillDown off the category row of every state.js SIGNAL_SOURCES entry. The expectation is READ from the store, because a hardcoded count is left behind by the next source.'
     Assert-That -Name 'every drill-down has its own master switch' `
         -Condition ($signalMasters.Count -eq $signalRows.Count) `
         -Expected 'one .signal-master per drill-down' `
@@ -628,17 +630,27 @@ function Test-ValueCardGeometry([CdpSession]$cdp) {
         -Condition ($r.scrollBefore -gt 0 -and $r.scrollAfterEdit -eq $r.scrollBefore) `
         -Expected "scrollTop still $($r.scrollBefore)" -Actual "$($r.scrollAfterEdit)" `
         -Hint 'scroll.js restores a raw pixel offset, which the browser clamps when the content got shorter.'
-    Assert-That -Name 'renaming the value sends its spellings back to pending' `
-        -Condition ($r.pending -eq $true) `
-        -Expected 'derivedSpellings null on the renamed Value' -Actual "$($r.pending)" `
-        -Hint 'This is the case with the most teeth: with nothing settled to draw, the chip row falls back to one line of text. Deleting a spelling CURATES and leaves the list settled, so it does not exercise the collapse.'
-    Assert-That -Name 'the card is the same height while its spellings are pending' `
+    # Renaming is two cases, because the sentinel a rename writes depends on the
+    # row's spelling POLICY (valuemodel.js repend).
+    Assert-That -Name 'renaming a CURATED value leaves it settled, never pending' `
+        -Condition ($r.curatedSettled -eq $true) `
+        -Expected 'the renamed Value still curated, with a settled spelling list' -Actual "$($r.curatedSettled)" `
+        -Hint 'pendingExpansions skips curated rows, so sending one back to pending means no expansion is ever requested and nothing clears the sentinel: the card claims to be working forever over chips that are already correct.'
+    Assert-That -Name 'the card is the same height after a rename' `
         -Condition ($r.heightRenamed -gt 0 -and $r.heightRenamed -eq $r.heightAfterEdit) `
         -Expected "still $($r.heightAfterEdit)px" -Actual "$($r.heightRenamed)px" `
-        -Hint 'The pending line renders INSIDE the chip row, in place of the chips, never as a row under it.'
-    Assert-That -Name 'the list keeps its scroll position while the spellings are pending' `
+        -Hint 'Whatever the row lands on, the chip row swaps its contents INSIDE itself, never as a row under it.'
+    Assert-That -Name 'the list keeps its scroll position across a rename' `
         -Condition ($r.scrollRenamed -eq $r.scrollAfterEdit) `
         -Expected "scrollTop still $($r.scrollAfterEdit)" -Actual "$($r.scrollRenamed)" -Hint ''
+    Assert-That -Name 'renaming an AUTOMATIC value sends its spellings back to pending' `
+        -Condition ($r.pending -eq $true) `
+        -Expected 'derivedSpellings null on the renamed automatic Value' -Actual "$($r.pending)" `
+        -Hint 'This is where the pending state lives now, and it is the case with the most teeth for the layout: with nothing settled to draw, the chip row falls back to one line of text.'
+    Assert-That -Name 'the card is the same height while its spellings are pending' `
+        -Condition ($r.heightAutoBefore -gt 0 -and $r.heightAutoPending -eq $r.heightAutoBefore) `
+        -Expected "still $($r.heightAutoBefore)px" -Actual "$($r.heightAutoPending)px" `
+        -Hint 'The pending line renders INSIDE the chip row, in place of the chips, never as a row under it.'
     Assert-That -Name 'a warning renders as an icon on the card' `
         -Condition ($r.hasWarningIcon -eq $true) `
         -Expected 'a .warnpop on the card' -Actual "$($r.hasWarningIcon)" `
@@ -648,8 +660,8 @@ function Test-ValueCardGeometry([CdpSession]$cdp) {
         -Expected "still $($r.heightRenamed)px" -Actual "$($r.heightWarned)px" `
         -Hint 'A warning rendered as a row makes the card taller when it arrives and shorter when it clears.'
     Assert-That -Name 'the list keeps its scroll position when a warning appears' `
-        -Condition ($r.scrollWarned -eq $r.scrollRenamed) `
-        -Expected "scrollTop still $($r.scrollRenamed)" -Actual "$($r.scrollWarned)" -Hint ''
+        -Condition ($r.scrollWarned -eq $r.scrollAutoPending) `
+        -Expected "scrollTop still $($r.scrollAutoPending)" -Actual "$($r.scrollWarned)" -Hint ''
     $drift = [Math]::Abs($r.scrollBeforeDelete - $r.scrollAfterDelete)
     Assert-That -Name 'deleting a card moves the list by at most one card' `
         -Condition ($r.cardHeight -gt 0 -and $drift -le $r.cardHeight) `

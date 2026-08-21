@@ -572,7 +572,7 @@ func (e *TruncatedReplyError) Error() string {
 // anything not copied exactly from the text is dropped afterwards anyway.
 const discoverSystemPrompt = `You are an entity extraction engine for confidential business documents.
 Extract proper names from the user's document and respond with ONLY a JSON object, no prose, using exactly these keys:
-{"entity_names": [], "project_names": [], "product_names": [], "brand_names": [], "person_names": [], "identifier_names": [], "other_names": []}
+{"entity_names": [], "project_names": [], "product_names": [], "brand_names": [], "person_names": [], "identifier_names": [], "country_names": [], "nationality_names": [], "business_sector_names": [], "other_names": []}
 Rules:
 - entity_names: named organisations, companies, teams and internal systems, whether they are clients, counterparties or internal.
 - project_names: engagement, project or workstream names and code names.
@@ -580,6 +580,9 @@ Rules:
 - brand_names: brand or trade names, which are how something is marketed rather than the company that owns it.
 - person_names: every natural person, including members of staff. A human being is NEVER an entity_names.
 - identifier_names: reference, contract, invoice and case codes.
+- country_names: a country, jurisdiction or state named as such.
+- nationality_names: a nationality or demonym, such as French or Luxembourgish.
+- business_sector_names: an industry or line of business, such as Transport or Insurance.
 - other_names: a proper name that is none of the above. Use it sparingly, and never as a place to put something you could file elsewhere.
 - Copy every name VERBATIM from the document. Never invent, translate or reformat names.
 - Use [] for a category with no findings.`
@@ -725,7 +728,7 @@ func MergeSuggestions(batches ...[]engine.Suggestion) []engine.Suggestion {
 const classifySystemPrompt = `You are an entity classification engine for confidential business documents.
 The user sends a list of suggestion names, each with short context snippets from the document.
 Assign every suggestion to exactly ONE category and respond with ONLY a JSON object, no prose, using exactly these keys:
-{"entity_names": [], "project_names": [], "product_names": [], "brand_names": [], "person_names": [], "identifier_names": [], "other_names": []}
+{"entity_names": [], "project_names": [], "product_names": [], "brand_names": [], "person_names": [], "identifier_names": [], "country_names": [], "nationality_names": [], "business_sector_names": [], "other_names": []}
 Rules:
 - entity_names: named organisations, companies, teams and internal systems, whether they are clients, counterparties or internal.
 - project_names: engagement, project or workstream names and code names.
@@ -733,6 +736,9 @@ Rules:
 - brand_names: brand or trade names, which are how something is marketed rather than the company that owns it.
 - person_names: every natural person, including members of staff. A human being is NEVER an entity_names.
 - identifier_names: reference, contract, invoice and case codes.
+- country_names: a country, jurisdiction or state named as such.
+- nationality_names: a nationality or demonym, such as French or Luxembourgish.
+- business_sector_names: an industry or line of business, such as Transport or Insurance.
 - other_names: a proper name that is none of the above. Use it sparingly, and never as a place to put something you could file elsewhere.
 - Copy every suggestion VERBATIM into one list. Never invent, translate or reformat names.
 - Use [] for a category with no suggestions.`
@@ -856,6 +862,9 @@ var promptCategories = []string{
 	engine.CatBrandNames,
 	engine.CatPersonNames,
 	engine.CatIdentifierNames,
+	engine.CatCountryNames,
+	engine.CatNationalityNames,
+	engine.CatBusinessSectorNames,
 	engine.CatOtherNames,
 }
 

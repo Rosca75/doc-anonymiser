@@ -339,6 +339,33 @@ var smartCommonWords = map[string]bool{
 	"holiday": true, "holidays": true, "buying": true, "extra": true,
 	"savings": true, "account": true, "overtime": true, "leave": true,
 	"vacation": true, "request": true, "approval": true, "congé": true,
+	// Contract and legal-document furniture. A contract's Title-Case and
+	// ALL-CAPS vocabulary is its own machinery, not the client's identity, and it
+	// is the largest noise class a legal document contributes. Same safety
+	// property as every other row here: a run is only dropped when EVERY
+	// significant word is listed, so "Framework Industries" still gets through.
+	// English then French.
+	"agreement": true, "agreements": true, "framework": true, "clause": true,
+	"party": true, "parties": true, "term": true, "duchy": true,
+	"grand": true, "register": true, "registry": true, "consultancy": true,
+	"process": true, "information": true, "property": true, "proprietary": true,
+	"intellectual": true, "data": true, "protection": true, "jurisdiction": true,
+	"governing": true, "obligations": true, "provisions": true, "warranty": true,
+	"indemnity": true, "disclosure": true, "confidential": true,
+	"confidentiality": true, "deliverable": true, "deliverables": true,
+	"purpose": true, "purposes": true, "scope": true, "schedule": true,
+	"exhibit": true, "recitals": true, "witness": true, "signature": true,
+	"signatures": true, "effective": true, "european": true, "parliament": true,
+	"directive": true, "eu": true, "regulations": true,
+	"companies": true, "company": true, "service": true, "services": true,
+	"societes": true, "sociétés": true,
+	"contrat": true, "accord": true, "convention": true, "duché": true,
+	"duche": true, "registre": true, "clauses": true, "partie": true,
+	"portée": true, "portee": true,
+	"annexes": true, "signataire": true, "signataires": true,
+	"confidentialité": true, "confidentialite": true, "propriété": true,
+	"propriete": true, "intellectuelle": true, "données": true, "donnees": true,
+	"européen": true, "europeen": true, "parlement": true,
 }
 
 // smartConnectors are the tiny function words ("of", "the", "and") that can
@@ -494,6 +521,80 @@ var smartLeadingStopwords = map[string]bool{
 	"Hello": true, "Hi": true, "Dear": true, "Hey": true,
 	"Bonjour": true, "Bonsoir": true, "Salut": true, "Cher": true,
 	"Chère": true, "Chers": true, "Best": true, "Regards": true,
+	// Quantifiers and determiners. "Neither Party" is about the term "Party",
+	// exactly as "The CSSF" is about "CSSF", and a contract is full of them.
+	"Neither": true, "Either": true, "Each": true, "Every": true, "Any": true,
+	"All": true, "Both": true, "Such": true, "No": true, "Some": true,
+	"Chaque": true, "Aucun": true, "Aucune": true, "Tout": true, "Tous": true,
+	"Toute": true, "Toutes": true,
+}
+
+// smartLeadingConjunctions are the function words a Value's name can never
+// BEGIN with. They are checked accent-folded and lower-cased, so the rule bites
+// on the ALL-CAPS spellings that are the reason it exists: a heading is one
+// adjacent stretch of capitalised words to the tokenizer, and without this rule
+// a run starts at the "AND" it crosses and harvests the fragment behind it
+// ("AND BETWEEN", "AND EXPENSES", "AND INDEMNITY", "AND TERMINATION").
+//
+// It stays a separate table from smartConnectors, which answers a different
+// question: a connector may sit INSIDE a common-noun phrase ("General Terms of
+// Sale") and is skipped when counting significant words, while these may not
+// OPEN a name at all. Prefer adding a word here over loosening a threshold.
+var smartLeadingConjunctions = map[string]bool{
+	"and": true, "or": true, "but": true, "nor": true, "so": true, "yet": true,
+	"for": true, "to": true, "of": true, "in": true, "on": true, "at": true,
+	"by": true, "with": true, "without": true, "as": true, "if": true,
+	"et": true, "ou": true, "mais": true, "ni": true, "car": true, "donc": true,
+	"aux": true, "avec": true, "sans": true, "pour": true, "par": true,
+}
+
+// smartRoleTerminators are the job-title and role words that TERMINATE a
+// capitalised run instead of joining it. A signature block reads
+// "PIERRE LAVENTURE Partner": the person is the name, the title is what they do,
+// and absorbing the title produces a Value ("LAVENTURE Partner") that matches
+// the document in one place and the person nowhere else. A terminator opening a
+// run means there is no name there at all, so no run is emitted
+// ("Chief Information Officer" is a title, not somebody).
+//
+// The list is deliberately CLOSED and deliberately DISJOINT from
+// orgKeywordsCommon: "Partners" and "Associates" name a firm ("Meridian
+// Partners"), while the singular "Partner" and "Associate" name a job, so only
+// the singular forms terminate. TestRoleTerminatorsDoNotShadowOrgKeywords holds
+// that separation, because a word in both tables would silently stop every
+// company named after its partners from being found.
+//
+// Compared lower-cased, accent-folded, with surrounding punctuation and a
+// trailing possessive removed, so "Partner," and "Consultant's" are recognised.
+var smartRoleTerminators = map[string]bool{
+	// English job titles, singular: the form that follows a person's name.
+	"partner": true, "associate": true, "director": true, "manager": true,
+	"officer": true, "chief": true, "president": true, "chairman": true,
+	"chairwoman": true, "chairperson": true, "secretary": true,
+	"treasurer": true, "consultant": true, "analyst": true, "executive": true,
+	"supervisor": true, "coordinator": true, "administrator": true,
+	"specialist": true, "intern": true, "trainee": true, "auditor": true,
+	"controller": true, "engineer": true, "advisor": true, "adviser": true,
+	"counsel": true, "attorney": true, "notary": true,
+	// C-level abbreviations, which sit beside a name exactly as a title does.
+	"ceo": true, "cfo": true, "cto": true, "coo": true, "cio": true,
+	"cmo": true, "chro": true, "cdo": true,
+	// French job titles.
+	"associe": true, "associee": true, "gerant": true, "gerante": true,
+	"directeur": true, "directrice": true, "presidente": true,
+	"secretaire": true, "tresorier": true, "tresoriere": true,
+	"responsable": true, "conseiller": true, "conseillere": true,
+	"avocat": true, "avocate": true, "notaire": true, "mandataire": true,
+	"expert": true, "reviseur": true,
+}
+
+// isRoleTerminator reports whether a token is one of the job-title words that
+// end a run. The token is folded, stripped of the punctuation a sentence puts
+// around it, and stripped of an English possessive, so "Partner," and
+// "Consultant's" both answer yes.
+func isRoleTerminator(tok string) bool {
+	folded := foldAccentsLower(strings.Trim(tok, ".,;:!?()[]\"'’-"))
+	folded = strings.TrimSuffix(strings.TrimSuffix(folded, "'s"), "’s")
+	return smartRoleTerminators[folded]
 }
 
 // productHeadNouns mark a capitalised run as a PRODUCT rather than a company:
@@ -516,6 +617,12 @@ var trademarkMarks = []string{"\u2122", "\u00ae", "\u2120"}
 // ("Johannes Borch <johannes.borch@pwc.lu>") is nearly as certain a person as
 // a title cue, and far more certain than a bare multi-word run (0.65).
 const emailPersonScore float32 = 0.90
+
+// legalNameScore is the confidence given to the NAME half of a continental legal
+// name ("Contoso" in "Contoso, Société Française de Transport S.A."). It sits at
+// the legal-form rung (0.95): the evidence is the same registered legal form,
+// and the name is the part of it worth replacing.
+const legalNameScore float32 = 0.95
 
 // emailLocalRe captures the LOCAL-PART of an email address (the text before
 // the @). The address itself is hard PII that pass 1 already removes; what the
@@ -679,7 +786,12 @@ type smartRun struct {
 	hasProduct     bool // a product head noun is in or beside the run
 	addressContext bool // a street cue sits beside or inside the run (an address)
 	orgKeyword     bool // an organisation keyword vouches the run as a company
-	words          int  // significant (non-particle) word count
+	// legalName marks the NAME half of a continental legal name, the part in
+	// front of the comma in "Contoso, Société Française de Transport S.A.". It
+	// is the form that recurs through the document, so it is the form the user
+	// needs as a Value; the full legal name folds into it as a spelling.
+	legalName bool
+	words     int // significant (non-particle) word count
 }
 
 // HeuristicDiscoverWithOptions is SmartDetect with the tuning
@@ -734,6 +846,7 @@ func HeuristicDiscoverContext(ctx context.Context, text string, allow *Allowlist
 		firstStart   int
 		category     string
 		qualifies    bool
+		legalName    bool
 		contexts     []string
 		sentenceOnly bool
 		addressOnly  bool
@@ -769,7 +882,7 @@ func HeuristicDiscoverContext(ctx context.Context, text string, allow *Allowlist
 		// than a legal form, and a product head noun is the weakest and only
 		// fills a gap.
 		switch {
-		case r.hasSuffix:
+		case r.hasSuffix, r.legalName:
 			g.category = CatEntityNames
 		case r.hasTrademark:
 			g.category = CatProductNames
@@ -780,8 +893,11 @@ func HeuristicDiscoverContext(ctx context.Context, text string, allow *Allowlist
 		case r.hasProduct && g.category == "":
 			g.category = CatProductNames
 		}
-		if r.hasSuffix || r.hasTitle || r.hasTrademark || r.orgKeyword {
+		if r.hasSuffix || r.hasTitle || r.hasTrademark || r.orgKeyword || r.legalName {
 			g.qualifies = true
+		}
+		if r.legalName {
+			g.legalName = true
 		}
 		if len(g.contexts) < maxSuggestionContexts {
 			g.contexts = append(g.contexts, contextSnippet(text, r.start, r.end))
@@ -859,6 +975,15 @@ func HeuristicDiscoverContext(ctx context.Context, text string, allow *Allowlist
 			if score < emailPersonScore {
 				score = emailPersonScore
 			}
+		}
+
+		// Legal-name signal: the group was seen as the name half of a legal name
+		// at least once. The score is lifted for the same reason the email signal
+		// lifts it, and it is done here rather than in suggestionScore because
+		// only ONE of a company's many occurrences carries its legal form, while
+		// suggestionScore only ever sees the first.
+		if g.legalName && score < legalNameScore {
+			score = legalNameScore
 		}
 
 		// Strict strictness: emit ONLY structurally-vouched suggestions, so a
@@ -964,6 +1089,23 @@ func extractRunsContext(ctx context.Context, text, country string) ([]smartRun, 
 			continue
 		}
 
+		// A job title opening a run means there is no name at this position:
+		// "Chief Information Officer" is what somebody does, not who they are.
+		if isRoleTerminator(tokens[i].text) {
+			i++
+			continue
+		}
+
+		// A name run never begins with a conjunction. An ALL-CAPS heading is a
+		// single adjacent stretch of capitalised words to the tokenizer, so a
+		// run starting after the lowercase-crossing "AND" harvests the fragment
+		// behind it ("AND BETWEEN", "AND TERMINATION"): ten of those were the
+		// second largest noise class in the review list.
+		if smartLeadingConjunctions[foldAccentsLower(tokens[i].text)] {
+			i++
+			continue
+		}
+
 		// Collect the run: SPACE-ADJACENT capitalised words, tolerated
 		// particles, and hyphenated capitalised words. Punctuation between
 		// tokens (commas, sentence ends) always terminates the run.
@@ -973,6 +1115,9 @@ func extractRunsContext(ctx context.Context, text, country string) ([]smartRun, 
 			t := tokens[j].text
 			if j > i && !tokens[j].adjacent {
 				break // ", " or ". " between words: never one name
+			}
+			if j > i && isRoleTerminator(t) {
+				break // "PIERRE LAVENTURE Partner": the title is not the name
 			}
 			if isCapWord(t) {
 				last = j
@@ -1044,11 +1189,37 @@ func extractRunsContext(ctx context.Context, text, country string) ([]smartRun, 
 				break
 			}
 		}
+		// nameEnd is where the NAME half of a legal name ends, when a comma sits
+		// between it and the legal form. It stays 0 when there is no comma to
+		// cross, which is the ordinary case.
+		nameEnd := 0
 		if !r.hasSuffix {
 			rest := text[r.end:]
 			trimmed := strings.TrimLeft(rest, " ")
 			pad := len(rest) - len(trimmed)
+			// Detector 2c, forward. "Acme, S.A." is the same continental legal-name
+			// form as "Acme, Societe anonyme", seen from the other side: a dotted
+			// single-letter form never joins a run at all, so there is no run after
+			// the comma to reach back FROM, and the comma has to be crossed going
+			// forward instead. The bound is the same: ONE comma, spaces only around
+			// it, and a recognised legal form after it.
+			if !strings.HasPrefix(trimmed, ",") {
+				// nothing to cross; the ordinary un-absorbed-suffix case below applies
+			} else if after := strings.TrimLeft(trimmed[1:], " "); after != "" {
+				for _, suffix := range legalSuffixes {
+					if strings.HasPrefix(after, suffix) && suffixBoundaryOK(after, suffix) {
+						nameEnd = r.end
+						r.end = len(text) - len(after) + len(suffix)
+						r.text = text[r.start:r.end]
+						r.hasSuffix = true
+						break
+					}
+				}
+			}
 			for _, suffix := range legalSuffixes {
+				if r.hasSuffix {
+					break
+				}
 				if strings.HasPrefix(trimmed, suffix) && suffixBoundaryOK(trimmed, suffix) {
 					r.end = r.end + pad + len(suffix)
 					r.text = text[r.start:r.end]
@@ -1056,6 +1227,62 @@ func extractRunsContext(ctx context.Context, text, country string) ([]smartRun, 
 					break
 				}
 			}
+		}
+
+		// The NAME half of a comma-separated legal name, emitted beside the full
+		// name for the reason detector 2c's backward half emits it: the short form
+		// is what recurs through the document, and family folding then makes it the
+		// main text with the full legal name as its spelling.
+		if nameEnd > r.start {
+			nameText := text[r.start:nameEnd]
+			if len([]rune(nameText)) >= 3 && !isBareSuffix(nameText) {
+				runs = append(runs, smartRun{
+					text:          nameText,
+					start:         r.start,
+					end:           nameEnd,
+					sentenceStart: r.sentenceStart,
+					legalName:     true,
+					words:         significantWords(nameText),
+				})
+			}
+		}
+
+		// Detector 2c: the comma between a name and its legal form.
+		//
+		// "Name, Société anonyme" / "Name, S.A." / "Name, Sàrl" is the standard
+		// continental legal-name form and the dominant one in French and
+		// Luxembourg drafting. A comma always terminates a run, so what survived
+		// was either the legal form with no name in front of it (worthless: the
+		// name is the only part worth replacing) or, when the form was one word,
+		// nothing at all. Reaching back over the comma is what makes the two
+		// parties of a contract like this findable offline at all.
+		//
+		// Bounded tightly, so the rule cannot walk a list of ordinary nouns: ONE
+		// comma, no newline, and the run itself must be a legal-form phrase.
+		if back := reachBackAcrossComma(text, tokens, i, r, country); back >= 0 {
+			// The NAME half on its own, emitted beside the full legal name. It
+			// is what recurs through the document (113 bare "Contoso" against
+			// one "Contoso, Société Française de Transport S.A."), so without it
+			// the user accepts a Value that matches the document once. Family
+			// folding then makes the short form the main text and the full legal
+			// name its spelling, which is the one-value-one-placeholder rule.
+			nameText := text[tokens[back].start:tokens[i-1].end]
+			if len([]rune(nameText)) >= 3 && !isBareSuffix(nameText) {
+				runs = append(runs, smartRun{
+					text:          nameText,
+					start:         tokens[back].start,
+					end:           tokens[i-1].end,
+					sentenceStart: tokens[back].sentenceStart,
+					legalName:     true,
+					words:         significantWords(nameText),
+				})
+			}
+			r.start = tokens[back].start
+			r.text = text[r.start:r.end]
+			r.words = significantWords(r.text)
+			// The name in front of the comma is where the run now starts, so
+			// whether it opened a sentence is the question that matters.
+			r.sentenceStart = tokens[back].sentenceStart
 		}
 
 		// Detector 3: product. A trademark mark is nearly free and nearly
@@ -1105,7 +1332,11 @@ func extractRunsContext(ctx context.Context, text, country string) ([]smartRun, 
 			// counts; the frequency and sentence rules weed out whichever
 			// grouping is noise. Suffix and organisation runs are already whole
 			// company names and produce no sub-run.
-			if r.sentenceStart && !r.hasSuffix && !r.hasTitle && !r.orgKeyword && last > i {
+			// The sub-run is where the conjunction rule earns most of its keep:
+			// an ALL-CAPS heading ("COSTS AND EXPENSES") is one run, and its
+			// sub-run starts at the second word, which is exactly the "AND".
+			if r.sentenceStart && !r.hasSuffix && !r.hasTitle && !r.orgKeyword && last > i &&
+				!smartLeadingConjunctions[foldAccentsLower(tokens[i+1].text)] {
 				sub := smartRun{
 					text:           text[tokens[i+1].start:r.end],
 					start:          tokens[i+1].start,
@@ -1134,6 +1365,82 @@ func runHasStreetCue(runText string) bool {
 		if streetCues[foldAccentsLower(w)] {
 			return true
 		}
+	}
+	return false
+}
+
+// reachBackAcrossComma answers detector 2c: does a name sit in front of this
+// run's legal form, separated only by a comma?
+//
+// It returns the token index the run should START at, or -1 to leave the run
+// alone. Every guard below is one wrong extension it prevents:
+//
+//   - the run must BE a legal-form phrase (isLegalFormTail), so the rule cannot
+//     glue two ordinary capitalised phrases together across a comma;
+//   - exactly ONE comma and no newline may separate them, so it cannot walk an
+//     enumeration or jump a line break;
+//   - the word in front must be a plain capitalised name word, so an article, a
+//     job title or a bare legal form never becomes the name;
+//   - it walks further back only over SPACE-ADJACENT capitalised words, so
+//     "Acme Group, S.A." keeps its whole name and a second comma stops it.
+//
+// @param text the document working form
+// @param tokens the tokenizer's output for it
+// @param at the index of the token the run currently starts at
+// @param r the run as the suffix and org detectors left it
+// @param country the document country, scoping the legal-form vocabulary
+// @return the token index to start at, or -1
+func reachBackAcrossComma(text string, tokens []token, at int, r smartRun, country string) int {
+	if at == 0 || !isLegalFormTail(r, country) {
+		return -1
+	}
+	sep := text[tokens[at-1].end:tokens[at].start]
+	if strings.Count(sep, ",") != 1 || strings.TrimLeft(strings.TrimRight(sep, " "), " ") != "," {
+		return -1 // not exactly one comma with only spaces around it
+	}
+	prev := at - 1
+	if !isCapWord(tokens[prev].text) ||
+		smartLeadingStopwords[tokens[prev].text] ||
+		smartLeadingConjunctions[foldAccentsLower(tokens[prev].text)] ||
+		isRoleTerminator(tokens[prev].text) ||
+		isBareSuffix(tokens[prev].text) {
+		return -1
+	}
+	// Walk further back over the rest of the name, space-adjacent capitalised
+	// words only. tokens[k].adjacent is false at the second comma, which is what
+	// keeps the single-comma bound.
+	for prev > 0 && tokens[prev].adjacent && isCapWord(tokens[prev-1].text) &&
+		!smartLeadingStopwords[tokens[prev-1].text] &&
+		!smartLeadingConjunctions[foldAccentsLower(tokens[prev-1].text)] &&
+		!isRoleTerminator(tokens[prev-1].text) {
+		prev--
+	}
+	return prev
+}
+
+// isLegalFormTail reports whether a run reads as the LEGAL FORM half of a
+// continental legal name, which is the only tail detector 2c may reach back
+// from.
+//
+// Two shapes qualify, and nothing else:
+//
+//   - the run carries a registered legal suffix ("Société Française de
+//     Transport S.A."), which the suffix detector has already established;
+//   - the run's FIRST significant word is an organisation-form word for the
+//     document country ("Société coopérative", "Gesellschaft ...",
+//     "Sociedad ..."). This shape needs its own test because a one-word form
+//     ("Société") carries no second significant word, so the ordinary
+//     organisation-keyword rule, which requires one, cannot see it.
+func isLegalFormTail(r smartRun, country string) bool {
+	if r.hasSuffix {
+		return true
+	}
+	for _, w := range strings.FieldsFunc(r.text, func(c rune) bool { return c == ' ' || c == '-' }) {
+		folded := foldAccentsLower(strings.Trim(w, ".,;:!?()\"'’"))
+		if folded == "" || smartParticles[folded] || smartConnectors[folded] {
+			continue
+		}
+		return orgKeywordApplies(folded, country)
 	}
 	return false
 }
@@ -1211,6 +1518,11 @@ type token struct {
 	adjacent      bool // separated from the previous token by spaces only
 }
 
+// signatureRuleUnderscores is how many consecutive '_' characters read as a
+// signature rule rather than as punctuation. Three is enough to be deliberate
+// and short enough to catch a hand-typed rule.
+const signatureRuleUnderscores = 3
+
 // tokenize splits text into letter/hyphen/apostrophe words with byte
 // offsets and sentence-start flags. Unicode-aware (French accents).
 func tokenize(text string) []token {
@@ -1242,22 +1554,45 @@ func tokenize(text string) []token {
 		wordStart = -1
 	}
 
+	// underscores counts the run of '_' characters currently being crossed. A
+	// run of signatureRuleUnderscores or more is a RULED LINE, which is what a
+	// signature block puts above a printed name. The word after it is a name and
+	// not a grammar-capitalised sentence opener, so the rule clears the
+	// sentence-start flag the preceding newline set. Without this the first word
+	// of every signature is treated as sentence case and stripped as noise,
+	// which loses the forename ("PIERRE LAVENTURE" becomes "LAVENTURE").
+	underscores := 0
+
 	for i, r := range text {
 		isWord := unicode.IsLetter(r) || r == '-' || r == '\'' || r == '’'
 		if isWord {
 			if wordStart < 0 {
 				wordStart = i
 			}
+			underscores = 0
 			continue
 		}
 		flush(i)
+		if r == '_' {
+			underscores++
+			if underscores >= signatureRuleUnderscores {
+				sentenceStart = false
+			}
+			continue
+		}
 		// Sentence boundaries: ., !, ?, newline. A '.' only ends a
 		// sentence when followed by whitespace (keeps "S.A." inside runs).
 		switch r {
 		case '\n', '!', '?':
 			sentenceStart = true
+			underscores = 0
 		case '.', ':':
 			sentenceStart = true
+			underscores = 0
+		case ' ', '\t':
+			// Spaces between the rule and the name do not end it.
+		default:
+			underscores = 0
 		}
 	}
 	flush(len(text))
@@ -1371,6 +1706,9 @@ func keepSuggestion(text string, count int, score float32, opts HeuristicDiscove
 	if opts.ExcludeCommonWords && isCommonWordRun(text) {
 		return false
 	}
+	if opts.ExcludeCommonWords && isAllCapsHeadingText(text) {
+		return false
+	}
 	if opts.MinConfidence > 0 && score < opts.MinConfidence {
 		return false
 	}
@@ -1398,6 +1736,64 @@ func isCommonWordRun(text string) bool {
 		}
 	}
 	return significant > 0
+}
+
+// headingFunctionWords are the function words that appear inside a heading or a
+// legal formula and NEVER inside a name: "PARTIES' ROLES AND COMMITMENTS",
+// "IN WITNESS WHEREOF", "GOVERNING LAW AND COMPETENT JURISDICTION". Compared
+// accent-folded and lower-cased.
+//
+// A name particle ("de", "van") is deliberately absent: "Banque de la Place" is
+// a real organisation and must survive.
+var headingFunctionWords = map[string]bool{
+	"and": true, "or": true, "of": true, "for": true, "to": true, "in": true,
+	"into": true, "on": true, "with": true, "under": true, "by": true,
+	"this": true, "these": true, "that": true, "whereof": true, "whereas": true,
+	"hereby": true, "herein": true, "between": true, "among": true,
+	"et": true, "ou": true, "des": true, "aux": true, "entre": true,
+	"pour": true, "par": true, "sur": true, "sous": true,
+}
+
+// isAllCapsHeadingText reports whether a run is ALL-CAPS heading or legal-formula
+// text rather than a name.
+//
+// ALL CAPS alone cannot be the rule: a signature block writes real people in
+// capitals ("PIERRE DUPONT", "MARTIN DESCHAMPS"), and those are exactly the
+// values the review list exists to surface. What separates furniture from a name
+// is the FUNCTION WORD inside it: a heading joins clauses ("ROLES AND
+// COMMITMENTS", "PARTIES ENTER INTO THIS AGREEMENT", "IN WITNESS WHEREOF") and a
+// person's name never does.
+//
+// Both conditions are required, so a Title-Case phrase containing "and" is left
+// to the common-word list, where a real "Marks and Spencer" can still get
+// through: restricting the rule to capitals bounds it to the text that is
+// document furniture by convention.
+func isAllCapsHeadingText(text string) bool {
+	words := strings.FieldsFunc(text, func(r rune) bool {
+		return r == ' ' || r == '-' || r == '\'' || r == '’'
+	})
+	hasFunctionWord := false
+	significant := 0
+	for _, w := range words {
+		trimmed := strings.Trim(w, ".,;:!?()\"'’")
+		if trimmed == "" {
+			continue
+		}
+		folded := foldAccentsLower(trimmed)
+		if headingFunctionWords[folded] {
+			hasFunctionWord = true
+			continue
+		}
+		if smartParticles[folded] {
+			continue
+		}
+		significant++
+		// One lower-case letter is enough to say this is not heading capitals.
+		if strings.ToUpper(trimmed) != trimmed {
+			return false
+		}
+	}
+	return hasFunctionWord && significant > 0
 }
 
 // followedByTrademark reports whether a trademark mark sits immediately after

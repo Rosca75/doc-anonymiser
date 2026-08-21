@@ -1046,10 +1046,14 @@ function solvePanel(e, conflict) {
       acts = button(WORKSPACE.solveRemoveThis, {
         kind: "ghost", cls: "solve-action", data: { act: "remove-value" },
       });
-    } else if (c.kind === "allowlist") {
+    } else if (c.resolution?.action === "drop_allow_term") {
+      // The action comes from the conflict's own stated resolution, the same one
+      // the refused-run panel on Anonymise reads, so the two screens cannot
+      // offer different ways out of one refusal.
       acts =
         button(WORKSPACE.solveRemoveFromAllowlist, {
-          kind: "ghost", cls: "solve-action", data: { act: "remove-allow" },
+          kind: "ghost", cls: "solve-action",
+          data: { act: "remove-allow", term: c.resolution.term || c.value },
         }) +
         button(WORKSPACE.solveRemoveThis, {
           kind: "ghost", cls: "solve-action", data: { act: "remove-value" },
@@ -1344,8 +1348,12 @@ async function moveSpellingElsewhere(cat, mainText, spelling) {
 
   const to = getState().values.find((o) => valueKey(o.category, o.mainText) === target);
   if (!to) { setState({}); return; }
-  const moved = moveSpelling(cat, mainText, to.category, to.mainText, spelling);
-  if (!moved) { setState({}); return; }
+  // "" is success; anything else is a reason the move did not happen (a stale
+  // drop, an unknown row), and the popup simply stays as it was.
+  if (moveSpelling(cat, mainText, to.category, to.mainText, spelling) !== "") {
+    setState({});
+    return;
+  }
   notify(WORKSPACE.spellingMoved(spelling, to.mainText), "ok");
   await refreshVariants();
 }
@@ -1931,8 +1939,13 @@ function wireGroupPanel(cardEl, cat, mainText) {
     const rest = participants.filter((p) => valueKey(p.category, p.mainText) !== mainKey);
 
     openValuePanel = { key: null, kind: null };
-    const n = groupValues(main, rest);
-    if (n) notify(WORKSPACE.groupedN(n, main.mainText), "ok");
+    // groupValues shares the family's ""-or-reason convention, so the COUNT is
+    // read from the store: how many rows the merge removed.
+    const before = getState().values.length;
+    if (groupValues(main, rest) === "") {
+      const merged = before - getState().values.length;
+      if (merged) notify(WORKSPACE.groupedN(merged, main.mainText), "ok");
+    }
     await refreshVariants();
   });
   cardEl.querySelector(".panel-cancel")?.addEventListener("click", () => {
@@ -1951,7 +1964,10 @@ function wireSolvePanel(cardEl, cat, mainText) {
       if (act === "remove-value") {
         deleteValue(cat, mainText);
       } else if (act === "remove-allow") {
-        removeAllowTerm(mainText);
+        // The term comes from the resolution rather than from the card's own
+        // main text: they agree today, and reading the stated one is what keeps
+        // them agreeing.
+        removeAllowTerm(action.dataset.term || mainText);
       } else if (act === "drop-spelling") {
         deleteVariant(cat, mainText, action.dataset.spelling);
         await refreshVariants();

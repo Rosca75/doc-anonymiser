@@ -252,6 +252,59 @@ func (p *docxParser) parseBody(docXML []byte) error {
 	}
 }
 
+// runAccumulator coalesces consecutive runs that share ONE formatting state
+// and wraps that whole stretch once, so the emphasis markers in the working
+// form describe the document's FORMATTING and not Word's run bookkeeping.
+//
+// Word splits a paragraph into <w:r> elements for reasons that have nothing to
+// do with formatting: proofing state, language tagging, revision ids, and
+// simply which editing session typed which characters. Wrapping every run on
+// its own turns a bold date into "**0****1****.01.20****01**": the date is
+// intact in the document and unmatchable in the working form. That breaks
+// every multi-token pattern (dates, phones, IBANs, VAT numbers) and every
+// adjacency heuristic whenever an author edited mid-token, so it is fixed here
+// at the source rather than in a pre-detection pass: every consumer (pass 1,
+// discovery, preview, the local-AI slices, export) then benefits and none has
+// to know.
+type runAccumulator struct {
+	out          *strings.Builder // where a flushed stretch is written
+	pending      strings.Builder  // text accumulated under the state below
+	bold, italic bool             // the formatting state `pending` was typed in
+	open         bool             // is there a stretch waiting to be wrapped?
+}
+
+// add appends one run's raw text under the formatting state that run declared,
+// flushing what came before first when the state differs.
+func (a *runAccumulator) add(text string, bold, italic bool) {
+	if text == "" {
+		return
+	}
+	if a.open && (a.bold != bold || a.italic != italic) {
+		a.flush()
+	}
+	a.bold, a.italic, a.open = bold, italic, true
+	a.pending.WriteString(text)
+}
+
+// flush wraps whatever is pending once and writes it out. It is called on a
+// formatting change, at a hyperlink boundary (emphasis markers must not
+// straddle the markdown link syntax) and at the end of the paragraph.
+func (a *runAccumulator) flush() {
+	if !a.open {
+		return
+	}
+	a.out.WriteString(wrapEmphasis(a.pending.String(), a.bold, a.italic))
+	a.pending.Reset()
+	a.open = false
+}
+
+// writeRaw emits text that carries no formatting of its own (the markdown link
+// brackets). Anything pending is flushed first so document order is kept.
+func (a *runAccumulator) writeRaw(text string) {
+	a.flush()
+	a.out.WriteString(text)
+}
+
 // parseParagraph consumes tokens until </w:p> and returns the paragraph as
 // one markdown line: heading, list item, or plain text. isList tells the
 // caller whether the line is a list item (drives blank-line placement).
@@ -265,6 +318,9 @@ func (p *docxParser) parseParagraph(dec *xml.Decoder) (line string, isList bool)
 		inPPr   bool   // pStyle/numPr only count inside paragraph properties
 		curLink string // hyperlink URL currently in effect ("" = none)
 	)
+	// Runs are coalesced by formatting state rather than wrapped one at a
+	// time; see runAccumulator for why.
+	acc := &runAccumulator{out: &text}
 
 	for depth > 0 {
 		tok, err := dec.Token()
@@ -293,11 +349,11 @@ func (p *docxParser) parseParagraph(dec *xml.Decoder) (line string, isList bool)
 				// Resolve r:id via the rels map; open a markdown link.
 				if target, ok := p.rels[attrVal(t, "id")]; ok && target != "" {
 					curLink = target
-					text.WriteString("[")
+					acc.writeRaw("[")
 				}
 			case "r":
 				depth-- // parseRun consumes up to and including </w:r>
-				text.WriteString(p.parseRun(dec))
+				acc.add(p.parseRun(dec))
 			}
 		case xml.EndElement:
 			depth--
@@ -306,13 +362,16 @@ func (p *docxParser) parseParagraph(dec *xml.Decoder) (line string, isList bool)
 				inPPr = false
 			case "hyperlink":
 				if curLink != "" {
-					text.WriteString("](" + curLink + ")")
+					acc.writeRaw("](" + curLink + ")")
 					curLink = ""
 				}
 			}
 		}
 	}
 
+	// The last stretch of the paragraph has no following run to trigger its
+	// flush, so close it here before the text is read.
+	acc.flush()
 	body := text.String()
 
 	// Heading styles map to markdown # levels. Word's built-in style IDs
@@ -343,15 +402,17 @@ func (p *docxParser) parseParagraph(dec *xml.Decoder) (line string, isList bool)
 	return body, false
 }
 
-// parseRun consumes one <w:r>…</w:r> and returns its markdown text with
-// bold/italic applied. Images inside the run become the placeholder.
-func (p *docxParser) parseRun(dec *xml.Decoder) string {
+// parseRun consumes one <w:r>…</w:r> and returns its RAW text plus the
+// formatting state that run declared. It deliberately does not apply the
+// markdown markers itself: the caller coalesces consecutive runs that share a
+// state and wraps the whole stretch once (see runAccumulator). Images inside
+// the run become the placeholder.
+func (p *docxParser) parseRun(dec *xml.Decoder) (text string, bold, italic bool) {
 	var (
-		text         strings.Builder
-		bold, italic bool
-		depth        = 1
-		inRPr        bool
-		inText       bool
+		buf    strings.Builder
+		depth  = 1
+		inRPr  bool
+		inText bool
 	)
 	for depth > 0 {
 		tok, err := dec.Token()
@@ -381,25 +442,25 @@ func (p *docxParser) parseRun(dec *xml.Decoder) string {
 				// (line, column) stays a space so the paragraph remains one
 				// markdown line.
 				if attrVal(t, "type") == "page" {
-					text.WriteString(docxPageBreak)
+					buf.WriteString(docxPageBreak)
 				} else {
-					text.WriteString(" ")
+					buf.WriteString(" ")
 				}
 			case "lastRenderedPageBreak":
 				// Word's cached "this is where the page broke when I last
 				// rendered" marker. It carries no text of its own; emitting
 				// the sentinel is what lets the page slice match the page
 				// count Word cached in docProps/app.xml.
-				text.WriteString(docxPageBreak)
+				buf.WriteString(docxPageBreak)
 			case "drawing", "pict":
 				// Images are dropped with an inline placeholder
 				// (CLAUDE.md §5) — the count feeds the import warning.
 				p.imagesDropped++
-				text.WriteString("*[image omitted]*")
+				buf.WriteString("*[image omitted]*")
 			}
 		case xml.CharData:
 			if inText {
-				text.Write(t)
+				buf.Write(t)
 			}
 		case xml.EndElement:
 			depth--
@@ -411,7 +472,7 @@ func (p *docxParser) parseRun(dec *xml.Decoder) string {
 			}
 		}
 	}
-	return wrapEmphasis(text.String(), bold, italic)
+	return buf.String(), bold, italic
 }
 
 // parseTable consumes one <w:tbl>…</w:tbl> and returns its cell text as

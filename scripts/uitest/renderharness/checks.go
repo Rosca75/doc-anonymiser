@@ -14,7 +14,24 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"doc-anonymiser/backend/engine"
 )
+
+// sameStrings reports whether two string slices are equal, order included. Used
+// where an expectation is READ from the store rather than written into the
+// harness, so a list that grows cannot leave a check behind.
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
 
 // reporter collects the verdicts and prints them as they happen.
 type reporter struct {
@@ -212,6 +229,7 @@ type railResult struct {
 	CategoriesWithSize            int      `json:"categoriesWithSize"`
 	CategoriesWithSizeAfterExpand int      `json:"categoriesWithSizeAfterExpand"`
 	SignalRows                    []string `json:"signalRows"`
+	SignalSources                 []string `json:"signalSources"`
 	SignalMasters                 []string `json:"signalMasters"`
 	SignalRowLine                 *struct {
 		SameRow           *bool  `json:"sameRow"`
@@ -307,11 +325,15 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 	// holds to the engine's. One drill-down per signal, one master per drill-down: a
 	// master over nothing, or a drill-down with no master, is a control that cannot
 	// say what it does.
-	r.assert("each signal has a drill-down on its own category row", len(got.SignalRows) == 1,
-		"1 .signal-row (one implemented signal source)",
-		fmt.Sprintf("%d: %v", len(got.SignalRows), got.SignalRows),
+	r.assert("each signal has a drill-down on its own category row",
+		len(got.SignalRows) == len(got.SignalSources) && len(got.SignalSources) > 0 &&
+			sameStrings(got.SignalRows, got.SignalSources),
+		fmt.Sprintf("one .signal-row per signal source: %v", got.SignalSources),
+		fmt.Sprintf("%d row(s): %v", len(got.SignalRows), got.SignalRows),
 		"views/identifyrail.js hangs a signalDrillDown off the category row of every "+
-			"state.js SIGNAL_SOURCES entry.")
+			"state.js SIGNAL_SOURCES entry. The expectation is READ from the store rather "+
+			"than written here: a hardcoded count is left behind by the next source, and "+
+			"then the harness fails describing a state it no longer creates.")
 
 	r.assert("every drill-down has its own master switch",
 		len(got.SignalMasters) == len(got.SignalRows),
@@ -627,12 +649,19 @@ type cardGeometryResult struct {
 	ListScrolls    *bool  `json:"listScrolls"`
 	Deleted        *bool  `json:"deleted"`
 	Pending        *bool  `json:"pending"`
+	CuratedSettled *bool  `json:"curatedSettled"`
 	HasWarningIcon *bool  `json:"hasWarningIcon"`
 
 	HeightBefore    int `json:"heightBefore"`
 	HeightAfterEdit int `json:"heightAfterEdit"`
 	HeightRenamed   int `json:"heightRenamed"`
 	HeightWarned    int `json:"heightWarned"`
+
+	// The automatic row measured beside the curated one: renaming it is where the
+	// pending state lives now, and where the collapse would show.
+	HeightAutoBefore  int `json:"heightAutoBefore"`
+	HeightAutoPending int `json:"heightAutoPending"`
+	ScrollAutoPending int `json:"scrollAutoPending"`
 
 	ScrollBefore    int `json:"scrollBefore"`
 	ScrollAfterEdit int `json:"scrollAfterEdit"`
@@ -707,18 +736,35 @@ func checkValueCardGeometry(c *cdpClient, r *reporter) {
 		"scroll.js restores a raw pixel offset, which the browser clamps when the content "+
 			"got shorter. The card holding its height is what makes the restore exact.")
 
-	r.assert("renaming the value sends its spellings back to pending",
-		boolIs(got.Pending, true),
-		"derivedSpellings null on the renamed Value", describeBool(got.Pending),
-		"This is the case with the most teeth: with nothing settled to draw, the chip row "+
-			"falls back to one line of text. Without it the probe never exercises the collapse "+
-			"the owner reported, because deleting a spelling CURATES and leaves the list settled.")
+	// Renaming is two cases, because the sentinel a rename writes depends on the
+	// row's spelling POLICY (valuemodel.js repend).
+	r.assert("renaming a CURATED value leaves it settled, never pending",
+		boolIs(got.CuratedSettled, true),
+		"the renamed Value still curated, with a settled spelling list",
+		describeBool(got.CuratedSettled),
+		"pendingExpansions skips curated rows, because a curated row's chips ARE its list. "+
+			"Sending one back to pending means no expansion is ever requested and nothing "+
+			"clears the sentinel: the card reads \"working out the other spellings...\" for "+
+			"the rest of the session over chips that are already correct.")
 
-	r.assert("the card is the same height while its spellings are pending",
+	r.assert("the card is the same height after a rename",
 		got.HeightRenamed > 0 && got.HeightRenamed == got.HeightAfterEdit,
 		fmt.Sprintf("still %dpx", got.HeightAfterEdit), fmt.Sprintf("%dpx", got.HeightRenamed),
+		"Whatever the row lands on, the chip row swaps its contents INSIDE itself, never as "+
+			"a row under it. A row that appears while Go answers is the collapse.")
+
+	r.assert("renaming an AUTOMATIC value sends its spellings back to pending",
+		boolIs(got.Pending, true),
+		"derivedSpellings null on the renamed automatic Value", describeBool(got.Pending),
+		"This is where the pending state lives now, and it is the case with the most teeth "+
+			"for the layout: with nothing settled to draw, the chip row falls back to one "+
+			"line of text.")
+
+	r.assert("the card is the same height while its spellings are pending",
+		got.HeightAutoBefore > 0 && got.HeightAutoPending == got.HeightAutoBefore,
+		fmt.Sprintf("still %dpx", got.HeightAutoBefore), fmt.Sprintf("%dpx", got.HeightAutoPending),
 		"The pending line renders INSIDE the chip row, in place of the chips, never as a row "+
-			"under it. A row that appears while Go answers is the collapse.")
+			"under it.")
 
 	r.assert("the list keeps its scroll position while the spellings are pending",
 		got.ScrollRenamed == got.ScrollAfterEdit,
@@ -736,9 +782,13 @@ func checkValueCardGeometry(c *cdpClient, r *reporter) {
 		"A warning rendered as a row makes the card taller when it arrives and shorter when "+
 			"it clears, which moves every card below it.")
 
+	// Measured against the offset immediately BEFORE the warning was seeded, which
+	// is the one the pending rename left, not the one two steps back: the question
+	// is whether a warning appearing moves the list, and comparing across another
+	// gesture would answer a different one.
 	r.assert("the list keeps its scroll position when a warning appears",
-		got.ScrollWarned == got.ScrollRenamed,
-		fmt.Sprintf("scrollTop still %d", got.ScrollRenamed), fmt.Sprintf("%d", got.ScrollWarned), "")
+		got.ScrollWarned == got.ScrollAutoPending,
+		fmt.Sprintf("scrollTop still %d", got.ScrollAutoPending), fmt.Sprintf("%d", got.ScrollWarned), "")
 
 	// Deleting a card genuinely shortens the list, so the offset MAY move. What
 	// must not happen is a clamp to the top, which is what the user reported.
@@ -1684,11 +1734,20 @@ type selectionPanelResult struct {
 // and reached through the Patterns tab, not this dropdown). ../../
 // category_parity_test.go holds the engine and the store to each other; this holds
 // the rendered dropdown to the same list.
-var declarableCategories = map[string]bool{
-	"entity_names": true, "project_names": true, "identifier_names": true,
-	"person_names": true, "product_names": true, "brand_names": true,
-	"other_names": true,
-}
+// It is DERIVED from engine.AllValueCategories rather than written out, so a new
+// category cannot leave this behind: a hand-written list turns "the dropdown
+// offers only real keys" into "the dropdown offers only the keys somebody
+// remembered", which passes while the new type is unreachable.
+var declarableCategories = func() map[string]bool {
+	out := map[string]bool{}
+	for _, c := range engine.AllValueCategories {
+		if c == engine.CatCustomPatterns {
+			continue
+		}
+		out[c] = true
+	}
+	return out
+}()
 
 // checkSelectionPanel asserts the Compare pane's REPLACE SELECTION panel opens
 // against a real text selection, that its type dropdown emits CATEGORY KEYS, and

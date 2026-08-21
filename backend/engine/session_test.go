@@ -500,30 +500,92 @@ func TestSessionRoundTripsImageDecisions(t *testing.T) {
 	})
 }
 
-// TestSessionVersion9RefusesAnOlderFile: the strict-version rule, at the version
-// the picture decisions arrived in.
+// TestSessionVersionRefusesAnOlderFile: the strict-version rule, at the version
+// the new value categories arrived in.
 //
-// A v8 file has no decisions and a v8 READER ignores the field. Either way round,
-// the file loads, nothing errors, and the exported document is wrong: it ships a
-// picture the user had redacted. That is exactly the failure the
-// refuse-never-migrate rule exists for, which is why this field bumped the
-// version even though a loader could technically ignore it.
-func TestSessionVersion9RefusesAnOlderFile(t *testing.T) {
-	t.Run("errors/session_v8_is_refused", func(t *testing.T) {
-		if SessionVersion != 9 {
-			t.Fatalf("SessionVersion is %d; this test describes the move to 9 and must be "+
+// The reason for THIS bump runs backwards from the usual one. Registry.Assign
+// PANICS on a category with no placeholderLabels row, so a file this build wrote
+// carrying a country_names Value, offered to an older binary under the version
+// that binary reads, would crash it on the next run rather than be refused. The
+// bump turns the crash into the clear "written by a different version" message.
+//
+// A v9 file is refused for the same shape of reason a v8 one was: it loads,
+// nothing errors, and the result is wrong.
+func TestSessionVersionRefusesAnOlderFile(t *testing.T) {
+	t.Run("errors/older_versions_are_refused", func(t *testing.T) {
+		if SessionVersion != 10 {
+			t.Fatalf("SessionVersion is %d; this test describes the move to 10 and must be "+
 				"rewritten for the version that replaces it", SessionVersion)
 		}
-		v8 := `{"version":8,"values":[],"allowTerms":[],"patterns":[],` +
-			`"settings":{"level":"medium","ollamaPort":11434,"model":"qwen3.5:0.8b"},` +
-			`"registry":[]}`
-		_, err := LoadSession([]byte(v8))
-		if err == nil {
-			t.Fatal("a version 8 session file was accepted; a session file is read only by the " +
-				"version that wrote it, because a half-read one silently reassigns placeholders")
-		}
-		if !strings.Contains(err.Error(), "9") {
-			t.Errorf("the refusal does not say which version this build reads:\n%v", err)
+		for _, older := range []int{8, 9} {
+			raw := fmt.Sprintf(`{"version":%d,"values":[],"allowTerms":[],"patterns":[],`+
+				`"settings":{"level":"medium","ollamaPort":11434,"model":"qwen3.5:0.8b"},`+
+				`"registry":[]}`, older)
+			_, err := LoadSession([]byte(raw))
+			if err == nil {
+				t.Fatalf("a version %d session file was accepted; a session file is read only by "+
+					"the version that wrote it, because a half-read one silently reassigns "+
+					"placeholders", older)
+			}
+			if !strings.Contains(err.Error(), "10") {
+				t.Errorf("the refusal does not say which version this build reads:\n%v", err)
+			}
 		}
 	})
+}
+
+// TestNewValueCategoriesHaveAPlaceholderLabel is the assertion the version bump
+// exists for: every value category the engine ships can actually be assigned a
+// placeholder. Registry.Assign panics on a category with no label, so a category
+// added without its row is a crash on the first run that uses it.
+func TestNewValueCategoriesHaveAPlaceholderLabel(t *testing.T) {
+	for _, category := range append(
+		append([]string{}, AllValueCategories...), AllPIICategories...) {
+		reg := NewRegistry()
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("assigning a placeholder for category %q panicked (%v): "+
+						"every shipped category needs a placeholderLabels row", category, r)
+				}
+			}()
+			if got := reg.Assign(category, "sample"); got == "" {
+				t.Errorf("category %q produced an empty placeholder", category)
+			}
+		}()
+	}
+}
+
+// TestDefinedTermsSurviveTheFile: the terms a document declares about itself are
+// enforced through the allowlist, so a restored session that lost them would
+// start suggesting every one of them again. They are stored SEPARATELY from the
+// user's own never-anonymise terms, because deleting a term the user typed is not
+// the same gesture as dropping a definition read out of a document.
+func TestDefinedTermsSurviveTheFile(t *testing.T) {
+	saved := Session{
+		Settings: SessionSettings{Level: "medium"},
+		DefinedTerms: []DefinedTerm{
+			{Term: "Work Order", Idiom: DefinitionIdiomMeans, Document: "a.docx"},
+			{Term: "Dedicated Advisors", Idiom: DefinitionIdiomParenthetical, Document: "a.docx"},
+		},
+	}
+	raw, err := SaveSession(saved)
+	if err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	back, err := LoadSession(raw)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if len(back.DefinedTerms) != len(saved.DefinedTerms) {
+		t.Fatalf("the file restored %d defined terms, want %d", len(back.DefinedTerms), len(saved.DefinedTerms))
+	}
+	for i, want := range saved.DefinedTerms {
+		if back.DefinedTerms[i] != want {
+			t.Errorf("defined term %d came back %+v, want %+v", i, back.DefinedTerms[i], want)
+		}
+	}
+	if strings.Contains(string(raw), `"allowTerms": [\n    "Work Order"`) {
+		t.Error("a defined term was written into the user's own never-anonymise list")
+	}
 }

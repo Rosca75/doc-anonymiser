@@ -72,7 +72,116 @@ func DiscoverFromSignals(in SignalDiscoveryInput) []Suggestion {
 	if !any {
 		return nil
 	}
-	return discoverFromEmails(in)
+	// One batch per source, merged through the shared rule, so two sources
+	// agreeing on a string is one reviewable row carrying both pieces of
+	// evidence rather than two rivals.
+	return MergeSuggestions(discoverFromEmails(in), discoverFromWebsites(in))
+}
+
+// discoverFromWebsites is the website source: a URL's registrable domain label
+// seeds an organisation, and the seed is then SEARCHED FOR in the whole batch,
+// exactly as an email domain's is.
+//
+// It answers a case email evidence cannot. A contract between two companies
+// routinely contains no address at all while printing each party's website, and
+// the domain label is often the SHORT form of the name ("nstar" for
+// "Northstar") that no spelling-derivation rule could produce from the long one.
+//
+// Everything an email domain is filtered by applies here for the same reasons:
+// public-suffix labels, public mail providers, infrastructure labels and a
+// minimum length. A URL PATH is deliberately ignored: a page is not an
+// organisation.
+func discoverFromWebsites(in SignalDiscoveryInput) []Suggestion {
+	if !SignalDerivationEnabled(in.Sources, SignalSourceWebsite, DerivationWebsiteOrganisation) {
+		return nil
+	}
+	seeds := map[string]*emailSeed{}
+	spans := map[string][][2]int{}
+
+	for _, doc := range in.Documents {
+		for _, m := range websitePatternRe.FindAllStringIndex(doc.Markdown, -1) {
+			url := doc.Markdown[m[0]:m[1]]
+			spans[doc.Name] = append(spans[doc.Name], [2]int{m[0], m[1]})
+			for _, seed := range websiteSeeds(url, doc.Name) {
+				addSeed(seeds, seed)
+			}
+		}
+	}
+	if len(seeds) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(seeds))
+	for k := range seeds {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var batches [][]Suggestion
+	for _, key := range keys {
+		batches = append(batches, matchSeed(*seeds[key], in, spans))
+	}
+	return MergeSuggestions(batches...)
+}
+
+// websitePatternRe is the URL shape used for EVIDENCE. It deliberately mirrors
+// pii.go's URL rule, so a URL that is anonymised is a URL that can be read as
+// evidence: two shapes drifting apart would make a signal appear or vanish for
+// reasons neither the user nor a test could see.
+var websitePatternRe = regexp.MustCompile(`https?://[^\s<>"')\]]+` +
+	`|\bwww\.[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+(?:/[^\s<>"')\],]*)?`)
+
+// websiteSeeds derives an organisation seed from a URL's registrable domain
+// label, or nothing when the host names no organisation.
+func websiteSeeds(url, docName string) []emailSeed {
+	host := urlHost(url)
+	if host == "" {
+		return nil
+	}
+	labels := strings.Split(host, ".")
+	// Walk in from the right past the public suffix, exactly as an email domain
+	// is walked: two-level suffixes ("co.uk") are why this is a loop.
+	i := len(labels) - 1
+	for i >= 0 && publicSuffixLabels[labels[i]] {
+		i--
+	}
+	if i < 0 {
+		return nil
+	}
+	label := labels[i]
+	if publicMailProviders[label] || infrastructureLabels[label] || len([]rune(label)) < minSeedLen {
+		return nil
+	}
+	return []emailSeed{{
+		folded:   foldAccentsLower(label),
+		category: CatEntityNames,
+		evidence: Evidence{
+			Kind:           EvidenceWebsiteDomain,
+			SignalCategory: CatURL,
+			SignalText:     url,
+			Documents:      []string{docName},
+		},
+	}}
+}
+
+// urlHost returns the lower-cased host of a URL, with the scheme, any
+// credentials, the port and the path removed. It is a few string cuts rather
+// than net/url because the input is already a regex match of a known shape, and
+// a parse error on a matched string would be a silent miss.
+func urlHost(url string) string {
+	host := strings.ToLower(url)
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+len("://"):]
+	}
+	if i := strings.IndexAny(host, "/?#"); i >= 0 {
+		host = host[:i]
+	}
+	if i := strings.LastIndex(host, "@"); i >= 0 {
+		host = host[i+1:] // credentials
+	}
+	if i := strings.LastIndex(host, ":"); i >= 0 {
+		host = host[:i] // port
+	}
+	return strings.Trim(host, ".")
 }
 
 // emailSeed is one string an email address suggests, with the evidence that
@@ -303,6 +412,11 @@ var publicSuffixLabels = map[string]bool{
 	"ch": true, "at": true, "it": true, "es": true, "pt": true, "ie": true,
 	"us": true, "ca": true, "au": true, "nz": true, "se": true, "no": true,
 	"dk": true, "fi": true, "pl": true, "cz": true, "gov.uk": true,
+	// Administrative second-level labels. They sit where a name would in a real
+	// host ("statistiques.public.lu", "agence.gouv.fr") and name no organisation,
+	// so without them the seed becomes the word "public" and the search finds it
+	// in ordinary prose ("a public limited liability company").
+	"public": true, "gouv": true, "admin": true, "etat": true, "state": true,
 }
 
 // publicMailProviders are consumer and generic mail hosts. A domain that is one

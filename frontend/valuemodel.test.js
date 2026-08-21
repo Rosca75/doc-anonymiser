@@ -13,11 +13,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { pendingExpansions } from "./valuemodel.js";
+import { pendingExpansions, repend } from "./valuemodel.js";
 import {
   resetState, getState,
   addValues, addSpelling, setValueSpellings, setValueSpellingError,
-  deleteValue, moveSpelling,
+  deleteValue, moveSpelling, renameValue, changeValueCategory, curate, setState,
 } from "./state.js";
 
 /** valueFor(mainText) finds one value in the store. */
@@ -159,7 +159,7 @@ test("moving a spelling curates the source and re-pends the target", () => {
   setValueSpellings("entity_names", "Alpha", ["Alph"]);
   setValueSpellings("entity_names", "Beta", []);
 
-  assert.equal(moveSpelling("entity_names", "Alpha", "entity_names", "Beta", "Alph"), true);
+  assert.equal(moveSpelling("entity_names", "Alpha", "entity_names", "Beta", "Alph"), "");
   const alpha = valueFor("Alpha");
   const beta = valueFor("Beta");
   // The source CURATES without it, so its automatic expansion cannot derive it
@@ -192,4 +192,66 @@ test("removing a value takes its spelling state with it", () => {
   deleteValue("entity_names", "Acme");
   assert.deepEqual(getState().values, []);
   assert.deepEqual(pendingExpansions(getState().values), []);
+});
+
+// --- The curated sentinel invariant -------------------------------------------
+//
+// A CURATED row's amended sentinel is [], never null. It is an INVARIANT rather
+// than a fix, so it is asserted as a property of the helper and then again
+// through each of the three writers that amend a row.
+//
+// null is the PENDING sentinel and pendingExpansions deliberately skips curated
+// rows, so writing null onto one means no expansion is ever requested and nothing
+// ever clears it: the card renders "working out the other spellings..." for the
+// rest of the session over chips that are already correct. The fix is NOT to
+// derive for curated rows, because that would let a deleted spelling come
+// straight back, which is the whole reason curation exists.
+
+test("repend writes the sentinel the POLICY calls for, both ways round", () => {
+  assert.equal(spellingState(repend({ spellingPolicy: "automatic" })), "pending",
+    "an automatic row has something to derive, so it goes pending");
+  assert.equal(spellingState(repend({})), "pending",
+    "an absent policy reads as automatic, so a producer that never set it is safe");
+  assert.equal(spellingState(repend({ spellingPolicy: "curated" })), "empty",
+    "a curated row's chips ARE its list, so amending it SETTLES it");
+});
+
+test("repend clears a stale expansion error either way", () => {
+  for (const policy of ["automatic", "curated"]) {
+    assert.equal(repend({ spellingPolicy: policy, spellingsError: "boom" }).spellingsError, null,
+      `a ${policy} row must not keep an error from before the amendment`);
+  }
+});
+
+/** curatedValue() seeds one CURATED value and returns it. */
+function curatedValue(category, mainText, spellings) {
+  resetState();
+  addValues([{ category, mainText }]);
+  setValueSpellings(category, mainText, spellings);
+  setState({
+    values: getState().values.map((e) =>
+      e.mainText === mainText ? curate(e, spellings) : e),
+  });
+  return valueFor(mainText);
+}
+
+test("amending a CURATED row never leaves it pending, whichever gesture did it", () => {
+  // These three writers all cleared derivedSpellings without looking at the
+  // policy, and pendingExpansions then refused to pick the row up, so the card
+  // claimed to still be working forever. One helper, three call sites.
+  const gestures = [
+    ["addSpelling", () => addSpelling("entity_names", "Northstar", "NStar 2")],
+    ["renameValue", () => renameValue("entity_names", "Northstar", "Northstar Group")],
+    ["changeValueCategory", () => changeValueCategory("entity_names", "Northstar", "brand_names")],
+  ];
+  for (const [name, gesture] of gestures) {
+    curatedValue("entity_names", "Northstar", ["Northstar", "NStar"]);
+    gesture();
+    const row = getState().values[0];
+    assert.equal(row.spellingPolicy, "curated", `${name} must not un-curate the row`);
+    assert.notEqual(spellingState(row), "pending",
+      `${name} left a curated row pending, and no expansion will ever arrive to clear it`);
+    assert.deepEqual(pendingExpansions(getState().values), [],
+      `${name} asked for an expansion of a settled row`);
+  }
 });

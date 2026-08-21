@@ -36,6 +36,19 @@ var CategoryCountries = map[string][]string{
 	CatDatabaseURI: nil,
 	CatDESteuerID:  {CountryDE},
 	CatESNIF:       {CountryES},
+	// A BIC is ISO 9362 and carries its own country code, so it applies
+	// everywhere.
+	CatBIC: nil,
+	// A postal code is a national SHAPE. The only shape implemented is the
+	// Luxembourg "L-" plus four digits, and a bare four-digit run is an ordinary
+	// number in every other country, so the category is scoped rather than
+	// running a pattern that would fire on clause numbers.
+	CatPostalCode: {CountryLU},
+	// An address line is anchored on a street-type gazetteer, and the gazetteer
+	// implemented is the French/Luxembourg one. A category outside the selected
+	// country renders DISABLED rather than hidden, so a German selection shows
+	// the switch and says it does not apply here.
+	CatAddress: {CountryLU, CountryFR},
 }
 
 func CategoryAppliesTo(category, country string) bool {

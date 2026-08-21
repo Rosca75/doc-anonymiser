@@ -109,6 +109,14 @@ var personCategories = map[string]bool{
 var literalOnlyCategories = map[string]bool{
 	CatIdentifierNames: true,
 	CatOtherNames:      true,
+	// The context values. A country, a nationality and a line of business are
+	// single ordinary words with no name structure at all: there is no legal
+	// suffix to strip and no surname to isolate, and organisation-style
+	// stripping on "Société Générale de Transport" would invent "Société
+	// Générale de", which names something else.
+	CatCountryNames:        true,
+	CatNationalityNames:    true,
+	CatBusinessSectorNames: true,
 }
 
 // nameParticles are the lower-case surname particles that glue multi-word
