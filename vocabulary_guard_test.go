@@ -78,7 +78,6 @@ var exemptFiles = map[string]string{
 }
 
 func TestNoRetiredIdentifierSurvives(t *testing.T) {
-
 	var hits []string
 	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
