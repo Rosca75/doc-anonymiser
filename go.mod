@@ -5,6 +5,7 @@ module doc-anonymiser
 go 1.26.5
 
 require (
+	github.com/aspose-pdf-foss/aspose-pdf-foss-for-go v0.7.0
 	github.com/go-pdf/fpdf v0.9.0
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/wailsapp/wails/v2 v2.13.0

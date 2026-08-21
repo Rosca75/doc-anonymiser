@@ -1,0 +1,847 @@
+// SPDX-License-Identifier: MIT
+
+package asposepdf
+
+import "fmt"
+
+// Form is the document's AcroForm view. Always non-nil — for documents
+// without an /AcroForm dict, Form is empty (no fields, no flags). Field
+// instances returned from Form are live handles over the underlying
+// pdfDict; SetValue mutates in place and the next Save writes the new
+// state.
+type Form struct {
+	doc        *Document
+	root       pdfDict // resolved /AcroForm dict; nil if document has none
+	leaves     []*fieldNode
+	cache      map[string]Field
+	fieldsList []Field
+}
+
+// fieldNode is the internal flat representation of a leaf form field.
+// It carries the field's own dict, computed FullName, resolved inherited
+// attributes (/FT, /Ff, /V, /DV, /DA), and references to its widget
+// kids (or itself if the field is also its own widget).
+type fieldNode struct {
+	form     *Form
+	dict     pdfDict
+	fullName string
+	ft       string // resolved /FT
+	ff       int    // resolved /Ff
+	widgets  []pdfDict
+}
+
+// Form returns the document's AcroForm. Always non-nil; for a document
+// without /AcroForm, an empty Form is returned (Fields() is empty,
+// Field(name) returns nil, HasField returns false).
+func (d *Document) Form() *Form {
+	form := &Form{doc: d}
+	if d.catalog == nil {
+		return form
+	}
+	root, ok := resolveRefToDict(d.objects, d.catalog["/AcroForm"])
+	if !ok {
+		return form
+	}
+	form.root = root
+	form.leaves = walkAcroForm(form, d.objects, root)
+	// Build canonical Field instances once so Field(), Fields(), and
+	// HasField() all share the same pointers. SetValue in later tasks
+	// mutates node.dict in place, so callers must see the same instance.
+	form.cache = make(map[string]Field, len(form.leaves))
+	form.fieldsList = make([]Field, 0, len(form.leaves))
+	for _, n := range form.leaves {
+		f := fieldFromNode(n)
+		if f == nil {
+			continue
+		}
+		form.fieldsList = append(form.fieldsList, f)
+		form.cache[n.fullName] = f
+	}
+	return form
+}
+
+// Fields returns all leaf form fields as a flat slice. Field tree
+// hierarchy is resolved internally; callers see only the leaves whose
+// FullName carries the dotted path.
+func (f *Form) Fields() []Field {
+	return f.fieldsList
+}
+
+// Field returns the leaf field by FullName, or nil if no such field
+// exists. Mirrors the C# `doc.Form["name"]` indexer pattern.
+func (f *Form) Field(name string) Field {
+	return f.cache[name]
+}
+
+// HasField reports whether a leaf field with the given FullName exists.
+func (f *Form) HasField(name string) bool {
+	_, ok := f.cache[name]
+	return ok
+}
+
+// Field is the common interface implemented by every concrete form
+// field type (TextBoxField, CheckboxField, RadioButtonField, etc.).
+type Field interface {
+	PartialName() string
+	FullName() string
+	Value() string
+	SetValue(s string) error
+	IsReadOnly() bool
+	IsRequired() bool
+	PageIndex() int
+	Rect() Rectangle
+	// SetStyle applies visual styling (colours, border, font, alignment)
+	// and regenerates the widget appearance. Style reads it back.
+	SetStyle(s FieldStyle) error
+	Style() FieldStyle
+	// Flatten bakes this single field's appearance into its page content
+	// and removes the field, leaving other fields and the /AcroForm intact.
+	// See (*fieldBase).Flatten in flatten.go.
+	Flatten() error
+}
+
+// walkAcroForm walks /AcroForm/Fields recursively, returning the flat
+// list of leaf fields with FullName, /FT and /Ff resolved through
+// inheritance per ISO 32000-1 §12.7.3.1.
+func walkAcroForm(form *Form, objects map[int]*pdfObject, root pdfDict) []*fieldNode {
+	fieldsVal, ok := root["/Fields"]
+	if !ok {
+		return nil
+	}
+	arr, ok := fieldsVal.(pdfArray)
+	if !ok {
+		return nil
+	}
+	var out []*fieldNode
+	for _, item := range arr {
+		dict, ok := resolveRefToDict(objects, item)
+		if !ok {
+			continue
+		}
+		walkField(form, objects, dict, "", "", 0, &out)
+	}
+	return out
+}
+
+func walkField(form *Form, objects map[int]*pdfObject, dict pdfDict, parentName, parentFT string, parentFF int, out *[]*fieldNode) {
+	tName := dictGetString(dict, "/T")
+	fullName := tName
+	if parentName != "" && tName != "" {
+		fullName = parentName + "." + tName
+	} else if parentName != "" {
+		fullName = parentName
+	}
+
+	ft := parentFT
+	if v, ok := dict["/FT"].(pdfName); ok {
+		ft = string(v)
+	}
+	ff := parentFF
+	if v, ok := dict["/Ff"]; ok {
+		ff = toInt(v)
+	}
+
+	kidsVal, hasKids := dict["/Kids"]
+	if !hasKids {
+		// Leaf without kids — the field itself is also its widget.
+		*out = append(*out, &fieldNode{form: form, dict: dict, fullName: fullName, ft: ft, ff: ff, widgets: []pdfDict{dict}})
+		return
+	}
+	arr, ok := kidsVal.(pdfArray)
+	if !ok {
+		*out = append(*out, &fieldNode{form: form, dict: dict, fullName: fullName, ft: ft, ff: ff})
+		return
+	}
+
+	// Kids may be sub-fields (have /T) or pure widgets (no /T, /Subtype=/Widget).
+	var widgets []pdfDict
+	hasSubFields := false
+	for _, item := range arr {
+		k, ok := resolveRefToDict(objects, item)
+		if !ok {
+			continue
+		}
+		if _, hasT := k["/T"]; hasT {
+			hasSubFields = true
+			break
+		}
+		widgets = append(widgets, k)
+	}
+	if !hasSubFields {
+		// All kids are pure widgets — this is still a leaf field.
+		*out = append(*out, &fieldNode{form: form, dict: dict, fullName: fullName, ft: ft, ff: ff, widgets: widgets})
+		return
+	}
+	// Recurse into sub-fields.
+	for _, item := range arr {
+		k, ok := resolveRefToDict(objects, item)
+		if !ok {
+			continue
+		}
+		walkField(form, objects, k, fullName, ft, ff, out)
+	}
+}
+
+// encodeFormString encodes a Go string for storage as a PDF field value.
+// ASCII strings are stored as Latin-1 (PDFDocEncoding-compatible);
+// non-ASCII strings are encoded as UTF-16BE with the 0xFE 0xFF BOM,
+// per ISO 32000-1 §7.9.2.2.
+func encodeFormString(s string) string {
+	if isASCII(s) {
+		return s
+	}
+	out := make([]byte, 0, len(s)*2+2)
+	out = append(out, 0xFE, 0xFF)
+	for _, r := range s {
+		if r > 0xFFFF {
+			// Encode as surrogate pair.
+			r -= 0x10000
+			hi := 0xD800 + (r >> 10)
+			lo := 0xDC00 + (r & 0x3FF)
+			out = append(out, byte(hi>>8), byte(hi), byte(lo>>8), byte(lo))
+			continue
+		}
+		out = append(out, byte(r>>8), byte(r))
+	}
+	return string(out)
+}
+
+// decodeFormString decodes a PDF field value back into a Go string.
+// UTF-16BE with the 0xFE 0xFF BOM is detected; everything else is
+// returned as-is (Latin-1 / PDFDocEncoding bytes are valid Go strings).
+func decodeFormString(v pdfValue) string {
+	s, ok := v.(string)
+	if !ok {
+		if n, ok := v.(pdfName); ok {
+			return string(n)
+		}
+		return ""
+	}
+	if len(s) >= 2 && s[0] == 0xFE && s[1] == 0xFF {
+		body := s[2:]
+		var out []rune
+		for i := 0; i+1 < len(body); i += 2 {
+			r := rune(body[i])<<8 | rune(body[i+1])
+			if r >= 0xD800 && r <= 0xDBFF && i+3 < len(body) {
+				lo := rune(body[i+2])<<8 | rune(body[i+3])
+				if lo >= 0xDC00 && lo <= 0xDFFF {
+					r = 0x10000 + ((r - 0xD800) << 10) + (lo - 0xDC00)
+					i += 2
+				}
+			}
+			out = append(out, r)
+		}
+		return string(out)
+	}
+	return s
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
+// noteFormMutated is invoked from every field-value setter. It rebuilds
+// the /AP appearance stream for each widget belonging to n so the on-page
+// chrome stays in sync with the new value. We no longer set
+// /AcroForm/NeedAppearances=true — viewers that honour /AP (Acrobat,
+// Foxit, browser PDF viewers, MuPDF, Poppler, …) use the freshly
+// generated stream directly, and NeedAppearances=true had the
+// side-effect of marking the document as modified on open in Acrobat
+// (the "Save changes?" prompt on close even when the user never edited
+// the form). Callers who still want viewer-side regeneration can opt
+// in via Form.SetNeedAppearances(true).
+func noteFormMutated(n *fieldNode) {
+	regenerateFieldAppearance(n)
+}
+
+// NeedAppearances reports whether /AcroForm/NeedAppearances is true,
+// which tells viewers to regenerate cached /AP appearance streams when
+// displaying form fields.
+func (f *Form) NeedAppearances() bool {
+	if f.root == nil {
+		return false
+	}
+	v, ok := f.root["/NeedAppearances"].(bool)
+	return ok && v
+}
+
+// SetNeedAppearances toggles /AcroForm/NeedAppearances. When set, viewers
+// regenerate the /AP appearance stream on display instead of trusting the
+// pre-generated one (which Acrobat treats as a document modification).
+// The library auto-builds /AP for every field on creation and on every
+// value mutation, so the default (false) is correct for nearly all cases;
+// callers only need this for niche workflows where viewer-side
+// regeneration is required.
+//
+// On a Document with no /AcroForm dict, calling this with true creates
+// a new /AcroForm dict in the catalog so the flag is preserved on Save.
+func (f *Form) SetNeedAppearances(v bool) {
+	if v {
+		f.ensureRoot()
+		if f.root != nil {
+			f.root["/NeedAppearances"] = true
+		}
+	} else if f.root != nil {
+		delete(f.root, "/NeedAppearances")
+	}
+}
+
+// ensureRoot lazily creates an /AcroForm dict on the document catalog
+// if absent. Also creates the catalog itself if the document is new
+// (NewDocument doesn't initialise one). Called from setters that need
+// a place to store flags.
+func (f *Form) ensureRoot() {
+	if f.root != nil {
+		return
+	}
+	if f.doc.catalog == nil {
+		f.doc.catalog = pdfDict{}
+	}
+	root := pdfDict{"/Fields": pdfArray{}}
+	f.doc.catalog["/AcroForm"] = root
+	f.root = root
+}
+
+// noteFormMutatedInForm is retained as a structural hook for AddXxx
+// methods: it ensures /AcroForm exists, which is needed so the new
+// field gets serialised. Setting /NeedAppearances=true here used to
+// kick viewers into regenerating /AP, but that was a workaround for
+// missing widget appearances. Now that every AddXxx writes a real
+// /AP stream, the flag stays off by default.
+func (f *Form) noteFormMutatedInForm() {
+	f.ensureRoot()
+}
+
+// AddTextField creates a single-line text input on pageNum with the
+// given rectangle and field name, auto-creating /AcroForm and the
+// default Helvetica font resource if needed. Returns the live
+// *TextBoxField handle. Errors on duplicate name, invalid pageNum,
+// or empty name.
+func (f *Form) AddTextField(pageNum int, rect Rectangle, name string) (*TextBoxField, error) {
+	fld, err := f.addTextFieldConfigured(pageNum, rect, name, nil)
+	if err != nil {
+		return nil, err
+	}
+	return fld.(*TextBoxField), nil
+}
+
+// addTextFieldConfigured creates a text field (/FT /Tx) and returns the live
+// handle. configure (if non-nil) may set field-specific entries on the widget
+// dict — /Ff flags (Password/FileSelect/RichText) or an /AA format action
+// (Number/Date) — before it is finalized; those in turn drive which concrete
+// field type fieldFromNode returns. Shared by AddTextField and the typed
+// variants in form_fields_extra.go.
+func (f *Form) addTextFieldConfigured(pageNum int, rect Rectangle, name string, configure func(dict pdfDict)) (Field, error) {
+	if err := f.validateNewField(pageNum, name); err != nil {
+		return nil, err
+	}
+	page, err := f.doc.Page(pageNum)
+	if err != nil {
+		return nil, err
+	}
+
+	helvName, err := f.ensureFontHelv()
+	if err != nil {
+		return nil, err
+	}
+
+	dict := pdfDict{
+		"/Type":    pdfName("/Annot"),
+		"/Subtype": pdfName("/Widget"),
+		"/FT":      pdfName("/Tx"),
+		"/T":       name,
+		"/V":       "",
+		"/DA":      "0 g /" + helvName + " 12 Tf",
+		"/Rect":    rectToPDFArray(rect),
+		"/P":       pdfRef{Num: page.pageObj().Num},
+	}
+	if configure != nil {
+		configure(dict)
+	}
+
+	objID := f.doc.nextID
+	f.doc.nextID++
+	f.doc.objects[objID] = &pdfObject{Num: objID, Value: dict}
+	ref := pdfRef{Num: objID}
+
+	f.appendToFields(ref)
+	appendAnnotToPage(f.doc.objects, page.pageObj(), ref)
+
+	f.rebuildFieldCache()
+	f.noteFormMutatedInForm()
+	regenerateWidgetAppearance(f, dict)
+
+	return f.cache[name], nil
+}
+
+// validateNewField checks the common preconditions for any AddXxx call.
+func (f *Form) validateNewField(pageNum int, name string) error {
+	if name == "" {
+		return fmt.Errorf("form field name is empty")
+	}
+	if pageNum < 1 || pageNum > f.doc.PageCount() {
+		return fmt.Errorf("pageNum %d out of range [1,%d]", pageNum, f.doc.PageCount())
+	}
+	if f.HasField(name) {
+		return fmt.Errorf("field with name %q already exists", name)
+	}
+	return nil
+}
+
+// appendToFields appends a ref to /AcroForm/Fields, creating the array
+// if absent.
+func (f *Form) appendToFields(ref pdfRef) {
+	f.ensureRoot()
+	arr, _ := f.root["/Fields"].(pdfArray)
+	arr = append(arr, ref)
+	f.root["/Fields"] = arr
+}
+
+// rebuildFieldCache regenerates Form.fieldsList and Form.cache from the
+// current /AcroForm/Fields. Called after any structural change so live
+// handles returned from prior calls remain canonical.
+func (f *Form) rebuildFieldCache() {
+	if f.root == nil {
+		f.leaves = nil
+		f.fieldsList = nil
+		f.cache = nil
+		return
+	}
+	f.leaves = walkAcroForm(f, f.doc.objects, f.root)
+	f.fieldsList = make([]Field, len(f.leaves))
+	f.cache = make(map[string]Field, len(f.leaves))
+	for i, n := range f.leaves {
+		field := fieldFromNode(n)
+		f.fieldsList[i] = field
+		f.cache[n.fullName] = field
+	}
+}
+
+// ensureFontHelv registers a Helvetica font resource under /AcroForm/DR/
+// Font/Helv and returns its resource name ("Helv"). Idempotent.
+func (f *Form) ensureFontHelv() (string, error) {
+	return f.ensureFont(FontHelvetica)
+}
+
+// rectToPDFArray converts a Rectangle to a /Rect pdfArray.
+func rectToPDFArray(r Rectangle) pdfArray {
+	return pdfArray{r.LLX, r.LLY, r.URX, r.URY}
+}
+
+// AddCheckbox creates a checkbox widget on pageNum with the given rectangle
+// and field name. Default state is unchecked (/V = /Off). The widget's
+// /AP/N has two appearance states: "/Yes" (export name for checked) and
+// "/Off". Callers can call SetChecked(true) on the returned handle to flip
+// state and ensure /V and /AS are in sync.
+//
+// Errors on duplicate name, invalid pageNum, or empty name.
+func (f *Form) AddCheckbox(pageNum int, rect Rectangle, name string) (*CheckboxField, error) {
+	if err := f.validateNewField(pageNum, name); err != nil {
+		return nil, err
+	}
+	page, err := f.doc.Page(pageNum)
+	if err != nil {
+		return nil, err
+	}
+
+	// Seed /AP/N with the state keys so regenerateWidgetAppearance can
+	// discover the export name ("Yes" by default) from the dict; the
+	// dict values are sentinel placeholders that the regenerator will
+	// overwrite with real Form XObjects on the same line.
+	apN := pdfDict{
+		"/Off": pdfDict{},
+		"/Yes": pdfDict{},
+	}
+
+	dict := pdfDict{
+		"/Type":    pdfName("/Annot"),
+		"/Subtype": pdfName("/Widget"),
+		"/FT":      pdfName("/Btn"),
+		"/T":       name,
+		"/V":       pdfName("/Off"),
+		"/AS":      pdfName("/Off"),
+		"/Rect":    rectToPDFArray(rect),
+		"/P":       pdfRef{Num: page.pageObj().Num},
+		"/AP":      pdfDict{"/N": apN},
+	}
+
+	objID := f.doc.nextID
+	f.doc.nextID++
+	f.doc.objects[objID] = &pdfObject{Num: objID, Value: dict}
+	ref := pdfRef{Num: objID}
+
+	f.appendToFields(ref)
+	appendAnnotToPage(f.doc.objects, page.pageObj(), ref)
+	f.rebuildFieldCache()
+	f.noteFormMutatedInForm()
+	regenerateWidgetAppearance(f, dict)
+
+	return f.cache[name].(*CheckboxField), nil
+}
+
+// AddComboBox creates a single-select dropdown choice field. The
+// caller can pre-populate options or pass an empty slice and call
+// AddOption later. Field is non-editable by default; SetEditable(true)
+// flips bit 19.
+func (f *Form) AddComboBox(pageNum int, rect Rectangle, name string, options []ChoiceOption) (*ComboBoxField, error) {
+	if err := f.validateNewField(pageNum, name); err != nil {
+		return nil, err
+	}
+	page, err := f.doc.Page(pageNum)
+	if err != nil {
+		return nil, err
+	}
+	helvName, err := f.ensureFontHelv()
+	if err != nil {
+		return nil, err
+	}
+
+	dict := pdfDict{
+		"/Type":    pdfName("/Annot"),
+		"/Subtype": pdfName("/Widget"),
+		"/FT":      pdfName("/Ch"),
+		"/T":       name,
+		"/V":       "",
+		"/Ff":      fieldFlagCombo, // distinguishes ComboBox from ListBox
+		"/Opt":     choiceOptionsToPDFArray(options),
+		"/DA":      "0 g /" + helvName + " 12 Tf",
+		"/Rect":    rectToPDFArray(rect),
+		"/P":       pdfRef{Num: page.pageObj().Num},
+	}
+
+	objID := f.doc.nextID
+	f.doc.nextID++
+	f.doc.objects[objID] = &pdfObject{Num: objID, Value: dict}
+	ref := pdfRef{Num: objID}
+
+	f.appendToFields(ref)
+	appendAnnotToPage(f.doc.objects, page.pageObj(), ref)
+	f.rebuildFieldCache()
+	f.noteFormMutatedInForm()
+	regenerateWidgetAppearance(f, dict)
+
+	return f.cache[name].(*ComboBoxField), nil
+}
+
+// AddListBox creates a single-select list field. SetMultiSelect(true)
+// on the returned handle enables multi-selection (bit 22).
+func (f *Form) AddListBox(pageNum int, rect Rectangle, name string, options []ChoiceOption) (*ListBoxField, error) {
+	if err := f.validateNewField(pageNum, name); err != nil {
+		return nil, err
+	}
+	page, err := f.doc.Page(pageNum)
+	if err != nil {
+		return nil, err
+	}
+	helvName, err := f.ensureFontHelv()
+	if err != nil {
+		return nil, err
+	}
+
+	dict := pdfDict{
+		"/Type":    pdfName("/Annot"),
+		"/Subtype": pdfName("/Widget"),
+		"/FT":      pdfName("/Ch"),
+		"/T":       name,
+		"/V":       "",
+		// /Ff is 0 — neither Combo (bit 18) nor MultiSelect (bit 22) set.
+		"/Opt":  choiceOptionsToPDFArray(options),
+		"/DA":   "0 g /" + helvName + " 12 Tf",
+		"/Rect": rectToPDFArray(rect),
+		"/P":    pdfRef{Num: page.pageObj().Num},
+	}
+
+	objID := f.doc.nextID
+	f.doc.nextID++
+	f.doc.objects[objID] = &pdfObject{Num: objID, Value: dict}
+	ref := pdfRef{Num: objID}
+
+	f.appendToFields(ref)
+	appendAnnotToPage(f.doc.objects, page.pageObj(), ref)
+	f.rebuildFieldCache()
+	f.noteFormMutatedInForm()
+	regenerateWidgetAppearance(f, dict)
+
+	return f.cache[name].(*ListBoxField), nil
+}
+
+// AddPushButton creates a non-toggling button. The caption is stored in
+// /MK/CA and rendered by viewers as the button label. Push buttons have
+// no value semantics — Value() returns "", SetValue returns an error.
+func (f *Form) AddPushButton(pageNum int, rect Rectangle, name string, caption string) (*ButtonField, error) {
+	if err := f.validateNewField(pageNum, name); err != nil {
+		return nil, err
+	}
+	page, err := f.doc.Page(pageNum)
+	if err != nil {
+		return nil, err
+	}
+
+	dict := pdfDict{
+		"/Type":    pdfName("/Annot"),
+		"/Subtype": pdfName("/Widget"),
+		"/FT":      pdfName("/Btn"),
+		"/T":       name,
+		"/Ff":      fieldFlagPushbutton,
+		"/Rect":    rectToPDFArray(rect),
+		"/P":       pdfRef{Num: page.pageObj().Num},
+		"/MK":      pdfDict{"/CA": caption},
+	}
+
+	objID := f.doc.nextID
+	f.doc.nextID++
+	f.doc.objects[objID] = &pdfObject{Num: objID, Value: dict}
+	ref := pdfRef{Num: objID}
+
+	f.appendToFields(ref)
+	appendAnnotToPage(f.doc.objects, page.pageObj(), ref)
+	f.rebuildFieldCache()
+	f.noteFormMutatedInForm()
+	regenerateWidgetAppearance(f, dict)
+
+	return f.cache[name].(*ButtonField), nil
+}
+
+// AddRadioGroup creates a radio-button parent field plus one widget per
+// item. Items may live on different pages. Export values must be
+// unique within the group.
+func (f *Form) AddRadioGroup(name string, items []RadioItem) (*RadioButtonField, error) {
+	if name == "" {
+		return nil, fmt.Errorf("form field name is empty")
+	}
+	if f.HasField(name) {
+		return nil, fmt.Errorf("field with name %q already exists", name)
+	}
+	if len(items) == 0 {
+		return nil, fmt.Errorf("radio group %q has no items", name)
+	}
+	seen := map[string]bool{}
+	for i, it := range items {
+		if it.Export == "" {
+			return nil, fmt.Errorf("radio item %d: empty Export", i)
+		}
+		if seen[it.Export] {
+			return nil, fmt.Errorf("radio item %d: duplicate Export %q", i, it.Export)
+		}
+		seen[it.Export] = true
+		if it.PageNum < 1 || it.PageNum > f.doc.PageCount() {
+			return nil, fmt.Errorf("radio item %d: pageNum %d out of range", i, it.PageNum)
+		}
+	}
+
+	// Allocate parent first.
+	parentDict := pdfDict{
+		"/FT":   pdfName("/Btn"),
+		"/Ff":   fieldFlagRadio,
+		"/T":    name,
+		"/V":    pdfName("/Off"),
+		"/Kids": pdfArray{},
+	}
+	parentID := f.doc.nextID
+	f.doc.nextID++
+	f.doc.objects[parentID] = &pdfObject{Num: parentID, Value: parentDict}
+	parentRef := pdfRef{Num: parentID}
+
+	for _, it := range items {
+		page, err := f.doc.Page(it.PageNum)
+		if err != nil {
+			return nil, err
+		}
+		// Seed /AP/N with the state-name keys (sentinel values overwritten
+		// during regenerateWidgetAppearance below) so the regenerator
+		// reads the per-item export name as the on-state.
+		apN := pdfDict{
+			"/Off":          pdfDict{},
+			"/" + it.Export: pdfDict{},
+		}
+		widgetDict := pdfDict{
+			"/Type":    pdfName("/Annot"),
+			"/Subtype": pdfName("/Widget"),
+			"/Parent":  parentRef,
+			"/Rect":    rectToPDFArray(it.Rect),
+			"/P":       pdfRef{Num: page.pageObj().Num},
+			"/AS":      pdfName("/Off"),
+			"/AP":      pdfDict{"/N": apN},
+		}
+		widgetID := f.doc.nextID
+		f.doc.nextID++
+		f.doc.objects[widgetID] = &pdfObject{Num: widgetID, Value: widgetDict}
+		widgetRef := pdfRef{Num: widgetID}
+
+		// Append widget ref to parent's /Kids.
+		kids, _ := parentDict["/Kids"].(pdfArray)
+		kids = append(kids, widgetRef)
+		parentDict["/Kids"] = kids
+
+		// Append widget ref to its page's /Annots.
+		appendAnnotToPage(f.doc.objects, page.pageObj(), widgetRef)
+
+		// Build the radio kid's /AP/N streams immediately so the field is
+		// fully renderable in MuPDF/Acrobat without /NeedAppearances=true.
+		regenerateWidgetAppearance(f, widgetDict)
+	}
+
+	f.appendToFields(parentRef)
+	f.rebuildFieldCache()
+	f.noteFormMutatedInForm()
+
+	return f.cache[name].(*RadioButtonField), nil
+}
+
+// choiceOptionsToPDFArray converts a slice of ChoiceOption to a /Opt
+// array. Each element is either a single string (Value-only) or a
+// two-element array [Export, Value] when Export is non-empty.
+func choiceOptionsToPDFArray(options []ChoiceOption) pdfArray {
+	arr := make(pdfArray, 0, len(options))
+	for _, o := range options {
+		if o.Export != "" {
+			arr = append(arr, pdfArray{o.Export, o.Value})
+		} else {
+			arr = append(arr, o.Value)
+		}
+	}
+	return arr
+}
+
+// RemoveField removes the named field (and all its widget annotations)
+// from /AcroForm/Fields and from each affected page's /Annots. The
+// underlying pdfObjects are deleted from the document's object map.
+// Returns true if the field was found and removed; false otherwise.
+//
+// For combined-pattern fields (TextField, Checkbox, ComboBox, ListBox,
+// PushButton), the single dict is both the field and its widget: it is
+// removed from /Fields and from the owning page's /Annots.
+//
+// For radio groups, the parent dict is removed from /Fields, and each
+// widget kid is removed from its respective page's /Annots.
+//
+// After removal, any *Field handles previously returned for this field
+// are dangling and must not be used.
+func (f *Form) RemoveField(name string) bool {
+	if f.cache == nil {
+		return false
+	}
+	if _, ok := f.cache[name]; !ok {
+		return false
+	}
+
+	// Find the internal node matching the name.
+	var target *fieldNode
+	for _, n := range f.leaves {
+		if n.fullName == name {
+			target = n
+			break
+		}
+	}
+	if target == nil {
+		return false
+	}
+
+	// Build a single-pass index: dict pointer → object ID.
+	// pdfDict is a map (reference type); the pointer of its underlying
+	// hmap is unique per allocation, so it serves as a stable identity key.
+	type dictKey = string // fmt.Sprintf("%p", dict)
+	dictToID := make(map[dictKey]int, len(f.doc.objects))
+	for id, obj := range f.doc.objects {
+		if d, ok := obj.Value.(pdfDict); ok {
+			dictToID[fmt.Sprintf("%p", d)] = id
+		}
+	}
+
+	// Collect IDs to delete: parent/field dict + every widget dict.
+	idsToRemove := map[int]bool{}
+	if id, ok := dictToID[fmt.Sprintf("%p", target.dict)]; ok {
+		idsToRemove[id] = true
+	}
+	for _, w := range target.widgets {
+		// For combined-pattern fields, w == target.dict, so this is a
+		// no-op duplicate insert — that's fine.
+		if w != nil {
+			if id, ok := dictToID[fmt.Sprintf("%p", w)]; ok {
+				idsToRemove[id] = true
+			}
+		}
+	}
+
+	// Splice removed refs out of /AcroForm/Fields.
+	if arr, ok := f.root["/Fields"].(pdfArray); ok {
+		newArr := make(pdfArray, 0, len(arr))
+		for _, item := range arr {
+			if ref, ok := item.(pdfRef); ok && idsToRemove[ref.Num] {
+				continue
+			}
+			newArr = append(newArr, item)
+		}
+		f.root["/Fields"] = newArr
+	}
+
+	// Splice removed refs out of every page's /Annots.
+	for _, p := range f.doc.pages {
+		pageDict, _ := p.Value.(pdfDict)
+		if pageDict == nil {
+			continue
+		}
+		annots, _ := pageDict["/Annots"].(pdfArray)
+		if len(annots) == 0 {
+			continue
+		}
+		newAnnots := make(pdfArray, 0, len(annots))
+		for _, a := range annots {
+			if ref, ok := a.(pdfRef); ok && idsToRemove[ref.Num] {
+				continue
+			}
+			newAnnots = append(newAnnots, a)
+		}
+		pageDict["/Annots"] = newAnnots
+	}
+
+	// Delete the objects from the document.
+	for id := range idsToRemove {
+		delete(f.doc.objects, id)
+	}
+
+	// Rebuild the cache and mark the form dirty.
+	f.rebuildFieldCache()
+	f.noteFormMutatedInForm()
+	return true
+}
+
+func fieldFromNode(n *fieldNode) Field {
+	switch n.ft {
+	case "/Tx":
+		tb := TextBoxField{fieldBase{node: n}}
+		switch {
+		case n.ff&fieldFlagFileSelect != 0:
+			return &FileSelectBoxField{tb}
+		case n.ff&fieldFlagRichText != 0:
+			return &RichTextBoxField{tb}
+		case n.ff&fieldFlagPassword != 0:
+			return &PasswordBoxField{tb}
+		case nodeHasFormatJS(n, "AFNumber"):
+			return &NumberField{tb}
+		case nodeHasFormatJS(n, "AFDate"):
+			return &DateField{tb}
+		}
+		return &TextBoxField{fieldBase{node: n}}
+	case "/Btn":
+		switch {
+		case n.ff&fieldFlagPushbutton != 0:
+			return &ButtonField{fieldBase{node: n}}
+		case n.ff&fieldFlagRadio != 0:
+			return &RadioButtonField{fieldBase{node: n}}
+		default:
+			return &CheckboxField{fieldBase{node: n}}
+		}
+	case "/Ch":
+		if n.ff&fieldFlagCombo != 0 {
+			return &ComboBoxField{fieldBase{node: n}}
+		}
+		return &ListBoxField{fieldBase{node: n}}
+	}
+	return nil
+}

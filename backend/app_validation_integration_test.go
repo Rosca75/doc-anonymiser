@@ -69,6 +69,11 @@ func llmOnlyApp(t *testing.T, replyFor func(userPrompt string) string) *App {
 	app := newTestApp(t, replyFor)
 	app.settings.UseLocalLLM = true
 	app.settings.UseHeuristicDiscovery = false
+	// The offline phase is heuristic discovery OR any signal reading, and the
+	// readings default on, so they are switched off explicitly: with any of
+	// them live the rules phase still runs (and reports progress), and a test
+	// about what the model proposes would be reading offline events too.
+	app.settings.SignalSuggestionSources = allSignalReadingsOff()
 	return app
 }
 

@@ -1,0 +1,41 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test cache and coverage
+*.test
+*.out
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# Output directories
+pages/
+output/
+all_pages/
+some_pages/
+result_files/
+# generated .md reports (api comparisons, release notes)
+reports/
+
+# Test PDFs (keep source PDFs, ignore generated ones)
+*_page*.pdf
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
