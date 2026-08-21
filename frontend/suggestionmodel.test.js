@@ -20,7 +20,7 @@ function fixture() {
   return [
     { mainText: "Marie Duval", category: "person_names", count: 7, discoveryMethods: ["heuristic", "signal"] },
     { mainText: "Alpine Trust", category: "entity_names", count: 3, discoveryMethods: ["heuristic"] },
-    { mainText: "Anouk Berger", category: "person_names", count: 3, discoveryMethods: ["local_ai"] },
+    { mainText: "Anouk Berger", category: "person_names", count: 3, discoveryMethods: ["local_llm"] },
     { mainText: "Project Borealis", category: "project_names", count: 1, discoveryMethods: ["heuristic"] },
     { mainText: "Helpdesk", category: "entity_names", count: 12, discoveryMethods: ["heuristic"] },
   ];
@@ -162,7 +162,7 @@ function threeSuggestions() {
     { discoveryMethods: ["heuristic"], mainText: "Thomas Berger", category: "person_names", count: 9 },
   ]);
   addSuggestions([
-    { discoveryMethods: ["local_ai"], mainText: "Meridian Consulting", category: "entity_names", count: 6 },
+    { discoveryMethods: ["local_llm"], mainText: "Meridian Consulting", category: "entity_names", count: 6 },
   ]);
 }
 

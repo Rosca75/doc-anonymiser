@@ -592,9 +592,9 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 			Model:                   settings.Model,
 			ContextSize:             settings.ContextSize,
 			Country:                 settings.Country,
-			UseLocalAI:              settings.UseLocalAI,
-			AIStrictFormat:          settings.AIStrictFormat,
-			AIDetailLevel:           settings.AIDetailLevel,
+			UseLocalLLM:             settings.UseLocalLLM,
+			LLMStrictFormat:         settings.LLMStrictFormat,
+			LLMDetailLevel:          settings.LLMDetailLevel,
 			UseBuiltInPatterns:      &settings.UseBuiltInPatterns,
 			UseHeuristicDiscovery:   &settings.UseHeuristicDiscovery,
 			SignalSuggestionSources: engine.NormaliseSignalSources(settings.SignalSuggestionSources),
@@ -723,11 +723,11 @@ func (a *App) restoredSettings(session engine.Session) Settings {
 		Model:                 session.Settings.Model,
 		ContextSize:           session.Settings.ContextSize,
 		Country:               session.Settings.Country,
-		UseLocalAI:            session.Settings.UseLocalAI,
-		AIStrictFormat:        session.Settings.AIStrictFormat, // absent means "off": that is the default
-		AIDetailLevel:         session.Settings.AIDetailLevel,  // absent means thorough, filled in below
-		UseBuiltInPatterns:    true,                            // absent means "on": that is the default
-		UseHeuristicDiscovery: true,                            // absent means "on": that is the default
+		UseLocalLLM:           session.Settings.UseLocalLLM,
+		LLMStrictFormat:       session.Settings.LLMStrictFormat, // absent means "off": that is the default
+		LLMDetailLevel:        session.Settings.LLMDetailLevel,  // absent means thorough, filled in below
+		UseBuiltInPatterns:    true,                             // absent means "on": that is the default
+		UseHeuristicDiscovery: true,                             // absent means "on": that is the default
 		// A missing key falls back to the default rather than to "off", so a file
 		// that says nothing about a source cannot silently disable it.
 		SignalSuggestionSources: engine.NormaliseSignalSources(session.Settings.SignalSuggestionSources),
@@ -760,8 +760,8 @@ func (a *App) restoredSettings(session engine.Session) Settings {
 	// that does not name one was written under THOROUGH, so thorough is what it
 	// describes. Carrying the live choice over instead would let loading an old
 	// session restore a scan the file never recorded.
-	if restored.AIDetailLevel == "" {
-		restored.AIDetailLevel = engine.DetailThorough
+	if restored.LLMDetailLevel == "" {
+		restored.LLMDetailLevel = engine.DetailThorough
 	}
 	return restored
 }

@@ -105,28 +105,28 @@ const initialState = {
   //                   and deterministic gazetteers. ON by default. Its
   //                   strictness is the heuristicDiscovery block below, which
   //                   nothing else reads.
-  //   useLocalAI the local model (Ollama). OFF by default. Detecting
+  //   useLocalLLM the local model (Ollama). OFF by default. Detecting
   //                   Ollama ENABLES the switch, it never flips it: turning on
   //                   a route that sends the document to a model, however
   //                   local, is the user's decision to make.
   // The scope the routes share (the categories, the preset, the document
   // country) and the confidence floor are settings of their own, read by
   // whichever route is on rather than owned by one of them.
-  // aiStrictFormat asks the local model to answer for EVERY category instead of
+  // llmStrictFormat asks the local model to answer for EVERY category instead of
   //   only the ones it thought of. OFF by default: it sometimes finds a little
   //   more, and usually takes about twice as long.
-  // aiDetailLevel is how much text one local model request carries: "thorough"
+  // llmDetailLevel is how much text one local model request carries: "thorough"
   //   (the default: smaller slices, the most values, the most requests) or
   //   "faster" (larger slices, fewer requests, and nothing found at all on a
-  //   small model). Mirrors engine.AllDetailLevels; see AI_DETAIL_LEVELS below.
+  //   small model). Mirrors engine.AllDetailLevels; see LLM_DETAIL_LEVELS below.
   // contextSize is the Ollama num_ctx setting, default 8192.
   // minConfidence is the detection-confidence floor, 0 to
   // 1 on the engine's scale. 0 is the default and keeps every detection,
   // which is exactly the behaviour before the setting existed.
   settings: {
     level: "medium", categories: null, ollamaPort: 11434, model: "", country: DEFAULT_COUNTRY,
-    contextSize: 8192, useLocalAI: false, aiStrictFormat: false,
-    aiDetailLevel: "thorough",
+    contextSize: 8192, useLocalLLM: false, llmStrictFormat: false,
+    llmDetailLevel: "thorough",
     useBuiltInPatterns: true, useHeuristicDiscovery: true,
     // Which READINGS of which built-in signals may DERIVE Suggestions.
     // Data-driven, keyed by SIGNAL_SOURCES and then by SIGNAL_DERIVATIONS: a new
@@ -137,9 +137,9 @@ const initialState = {
     },
     minConfidence: 0,
     // heuristicDiscovery is the tuning for the offline Smart
-    // detection pass, matching engine.SmartDetectOptions field for field.
+    // detection pass, matching engine.HeuristicDiscoveryOptions field for field.
     // The defaults are the STRICTER ones (engine
-    // DefaultSmartDetectOptions), because over-detection was the reported
+    // DefaultHeuristicDiscoveryOptions), because over-detection was the reported
     // problem; a user who wants everything back sets them to 0/false.
     heuristicDiscovery: {
       minLength: 4,
@@ -150,7 +150,7 @@ const initialState = {
     },
   },
 
-  // Local-AI SCAN SCOPE (CLAUDE.md §5): which ONE document, and which of its own
+  // LOCAL-LLM SCAN SCOPE (CLAUDE.md §5): which ONE document, and which of its own
   // units (pages/slides/rows/lines), the local model reads. Handing a whole
   // document to a small local model is "too much", so the user can aim the scan.
   //   docName ""     means "every document, whole", the unchanged behaviour.
@@ -159,7 +159,7 @@ const initialState = {
   //                  (parsePageSpec parses "14", "12-15", "12,13,18-20").
   // It is a transient per-run choice, deliberately NOT part of settings, so it
   // never travels in a session file and never reaches Go through applySettings.
-  aiScope: { docName: "", mode: "all", pages: "" },
+  llmScope: { docName: "", mode: "all", pages: "" },
 
   // Entity review state: array of
   // {category, mainText, spellings, status: "accepted"|"denied"}.
@@ -222,7 +222,7 @@ const initialState = {
   // It is never recomputed here.
   discovery: null,
 
-  // What the LOCAL AI actually did on the last run, or null before the first
+  // What the LOCAL MODEL actually did on the last run, or null before the first
   // one: {requests, silent, truncated, secondsPerRequest}, straight from the Go
   // result.
   //
@@ -230,17 +230,17 @@ const initialState = {
   // of them is about the document. The seconds are MEASURED on this machine and
   // this document, which is the only way a user can judge how a scan will feel:
   // no fixed sentence in a tooltip knows their laptop.
-  // aiRequestEstimate is how many model requests the CURRENT scope and detail
+  // llmRequestEstimate is how many model requests the CURRENT scope and detail
   // level would send, answered by Go with the same helper the run uses, so the
   // read-out cannot promise a number the run then contradicts. Null before the
   // first answer: a read-out that guesses while it waits is worse than none.
-  aiRequestEstimate: null,
-  lastAIScan: null,
+  llmRequestEstimate: null,
+  lastLLMScan: null,
 
   // Unified suggestion review list: suggestions from
   // any discovery method wait HERE until explicitly accepted; nothing
   // flows into values without user confirmation. Each row:
-  // {source: "smart"|"local-ai", text, category, count, contexts}.
+  // {source: "rules"|"local_llm", text, category, count, contexts}.
   suggestions: [],
 
   // Built-in pattern matching's READ-ONLY preview, as the last detection run
@@ -423,7 +423,7 @@ export const ALL_CATEGORIES = [
 // a fact to overwrite. Built-in pattern matching and custom pattern matching are
 // absent on purpose: they produce direct matches, never Suggestions, so nothing
 // they find is ever a Value with provenance to record.
-export const DISCOVERY_METHODS = ["manual", "signal", "heuristic", "local_ai"];
+export const DISCOVERY_METHODS = ["manual", "signal", "heuristic", "local_llm"];
 
 // CONFLICT_RESOLUTIONS mirrors engine.AllConflictResolutions exactly and is
 // checked by ../detection_parity_test.go. Each entry is an action an interface
@@ -446,7 +446,7 @@ export const CONFLICT_RESOLUTIONS = ["drop_allow_term"];
 // NAME the winning method in an intersection warning. Keeping the two apart is
 // what stops raising the confidence floor from silently reordering precedence.
 export const MATCH_CLASSES = [
-  "built_in_pattern", "user_defined", "smart_discovered", "local_ai_discovered",
+  "built_in_pattern", "user_defined", "rules_discovered", "local_llm_discovered",
 ];
 
 // SIGNAL_SOURCES mirrors engine.AllSignalSources exactly and is checked by
@@ -456,7 +456,7 @@ export const MATCH_CLASSES = [
 // row, a new field and a new persisted flag.
 export const SIGNAL_SOURCES = ["email", "url"];
 
-// AI_DETAIL_LEVELS mirrors engine.AllDetailLevels exactly, in the order the rail
+// LLM_DETAIL_LEVELS mirrors engine.AllDetailLevels exactly, in the order the rail
 // offers them, and is checked by ../detection_parity_test.go. The dropdown is
 // built from it, so a third option invented here would be a control the user can
 // pick and the engine then refuses.
@@ -464,7 +464,7 @@ export const SIGNAL_SOURCES = ["email", "url"];
 // There is deliberately no "whole document in one request" level on either side.
 // It measures zero values on every model tried, and a choice whose outcome is
 // "finds nothing" is a broken switch rather than an option.
-export const AI_DETAIL_LEVELS = ["thorough", "faster"];
+export const LLM_DETAIL_LEVELS = ["thorough", "faster"];
 
 // SIGNAL_DERIVATIONS mirrors engine.SignalDerivations exactly and is checked by
 // the same guard. Each entry lists, per signal, the READINGS that signal supports,
@@ -1040,7 +1040,7 @@ export function setMinConfidence(value) {
   return value;
 }
 
-// HEURISTIC_DISCOVERY_DEFAULTS mirrors engine.DefaultSmartDetectOptions. It is
+// HEURISTIC_DISCOVERY_DEFAULTS mirrors engine.DefaultHeuristicDiscoveryOptions. It is
 // exported so a session loaded from an older file, which has no
 // heuristicDiscovery block at all, can be filled with the same defaults a fresh
 // session starts from.
@@ -1118,13 +1118,13 @@ export function selectionPresetName(categories) {
   return "custom";
 }
 
-// --- Local-AI gating --------------------------------------
+// --- Local-model gating -----------------------------------
 
 /**
- * setUseLocalAI(on) records the user's explicit "use the local model" choice.
+ * setUseLocalLLM(on) records the user's explicit "use the local model" choice.
  */
-export function setUseLocalAI(on) {
-  setState({ settings: { ...state.settings, useLocalAI: !!on } });
+export function setUseLocalLLM(on) {
+  setState({ settings: { ...state.settings, useLocalLLM: !!on } });
 }
 
 /**
@@ -1140,7 +1140,7 @@ export function setUseLocalAI(on) {
  * to run, so there is nothing to adopt, and a stopped server must not erase the
  * user's choice.
  *
- * Detecting Ollama still never flips `useLocalAI`: sending a document to a
+ * Detecting Ollama still never flips `useLocalLLM`: sending a document to a
  * model is a decision the user makes.
  */
 export function adoptProbe(status) {
@@ -1151,7 +1151,7 @@ export function adoptProbe(status) {
   setState(patch);
 }
 
-// --- Local-AI scan scope ----------------------------------
+// --- Local-model scan scope -------------------------------
 
 /**
  * parsePageSpec(spec, maxPage) turns a free-text page spec into a sorted,
@@ -1202,22 +1202,22 @@ export function parsePageSpec(spec, maxPage) {
 }
 
 /**
- * setAIScope(patch) records which document the local model reads and, within it,
+ * setLLMScope(patch) records which document the local model reads and, within it,
  * whether to scan the whole document ("all") or a set of pages ("pages"). An
  * empty or unknown docName resets the scope to "every document, whole", so a
  * stale selection (a document that was removed) can never send a request for a
  * document that is gone. The `pages` string is stored verbatim; it is parsed
  * against the selected document's unit count only when the bridge arg is built
- * (aiScopeArg), so the read-out and the request always agree.
+ * (llmScopeArg), so the read-out and the request always agree.
  * @param {object} patch any subset of {docName, mode, pages}
  * @returns {object} the stored scope
  */
-export function setAIScope(patch) {
-  const next = { ...state.aiScope, ...(patch ?? {}) };
+export function setLLMScope(patch) {
+  const next = { ...state.llmScope, ...(patch ?? {}) };
   const doc = state.documents.find((d) => d.name === next.docName);
   if (!next.docName || !doc) {
     const cleared = { docName: "", mode: "all", pages: "" };
-    setState({ aiScope: cleared });
+    setState({ llmScope: cleared });
     return cleared;
   }
   const scope = {
@@ -1225,12 +1225,12 @@ export function setAIScope(patch) {
     mode: next.mode === "pages" ? "pages" : "all",
     pages: typeof next.pages === "string" ? next.pages : "",
   };
-  setState({ aiScope: scope });
+  setState({ llmScope: scope });
   return scope;
 }
 
 /**
- * aiScopeArg(s) is the scope to hand runDetection, or null when the local model
+ * llmScopeArg(s) is the scope to hand runDetection, or null when the local model
  * should read every document whole. Kept out of the settings payload on
  * purpose: the scope is a per-run choice, not a saved setting.
  *
@@ -1239,8 +1239,8 @@ export function setAIScope(patch) {
  * that resolves to nothing, both send. A null return keeps today's meaning:
  * every document, whole.
  */
-export function aiScopeArg(s = state) {
-  const sc = s.aiScope;
+export function llmScopeArg(s = state) {
+  const sc = s.llmScope;
   if (!sc || !sc.docName) return null;
   if (sc.mode !== "pages") return { docName: sc.docName, pages: [] };
   const doc = s.documents.find((d) => d.name === sc.docName);
@@ -1302,7 +1302,7 @@ export function detectionRoutesOn(s = state) {
  * reachable.
  */
 export function llmEnabled(s = state) {
-  return !!(s.settings.useLocalAI && s.ollama?.available);
+  return !!(s.settings.useLocalLLM && s.ollama?.available);
 }
 
 // --- Screen navigation -----------------------------------
@@ -1405,7 +1405,7 @@ export function knownStep(step) {
  *              Values screens and is curated across the whole session, so
  *              it belongs to neither step.
  *
- * The Ollama connection settings (port, model, context size, useLocalAI) are
+ * The Ollama connection settings (port, model, context size, useLocalLLM) are
  * likewise left alone by the configure reset: they describe the machine,
  * not the choices made about this batch of documents.
  */
@@ -1442,7 +1442,7 @@ export const STEP_RESETS = {
     intersections: [],
     patterns: [],
     discovery: null,
-    lastAIScan: null,
+    lastLLMScan: null,
   }),
   // Anonymise owns the run itself, everything it produced, and the editing
   // surfaces that only exist once there is a result to edit.
@@ -1548,17 +1548,17 @@ export function nextStep() {
 export function applyImportResult(result) {
   const documents = result.documents ?? [];
   const previewStillValid = documents.some((d) => d.name === state.previewDoc);
-  // A local-AI scope that named a document no longer in the list would target a
+  // A local-model scope that named a document no longer in the list would target a
   // document that is gone, so it resets to "every document" when its target
   // disappears. A document that merely SHRANK needs no reset: the page spec is
   // stored as text and re-parsed against the current unit count at send time
-  // (aiScopeArg), so out-of-range units are dropped then, not stored now.
-  const scopedDoc = documents.find((d) => d.name === state.aiScope?.docName);
+  // (llmScopeArg), so out-of-range units are dropped then, not stored now.
+  const scopedDoc = documents.find((d) => d.name === state.llmScope?.docName);
   setState({
     documents,
     importErrors: result.errors ?? [],
     previewDoc: previewStillValid ? state.previewDoc : (documents[0]?.name ?? null),
-    aiScope: scopedDoc ? state.aiScope : { docName: "", mode: "all", pages: "" },
+    llmScope: scopedDoc ? state.llmScope : { docName: "", mode: "all", pages: "" },
     // A fresh import list makes every cached source stale (a re-imported file
     // with the same name is a DIFFERENT file). Dropping the cache is cheaper
     // and safer than deciding which entries survived. The picture inventories
@@ -2074,7 +2074,7 @@ function mergeSuggestionRows(into, from) {
     evidence: mergeEvidence(into.evidence, from.evidence),
     // The STRONGEST confidence wins, as engine.MergeSuggestions does it: two
     // routes agreeing is corroboration, so a row heuristics also found is not
-    // demoted to the AI's number just because the AI reported it second.
+    // demoted to the model's number just because the model reported it second.
     confidence: Math.max(into.confidence ?? 0, from.confidence ?? 0),
   };
 }
@@ -2175,7 +2175,7 @@ export function acceptSuggestion(text) {
  * Raising Minimum confidence would then leave the model's guesses in place,
  * which is the opposite of what the control says it does. Where two routes
  * found the same thing the merge already kept the higher score, so a row
- * heuristics also found is not demoted by the AI's number.
+ * heuristics also found is not demoted by the model's number.
  */
 function valueFromSuggestion(row) {
   return {
@@ -2929,7 +2929,7 @@ export function startNewBatch() {
     intersections: [],
     patterns: [],
     discovery: null,
-    lastAIScan: null,
+    lastLLMScan: null,
     running: false,
     progress: null,
     results: null,

@@ -61,7 +61,7 @@ import {
   addPattern, removePattern, NAME_CATEGORIES,
   renameValue, renameSpelling, changeValueCategory, changeSuggestionCategory,
   groupValues, clearAllValues, valueConflicts, spellingsOf, removeAllowTerm, addAllowTerm,
-  aiScopeArg, curate, setIntersections, intersectionsFor, buildIntersectionRequest,
+  llmScopeArg, curate, setIntersections, intersectionsFor, buildIntersectionRequest,
   foldIntoFamily, DISCOVERY_METHODS, relatedTo,
 } from "../state.js";
 import { pendingExpansions } from "../valuemodel.js";
@@ -274,7 +274,7 @@ function head(s, busy) {
   const routes = detectionRoutesOn(s);
   const blocked = s.documents.length === 0 ? WORKSPACE.runNeedsDocuments
     : (routes === 0 ? WORKSPACE.runNeedsRoute : "");
-  const runTitle = aiOK ? WORKSPACE.runWithAI : WORKSPACE.runOffline;
+  const runTitle = aiOK ? WORKSPACE.runWithLLM : WORKSPACE.runOffline;
   const run = busy
     ? button(WORKSPACE.cancel, { kind: "secondary", id: "btn-detect-cancel", icon: "cancel" })
     : button(WORKSPACE.runDetection, {
@@ -324,7 +324,7 @@ export function progressStrip(s) {
  *
  * Every part of that answers a question the old one-line caption left open
  * when a run felt stuck: WHICH pass is this (two routes read the same files
- * twice), where inside a long file has it got to (a chunked AI scan sat on
+ * twice), where inside a long file has it got to (a chunked model scan sat on
  * one caption for minutes), and has anything happened at all recently.
  */
 export function detectionCaption(d) {
@@ -1648,7 +1648,7 @@ function wireDetection(container) {
     });
 
     try {
-      const result = await runDetection(all, getState().allowlist, aiScopeArg());
+      const result = await runDetection(all, getState().allowlist, llmScopeArg());
       // ONE list, one call. Every row already says which methods found it, so
       // there is no per-route mapping step here for a field to fall out of: the
       // Local LLM route's folded spellings used to be lost in exactly such a step.
@@ -1662,18 +1662,18 @@ function wireDetection(container) {
       // What the local model actually did, kept for the rail's read-out. A run
       // that found nothing is not the same fact as a document that holds
       // nothing, and the request count is what separates them.
-      if ((result?.aiRequests ?? 0) > 0) {
+      if ((result?.llmRequests ?? 0) > 0) {
         setState({
-          lastAIScan: {
-            requests: result.aiRequests,
-            silent: result.aiSilentRequests ?? 0,
-            truncated: result.aiTruncatedRequests ?? 0,
-            secondsPerRequest: result.aiSecondsPerRequest ?? 0,
+          lastLLMScan: {
+            requests: result.llmRequests,
+            silent: result.llmSilentRequests ?? 0,
+            truncated: result.llmTruncatedRequests ?? 0,
+            secondsPerRequest: result.llmSecondsPerRequest ?? 0,
           },
         });
       }
 
-      // A file the AI could not read is reported, not silently dropped.
+      // A file the model could not read is reported, not silently dropped.
       for (const skip of result?.skipped ?? []) {
         notify(WORKSPACE.skippedNotice(skip.name, skip.reason), "warn");
       }

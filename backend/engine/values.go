@@ -80,7 +80,7 @@ type Value struct {
 	//
 	// A Value accepted from a local model Suggestion carries ConfidenceLLMDefault
 	// instead. That is what gives the Configure panel's minimum-confidence
-	// setting something real to act on: raising the minimum above the AI level
+	// setting something real to act on: raising the minimum above the model tier
 	// stops replacing Values only the model suggested, while everything the user
 	// declared keeps being replaced.
 	Confidence float32 `json:"confidence,omitempty"`
@@ -307,7 +307,7 @@ func DetectValues(text string, values []Value, allow *Allowlist) []Span {
 					// "M. Duval" and "Marie" share one placeholder.
 					MainText: v.MainText,
 					// A Value that states its own confidence keeps it (one
-					// accepted from an AI Suggestion does); anything else is a
+					// accepted from a local model Suggestion does); anything else is a
 					// Value the user declared, which is high trust.
 					Confidence: valueConfidence(v),
 					MatchClass: MatchClassForMethods(v.DiscoveryMethods),

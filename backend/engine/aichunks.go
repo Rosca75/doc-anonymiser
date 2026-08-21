@@ -1,4 +1,4 @@
-// engine/aichunks.go — how a document is divided for one local-AI request.
+// engine/aichunks.go — how a document is divided for one local-model request.
 //
 // The engine owns this because the engine is what knows what a UNIT of a
 // document is: a slide, a page, a row, a line (see pagescope.go). The Ollama
@@ -20,7 +20,7 @@ import (
 	"strings"
 )
 
-// Detail levels: how much text one local-AI request carries. They are the user's
+// Detail levels: how much text one local-model request carries. They are the user's
 // dial over that, so they are two named sizes rather than a byte figure nobody
 // outside this file could choose sensibly.
 //
@@ -93,7 +93,7 @@ func ScanTargetBytes(level string) int {
 	return thoroughTargetBytes
 }
 
-// ScanChunk is one local-AI request's worth of text, plus the units it covers.
+// ScanChunk is one local-model request's worth of text, plus the units it covers.
 //
 // The unit numbers travel with the text so progress can say "slides 4 to 6 of
 // 15" in the same word the import list already uses for this document. A chunk

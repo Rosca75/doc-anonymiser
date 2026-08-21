@@ -794,7 +794,7 @@ type smartRun struct {
 	words     int // significant (non-particle) word count
 }
 
-// HeuristicDiscoverWithOptions is SmartDetect with the tuning
+// HeuristicDiscoverWithOptions is HeuristicDiscover with the tuning
 // applied. The detectors themselves are unchanged; the options decide
 // which of their proposals reach the review list, and every suggestion
 // carries the heuristic score the filtering used (suggestionScore), so the
@@ -1288,7 +1288,7 @@ func extractRunsContext(ctx context.Context, text, country string) ([]smartRun, 
 		// Detector 3: product. A trademark mark is nearly free and nearly
 		// certain; a head noun is weaker and says only "this reads like a
 		// product". Everything else about a product name is world knowledge,
-		// which is what the AI route is for, and the frontend label says so.
+		// which is what the local model route is for, and the frontend label says so.
 		r.hasTrademark = followedByTrademark(text, r.end)
 		r.hasProduct = r.hasTrademark || hasProductHeadNoun(text, r)
 

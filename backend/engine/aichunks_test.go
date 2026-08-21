@@ -1,4 +1,4 @@
-// engine/aichunks_test.go — how a document is divided for one local-AI request.
+// engine/aichunks_test.go — how a document is divided for one local-model request.
 //
 // TIER: unit (docs/TESTING.md). Pure functions over in-memory Documents, no
 // I/O, no model, no fixtures beyond a few literals.

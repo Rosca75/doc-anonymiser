@@ -319,7 +319,7 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 
 	r.assert("Local LLM discovery is off by default", boolIs(got.LocalOn, false),
 		"the rail-local route switch unchecked", describeBool(got.LocalOn),
-		"state.js settings.useLocalAI defaults to false. Detecting Ollama ENABLES this switch, "+
+		"state.js settings.useLocalLLM defaults to false. Detecting Ollama ENABLES this switch, "+
 			"it never flips it.")
 
 	r.assert("every category checkbox is present", got.Categories == fx.CategoryCount,
@@ -406,7 +406,7 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 		r.assert("the detail level renders in the Local LLM discovery section", false,
 			"#ai-detail-level with its label and help icon in a .rail-field-row",
 			"one of them is missing",
-			"views/identifyrail.js localAISection renders the dial between the model field "+
+			"views/identifyrail.js localLLMSection renders the dial between the model field "+
 				"and Context, with a helpTooltip beside it.")
 	} else {
 		r.assert("the detail level is laid out once its section is opened",

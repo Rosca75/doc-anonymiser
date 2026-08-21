@@ -154,10 +154,10 @@ func TestIntersectionReportsFragmentSpellings(t *testing.T) {
 	}
 }
 
-// TestIntersectionAutoCoversAI: the two detector routes against each other.
+// TestIntersectionAutoCoversTheLLM: the two detector routes against each other.
 // Heuristic discovery outranks the local model, so an auto value covering a model one
-// reports the AI value as the loser.
-func TestIntersectionAutoCoversAI(t *testing.T) {
+// reports the local model value as the loser.
+func TestIntersectionAutoCoversTheLLM(t *testing.T) {
 	docs := []Document{{
 		Name: "a.txt", Format: FormatTXT,
 		Markdown: "The Helios Fund closed in June.\n",
@@ -166,15 +166,15 @@ func TestIntersectionAutoCoversAI(t *testing.T) {
 	rows := DetectIntersections(docs, scopeFor([]Value{
 		// The longer name from heuristic discovery...
 		{Category: CatEntityNames, MainText: "Helios Fund", DiscoveryMethods: []string{MethodHeuristic}},
-		// ...covering the shorter one the AI proposed as a brand.
-		{Category: CatBrandNames, MainText: "Helios", DiscoveryMethods: []string{MethodLocalAI}},
+		// ...covering the shorter one the local model proposed as a brand.
+		{Category: CatBrandNames, MainText: "Helios", DiscoveryMethods: []string{MethodLocalLLM}},
 	}, nil))
 
 	row, ok := findIntersection(rows, "Helios", CatBrandNames)
 	if !ok {
-		t.Fatalf("the AI value must be reported as covered, got %+v", rows)
+		t.Fatalf("the local model value must be reported as covered, got %+v", rows)
 	}
-	if row.MatchClass != MatchClassLocalAIDiscovered || row.WinnerMatchClass != MatchClassSmartDiscovered {
+	if row.MatchClass != MatchClassLocalLLMDiscovered || row.WinnerMatchClass != MatchClassRulesDiscovered {
 		t.Errorf("heuristic discovery must supersede the local model, got %s losing to %s",
 			row.MatchClass, row.WinnerMatchClass)
 	}
@@ -191,7 +191,7 @@ func TestIntersectionSilentWhenValuesDoNotCoOccur(t *testing.T) {
 
 	rows := DetectIntersections(docs, scopeFor([]Value{
 		{Category: CatEntityNames, MainText: "Alpine Trust"},
-		{Category: CatBrandNames, MainText: "Borealis Capital", DiscoveryMethods: []string{MethodLocalAI}},
+		{Category: CatBrandNames, MainText: "Borealis Capital", DiscoveryMethods: []string{MethodLocalLLM}},
 	}, nil))
 
 	if len(rows) != 0 {

@@ -55,14 +55,14 @@ func TestDetectionRouteDefaults(t *testing.T) {
 	if !engine.SignalSourceEnabled(s.SignalSuggestionSources, engine.SignalSourceEmail) {
 		t.Error("email-derived Suggestions must be on by default")
 	}
-	if s.UseLocalAI {
+	if s.UseLocalLLM {
 		t.Error("the local model route must be off by default")
 	}
 }
 
 // TestSessionSettingsRoundTrip guards a settings-loss bug found on the way:
 // LoadSessionFromFile rebuilt Settings from a literal that omitted
-// MinConfidence and SmartDetect, so loading a session silently reset the
+// MinConfidence and the heuristic options, so loading a session silently reset the
 // confidence floor to 0 and the smart tuning to the defaults. Both decide what
 // gets replaced, and the user reads "load session" as "restore what I saved".
 func TestSessionSettingsRoundTrip(t *testing.T) {
@@ -136,7 +136,7 @@ func TestApplySettingsCarriesTheStrictFormatChoice(t *testing.T) {
 		t.Run("config/"+tc.name, func(t *testing.T) {
 			app := NewApp()
 			s := app.GetSettings()
-			s.AIStrictFormat = tc.set
+			s.LLMStrictFormat = tc.set
 
 			if _, err := app.ApplySettings(s); err != nil {
 				t.Fatalf("ApplySettings: %v", err)
@@ -147,7 +147,7 @@ func TestApplySettingsCarriesTheStrictFormatChoice(t *testing.T) {
 			}
 			// The stored setting round-trips as it arrived, so the rail redraws the
 			// checkbox the user left rather than a value Go invented.
-			if got := app.GetSettings().AIStrictFormat; (got == nil) != (tc.set == nil) {
+			if got := app.GetSettings().LLMStrictFormat; (got == nil) != (tc.set == nil) {
 				t.Errorf("the stored setting is %v, want the pointer it was given (%v)", got, tc.set)
 			} else if got != nil && *got != *tc.set {
 				t.Errorf("the stored setting is %v, want %v", *got, *tc.set)
@@ -167,7 +167,7 @@ func TestApplySettingsCarriesTheStrictFormatChoice(t *testing.T) {
 func TestStrictFormatSurvivesTheSessionFile(t *testing.T) {
 	on := true
 	data, err := engine.SaveSession(engine.Session{
-		Settings: engine.SessionSettings{Level: "medium", OllamaPort: 11434, AIStrictFormat: &on},
+		Settings: engine.SessionSettings{Level: "medium", OllamaPort: 11434, LLMStrictFormat: &on},
 	})
 	if err != nil {
 		t.Fatalf("SaveSession: %v", err)
@@ -176,8 +176,8 @@ func TestStrictFormatSurvivesTheSessionFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSession: %v", err)
 	}
-	if loaded.Settings.AIStrictFormat == nil || !*loaded.Settings.AIStrictFormat {
-		t.Errorf("the format choice did not survive the file: %v", loaded.Settings.AIStrictFormat)
+	if loaded.Settings.LLMStrictFormat == nil || !*loaded.Settings.LLMStrictFormat {
+		t.Errorf("the format choice did not survive the file: %v", loaded.Settings.LLMStrictFormat)
 	}
 
 	app := NewApp()
@@ -227,14 +227,14 @@ func TestApplySettingsValidatesTheDetailLevel(t *testing.T) {
 		t.Run("config/"+tc.name, func(t *testing.T) {
 			app := NewApp()
 			s := app.GetSettings()
-			s.AIDetailLevel = tc.level
+			s.LLMDetailLevel = tc.level
 
 			if _, err := app.ApplySettings(s); err != nil {
 				t.Fatalf("ApplySettings(%q): %v", tc.level, err)
 			}
 			// The stored value is what the rail's dropdown marks as selected, so
 			// it has to be a real level rather than whatever arrived.
-			if got := app.GetSettings().AIDetailLevel; got != tc.want {
+			if got := app.GetSettings().LLMDetailLevel; got != tc.want {
 				t.Errorf("the stored detail level is %q, want %q", got, tc.want)
 			}
 		})
@@ -243,7 +243,7 @@ func TestApplySettingsValidatesTheDetailLevel(t *testing.T) {
 	t.Run("errors/an_unknown_level_is_refused_and_names_the_valid_ones", func(t *testing.T) {
 		app := NewApp()
 		s := app.GetSettings()
-		s.AIDetailLevel = "exhaustive"
+		s.LLMDetailLevel = "exhaustive"
 
 		_, err := app.ApplySettings(s)
 		if err == nil {
@@ -254,7 +254,7 @@ func TestApplySettingsValidatesTheDetailLevel(t *testing.T) {
 				t.Errorf("the refusal must name %q so the user can act on it, got: %v", want, err)
 			}
 		}
-		if got := app.GetSettings().AIDetailLevel; got == "exhaustive" {
+		if got := app.GetSettings().LLMDetailLevel; got == "exhaustive" {
 			t.Error("a refused level must not be stored")
 		}
 	})
@@ -269,7 +269,7 @@ func TestApplySettingsValidatesTheDetailLevel(t *testing.T) {
 func TestDetailLevelSurvivesTheSessionFile(t *testing.T) {
 	data, err := engine.SaveSession(engine.Session{
 		Settings: engine.SessionSettings{
-			Level: "medium", OllamaPort: 11434, AIDetailLevel: engine.DetailFaster,
+			Level: "medium", OllamaPort: 11434, LLMDetailLevel: engine.DetailFaster,
 		},
 	})
 	if err != nil {
@@ -279,15 +279,15 @@ func TestDetailLevelSurvivesTheSessionFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSession: %v", err)
 	}
-	if loaded.Settings.AIDetailLevel != engine.DetailFaster {
-		t.Errorf("the detail level did not survive the file: %q", loaded.Settings.AIDetailLevel)
+	if loaded.Settings.LLMDetailLevel != engine.DetailFaster {
+		t.Errorf("the detail level did not survive the file: %q", loaded.Settings.LLMDetailLevel)
 	}
 
 	app := NewApp()
 	if _, err := app.applyRestoredSession(loaded); err != nil {
 		t.Fatalf("applyRestoredSession: %v", err)
 	}
-	if got := app.GetSettings().AIDetailLevel; got != engine.DetailFaster {
+	if got := app.GetSettings().LLMDetailLevel; got != engine.DetailFaster {
 		t.Errorf("the restored detail level is %q, want %q", got, engine.DetailFaster)
 	}
 
@@ -306,7 +306,7 @@ func TestDetailLevelSurvivesTheSessionFile(t *testing.T) {
 	if _, err := app.applyRestoredSession(loadedSilent); err != nil {
 		t.Fatalf("applyRestoredSession: %v", err)
 	}
-	if got := app.GetSettings().AIDetailLevel; got != engine.DetailThorough {
+	if got := app.GetSettings().LLMDetailLevel; got != engine.DetailThorough {
 		t.Errorf("a file that says nothing about the detail level restored %q, want %q: silence means the level the file was written under",
 			got, engine.DetailThorough)
 	}

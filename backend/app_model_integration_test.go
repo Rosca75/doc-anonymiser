@@ -108,7 +108,7 @@ func modelApp(t *testing.T, ms *modelServer, stored string) *App {
 	app.llm = ollama.New(ms.URL)
 	app.settings.Model = stored
 	app.llm.Model = stored
-	app.settings.UseLocalAI = true
+	app.settings.UseLocalLLM = true
 	app.settings.UseHeuristicDiscovery = false
 	app.docs = []engine.Document{
 		{Name: "a.txt", Format: engine.FormatTXT, Markdown: "Alpine Trust met Marie Duval."},

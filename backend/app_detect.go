@@ -31,10 +31,20 @@ import (
 
 // Detection phases name one route in the run. These are engine tokens, not
 // labels: the frontend maps them to the words the user reads.
+//
+// PhaseRules is the OFFLINE discovery half, heuristic discovery and
+// signal-based discovery together: they run in one pass over one document, so
+// naming the phase after either half would describe half of what it did.
 const (
-	PhaseSmart   = "smart"
-	PhaseLocalAI = "local_ai"
+	PhaseRules    = "rules"
+	PhaseLocalLLM = "local_llm"
 )
+
+// AllDetectionPhases is every token a progress event can carry. It exists so the
+// parity guard can hold copy.js WORDS to it: a phase the frontend does not
+// recognise falls through to "Starting", so a run in flight reports itself as one
+// that has not begun, and nothing errors to say so.
+var AllDetectionPhases = []string{PhaseRules, PhaseLocalLLM}
 
 // DetectionProgress is the payload of the "detection:progress" event.
 //
@@ -50,7 +60,7 @@ type DetectionProgress struct {
 	DocIndex   int    `json:"docIndex"` // 0-based, within this phase
 	DocCount   int    `json:"docCount"`
 	DocName    string `json:"docName"`
-	// ChunkIndex/ChunkCount are the position INSIDE one document's AI scan:
+	// ChunkIndex/ChunkCount are the position INSIDE one document's local model scan:
 	// which request is being sent, and how many the scan needs. Zero when the
 	// phase sends no requests. Without them a single large file sits on one
 	// unchanging caption for minutes and reads as hung.
@@ -94,27 +104,27 @@ type DetectionResult struct {
 	Cancelled bool            `json:"cancelled"`
 	Status    string          `json:"status"`
 
-	// AIRequests and AISilentRequests are how many requests the local model route
+	// LLMRequests and LLMSilentRequests are how many requests the local model route
 	// sent and how many of those came back with nothing. They exist because
 	// "0 suggestions" means two different things, and only one of them is about
 	// the document: a model that answered nothing fifteen times reads exactly
 	// like a document with no names in it, and the user gets no hint that
 	// another model or a smaller slice would change the answer.
-	AIRequests       int `json:"aiRequests"`
-	AISilentRequests int `json:"aiSilentRequests"`
-	// AITruncatedRequests is how many requests the model was still answering
+	LLMRequests       int `json:"llmRequests"`
+	LLMSilentRequests int `json:"llmSilentRequests"`
+	// LLMTruncatedRequests is how many requests the model was still answering
 	// when it hit its generation cap. It is reported beside the silent count
 	// and never folded into it, because the two say opposite things about the
 	// document: a silent request found nothing, a truncated one found more than
 	// it was allowed to finish listing. What it did finish is kept, so a
 	// truncated request usually still contributes values; the number is what
 	// tells the user some may be missing from those pages.
-	AITruncatedRequests int `json:"aiTruncatedRequests"`
-	// AISecondsPerRequest is MEASURED, not estimated: the AI phase's wall clock
+	LLMTruncatedRequests int `json:"llmTruncatedRequests"`
+	// LLMSecondsPerRequest is MEASURED, not estimated: the local model phase's wall clock
 	// divided by its requests. It is what lets a user judge the speed of a scan
 	// on their OWN document and their own machine, which no fixed guidance in a
 	// tooltip can do. Zero when the route did not run.
-	AISecondsPerRequest float64 `json:"aiSecondsPerRequest"`
+	LLMSecondsPerRequest float64 `json:"llmSecondsPerRequest"`
 
 	// PatternMatches and PatternCategories are built-in pattern matching's
 	// READ-ONLY preview: what the switched-on signal categories claim in the
@@ -140,29 +150,29 @@ type DetectionResult struct {
 	BuiltInPatternsOn bool `json:"builtInPatternsOn"`
 }
 
-// AIScope narrows the local-AI route to one document and, within it, an
+// LLMScope narrows the local-model route to one document and, within it, an
 // arbitrary SET of its own sub-units (pages/slides/rows/lines — see
 // engine.Document.PageCount).
 //
 // It exists because handing a whole document to a small local model is "too
 // much" (the reported problem): the scan stalls or the context window
-// overflows. Scoping is deliberately LOCAL-AI ONLY — the offline Smart route is
-// cheap and reads everything — so it lives here rather than in Settings, and it
+// overflows. Scoping is deliberately LOCAL-LLM ONLY — the offline routes are
+// cheap and read everything — so it lives here rather than in Settings, and it
 // is a per-run choice that is never persisted to a session.
 //
 // Pages is a 1-based set already parsed, sorted and de-duplicated by the
 // frontend (state.js parsePageSpec) from the user's free-text spec, so it can
 // express a single page, a contiguous range, or a discontiguous mix
 // ("12,13,18-20"). An EMPTY Pages means "the whole selected document"; a nil
-// *AIScope, or one with an empty DocName, means "every document, whole" — the
+// *LLMScope, or one with an empty DocName, means "every document, whole" — the
 // unchanged behaviour.
-type AIScope struct {
+type LLMScope struct {
 	DocName string `json:"docName"` // "" = every document
 	Pages   []int  `json:"pages"`   // 1-based set; empty = the whole selected document
 }
 
 // active reports whether this scope actually narrows anything.
-func (s *AIScope) active() bool {
+func (s *LLMScope) active() bool {
 	return s != nil && s.DocName != ""
 }
 
@@ -175,11 +185,11 @@ func (s *AIScope) active() bool {
 // a model that is not running. A frontend that asks for a route the user
 // switched off does not get it.
 //
-// aiScope narrows Local LLM discovery only (the offline routes always read every
-// file); nil leaves the AI route reading every document whole.
+// llmScope narrows Local LLM discovery only (the offline routes always read every
+// file); nil leaves the local model route reading every document whole.
 //
 // It always emits exactly one terminal event before returning.
-func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIScope) (*DetectionResult, error) {
+func (a *App) RunDetection(fileNames []string, allowTerms []string, llmScope *LLMScope) (*DetectionResult, error) {
 	docs := a.docsByName(fileNames)
 	if len(docs) == 0 {
 		return nil, fmt.Errorf(
@@ -218,21 +228,21 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 	allow := a.allowlistFor(allowTerms)
 	llm.Allow = allow.Contains
 
-	// The AI route needs the switch, a reachable Ollama, and something to
+	// The local model route needs the switch, a reachable Ollama, and something to
 	// read. Probing here rather than trusting the stored flag is what stops a
 	// stale "on" from starting a model that is not running.
-	useLocalAI := settings.UseLocalAI && llm.Probe().Available
+	useLocalLLM := settings.UseLocalLLM && llm.Probe().Available
 	phases := []string{}
-	// PhaseSmart, which the interface labels "Heuristic discovery", is the two
+	// PhaseRules, which the interface labels "Heuristic discovery", is the two
 	// offline DISCOVERY methods: heuristic
 	// discovery and signal-based discovery. Built-in pattern matching is not a
 	// discovery method and therefore not a phase: it produces direct matches at
 	// anonymisation time, so its switch does not appear here.
 	if settings.UseHeuristicDiscovery || a.signalDiscoveryOn(settings) {
-		phases = append(phases, PhaseSmart)
+		phases = append(phases, PhaseRules)
 	}
-	if useLocalAI {
-		phases = append(phases, PhaseLocalAI)
+	if useLocalLLM {
+		phases = append(phases, PhaseLocalLLM)
 	}
 
 	res := &DetectionResult{Phases: phases, Suggestions: []engine.Suggestion{}}
@@ -278,10 +288,10 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 			p.Fraction = overallFraction(phaseIndex, len(phases), p.DocIndex, p.DocCount, p.ChunkIndex, p.ChunkCount)
 			a.emit("detection:progress", p)
 		}
-		if phase == PhaseSmart {
+		if phase == PhaseRules {
 			a.runSmartPhase(ctx, docs, allow, settings, res, report)
 		} else {
-			a.runLocalAIPhase(ctx, docs, llm, settings.AIDetailLevel, aiScope, res, report)
+			a.runLocalLLMPhase(ctx, docs, llm, settings.LLMDetailLevel, llmScope, res, report)
 		}
 		if ctx.Err() != nil {
 			break
@@ -303,8 +313,8 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 	// found (only main texts and short context snippets travel, never documents).
 	// A classification failure degrades to the heuristic categories with a note:
 	// the findings are the point, the labels are polish.
-	if useLocalAI && ctx.Err() == nil && len(res.Suggestions) > 0 {
-		if err := a.refineCategories(ctx, llm, docs, settings.AIDetailLevel, aiScope, res); err != nil && ctx.Err() == nil {
+	if useLocalLLM && ctx.Err() == nil && len(res.Suggestions) > 0 {
+		if err := a.refineCategories(ctx, llm, docs, settings.LLMDetailLevel, llmScope, res); err != nil && ctx.Err() == nil {
 			res.Errors = append(res.Errors,
 				fmt.Sprintf("the local model could not refine the categories, the offline guesses were kept: %v", err))
 		}
@@ -449,9 +459,9 @@ func (a *App) CancelDetection() {
 // category, which is the same graceful outcome a classification failure already
 // produces.
 func (a *App) refineCategories(ctx context.Context, llm *ollama.Client,
-	docs []engine.Document, level string, scope *AIScope, res *DetectionResult,
+	docs []engine.Document, level string, scope *LLMScope, res *DetectionResult,
 ) error {
-	// The problems are discarded here on purpose: runLocalAIPhase has already
+	// The problems are discarded here on purpose: runLocalLLMPhase has already
 	// run with this same scope and reported them, and saying "page 9 is out of
 	// bounds" twice for one run reads as two separate faults.
 	var scoped string
@@ -544,7 +554,7 @@ func (a *App) signalDiscoveryOn(s Settings) bool {
 	return false
 }
 
-// runSmartPhase runs PhaseSmart, the offline discovery half: heuristic discovery over
+// runSmartPhase runs PhaseRules, the offline discovery half: heuristic discovery over
 // every document, plus signal-based discovery over the whole batch.
 //
 // Every document is scanned; one cancelled mid-scan contributes what it found
@@ -643,7 +653,7 @@ func (u scanUnit) slices(level string, hardMaxBytes int) ([]engine.ScanChunk, er
 // second (stay quiet). Neither problem is a failure: an out-of-range page and
 // a scope naming a document that is not imported are both the user's request,
 // reported so the run can finish cleanly.
-func scopedUnits(docs []engine.Document, scope *AIScope) (units []scanUnit, problems []string) {
+func scopedUnits(docs []engine.Document, scope *LLMScope) (units []scanUnit, problems []string) {
 	scopeMatched := false
 	for _, doc := range docs {
 		if scope.active() {
@@ -678,7 +688,7 @@ func scopedUnits(docs []engine.Document, scope *AIScope) (units []scanUnit, prob
 	return units, problems
 }
 
-// scanJob is one document's worth of local-AI work: the slices to send, the
+// scanJob is one document's worth of local-model work: the slices to send, the
 // word for its own units, and the text the hallucination filter reads.
 type scanJob struct {
 	name   string
@@ -687,10 +697,10 @@ type scanJob struct {
 	source string
 }
 
-// aiScanPlan is what a scope and a detail level become before a single request
+// llmScanPlan is what a scope and a detail level become before a single request
 // is sent: the jobs to run, the documents with nothing to read, and the problems
 // worth telling the user about.
-type aiScanPlan struct {
+type llmScanPlan struct {
 	jobs     []scanJob
 	skipped  []DetectionSkip
 	problems []string
@@ -698,7 +708,7 @@ type aiScanPlan struct {
 
 // requests is how many model requests the plan implies, which is the number the
 // rail shows before the user pays it.
-func (p aiScanPlan) requests() int {
+func (p llmScanPlan) requests() int {
 	total := 0
 	for _, job := range p.jobs {
 		total += len(job.slices)
@@ -706,7 +716,7 @@ func (p aiScanPlan) requests() int {
 	return total
 }
 
-// planAIScan is THE ONE place a scope and a detail level become requests.
+// planLLMScan is THE ONE place a scope and a detail level become requests.
 //
 // Both the run and the estimate go through it, and that is the whole reason it
 // exists: a read-out predicting a different number from the run is worse than no
@@ -716,9 +726,9 @@ func (p aiScanPlan) requests() int {
 // Slicing happens up front rather than per document as the loop reaches it, so
 // the request count is known before the first request is sent and the warning
 // about a long scan can precede the wait instead of following it.
-func planAIScan(docs []engine.Document, llm *ollama.Client, level string, scope *AIScope) aiScanPlan {
+func planLLMScan(docs []engine.Document, llm *ollama.Client, level string, scope *LLMScope) llmScanPlan {
 	units, problems := scopedUnits(docs, scope)
-	plan := aiScanPlan{problems: problems}
+	plan := llmScanPlan{problems: problems}
 
 	for _, u := range units {
 		slices, err := u.slices(level, llm.PromptBudgetBytes())
@@ -751,7 +761,7 @@ func planAIScan(docs []engine.Document, llm *ollama.Client, level string, scope 
 	return plan
 }
 
-// EstimateAIRequests reports how many model requests the current scope and
+// EstimateLLMRequests reports how many model requests the current scope and
 // detail level imply, so the rail can show the cost of a choice BEFORE the user
 // pays it.
 //
@@ -761,7 +771,7 @@ func planAIScan(docs []engine.Document, llm *ollama.Client, level string, scope 
 // would cost. It reaches no model and mutates nothing, so it is safe to call on
 // every edit of the scope or the level.
 //
-// The count comes from planAIScan, the same helper the run itself uses. A second
+// The count comes from planLLMScan, the same helper the run itself uses. A second
 // formula here would be a number that disagrees with reality as soon as either
 // copy changes, and the user would have no way of telling which was lying.
 //
@@ -771,7 +781,7 @@ func planAIScan(docs []engine.Document, llm *ollama.Client, level string, scope 
 // this counts in spite of them, so failing would break the one property the
 // number is for: the estimate equals what the run then does. Only having nothing
 // to estimate is an error.
-func (a *App) EstimateAIRequests(fileNames []string, aiScope *AIScope) (int, error) {
+func (a *App) EstimateLLMRequests(fileNames []string, llmScope *LLMScope) (int, error) {
 	docs := a.docsByName(fileNames)
 	if len(docs) == 0 {
 		return 0, fmt.Errorf(
@@ -779,14 +789,14 @@ func (a *App) EstimateAIRequests(fileNames []string, aiScope *AIScope) (int, err
 	}
 
 	a.mu.Lock()
-	level := a.settings.AIDetailLevel
+	level := a.settings.LLMDetailLevel
 	llm := a.llm
 	a.mu.Unlock()
 
-	return planAIScan(docs, llm, level, aiScope).requests(), nil
+	return planLLMScan(docs, llm, level, llmScope).requests(), nil
 }
 
-// runLocalAIPhase is Local LLM discovery: one request per slice, with the slices
+// runLocalLLMPhase is Local LLM discovery: one request per slice, with the slices
 // aligned to each document's OWN units by the engine.
 //
 // A large document is scanned and WARNED about, never refused. The user asked for
@@ -800,10 +810,10 @@ func (a *App) EstimateAIRequests(fileNames []string, aiScope *AIScope) (int, err
 // When scope is active the route reads ONE document. If the scope names a set
 // of pages it reads only those (CLAUDE.md §5); with no pages it reads the whole
 // selected document. The Smart route is unaffected: it already read everything.
-func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *ollama.Client,
-	level string, scope *AIScope, res *DetectionResult, report func(DetectionProgress),
+func (a *App) runLocalLLMPhase(ctx context.Context, docs []engine.Document, llm *ollama.Client,
+	level string, scope *LLMScope, res *DetectionResult, report func(DetectionProgress),
 ) {
-	plan := planAIScan(docs, llm, level, scope)
+	plan := planLLMScan(docs, llm, level, scope)
 	res.Errors = append(res.Errors, plan.problems...)
 	res.Skipped = append(res.Skipped, plan.skipped...)
 	jobs := plan.jobs
@@ -817,8 +827,8 @@ func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *
 	started := time.Now()
 	defer func() {
 		res.Suggestions = mergeInto(res.Suggestions, batches)
-		if res.AIRequests > 0 {
-			res.AISecondsPerRequest = time.Since(started).Seconds() / float64(res.AIRequests)
+		if res.LLMRequests > 0 {
+			res.LLMSecondsPerRequest = time.Since(started).Seconds() / float64(res.LLMRequests)
 		}
 		// Every request answering nothing is the case that reads as a clean
 		// document and is not one. It names the MODEL, because "your model found
@@ -826,10 +836,10 @@ func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *
 		// interface already renders those as problems the run finished with. A
 		// parallel notes channel would be a second thing to render and a second
 		// thing to forget.
-		if res.AIRequests > 0 && res.AISilentRequests == res.AIRequests {
+		if res.LLMRequests > 0 && res.LLMSilentRequests == res.LLMRequests {
 			res.Errors = append(res.Errors, fmt.Sprintf(
 				"the local model model %q returned nothing for all %d request(s), so this run found no values through it; a larger model usually changes that",
-				llm.Model, res.AIRequests))
+				llm.Model, res.LLMRequests))
 		}
 	}()
 
@@ -860,9 +870,9 @@ func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *
 		// The counts accumulate across documents, and they accumulate even when
 		// the file failed: a request that was sent was sent, and the run's
 		// honesty about what the model did is what these numbers are for.
-		res.AIRequests += outcome.Requests
-		res.AISilentRequests += outcome.Silent
-		res.AITruncatedRequests += outcome.Truncated
+		res.LLMRequests += outcome.Requests
+		res.LLMSilentRequests += outcome.Silent
+		res.LLMTruncatedRequests += outcome.Truncated
 		// A cut-off reply is reported PER DOCUMENT rather than per request: the
 		// user acts on it by scoping the scan, and a scope names a document and
 		// its pages. One line per file says which file to aim at; one line per
@@ -916,7 +926,7 @@ func sliceText(slices []engine.ScanChunk) string {
 //
 // Phases are sequential, and each phase's own fraction only ever grows, so
 // the result is non-decreasing even when the second phase reads FEWER files
-// than the first (oversized documents are skipped by the AI route).
+// than the first (oversized documents are skipped by the local model route).
 func overallFraction(phaseIndex, phaseCount, docIndex, docCount, chunkIndex, chunkCount int) float64 {
 	if phaseCount <= 0 {
 		return 0
@@ -939,7 +949,7 @@ func overallFraction(phaseIndex, phaseCount, docIndex, docCount, chunkIndex, chu
 // what happened, including the two things the old code computed and then
 // dropped on the floor: that a run was cancelled, and that files were skipped.
 //
-// When the AI phase ran it also names the REQUEST count, so the summary of a
+// When the local model phase ran it also names the REQUEST count, so the summary of a
 // run that found nothing distinguishes "the model was asked fifteen times" from
 // "there was one small thing to read" without the reader opening anything else.
 func detectionStatus(res *DetectionResult, docCount int) string {
@@ -949,33 +959,33 @@ func detectionStatus(res *DetectionResult, docCount int) string {
 			len(res.Suggestions))
 	case len(res.Errors) > 0:
 		return fmt.Sprintf("finished with %d problem(s): %d suggestion(s) from %d file(s)%s",
-			len(res.Errors), len(res.Suggestions), docCount, aiRequestSummary(res))
+			len(res.Errors), len(res.Suggestions), docCount, llmRequestSummary(res))
 	default:
 		return fmt.Sprintf("scanned %d file(s), %d suggestion(s)%s",
-			docCount, len(res.Suggestions), aiRequestSummary(res))
+			docCount, len(res.Suggestions), llmRequestSummary(res))
 	}
 }
 
-// aiRequestSummary is the trailing clause naming what the local model was asked,
+// llmRequestSummary is the trailing clause naming what the local model was asked,
 // and empty when the route did not run, so a Smart-only run's summary is
 // unchanged.
-func aiRequestSummary(res *DetectionResult) string {
-	if res.AIRequests == 0 {
+func llmRequestSummary(res *DetectionResult) string {
+	if res.LLMRequests == 0 {
 		return ""
 	}
 	// The two clauses are separate because they are separate facts, and a run
 	// can carry both: some requests found nothing, others were still answering
 	// when they ran out of room.
 	var clauses []string
-	if res.AISilentRequests > 0 {
-		clauses = append(clauses, fmt.Sprintf("%d returned nothing", res.AISilentRequests))
+	if res.LLMSilentRequests > 0 {
+		clauses = append(clauses, fmt.Sprintf("%d returned nothing", res.LLMSilentRequests))
 	}
-	if res.AITruncatedRequests > 0 {
-		clauses = append(clauses, fmt.Sprintf("%d ran out of room", res.AITruncatedRequests))
+	if res.LLMTruncatedRequests > 0 {
+		clauses = append(clauses, fmt.Sprintf("%d ran out of room", res.LLMTruncatedRequests))
 	}
 	if len(clauses) == 0 {
-		return fmt.Sprintf(" (local model: %d request(s))", res.AIRequests)
+		return fmt.Sprintf(" (local model: %d request(s))", res.LLMRequests)
 	}
 	return fmt.Sprintf(" (local model: %d request(s), %s)",
-		res.AIRequests, strings.Join(clauses, ", "))
+		res.LLMRequests, strings.Join(clauses, ", "))
 }

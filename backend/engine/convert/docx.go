@@ -40,7 +40,7 @@ func Docx(raw []byte) (markdown string, warnings []string, err error) {
 
 // docxPageBreak is the private sentinel the parser writes where Word recorded
 // a page break, so the finished markdown can be split back into pages for the
-// page-scoped local-AI scan (CLAUDE.md §5). It is a form feed (U+000C), the
+// page-scoped local-model scan (CLAUDE.md §5). It is a form feed (U+000C), the
 // ASCII page-break control: it never occurs in real document text, and it is
 // stripped out of the markdown the rest of the app sees, so nothing downstream
 // (pipeline, export, preview) is affected by its presence.
@@ -264,7 +264,7 @@ func (p *docxParser) parseBody(docXML []byte) error {
 // every multi-token pattern (dates, phones, IBANs, VAT numbers) and every
 // adjacency heuristic whenever an author edited mid-token, so it is fixed here
 // at the source rather than in a pre-detection pass: every consumer (pass 1,
-// discovery, preview, the local-AI slices, export) then benefits and none has
+// discovery, preview, the local-model slices, export) then benefits and none has
 // to know.
 type runAccumulator struct {
 	out          *strings.Builder // where a flushed stretch is written

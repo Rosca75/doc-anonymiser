@@ -77,7 +77,20 @@ import (
 //	    declare about themselves, which is enforced through the allowlist: a v9
 //	    reader ignoring it would restore a session and start suggesting every
 //	    defined term again.
-const SessionVersion = 10
+//	v11: the detection vocabulary's IDENTIFIERS moved with the labels, so one
+//	    discovery method, two match classes and the three local-model settings
+//	    keys are all spelled differently. Every one of them is written into a
+//	    session file, so a v10 file states a Value's provenance and the user's
+//	    route settings in words this build does not read: the methods come back
+//	    EMPTY, which makes MatchClassForMethods rank the Value as user-defined and
+//	    hands it a precedence it never had, and the three settings read as their
+//	    zero values, silently switching the local route and its two options off.
+//	    Both failures load cleanly and change what the next run replaces, which is
+//	    exactly the shape the strict-version rule exists for. The old spellings are
+//	    not written here: the current ones are the contract, and
+//	    ../../vocabulary_guard_test.go is what keeps the retired ones out of the
+//	    tree.
+const SessionVersion = 11
 
 // SessionSettings mirrors the app settings worth persisting. The engine does not
 // interpret them: they round-trip for app.go.
@@ -88,9 +101,9 @@ type SessionSettings struct {
 	Model       string            `json:"model"`
 	ContextSize int               `json:"contextSize,omitempty"`
 	Country     string            `json:"country,omitempty"`
-	// UseLocalAI is the Local LLM discovery route switch.
-	UseLocalAI bool `json:"useLocalAI,omitempty"`
-	// AIStrictFormat is the local model's discovery reply format: schema-constrained
+	// UseLocalLLM is the Local LLM discovery route switch.
+	UseLocalLLM bool `json:"useLocalLLM,omitempty"`
+	// LLMStrictFormat is the local model's discovery reply format: schema-constrained
 	// when true, Ollama's loose JSON mode otherwise. A POINTER so "absent" and
 	// "the user switched it off" stay distinguishable, exactly as the two method
 	// switches below are pointers.
@@ -100,13 +113,13 @@ type SessionSettings struct {
 	// the default the file was written under, so nothing is guessed and no
 	// migration is needed. A bump is for a field whose OLD meaning cannot be
 	// recovered, which is what version 7's per-source booleans were.
-	AIStrictFormat *bool `json:"aiStrictFormat,omitempty"`
-	// AIDetailLevel is how much text one local-AI request carries
+	LLMStrictFormat *bool `json:"llmStrictFormat,omitempty"`
+	// LLMDetailLevel is how much text one local-model request carries
 	// (DetailThorough or DetailFaster). A plain string rather than a pointer,
 	// because absence and the default are the SAME thing here: an empty value
 	// reads as thorough, which is what a file written without the field was
 	// written under. No version bump, for the reason given above.
-	AIDetailLevel string `json:"aiDetailLevel,omitempty"`
+	LLMDetailLevel string `json:"llmDetailLevel,omitempty"`
 	// UseBuiltInPatterns and UseHeuristicDiscovery are two of the offline
 	// three methods. Both are POINTERS because their default is TRUE: with a
 	// plain bool, "absent" and "the user switched it off" are the same value,

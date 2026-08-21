@@ -1,5 +1,5 @@
 // engine/pagescope.go — addressable sub-units of a document for the
-// page-scoped local-AI scan (CLAUDE.md §5).
+// page-scoped local-model scan (CLAUDE.md §5).
 //
 // The reported problem was that handing a whole document to the local model is
 // "too much": a small model on a laptop chokes on a large file. The fix is to
@@ -76,7 +76,7 @@ func (d Document) PageRangeMarkdown(from, to int) (string, error) {
 //
 // It returns a closure rather than doing the work directly because the unit
 // boundaries are derived from the markdown: a caller slicing many ranges out of
-// one document (the local-AI slicer in aichunks.go packs one slice per request)
+// one document (the local-model slicer in aichunks.go packs one slice per request)
 // would otherwise re-scan the whole text for every range it tries, which is
 // quadratic on a line-unit document. PageRangeMarkdown is the single-shot form
 // of the same answer, and both go through this so the two cannot disagree.
@@ -123,7 +123,7 @@ func (d Document) unitSlicer() func(from, to int) string {
 }
 
 // PagesMarkdown returns the working-form markdown for an arbitrary SET of
-// sub-units, given as 1-based indices. It backs the discontiguous local-AI scan
+// sub-units, given as 1-based indices. It backs the discontiguous local-model scan
 // (e.g. "12,13,18,19"): unlike PageRangeMarkdown it does not require the units
 // to be contiguous, so the model reads exactly the pages the user picked and
 // nothing between them.

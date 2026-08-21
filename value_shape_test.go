@@ -55,7 +55,7 @@ func TestValueWireShapeCarriesNoRetiredField(t *testing.T) {
 		MainText:         "Marie Duval",
 		Spellings:        []string{"M. Duval"},
 		SpellingPolicy:   engine.SpellingPolicyCurated,
-		DiscoveryMethods: []string{engine.MethodHeuristic, engine.MethodLocalAI},
+		DiscoveryMethods: []string{engine.MethodHeuristic, engine.MethodLocalLLM},
 		Evidence: []engine.Evidence{{
 			Kind:           engine.EvidenceEmailLocalPart,
 			SignalCategory: engine.CatEmail,

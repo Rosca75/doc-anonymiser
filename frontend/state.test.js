@@ -19,13 +19,13 @@ import {
   goToScreen,
   applyPreset, toggleCategory, selectionPresetName, presetCategories,
   adoptCategories, ALWAYS_ON_CATEGORIES,
-  setUseLocalAI, adoptProbe,
+  setUseLocalLLM, adoptProbe,
   detectionRoutesOn, llmEnabled,
   setUseBuiltInPatterns, setUseHeuristicDiscovery,
   addSuggestions, acceptSuggestion, rejectSuggestion, acceptAllShown,
   DISCOVERY_METHODS, MATCH_CLASSES, SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
   CONFLICT_RESOLUTIONS,
-  AI_DETAIL_LEVELS,
+  LLM_DETAIL_LEVELS,
   signalSourceOn, enabledSignalSources, setSignalSource,
   signalDerivationOn, enabledSignalDerivations, setSignalDerivation,
   moveSpelling, valueAutocomplete, reassignOriginal,
@@ -36,7 +36,7 @@ import {
   startImageScan, setImageInventory, setImageScanError, cacheImageThumb,
   applyImageDecision, openImageEditor, updateImageEditor, closeImageEditor,
   setAnonymiseTab, setImageFilter, setImageLayout,
-  setAIScope, aiScopeArg, parsePageSpec,
+  setLLMScope, llmScopeArg, parsePageSpec,
   setNotice, clearNotice, NOTICE_TONES,
   setDocumentCountry,
   setValueTables,
@@ -118,7 +118,7 @@ test("applyImportResult updates documents, errors and preview selection", () => 
   assert.equal(getState().previewDoc, "c.md");
 });
 
-// --- local-AI scan scope -------------------------------------------------
+// --- local-model scan scope ----------------------------------------------
 
 test("parsePageSpec parses numbers, ranges and a mix into a sorted set", () => {
   assert.deepEqual(parsePageSpec("12-15,18", 20),
@@ -143,61 +143,61 @@ test("parsePageSpec drops out-of-range tokens and reports a bad one", () => {
   assert.deepEqual(parsePageSpec("   ", 10), { pages: [], error: null });
 });
 
-test("setAIScope stores the document and mode, defaulting to whole", () => {
+test("setLLMScope stores the document and mode, defaulting to whole", () => {
   resetState();
   setState({ documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }] });
 
   // Choosing a document defaults to scanning it whole.
-  assert.deepEqual(setAIScope({ docName: "a.pdf" }),
+  assert.deepEqual(setLLMScope({ docName: "a.pdf" }),
     { docName: "a.pdf", mode: "all", pages: "" });
 
   // Switching to a page set stores the raw spec verbatim.
-  assert.deepEqual(setAIScope({ mode: "pages", pages: "2-4" }),
+  assert.deepEqual(setLLMScope({ mode: "pages", pages: "2-4" }),
     { docName: "a.pdf", mode: "pages", pages: "2-4" });
 });
 
-test("setAIScope resets to all documents for an unknown or empty name", () => {
+test("setLLMScope resets to all documents for an unknown or empty name", () => {
   resetState();
   setState({ documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }] });
-  setAIScope({ docName: "a.pdf", mode: "pages", pages: "2-4" });
+  setLLMScope({ docName: "a.pdf", mode: "pages", pages: "2-4" });
 
-  assert.deepEqual(setAIScope({ docName: "gone.pdf" }),
+  assert.deepEqual(setLLMScope({ docName: "gone.pdf" }),
     { docName: "", mode: "all", pages: "" }, "a name not in the list clears the scope");
-  assert.equal(aiScopeArg(), null, "and nothing is sent to Go");
+  assert.equal(llmScopeArg(), null, "and nothing is sent to Go");
 });
 
-test("aiScopeArg emits {docName, pages} and null for every document", () => {
+test("llmScopeArg emits {docName, pages} and null for every document", () => {
   resetState();
-  assert.equal(aiScopeArg(), null, "the default is every document, whole");
+  assert.equal(llmScopeArg(), null, "the default is every document, whole");
   setState({ documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }] });
 
   // Whole selected document: pages is an empty array.
-  setAIScope({ docName: "a.pdf", mode: "all" });
-  assert.deepEqual(aiScopeArg(), { docName: "a.pdf", pages: [] });
+  setLLMScope({ docName: "a.pdf", mode: "all" });
+  assert.deepEqual(llmScopeArg(), { docName: "a.pdf", pages: [] });
 
   // A page set parses against the selected document's unit count.
-  setAIScope({ mode: "pages", pages: "1-3,5" });
-  assert.deepEqual(aiScopeArg(), { docName: "a.pdf", pages: [1, 2, 3, 5] });
+  setLLMScope({ mode: "pages", pages: "1-3,5" });
+  assert.deepEqual(llmScopeArg(), { docName: "a.pdf", pages: [1, 2, 3, 5] });
 
   // Out-of-range units are dropped at send time.
-  setAIScope({ pages: "5,99" });
-  assert.deepEqual(aiScopeArg(), { docName: "a.pdf", pages: [5] });
+  setLLMScope({ pages: "5,99" });
+  assert.deepEqual(llmScopeArg(), { docName: "a.pdf", pages: [5] });
 });
 
 test("a new import drops a scope whose document is gone", () => {
   resetState();
   setState({ documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }] });
-  setAIScope({ docName: "a.pdf", mode: "pages", pages: "3-5" });
+  setLLMScope({ docName: "a.pdf", mode: "pages", pages: "3-5" });
 
   // Re-importing without that document clears the scope.
   applyImportResult({ documents: [{ name: "b.pdf", unit: "page", pageCount: 2 }] });
-  assert.deepEqual(getState().aiScope, { docName: "", mode: "all", pages: "" });
+  assert.deepEqual(getState().llmScope, { docName: "", mode: "all", pages: "" });
 
   // A document that merely shrank keeps its scope: the spec re-parses at send
   // time, so out-of-range units are dropped then, not stored now.
-  setAIScope({ docName: "b.pdf", mode: "pages", pages: "1-2" });
+  setLLMScope({ docName: "b.pdf", mode: "pages", pages: "1-2" });
   applyImportResult({ documents: [{ name: "b.pdf", unit: "page", pageCount: 4 }] });
-  assert.deepEqual(getState().aiScope, { docName: "b.pdf", mode: "pages", pages: "1-2" });
+  assert.deepEqual(getState().llmScope, { docName: "b.pdf", mode: "pages", pages: "1-2" });
 });
 
 // --- Value review reducers -----------------------------------------------
@@ -550,17 +550,17 @@ test("buildRunRequest carries suppressRegexPII as the inverse of useBuiltInPatte
   assert.equal(buildRunRequest().suppressRegexPII, true, "Native off suppresses the regex pass");
 });
 
-// --- Local-AI gating -----------------------------------------------------
+// --- Local-model gating --------------------------------------------------
 
 test("llmEnabled requires BOTH the toggle and a reachable Ollama", () => {
   resetState();
   setState({ ollama: { available: true, models: [], detail: "" } });
-  setUseLocalAI(false);
-  assert.equal(llmEnabled(), false, "toggle off blocks AI even with Ollama up");
-  setUseLocalAI(true);
+  setUseLocalLLM(false);
+  assert.equal(llmEnabled(), false, "the route off blocks the model even with Ollama up");
+  setUseLocalLLM(true);
   assert.equal(llmEnabled(), true);
   setState({ ollama: { available: false, models: [], detail: "" } });
-  assert.equal(llmEnabled(), false, "Ollama down blocks AI even with toggle on");
+  assert.equal(llmEnabled(), false, "Ollama down blocks the model even with the route on");
 });
 
 test("adoptProbe adopts the model the probe resolved", () => {
@@ -579,7 +579,7 @@ test("adoptProbe never flips the Local LLM discovery route on", () => {
   // document to a model is the user's decision.
   resetState();
   adoptProbe({ available: true, models: ["a:1"], detail: "ok", model: "a:1" });
-  assert.equal(getState().settings.useLocalAI, false);
+  assert.equal(getState().settings.useLocalLLM, false);
   assert.equal(llmEnabled(), false);
 });
 
@@ -600,9 +600,9 @@ test("the two offline routes start on and Local LLM discovery starts off", () =>
   resetState();
   assert.equal(getState().settings.useBuiltInPatterns, true);
   assert.equal(getState().settings.useHeuristicDiscovery, true);
-  assert.equal(getState().settings.useLocalAI, false);
+  assert.equal(getState().settings.useLocalLLM, false);
   setState({ ollama: { available: true, models: [], detail: "" } });
-  assert.equal(getState().settings.useLocalAI, false,
+  assert.equal(getState().settings.useLocalLLM, false,
     "detecting Ollama must not switch the route on");
 });
 
@@ -614,9 +614,9 @@ test("the local model's reply format starts on the fast end", () => {
   // a checkbox from it and an undefined would render as unchecked by accident
   // rather than by decision.
   resetState();
-  assert.equal(getState().settings.aiStrictFormat, false,
+  assert.equal(getState().settings.llmStrictFormat, false,
     "asking the model for every category is the slow option, so it is opt-in");
-  assert.ok("aiStrictFormat" in getState().settings,
+  assert.ok("llmStrictFormat" in getState().settings,
     "the setting must exist in the store, not be implied by its absence");
 });
 
@@ -627,18 +627,18 @@ test("the local model's detail level starts on the thorough end", () => {
   // key, because the rail marks a dropdown option from it and an undefined would
   // mark nothing, which is how the browser ends up choosing.
   resetState();
-  assert.equal(getState().settings.aiDetailLevel, "thorough",
+  assert.equal(getState().settings.llmDetailLevel, "thorough",
     "the slower, more thorough level is the default");
-  assert.ok("aiDetailLevel" in getState().settings,
+  assert.ok("llmDetailLevel" in getState().settings,
     "the setting must exist in the store, not be implied by its absence");
 });
 
-test("AI_DETAIL_LEVELS is exactly the two identifiers Go validates", () => {
+test("LLM_DETAIL_LEVELS is exactly the two identifiers Go validates", () => {
   // Go refuses a level it cannot size, so a third entry here would be an option
   // the user can pick and the engine then rejects. The list is frozen for the
   // same reason the other mirrored vocabularies are.
-  assert.deepEqual(AI_DETAIL_LEVELS, ["thorough", "faster"]);
-  assert.ok(AI_DETAIL_LEVELS.includes(getState().settings.aiDetailLevel),
+  assert.deepEqual(LLM_DETAIL_LEVELS, ["thorough", "faster"]);
+  assert.ok(LLM_DETAIL_LEVELS.includes(getState().settings.llmDetailLevel),
     "the default has to be one of the levels the list offers");
 });
 
@@ -650,7 +650,7 @@ test("there is no derived section flag: each route is its own stored boolean", (
   for (const dead of ["useSmartDetect", "smartDetection", "useSmartDetection"]) {
     assert.ok(!(dead in getState().settings), `${dead} must not be a persisted flag`);
   }
-  for (const key of ["useBuiltInPatterns", "useHeuristicDiscovery", "useLocalAI"]) {
+  for (const key of ["useBuiltInPatterns", "useHeuristicDiscovery", "useLocalLLM"]) {
     assert.equal(typeof getState().settings[key], "boolean", `${key} must be stored`);
   }
 });
@@ -674,12 +674,12 @@ test("detectionRoutesOn counts the DISCOVERY routes that are enabled", () => {
   resetState();
   assert.equal(detectionRoutesOn(), 1, "the offline discovery phase alone");
   setState({ ollama: { available: true, models: [], detail: "" } });
-  setUseLocalAI(true);
+  setUseLocalLLM(true);
   assert.equal(detectionRoutesOn(), 2);
   setUseHeuristicDiscovery(false);
   for (const source of SIGNAL_SOURCES) setSignalSource(source, false);
   assert.equal(detectionRoutesOn(), 1, "local LLM discovery alone");
-  setUseLocalAI(false);
+  setUseLocalLLM(false);
   assert.equal(detectionRoutesOn(), 0, "nothing to run, and the UI must say so");
 });
 
@@ -714,9 +714,9 @@ test("reject removes, duplicates and existing values are skipped", () => {
   resetState();
   addValues([{ category: "entity_names", mainText: "Known Corp" }]);
   const added = addSuggestions([
-    { discoveryMethods: ["local_ai"], mainText: "Known Corp", category: "entity_names" }, // already an entity
-    { discoveryMethods: ["local_ai"], mainText: "Fresh Co", category: "entity_names" },
-    { discoveryMethods: ["local_ai"], mainText: "fresh co", category: "entity_names" },   // case-insensitive dup
+    { discoveryMethods: ["local_llm"], mainText: "Known Corp", category: "entity_names" }, // already an entity
+    { discoveryMethods: ["local_llm"], mainText: "Fresh Co", category: "entity_names" },
+    { discoveryMethods: ["local_llm"], mainText: "fresh co", category: "entity_names" },   // case-insensitive dup
   ]);
   assert.equal(added, 1);
   rejectSuggestion("Fresh Co");
@@ -1168,15 +1168,15 @@ test("resetStep(identify) clears values, suggestions, patterns and discovery", (
 });
 
 test("resetStep(identify) keeps the machine's connection settings", () => {
-  // Port, model and the AI toggle describe the machine, not this batch of
+  // Port, model and the route switch describe the machine, not this batch of
   // documents, so stepping back must not make the user reconfigure Ollama.
   fullSession();
-  setState({ settings: { ...getState().settings, ollamaPort: 12345, model: "custom:7b", useLocalAI: true } });
+  setState({ settings: { ...getState().settings, ollamaPort: 12345, model: "custom:7b", useLocalLLM: true } });
   resetStep("identify");
   const s = getState();
   assert.equal(s.settings.ollamaPort, 12345);
   assert.equal(s.settings.model, "custom:7b");
-  assert.equal(s.settings.useLocalAI, true);
+  assert.equal(s.settings.useLocalLLM, true);
 });
 
 test("resetStep(anonymise) clears the run and its re-identification mapping", () => {
@@ -2016,12 +2016,12 @@ test("acceptAllShown keeps each row's own methods", () => {
   resetState();
   addSuggestions([
     { discoveryMethods: ["heuristic"], mainText: "Meridian", category: "entity_names" },
-    { discoveryMethods: ["local_ai"], mainText: "Borealis", category: "entity_names" },
+    { discoveryMethods: ["local_llm"], mainText: "Borealis", category: "entity_names" },
   ]);
   assert.equal(acceptAllShown(["Meridian", "Borealis"]), 2);
   const byName = Object.fromEntries(
     getState().values.map((v) => [v.mainText, v.discoveryMethods]));
-  assert.deepEqual(byName, { Meridian: ["heuristic"], Borealis: ["local_ai"] });
+  assert.deepEqual(byName, { Meridian: ["heuristic"], Borealis: ["local_llm"] });
 });
 
 test("a Value the user typed carries the manual method, and it travels to Go", () => {
@@ -2061,9 +2061,9 @@ test("the three shared vocabularies are the ones Go knows", () => {
   // The parity guards in ../detection_parity_test.go check these against Go.
   // Here they are pinned as a list, so a local edit that breaks the shape of the
   // declaration fails in this suite too rather than only in the Go one.
-  assert.deepEqual(DISCOVERY_METHODS, ["manual", "signal", "heuristic", "local_ai"]);
+  assert.deepEqual(DISCOVERY_METHODS, ["manual", "signal", "heuristic", "local_llm"]);
   assert.deepEqual(MATCH_CLASSES,
-    ["built_in_pattern", "user_defined", "smart_discovered", "local_ai_discovered"]);
+    ["built_in_pattern", "user_defined", "rules_discovered", "local_llm_discovered"]);
   assert.deepEqual(SIGNAL_SOURCES, ["email", "url"]);
 });
 
@@ -2363,7 +2363,7 @@ test("an accepted local model Suggestion keeps the model confidence, not the man
   // promises.
   resetState();
   addSuggestions([{
-    discoveryMethods: ["local_ai"], mainText: "Borealis Fund",
+    discoveryMethods: ["local_llm"], mainText: "Borealis Fund",
     category: "entity_names", confidence: 0.8,
   }]);
   assert.equal(acceptSuggestion("Borealis Fund"), true);
@@ -2387,7 +2387,7 @@ test("a Value the user declared states no confidence, which Go reads as a declar
 
 test("nothing is claimed about a local model scan before one has run", () => {
   resetState();
-  assert.equal(getState().lastAIScan, null,
+  assert.equal(getState().lastLLMScan, null,
     "an absent scan is null, not a row of zeroes that reads as a scan that found nothing");
 });
 
@@ -2396,9 +2396,9 @@ test("stepping back to Identify forgets the last scan's numbers", () => {
   // behind, they would describe a scan whose suggestions are already gone, which
   // is worse than showing nothing: the reader has no way to tell.
   resetState();
-  setState({ lastAIScan: { requests: 9, silent: 2, secondsPerRequest: 4 } });
+  setState({ lastLLMScan: { requests: 9, silent: 2, secondsPerRequest: 4 } });
   resetStep("identify");
-  assert.equal(getState().lastAIScan, null,
+  assert.equal(getState().lastLLMScan, null,
     "the read-out must not survive the reset of the step it describes");
 });
 

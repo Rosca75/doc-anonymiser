@@ -542,11 +542,11 @@ func TestSeveralMethodsReduceToTheStrongestClass(t *testing.T) {
 		{"nothing stated is trusted, not demoted", nil, MatchClassUserDefined},
 		{"an unknown method is trusted, not demoted", []string{"telepathy"}, MatchClassUserDefined},
 		{"manual", []string{MethodManual}, MatchClassUserDefined},
-		{"signal", []string{MethodSignal}, MatchClassSmartDiscovered},
-		{"heuristic", []string{MethodHeuristic}, MatchClassSmartDiscovered},
-		{"local model", []string{MethodLocalAI}, MatchClassLocalAIDiscovered},
-		{"signal and AI reduce to signal", []string{MethodLocalAI, MethodSignal}, MatchClassSmartDiscovered},
-		{"manual beats every discovery", []string{MethodLocalAI, MethodHeuristic, MethodManual}, MatchClassUserDefined},
+		{"signal", []string{MethodSignal}, MatchClassRulesDiscovered},
+		{"heuristic", []string{MethodHeuristic}, MatchClassRulesDiscovered},
+		{"local model", []string{MethodLocalLLM}, MatchClassLocalLLMDiscovered},
+		{"signal and local model reduce to signal", []string{MethodLocalLLM, MethodSignal}, MatchClassRulesDiscovered},
+		{"manual beats every discovery", []string{MethodLocalLLM, MethodHeuristic, MethodManual}, MatchClassUserDefined},
 	}
 	for _, tc := range cases {
 		if got := MatchClassForMethods(tc.methods); got != tc.want {

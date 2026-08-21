@@ -469,7 +469,7 @@ export function applySession(session) {
       ollamaPort: settings.ollamaPort,
       model: settings.model,
       contextSize: settings.contextSize,
-      useLocalAI: settings.useLocalAI,
+      useLocalLLM: settings.useLocalLLM,
       // Absent means ON for both offline routes: they are the shipped defaults,
       // and a file that says nothing about one must not restore it switched off.
       // Each of the three route switches is restored from its OWN key; there is

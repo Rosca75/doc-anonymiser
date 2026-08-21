@@ -29,7 +29,7 @@ import (
 const ErrScannedPDF = "No text layer found, this PDF is likely scanned. OCR is not supported; convert it externally first."
 
 // pdfPageSeparator joins consecutive PDF pages in the working markdown. It is
-// also the boundary the page-scoped local-AI scan slices on, which is why the
+// also the boundary the page-scoped local-model scan slices on, which is why the
 // exact per-page texts are returned separately by PDFWithPages: a blank line
 // can occur INSIDE a page too, so the markdown alone cannot be split back into
 // pages reliably.
@@ -47,7 +47,7 @@ func PDF(raw []byte) (markdown string, warnings []string, err error) {
 
 // PDFWithPages is PDF plus the per-page text slice, in page order.
 //
-// The pages slice is what the page-scoped local-AI scan addresses (CLAUDE.md
+// The pages slice is what the page-scoped local-model scan addresses (CLAUDE.md
 // §5): the user picks "pages 2 to 4" and only those page texts are sent to the
 // model. joining pages with pdfPageSeparator reproduces markdown exactly, so
 // the two returns never drift.

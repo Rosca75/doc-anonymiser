@@ -82,7 +82,7 @@ func TestNoEmDashInUserFacingStrings(t *testing.T) {
 //
 // The engine IDENTIFIERS keep their spelling, because a label is a display string
 // and an identifier is a contract. That is why this guard reads string LITERALS
-// and skips comments: a comment naming PhaseSmart or local_ai and saying what it
+// and skips comments: a comment naming PhaseRules or local_llm and saying what it
 // renders as is exactly what should be written.
 var retiredRouteNames = []string{"Smart detection", "Smart Detection", "Local AI"}
 

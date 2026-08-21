@@ -26,7 +26,7 @@ func runWith(t *testing.T, minConfidence float32) string {
 			// A value the user declared themselves: high trust.
 			{Category: "person_names", MainText: "Marie Duval"},
 			// A value accepted from a local model Suggestion: lower trust.
-			{Category: "person_names", MainText: "Anouk Berger", DiscoveryMethods: []string{MethodLocalAI}, Confidence: ConfidenceLLMDefault},
+			{Category: "person_names", MainText: "Anouk Berger", DiscoveryMethods: []string{MethodLocalLLM}, Confidence: ConfidenceLLMDefault},
 		},
 		Level:         LevelMedium,
 		MinConfidence: minConfidence,
@@ -53,14 +53,14 @@ func TestMinConfidenceDefaultReplacesEverything(t *testing.T) {
 	}
 }
 
-func TestMinConfidenceAboveAITierKeepsListedValuesOnly(t *testing.T) {
-	// 0.9 sits between the AI tier (0.8) and the user tier (0.95).
+func TestMinConfidenceAboveLLMTierKeepsListedValuesOnly(t *testing.T) {
+	// 0.9 sits between the model tier (0.8) and the user tier (0.95).
 	got := runWith(t, 0.9)
 	if strings.Contains(got, "Marie Duval") {
 		t.Errorf("a value the user listed must still be replaced, got:\n%s", got)
 	}
 	if !strings.Contains(got, "Anouk Berger") {
-		t.Errorf("a value accepted from an AI Suggestion must be left alone above its tier, got:\n%s", got)
+		t.Errorf("a value accepted from a local model Suggestion must be left alone above its tier, got:\n%s", got)
 	}
 }
 
@@ -104,7 +104,7 @@ func TestFilterByMinConfidence(t *testing.T) {
 		{"zero is a no-op", 0, 4},
 		{"negative is a no-op", -1, 4},
 		{"below every tier keeps everything", 0.5, 4},
-		{"above the AI tier drops the AI span", 0.9, 3},
+		{"above the model tier drops the AI span", 0.9, 3},
 		{"above the user tier drops both value spans", 0.99, 2},
 	}
 	for _, tc := range cases {

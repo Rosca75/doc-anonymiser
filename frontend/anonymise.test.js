@@ -159,12 +159,12 @@ test("the Selected placeholder card edits the replacement value, like the table"
   assert.match(html, /Marie Duval/, "the card still names what the placeholder replaces");
 });
 
-test("the report note says the preset the run used, and nothing about an AI pass", () => {
+test("the report note says the preset the run used, and nothing about a local model pass", () => {
   const s = reportState();
   const note = textOf(reportCard(s), "#report-run-note");
   assert.match(note, /medium/);
   assert.doesNotMatch(note, /deep scan|AI/i,
-    "Anonymise runs no discovery method, so the run note must not mention an AI pass");
+    "Anonymise runs no discovery method, so the run note must not mention a local model pass");
 });
 
 test("the Report card renders the overlap warnings the run computes, and dismisses them", () => {

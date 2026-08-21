@@ -243,9 +243,9 @@ func TestSuggestionScoreLadder(t *testing.T) {
 	}
 }
 
-// TestSmartDetectOptionsFilters walks each option independently, so a
+// TestHeuristicDiscoveryOptionsFilters walks each option independently, so a
 // failure names the knob that broke rather than "fewer suggestions".
-func TestSmartDetectOptionsFilters(t *testing.T) {
+func TestHeuristicDiscoveryOptionsFilters(t *testing.T) {
 	// Anouk Berger sits MID-sentence on purpose: a name whose only
 	// occurrence opens a sentence is dropped by the sentence-start rule,
 	// which predates these options and is not what is under test here.
