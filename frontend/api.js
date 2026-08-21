@@ -207,7 +207,7 @@ export async function saveAllowlistTemplate() {
 // --- Values screen ------------------------------------------
 
 /**
- * runDetection(fileNames, allowTerms, aiScope) runs EVERY enabled detection
+ * runDetection(fileNames, allowTerms, llmScope) runs EVERY enabled detection
  * route in one call and resolves to a DetectionResult
  * {suggestions, proposals, phases, skipped, errors, cancelled, status}.
  *
@@ -217,7 +217,7 @@ export async function saveAllowlistTemplate() {
  * event ("detection:done" or "detection:error") now cover the whole run.
  * Which routes run is decided in Go from the stored switches.
  *
- * aiScope, when set, restricts the LOCAL AI route to one document and, within
+ * llmScope, when set, restricts the LOCAL LLM route to one document and, within
  * it, a set of its own units (page/slide/row/line): {docName, pages}, where
  * pages is a 1-based number[]. An empty pages array means the whole selected
  * document; null (the default) means every document, whole. It never affects
@@ -227,8 +227,8 @@ export async function saveAllowlistTemplate() {
  * only a failure to start (no matching documents, a run already in flight)
  * rejects.
  */
-export async function runDetection(fileNames, allowTerms, aiScope = null) {
-  return bridge().RunDetection(fileNames, allowTerms, aiScope);
+export async function runDetection(fileNames, allowTerms, llmScope = null) {
+  return bridge().RunDetection(fileNames, allowTerms, llmScope);
 }
 
 /**
@@ -256,7 +256,7 @@ export async function forgetDefinedTerm(term) {
 }
 
 /**
- * estimateAIRequests(fileNames, aiScope) resolves to how many model requests the
+ * estimateLLMRequests(fileNames, llmScope) resolves to how many model requests the
  * current scope and detail level imply, so the rail can show the cost of a
  * choice before the user pays it.
  *
@@ -270,8 +270,8 @@ export async function forgetDefinedTerm(term) {
  * scope naming pages that do not exist resolves to the count the run would
  * actually send, which for that document is zero.
  */
-export async function estimateAIRequests(fileNames, aiScope = null) {
-  return bridge().EstimateAIRequests(fileNames, aiScope);
+export async function estimateLLMRequests(fileNames, llmScope = null) {
+  return bridge().EstimateLLMRequests(fileNames, llmScope);
 }
 
 /** cancelDetection() aborts the in-flight detection run (no-op if idle).

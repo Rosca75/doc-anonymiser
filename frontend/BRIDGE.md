@@ -96,11 +96,11 @@ There are THREE detection routes, and the settings say so directly: the WIRE
 CONTRACT is exactly three booleans plus the nested `signalSuggestionSources`, and
 there is no derived section flag on either side of the bridge.
 
-**Local LLM discovery** is one switch, `useLocalAI`. Off by default and
+**Local LLM discovery** is one switch, `useLocalLLM`. Off by default and
 additionally gated on the live Ollama probe, so a stale `true` can never start a
 model that is not running.
 
-`aiStrictFormat` is the same route's reply-format choice, off by default: on, the
+`llmStrictFormat` is the same route's reply-format choice, off by default: on, the
 DISCOVERY request asks the model to answer for every category (a JSON Schema in
 `format`); off, it asks for loose JSON mode. It changes recall and time and
 nothing else, and the two directions are both real: the schema found a little more
@@ -112,8 +112,8 @@ EXPLICITLY rather than omitting it. It does NOT reach the CLASSIFICATION call,
 which is always schema-constrained: that call files a bounded list of names, where
 "every category present" is what makes the re-filing complete.
 
-`aiDetailLevel` is how much text one request of the same route carries. One of `engine.AllDetailLevels` (`"thorough"`, the default, or
-`"faster"`), mirrored by `state.js AI_DETAIL_LEVELS` and guarded by
+`llmDetailLevel` is how much text one request of the same route carries. One of `engine.AllDetailLevels` (`"thorough"`, the default, or
+`"faster"`), mirrored by `state.js LLM_DETAIL_LEVELS` and guarded by
 `../detection_parity_test.go`. `applySettings` REFUSES a level Go cannot size and
 names the two valid ones; the EMPTY string is accepted, because absence has a
 documented meaning (thorough) and is what a session file written before the
@@ -180,8 +180,8 @@ display choice: it decides which country-specific regex categories run.
 
 | `api.js` wrapper | Args | Resolves to |
 |---|---|---|
-| `runDetection(fileNames, allowTerms, aiScope)` | names, allowlist, optional `AIScope {docName, pages}` (null = every document whole; restricts the LOCAL LLM route only; `pages` is a 1-based `number[]` over the document's own page/slide/row/line units, and an empty array means the whole selected document) | `DetectionResult {suggestions, phases, skipped, errors, cancelled, status, aiRequests, aiSilentRequests, aiTruncatedRequests, aiSecondsPerRequest, patternMatches, patternCategories, builtInPatternsOn}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
-| `estimateAIRequests(fileNames, aiScope)` | names, optional `AIScope` | how many model requests the current scope and DETAIL LEVEL imply, as a number. Reaches no model, probes nothing and mutates nothing, so it is safe to call on every edit. Go computes it with the SAME helper the run uses, which is what makes it equal to the request count the run then makes: a read-out predicting something else is worse than none. Rejects only when there is nothing to estimate (no matching documents); a scope naming pages that do not exist resolves to what the run would actually send, which for that document is zero |
+| `runDetection(fileNames, allowTerms, llmScope)` | names, allowlist, optional `LLMScope {docName, pages}` (null = every document whole; restricts the LOCAL LLM route only; `pages` is a 1-based `number[]` over the document's own page/slide/row/line units, and an empty array means the whole selected document) | `DetectionResult {suggestions, phases, skipped, errors, cancelled, status, llmRequests, llmSilentRequests, llmTruncatedRequests, llmSecondsPerRequest, patternMatches, patternCategories, builtInPatternsOn}`. THE detection entry point: Go runs every switched-on route under one cancellation context. A cancelled run resolves with the partial findings and `cancelled: true`; only a failure to START rejects (no matching documents, a run already in flight). An out-of-range or unknown-document scope is reported in `errors`, not rejected. |
+| `estimateLLMRequests(fileNames, llmScope)` | names, optional `LLMScope` | how many model requests the current scope and DETAIL LEVEL imply, as a number. Reaches no model, probes nothing and mutates nothing, so it is safe to call on every edit. Go computes it with the SAME helper the run uses, which is what makes it equal to the request count the run then makes: a read-out predicting something else is worse than none. Rejects only when there is nothing to estimate (no matching documents); a scope naming pages that do not exist resolves to what the run would actually send, which for that document is zero |
 | `cancelDetection()` | — | aborts the in-flight run, reaching whichever route is running, including mid-file |
 | `expandSpellings(value)` | `{category, mainText, spellings, spellingPolicy}` | the forms this Value matches, longest first. `spellingPolicy: "curated"` means the list is the user's: Go derives nothing and returns the main text plus exactly the spellings it was given, so the chips on the card are what the run replaces |
 | `countTermMatches(term)` | term | `{count, documents}`, the live read-out under the manual declaration row (debounced) |
@@ -227,16 +227,16 @@ smaller slice would change the answer.
 
 | Field | Meaning |
 |---|---|
-| `aiRequests` | how many requests the route sent, across every document it read. Zero when the route did not run |
-| `aiSilentRequests` | how many of those parsed cleanly and yielded NOTHING, counted after the hallucination filter, because a reply of three invented names told the user nothing |
-| `aiTruncatedRequests` | how many of those were still answering when the model hit its generation cap. Counted APART from the silent ones, never folded into them: a silent request found nothing, a cut-off one found more than it was allowed to finish listing, and only the second means values may be missing from a page that did return some |
-| `aiSecondsPerRequest` | MEASURED, not estimated: the phase's wall clock divided by its requests. It is what lets a user judge a scan on their own machine and their own document, which no fixed sentence in a tooltip can do |
+| `llmRequests` | how many requests the route sent, across every document it read. Zero when the route did not run |
+| `llmSilentRequests` | how many of those parsed cleanly and yielded NOTHING, counted after the hallucination filter, because a reply of three invented names told the user nothing |
+| `llmTruncatedRequests` | how many of those were still answering when the model hit its generation cap. Counted APART from the silent ones, never folded into them: a silent request found nothing, a cut-off one found more than it was allowed to finish listing, and only the second means values may be missing from a page that did return some |
+| `llmSecondsPerRequest` | MEASURED, not estimated: the phase's wall clock divided by its requests. It is what lets a user judge a scan on their own machine and their own document, which no fixed sentence in a tooltip can do |
 
 Most requests returning nothing is NORMAL, so only an ALL-silent phase adds a
 message to `errors`, and that message names the MODEL, which is the actionable
 half. `status` names the request count whenever the route ran, so the one-line
 summary distinguishes the two cases by itself. The frontend keeps the four
-numbers in `state.lastAIScan` and shows them as the Local LLM discovery section's
+numbers in `state.lastLLMScan` and shows them as the Local LLM discovery section's
 `.rail-readout`; the backward reset for Identify clears them, because they
 describe a run that reset discards.
 
@@ -245,7 +245,7 @@ reported as TRUNCATION rather than surfacing as "the model's reply was not the
 expected JSON object". The user can act on one of those and not the other.
 
 Truncation degrades ONE SLICE and ends nothing. What the model finished writing
-before the cut is salvaged, the slice is counted in `aiTruncatedRequests`, and
+before the cut is salvaged, the slice is counted in `llmTruncatedRequests`, and
 the scan carries on to the next slice; the run then reports, per document, how
 many of its requests ran out of room and what to do about it. Salvage is safe
 because the hallucination filter drops anything that does not occur verbatim in
@@ -287,7 +287,7 @@ shape, and the mapping for the local model route rebuilt the row as
 methods found it, so route membership is a property of the row.
 
 - `discoveryMethods` is a SET drawn from `engine.AllDiscoveryMethods`
-  (`manual`, `signal`, `heuristic`, `local_ai`), mirrored by `state.js
+  (`manual`, `signal`, `heuristic`, `local_llm`), mirrored by `state.js
   DISCOVERY_METHODS` and guarded by `../detection_parity_test.go`. Several
   methods can find the same thing, and two routes agreeing is corroboration
   worth showing rather than a fact to overwrite. Built-in and custom pattern
@@ -303,7 +303,7 @@ methods found it, so route membership is a property of the row.
 - `confidence` is a THIRD thing beside provenance and precedence, and it is what
   the Configure rail's **Minimum confidence** acts on. A local model finding carries
   `engine.ConfidenceLLMDefault` (0.8), stamped at the Ollama boundary beside the
-  `local_ai` method. `0` means NOT STATED, which the engine reads as a user
+  `local_llm` method. `0` means NOT STATED, which the engine reads as a user
   declaration and scores at `ConfidenceManualDefault` (0.95). The number must
   survive the whole way across: `addSuggestions` keeps it on the row,
   `valueFromSuggestion` carries it into the Value, and `addValues` stores it.
@@ -485,7 +485,7 @@ The run `request` is
 - `discoveryMethods` is PROVENANCE and travels intact. Go reduces the set to ONE
   match class (`engine.MatchClassForMethods`, taking the strongest) when an
   overlap has to be decided, and reduces it nowhere else. Precedence order is
-  `built_in_pattern`, `user_defined`, `smart_discovered`, `local_ai_discovered`;
+  `built_in_pattern`, `user_defined`, `rules_discovered`, `local_llm_discovered`;
   lower wins, and an unknown or empty set ranks with `user_defined`, so a producer
   that states nothing is trusted rather than silently demoted. `matchClass` is
   never user-editable state and the frontend never writes it onto a Value.
@@ -572,6 +572,15 @@ missing runtime is a safe no-op).
 | `detection:done` | when a `runDetection` run finishes, is cancelled, or has nothing to run | `DetectionResult` (one `suggestions` list) |
 | `detection:error` | when a run stops unexpectedly | `{message}` |
 
+`phase` is one of `backend.AllDetectionPhases`: **`rules`**, the offline
+discovery half (heuristic discovery and signal-based discovery run in one pass
+over one document, so naming the phase after either half would describe half of
+what it did), and **`local_llm`**. The frontend maps the token to the words the
+user reads in `copy.js phaseName`, and `detection_parity_test.go` holds the two
+lists together: an unhandled token falls through to "Starting", so a run in
+flight would report itself as one that has not begun, and nothing errors to say
+so.
+
 **`detection:done` / `detection:error` are a guarantee, not a courtesy.** Exactly
 one of them fires for every started run, so the progress bar can be cleared by
 the event rather than by the caller's `finally`. `fraction` is the whole run's
@@ -585,8 +594,8 @@ request number and the request count for that document's scan. `unitFrom`,
 `unitTo` and `unitWord` say which of the document's OWN units the current request
 covers, so a caption can read "slides 4 to 6 of 15" in the same word the import
 list uses; `unitWord` is SINGULAR and the frontend pluralises, exactly as
-`DocumentInfo.unit` works. All three are zero and empty on the Smart route, which
-sends no requests.
+`DocumentInfo.unit` works. All three are zero and empty on the `rules` phase,
+which sends no requests.
 
 ## Rules for changing the contract
 

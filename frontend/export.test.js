@@ -45,7 +45,7 @@ test("applySession restores each route flag on its own, an absent flag meaning o
   const s = getState().settings;
   assert.equal(s.useBuiltInPatterns, false, "an explicit false is restored");
   assert.equal(s.useHeuristicDiscovery, true, "an absent flag restores ON");
-  assert.equal(s.useLocalAI, undefined,
+  assert.equal(s.useLocalLLM, undefined,
     "the local route is not switched on by a file that says nothing about it");
 });
 

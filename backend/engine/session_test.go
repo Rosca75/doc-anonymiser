@@ -194,7 +194,7 @@ func TestSessionRoundTripsACuratedValue(t *testing.T) {
 			MainText:         "Marie Duval",
 			Spellings:        []string{"Duval"},
 			SpellingPolicy:   SpellingPolicyCurated,
-			DiscoveryMethods: []string{MethodHeuristic, MethodLocalAI},
+			DiscoveryMethods: []string{MethodHeuristic, MethodLocalLLM},
 			Evidence: []Evidence{{
 				Kind: EvidenceEmailLocalPart, SignalCategory: CatEmail,
 				SignalText: "marie.duval@example.com", Documents: []string{"engagement.md"},
@@ -217,7 +217,7 @@ func TestSessionRoundTripsACuratedValue(t *testing.T) {
 	}
 	// Provenance and evidence survive the file too. Losing them would leave the
 	// workspace unable to say why a Value is there after a reload, and would
-	// silently promote an AI finding to a user declaration in precedence.
+	// silently promote a local model finding to a user declaration in precedence.
 	if len(got.DiscoveryMethods) != 2 {
 		t.Errorf("every discovery method must survive the file, got %v", got.DiscoveryMethods)
 	}
@@ -285,7 +285,7 @@ func TestLoadSessionWithoutOptionalFields(t *testing.T) {
 	    "ollamaPort": 11434,
 	    "model": "qwen3.5:0.8b",
 	    "contextSize": 8192,
-	    "useLocalAI": true
+	    "useLocalLLM": true
 	  },
 	  "registry": []
 	}`, SessionVersion)
@@ -299,7 +299,7 @@ func TestLoadSessionWithoutOptionalFields(t *testing.T) {
 			s.Settings.MinConfidence)
 	}
 	// The fields that WERE present must survive untouched.
-	if s.Settings.Level != "medium" || !s.Settings.UseLocalAI || s.Settings.ContextSize != 8192 {
+	if s.Settings.Level != "medium" || !s.Settings.UseLocalLLM || s.Settings.ContextSize != 8192 {
 		t.Errorf("existing settings were not preserved: %+v", s.Settings)
 	}
 	if len(s.Values) != 1 || s.Values[0].MainText != "Alpine Trust" {
@@ -501,23 +501,28 @@ func TestSessionRoundTripsImageDecisions(t *testing.T) {
 }
 
 // TestSessionVersionRefusesAnOlderFile: the strict-version rule, at the version
-// the new value categories arrived in.
+// the detection vocabulary's IDENTIFIERS arrived in.
 //
-// The reason for THIS bump runs backwards from the usual one. Registry.Assign
-// PANICS on a category with no placeholderLabels row, so a file this build wrote
-// carrying a country_names Value, offered to an older binary under the version
-// that binary reads, would crash it on the next run rather than be refused. The
-// bump turns the crash into the clear "written by a different version" message.
+// A v10 file states a Value's provenance and the user's route settings in words
+// this build does not read. The methods would come back empty, which makes
+// MatchClassForMethods rank the Value as user-defined and hands it a precedence
+// it never had, and the three settings would read as their zero values, silently
+// switching the local route and its two options off.
 //
-// A v9 file is refused for the same shape of reason a v8 one was: it loads,
-// nothing errors, and the result is wrong.
+// So a v10 file is refused for the same shape of reason a v9 one was: it loads,
+// nothing errors, and what the next run replaces has changed.
+//
+// The v10 fixture below spells the retired identifiers out, because a file
+// carrying the CURRENT spellings under the OLD version would not be the file this
+// test is about. That is why ../../vocabulary_guard_test.go exempts this one file
+// by name.
 func TestSessionVersionRefusesAnOlderFile(t *testing.T) {
 	t.Run("errors/older_versions_are_refused", func(t *testing.T) {
-		if SessionVersion != 10 {
-			t.Fatalf("SessionVersion is %d; this test describes the move to 10 and must be "+
+		if SessionVersion != 11 {
+			t.Fatalf("SessionVersion is %d; this test describes the move to 11 and must be "+
 				"rewritten for the version that replaces it", SessionVersion)
 		}
-		for _, older := range []int{8, 9} {
+		for _, older := range []int{8, 9, 10} {
 			raw := fmt.Sprintf(`{"version":%d,"values":[],"allowTerms":[],"patterns":[],`+
 				`"settings":{"level":"medium","ollamaPort":11434,"model":"qwen3.5:0.8b"},`+
 				`"registry":[]}`, older)
@@ -527,9 +532,29 @@ func TestSessionVersionRefusesAnOlderFile(t *testing.T) {
 					"the version that wrote it, because a half-read one silently reassigns "+
 					"placeholders", older)
 			}
-			if !strings.Contains(err.Error(), "10") {
+			// The message has to name BOTH numbers, or the user is told the file is
+			// wrong without being told what would be right.
+			if !strings.Contains(err.Error(), "11") {
 				t.Errorf("the refusal does not say which version this build reads:\n%v", err)
 			}
+			if !strings.Contains(err.Error(), fmt.Sprint(older)) {
+				t.Errorf("the refusal does not say which version the file holds:\n%v", err)
+			}
+		}
+	})
+
+	t.Run("errors/no_migration_path_exists", func(t *testing.T) {
+		// The policy is refusal, never migration: a session file holds the
+		// re-identification key, and a half-migrated one silently reassigns
+		// placeholders. A v10 file carrying the OLD spellings must be refused on the
+		// version alone, before anything reads a field.
+		raw := `{"version":10,"values":[{"category":"person_names","mainText":"Marie Duval",` +
+			`"discoveryMethods":["local_ai"]}],"allowTerms":[],"patterns":[],` +
+			`"settings":{"level":"medium","ollamaPort":11434,"model":"qwen3.5:0.8b",` +
+			`"useLocalAI":true,"aiStrictFormat":true,"aiDetailLevel":"faster"},"registry":[]}`
+		if _, err := LoadSession([]byte(raw)); err == nil {
+			t.Fatal("a v10 file carrying the retired identifiers was accepted; there is no " +
+				"migration table and no compatibility alias anywhere in the loader")
 		}
 	})
 }

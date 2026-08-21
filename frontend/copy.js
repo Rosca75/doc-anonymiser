@@ -205,7 +205,7 @@ export const CONFIGURE = {
   // window. Ollama's own settings decide how fast a scan runs and the app cannot
   // read or change them, so the guidance lives in a page with room for it rather
   // than in a tooltip that would then carry two subjects.
-  useAIHelp: "A language model running on this machine reads the documents and suggests Values. Nothing leaves your computer, and nothing it finds is replaced until you accept it. The Documentation window has a note on Ollama settings that affect how fast a scan runs.",
+  useLLMHelp: "A language model running on this machine reads the documents and suggests Values. Nothing leaves your computer, and nothing it finds is replaced until you accept it. The Documentation window has a note on Ollama settings that affect how fast a scan runs.",
   contextSizeHelp: "Higher values let the model read longer documents at once but use more memory.",
   // The reply-format switch, in OUTCOME terms. The mechanism (a JSON schema
   // constraining which keys the reply must carry) is not what a business user is
@@ -220,7 +220,7 @@ export const CONFIGURE = {
   // nothing, so those are what the sentence says. The request count itself is
   // dynamic and belongs in the read-out beside the control, not here.
   detailLevelHelp: "The local model reads your document in slices. Smaller slices find the most values and send more requests. Larger slices send fewer requests, and on a small model they can miss values completely. Whether fewer requests is quicker depends on your model and your machine.",
-  aiOffTooltip: "Local LLM discovery is turned off. Turn it on with the switch on the Local LLM discovery section of Configure.",
+  llmOffTooltip: "Local LLM discovery is turned off. Turn it on with the switch on the Local LLM discovery section of Configure.",
   allowHint: "Terms in this list survive every pass, even when they also appear as names to replace.",
   // the per-group bulk buttons.
   selectAll: "Select all",
@@ -608,7 +608,7 @@ export const WORKSPACE = {
   // actually include, which depends on whether the local model can run.
   runDetection: "Run detection",
   runOffline: "Reads every imported document and suggests values, without any AI.",
-  runWithAI: "Reads every imported document twice: the offline passes, then the local model. Nothing leaves your computer.",
+  runWithLLM: "Reads every imported document twice: the offline passes, then the local model. Nothing leaves your computer.",
   runNeedsRoute: "No detection route is on. Turn on Built-in patterns, Heuristic discovery or Local LLM discovery in Configure.",
   runNeedsDocuments: "Import at least one document first.",
   cancel: "Cancel",
@@ -618,8 +618,8 @@ export const WORKSPACE = {
   // where inside this file.
   /** phaseName(phase) turns an engine route token into words. */
   phaseName(phase) {
-    if (phase === "ai") return "Local LLM discovery";
-    if (phase === "smart") return "Heuristic discovery";
+    if (phase === "local_llm") return "Local LLM discovery";
+    if (phase === "rules") return "Heuristic discovery";
     return "Starting";
   },
   /** fileOf(file, index, total) is the position in the batch. */
@@ -705,7 +705,7 @@ export const WORKSPACE = {
     manual: "You",
     signal: "From a signal",
     heuristic: "Heuristic discovery",
-    local_ai: "Local LLM discovery",
+    local_llm: "Local LLM discovery",
   },
   methodTitle: "Which discovery method found this",
 
@@ -716,8 +716,8 @@ export const WORKSPACE = {
   matchClassLabel: {
     built_in_pattern: "a built-in pattern",
     user_defined: "something you declared",
-    smart_discovered: "Heuristic discovery",
-    local_ai_discovered: "Local LLM discovery",
+    rules_discovered: "Heuristic discovery",
+    local_llm_discovered: "Local LLM discovery",
   },
 
   // WHY a discovery method produced a row, one entry per engine evidence kind,

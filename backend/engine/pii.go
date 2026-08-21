@@ -684,7 +684,7 @@ func effectiveConfidence(s Span) float32 {
 // ResolveOverlaps keeps a non-overlapping subset of spans, in the fixed
 // priority order below. The result is sorted by Start.
 //
-//  1. Lower MatchClassRank wins: native, then declared, then auto, then AI
+//  1. Lower MatchClassRank wins: native, then declared, then auto, then the local model
 //     (matchClass.go). MatchClass comes FIRST because it is the only comparator that
 //     answers "which route should own this string", and it is the answer the
 //     user is shown. The two comparators below cannot answer it: a regex

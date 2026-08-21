@@ -130,16 +130,16 @@ func TestDetectionAlwaysEndsWithATerminalEvent(t *testing.T) {
 	}
 }
 
-// TestBuiltInPatternsAloneRunsNoSmartPhase: PhaseSmart is the two offline
+// TestBuiltInPatternsAloneRunsNoRulesPhase: PhaseRules is the two offline
 // two DISCOVERY methods. Built-in pattern matching is not one of them: it
 // produces direct matches at anonymisation time, so having it on must not, by
 // itself, make the detect button produce Suggestions.
-func TestBuiltInPatternsAloneRunsNoSmartPhase(t *testing.T) {
+func TestBuiltInPatternsAloneRunsNoRulesPhase(t *testing.T) {
 	app := detectionApp()
 	app.settings.UseHeuristicDiscovery = false
 	app.settings.SignalSuggestionSources = allSignalReadingsOff()
 	app.settings.UseBuiltInPatterns = true // on, and still not a discovery method
-	app.settings.UseLocalAI = false
+	app.settings.UseLocalLLM = false
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"a.txt"}, nil, nil)
@@ -147,7 +147,7 @@ func TestBuiltInPatternsAloneRunsNoSmartPhase(t *testing.T) {
 		t.Fatalf("RunDetection: %v", err)
 	}
 	for _, p := range res.Phases {
-		if p == PhaseSmart {
+		if p == PhaseRules {
 			t.Errorf("every discovery method is off, so the smart phase must not run; phases %v",
 				res.Phases)
 		}
@@ -172,7 +172,7 @@ func TestBuiltInPatternsOffKeepsSignalDiscovery(t *testing.T) {
 	app := detectionApp()
 	app.settings.UseBuiltInPatterns = false
 	app.settings.UseHeuristicDiscovery = false // so any Suggestion here is the signal's
-	app.settings.UseLocalAI = false
+	app.settings.UseLocalLLM = false
 	app.settings.Categories = engine.CategorySelection{
 		engine.CatEmail: true, engine.CatEntityNames: true, engine.CatPersonNames: true,
 	}
@@ -218,7 +218,7 @@ func TestDetectionWithNoRouteOnStillEnds(t *testing.T) {
 	app := detectionApp()
 	app.settings.UseHeuristicDiscovery = false
 	app.settings.SignalSuggestionSources = allSignalReadingsOff()
-	app.settings.UseLocalAI = false
+	app.settings.UseLocalLLM = false
 	app.settings.UseBuiltInPatterns = false
 	rec := withRecorder(t, app)
 
@@ -251,7 +251,7 @@ func TestBuiltInPreviewNeedsNoDiscoveryRoute(t *testing.T) {
 	app := detectionApp()
 	app.settings.UseHeuristicDiscovery = false
 	app.settings.SignalSuggestionSources = allSignalReadingsOff()
-	app.settings.UseLocalAI = false
+	app.settings.UseLocalLLM = false
 	app.settings.UseBuiltInPatterns = true
 	app.settings.Categories = engine.CategorySelection{engine.CatEmail: true}
 	app.docs = []engine.Document{
@@ -313,7 +313,7 @@ func TestBuiltInPreviewObeysTheRemovalList(t *testing.T) {
 
 // TestDetectionProgressNeverGoesBackwards guards the second half of the
 // report. With two routes the bar used to rewind to file 1 of a SMALLER total
-// when the AI pass started, which reads as a run that restarted itself.
+// when the local model pass started, which reads as a run that restarted itself.
 func TestDetectionProgressNeverGoesBackwards(t *testing.T) {
 	// A model that answers instantly, so both routes run over all three files.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -336,7 +336,7 @@ func TestDetectionProgressNeverGoesBackwards(t *testing.T) {
 
 	app := detectionApp()
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseLocalAI = true
+	app.settings.UseLocalLLM = true
 	rec := withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"a.txt", "b.txt", "c.txt"}, nil, nil)
@@ -363,7 +363,7 @@ func TestDetectionProgressNeverGoesBackwards(t *testing.T) {
 		previous = p.Fraction
 	}
 	// And the two routes are distinguishable, so the caption can name them.
-	if events[0].Phase != PhaseSmart || events[len(events)-1].Phase != PhaseLocalAI {
+	if events[0].Phase != PhaseRules || events[len(events)-1].Phase != PhaseLocalLLM {
 		t.Errorf("the routes must run in order, got %q then %q",
 			events[0].Phase, events[len(events)-1].Phase)
 	}
@@ -426,7 +426,7 @@ func TestDetectionKeepsGoingWhenOneFileFails(t *testing.T) {
 
 	app := detectionApp()
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseLocalAI = true
+	app.settings.UseLocalLLM = true
 	rec := withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"a.txt", "b.txt", "c.txt"}, nil, nil)
@@ -440,7 +440,7 @@ func TestDetectionKeepsGoingWhenOneFileFails(t *testing.T) {
 		t.Errorf("the report must name the file that failed: %v", res.Errors)
 	}
 	if len(res.Suggestions) == 0 {
-		t.Error("the offline route's findings must survive an AI failure")
+		t.Error("the offline route's findings must survive a local model failure")
 	}
 	if rec.count("detection:done") != 1 {
 		t.Error("a run with a failed file still ends with detection:done")
@@ -566,8 +566,8 @@ func TestAWholeDocumentIsNotOneRequest(t *testing.T) {
 	app := NewApp()
 	app.docs = []engine.Document{slideDeck(2)}
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseLocalAI = true
-	app.settings.UseHeuristicDiscovery = false // isolate the AI route
+	app.settings.UseLocalLLM = true
+	app.settings.UseHeuristicDiscovery = false // isolate the local model route
 	withRecorder(t, app)
 
 	if _, err := app.RunDetection([]string{"deck.pptx"}, nil, nil); err != nil {
@@ -590,27 +590,27 @@ func TestAWholeDocumentIsNotOneRequest(t *testing.T) {
 	}
 }
 
-// TestEstimateAIRequestsEqualsWhatTheRunSends is the read-out's whole contract.
+// TestEstimateLLMRequestsEqualsWhatTheRunSends is the read-out's whole contract.
 //
 // The rail shows the request count BEFORE the user pays it, and a number that
 // disagrees with what the run then does is worse than no number at all: it
 // teaches the reader to distrust the one figure they use to decide between the
-// two detail levels. Both sides go through planAIScan for exactly this reason,
+// two detail levels. Both sides go through planLLMScan for exactly this reason,
 // and this is the test that says so.
 //
 // It is checked at both levels and under a page scope, because those are the
 // three things that move the number. The mock answers nothing and the offline
 // route is off, so no classification call is sent and every request the server
 // sees is a discovery request.
-func TestEstimateAIRequestsEqualsWhatTheRunSends(t *testing.T) {
+func TestEstimateLLMRequestsEqualsWhatTheRunSends(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		level string
-		scope *AIScope
+		scope *LLMScope
 	}{
 		{"thorough_over_the_whole_deck", engine.DetailThorough, nil},
 		{"faster_over_the_whole_deck", engine.DetailFaster, nil},
-		{"thorough_over_a_page_scope", engine.DetailThorough, &AIScope{DocName: "deck.pptx", Pages: []int{2, 3}}},
+		{"thorough_over_a_page_scope", engine.DetailThorough, &LLMScope{DocName: "deck.pptx", Pages: []int{2, 3}}},
 	} {
 		t.Run("detection/"+tc.name, func(t *testing.T) {
 			var seen []string
@@ -620,14 +620,14 @@ func TestEstimateAIRequestsEqualsWhatTheRunSends(t *testing.T) {
 			app := NewApp()
 			app.docs = []engine.Document{slideDeck(6)}
 			app.llm = ollama.New(srv.URL)
-			app.settings.UseLocalAI = true
-			app.settings.UseHeuristicDiscovery = false // isolate the AI route
-			app.settings.AIDetailLevel = tc.level
+			app.settings.UseLocalLLM = true
+			app.settings.UseHeuristicDiscovery = false // isolate the local model route
+			app.settings.LLMDetailLevel = tc.level
 			withRecorder(t, app)
 
-			estimate, err := app.EstimateAIRequests([]string{"deck.pptx"}, tc.scope)
+			estimate, err := app.EstimateLLMRequests([]string{"deck.pptx"}, tc.scope)
 			if err != nil {
-				t.Fatalf("EstimateAIRequests: %v", err)
+				t.Fatalf("EstimateLLMRequests: %v", err)
 			}
 			if estimate <= 0 {
 				t.Fatalf("the estimate is %d, want a positive request count for a six slide deck", estimate)
@@ -643,8 +643,8 @@ func TestEstimateAIRequestsEqualsWhatTheRunSends(t *testing.T) {
 			}
 			// And the run's own count agrees, so the pre-run and post-run
 			// read-outs cannot tell the user two different stories.
-			if res.AIRequests != estimate {
-				t.Errorf("the run reports %d request(s) and the read-out promised %d", res.AIRequests, estimate)
+			if res.LLMRequests != estimate {
+				t.Errorf("the run reports %d request(s) and the read-out promised %d", res.LLMRequests, estimate)
 			}
 		})
 	}
@@ -653,15 +653,15 @@ func TestEstimateAIRequestsEqualsWhatTheRunSends(t *testing.T) {
 		app := NewApp()
 		app.docs = []engine.Document{slideDeck(6)}
 
-		app.settings.AIDetailLevel = engine.DetailThorough
-		thorough, err := app.EstimateAIRequests([]string{"deck.pptx"}, nil)
+		app.settings.LLMDetailLevel = engine.DetailThorough
+		thorough, err := app.EstimateLLMRequests([]string{"deck.pptx"}, nil)
 		if err != nil {
-			t.Fatalf("EstimateAIRequests(thorough): %v", err)
+			t.Fatalf("EstimateLLMRequests(thorough): %v", err)
 		}
-		app.settings.AIDetailLevel = engine.DetailFaster
-		faster, err := app.EstimateAIRequests([]string{"deck.pptx"}, nil)
+		app.settings.LLMDetailLevel = engine.DetailFaster
+		faster, err := app.EstimateLLMRequests([]string{"deck.pptx"}, nil)
 		if err != nil {
-			t.Fatalf("EstimateAIRequests(faster): %v", err)
+			t.Fatalf("EstimateLLMRequests(faster): %v", err)
 		}
 		if !(faster < thorough) {
 			t.Errorf("faster needs %d request(s) and thorough %d: a dial that does not move the number is not wired up",
@@ -671,7 +671,7 @@ func TestEstimateAIRequestsEqualsWhatTheRunSends(t *testing.T) {
 
 	t.Run("errors/nothing_to_estimate_is_an_error_not_a_zero", func(t *testing.T) {
 		app := NewApp()
-		if _, err := app.EstimateAIRequests([]string{"missing.txt"}, nil); err == nil {
+		if _, err := app.EstimateLLMRequests([]string{"missing.txt"}, nil); err == nil {
 			t.Error("estimating over no matching documents must say so, not answer zero as though the scan were free")
 		}
 	})
@@ -688,7 +688,7 @@ func TestDetectionProgressCarriesUnitNumbers(t *testing.T) {
 	app := NewApp()
 	app.docs = []engine.Document{slideDeck(3)}
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseLocalAI = true
+	app.settings.UseLocalLLM = true
 	app.settings.UseHeuristicDiscovery = false
 	rec := withRecorder(t, app)
 
@@ -698,12 +698,12 @@ func TestDetectionProgressCarriesUnitNumbers(t *testing.T) {
 
 	var perRequest []DetectionProgress
 	for _, p := range rec.progress() {
-		if p.Phase == PhaseLocalAI && p.ChunkCount > 0 {
+		if p.Phase == PhaseLocalLLM && p.ChunkCount > 0 {
 			perRequest = append(perRequest, p)
 		}
 	}
 	if len(perRequest) == 0 {
-		t.Fatal("the AI phase must report progress per request")
+		t.Fatal("the local model phase must report progress per request")
 	}
 	for _, p := range perRequest {
 		if p.ChunkCount != len(seen) {
@@ -760,7 +760,7 @@ func TestSilenceIsReportedAndDoesNotReadAsACleanDocument(t *testing.T) {
 	app.docs = []engine.Document{slideDeck(3)}
 	app.llm = ollama.New(srv.URL)
 	app.llm.Model = "tiny-model"
-	app.settings.UseLocalAI = true
+	app.settings.UseLocalLLM = true
 	app.settings.UseHeuristicDiscovery = false
 	rec := withRecorder(t, app)
 
@@ -781,16 +781,16 @@ func TestSilenceIsReportedAndDoesNotReadAsACleanDocument(t *testing.T) {
 
 	// The counts come from the server's own tally, so the assertion cannot drift
 	// from what was actually sent.
-	if want := int(atomic.LoadInt32(calls)); res.AIRequests != want {
-		t.Errorf("AIRequests = %d, want the %d call(s) the server saw", res.AIRequests, want)
+	if want := int(atomic.LoadInt32(calls)); res.LLMRequests != want {
+		t.Errorf("LLMRequests = %d, want the %d call(s) the server saw", res.LLMRequests, want)
 	}
-	if want := int(atomic.LoadInt32(empties)); res.AISilentRequests != want {
-		t.Errorf("AISilentRequests = %d, want the %d empty reply(s) the server sent",
-			res.AISilentRequests, want)
+	if want := int(atomic.LoadInt32(empties)); res.LLMSilentRequests != want {
+		t.Errorf("LLMSilentRequests = %d, want the %d empty reply(s) the server sent",
+			res.LLMSilentRequests, want)
 	}
-	if res.AIRequests == 0 || res.AISilentRequests != res.AIRequests {
-		t.Fatalf("this scan is all silent by construction: AIRequests=%d AISilentRequests=%d",
-			res.AIRequests, res.AISilentRequests)
+	if res.LLMRequests == 0 || res.LLMSilentRequests != res.LLMRequests {
+		t.Fatalf("this scan is all silent by construction: LLMRequests=%d LLMSilentRequests=%d",
+			res.LLMRequests, res.LLMSilentRequests)
 	}
 
 	joined := strings.Join(res.Errors, " | ")
@@ -803,8 +803,8 @@ func TestSilenceIsReportedAndDoesNotReadAsACleanDocument(t *testing.T) {
 	if !strings.Contains(res.Status, "request") {
 		t.Errorf("the one line summary must name the request count so it stops meaning two things: %q", res.Status)
 	}
-	if res.AISecondsPerRequest < 0 {
-		t.Errorf("the measured seconds per request must not be negative: %v", res.AISecondsPerRequest)
+	if res.LLMSecondsPerRequest < 0 {
+		t.Errorf("the measured seconds per request must not be negative: %v", res.LLMSecondsPerRequest)
 	}
 }
 
@@ -823,7 +823,7 @@ func TestPartialSilenceIsNotReportedAsTotalSilence(t *testing.T) {
 	app := NewApp()
 	app.docs = []engine.Document{slideDeck(3)}
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseLocalAI = true
+	app.settings.UseLocalLLM = true
 	app.settings.UseHeuristicDiscovery = false
 	withRecorder(t, app)
 
@@ -831,9 +831,9 @@ func TestPartialSilenceIsNotReportedAsTotalSilence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
-	if res.AISilentRequests >= res.AIRequests {
-		t.Fatalf("one request answered, so the phase is not all silent: AIRequests=%d AISilentRequests=%d",
-			res.AIRequests, res.AISilentRequests)
+	if res.LLMSilentRequests >= res.LLMRequests {
+		t.Fatalf("one request answered, so the phase is not all silent: LLMRequests=%d LLMSilentRequests=%d",
+			res.LLMRequests, res.LLMSilentRequests)
 	}
 	for _, msg := range res.Errors {
 		if strings.Contains(msg, "returned nothing for all") {
@@ -895,8 +895,8 @@ func TestATruncatedSliceDoesNotStopTheRestOfTheDocument(t *testing.T) {
 	app := NewApp()
 	app.docs = []engine.Document{slideDeck(3)}
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseLocalAI = true
-	app.settings.UseHeuristicDiscovery = false // isolate the AI route
+	app.settings.UseLocalLLM = true
+	app.settings.UseHeuristicDiscovery = false // isolate the local model route
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"deck.pptx"}, nil, nil)
@@ -909,9 +909,9 @@ func TestATruncatedSliceDoesNotStopTheRestOfTheDocument(t *testing.T) {
 	if !strings.Contains(strings.Join(seen, "\n"), "point 3.") {
 		t.Error("the slides after the truncated one were never sent, so the scan stopped where the reply was cut")
 	}
-	if res.AIRequests != 3 || res.AITruncatedRequests != 1 {
-		t.Errorf("want 3 requests with 1 truncated, got aiRequests=%d aiTruncatedRequests=%d",
-			res.AIRequests, res.AITruncatedRequests)
+	if res.LLMRequests != 3 || res.LLMTruncatedRequests != 1 {
+		t.Errorf("want 3 requests with 1 truncated, got llmRequests=%d llmTruncatedRequests=%d",
+			res.LLMRequests, res.LLMTruncatedRequests)
 	}
 	// The truncated slice still contributed: what the model finished writing is
 	// salvaged, and the half-written name is dropped by the hallucination filter.
@@ -984,7 +984,7 @@ func TestATruncatedReplyOnOneFileLeavesTheOthersIntact(t *testing.T) {
 			Markdown: "Borealis Fund objected to the terms.\n"},
 	}
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseLocalAI = true
+	app.settings.UseLocalLLM = true
 	app.settings.UseHeuristicDiscovery = false
 	withRecorder(t, app)
 
@@ -1012,8 +1012,8 @@ func TestATruncatedReplyOnOneFileLeavesTheOthersIntact(t *testing.T) {
 			t.Errorf("the truncation message must not name %q as the fix, it is already the default: %q", banned, joined)
 		}
 	}
-	if res.AITruncatedRequests != 1 {
-		t.Errorf("the run must count the truncated request, got %d", res.AITruncatedRequests)
+	if res.LLMTruncatedRequests != 1 {
+		t.Errorf("the run must count the truncated request, got %d", res.LLMTruncatedRequests)
 	}
 }
 
@@ -1030,10 +1030,10 @@ func assertNoScopeProblem(t *testing.T, res *DetectionResult) {
 	}
 }
 
-// TestDetectionAIScopeLimitsToPageRange is the whole point of the feature: with
+// TestDetectionLLMScopeLimitsToPageRange is the whole point of the feature: with
 // a scope set, the local model must see ONLY the chosen document's chosen pages,
 // never the rest, so a small model is not handed "too much".
-func TestDetectionAIScopeLimitsToPageRange(t *testing.T) {
+func TestDetectionLLMScopeLimitsToPageRange(t *testing.T) {
 	var seen []string
 	srv := scopeChatServer(&seen)
 	defer srv.Close()
@@ -1046,12 +1046,12 @@ func TestDetectionAIScopeLimitsToPageRange(t *testing.T) {
 		},
 	}
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseLocalAI = true
-	app.settings.UseHeuristicDiscovery = false // isolate the AI route
+	app.settings.UseLocalLLM = true
+	app.settings.UseHeuristicDiscovery = false // isolate the local model route
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"big.txt"}, nil,
-		&AIScope{DocName: "big.txt", Pages: []int{2, 3}})
+		&LLMScope{DocName: "big.txt", Pages: []int{2, 3}})
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
@@ -1077,10 +1077,10 @@ func TestDetectionAIScopeLimitsToPageRange(t *testing.T) {
 	}
 }
 
-// TestDetectionAIScopeOutOfRangeReportsButFinishes: a stale or hand-typed range
+// TestDetectionLLMScopeOutOfRangeReportsButFinishes: a stale or hand-typed range
 // is the user's request, so it is reported, not crashed on, and the run still
 // ends cleanly.
-func TestDetectionAIScopeOutOfRangeReportsButFinishes(t *testing.T) {
+func TestDetectionLLMScopeOutOfRangeReportsButFinishes(t *testing.T) {
 	var seen []string
 	srv := scopeChatServer(&seen)
 	defer srv.Close()
@@ -1090,12 +1090,12 @@ func TestDetectionAIScopeOutOfRangeReportsButFinishes(t *testing.T) {
 		{Name: "small.txt", Format: engine.FormatTXT, Unit: engine.UnitLine, Markdown: "one\ntwo\n"},
 	}
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseLocalAI = true
+	app.settings.UseLocalLLM = true
 	app.settings.UseHeuristicDiscovery = false
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"small.txt"}, nil,
-		&AIScope{DocName: "small.txt", Pages: []int{5, 9}})
+		&LLMScope{DocName: "small.txt", Pages: []int{5, 9}})
 	if err != nil {
 		t.Fatalf("an out-of-range scope must not fail the run: %v", err)
 	}
@@ -1107,10 +1107,10 @@ func TestDetectionAIScopeOutOfRangeReportsButFinishes(t *testing.T) {
 	}
 }
 
-// TestDetectionAIScopeDiscontiguousPages proves a discontiguous page set (the
+// TestDetectionLLMScopeDiscontiguousPages proves a discontiguous page set (the
 // CR3 feature, "1,3") reaches the local model as exactly those pages, with the
 // pages between them left out.
-func TestDetectionAIScopeDiscontiguousPages(t *testing.T) {
+func TestDetectionLLMScopeDiscontiguousPages(t *testing.T) {
 	var seen []string
 	srv := scopeChatServer(&seen)
 	defer srv.Close()
@@ -1123,12 +1123,12 @@ func TestDetectionAIScopeDiscontiguousPages(t *testing.T) {
 		},
 	}
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseLocalAI = true
-	app.settings.UseHeuristicDiscovery = false // isolate the AI route
+	app.settings.UseLocalLLM = true
+	app.settings.UseHeuristicDiscovery = false // isolate the local model route
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"big.txt"}, nil,
-		&AIScope{DocName: "big.txt", Pages: []int{1, 3}})
+		&LLMScope{DocName: "big.txt", Pages: []int{1, 3}})
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
@@ -1151,14 +1151,14 @@ func TestDetectionAIScopeDiscontiguousPages(t *testing.T) {
 	}
 }
 
-// TestClassifyRespectsTheAIScope is the scope-leak guard, and its absence is
+// TestClassifyRespectsTheLLMScope is the scope-leak guard, and its absence is
 // what let the leak exist.
 //
 // The classification call is the LARGER of the two Local LLM discovery makes, so
 // scoping only the discovery call left the user's "just page 1" handing the
 // whole batch to the model: about half a scoped run's prompt tokens, spent on
 // text the user had explicitly excluded, while the interface promised otherwise.
-func TestClassifyRespectsTheAIScope(t *testing.T) {
+func TestClassifyRespectsTheLLMScope(t *testing.T) {
 	var seen []string
 	srv := scopeChatServer(&seen)
 	defer srv.Close()
@@ -1172,12 +1172,12 @@ func TestClassifyRespectsTheAIScope(t *testing.T) {
 			"Borealis Fund objected. Borealis Fund replied. Borealis Fund withdrew.\n",
 	}}
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseLocalAI = true
+	app.settings.UseLocalLLM = true
 	app.settings.UseHeuristicDiscovery = true // it is the smart route that gets classified
 	withRecorder(t, app)
 
 	if _, err := app.RunDetection([]string{"two.txt"}, nil,
-		&AIScope{DocName: "two.txt", Pages: []int{1}}); err != nil {
+		&LLMScope{DocName: "two.txt", Pages: []int{1}}); err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
 
@@ -1221,7 +1221,7 @@ func TestClassifyPayloadIsFoldedAndBounded(t *testing.T) {
 			"Alpine Trust confirmed later. Alpine Trust S.A. confirmed too.\n",
 	}}
 	app.llm = ollama.New(srv.URL)
-	app.settings.UseLocalAI = true
+	app.settings.UseLocalLLM = true
 	app.settings.UseHeuristicDiscovery = true
 	withRecorder(t, app)
 
@@ -1267,17 +1267,17 @@ func TestClassifyPayloadIsFoldedAndBounded(t *testing.T) {
 // TestDetectionRespectsTheRouteSwitches: Go decides, not the caller.
 func TestDetectionRespectsTheRouteSwitches(t *testing.T) {
 	app := detectionApp()
-	// UseLocalAI is on but there is no Ollama at this port, so the route cannot run
+	// UseLocalLLM is on but there is no Ollama at this port, so the route cannot run
 	// and must not be reported as having run.
 	app.llm = ollama.New("http://127.0.0.1:1")
-	app.settings.UseLocalAI = true
+	app.settings.UseLocalLLM = true
 	withRecorder(t, app)
 
 	res, err := app.RunDetection([]string{"a.txt"}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunDetection: %v", err)
 	}
-	if len(res.Phases) != 1 || res.Phases[0] != PhaseSmart {
+	if len(res.Phases) != 1 || res.Phases[0] != PhaseRules {
 		t.Errorf("only the offline route can run without Ollama, got %v", res.Phases)
 	}
 }
@@ -1304,7 +1304,7 @@ func TestDetectionFoldsFamiliesAcrossRoutes(t *testing.T) {
 		Name: "a.txt", Format: engine.FormatTXT,
 		Markdown: "Alpine Trust is here. Alpine Trust again. Alpine Trust S.A. signed the deed.\n",
 	}}
-	app.settings.UseLocalAI = true
+	app.settings.UseLocalLLM = true
 	app.settings.UseHeuristicDiscovery = true
 
 	res, err := app.RunDetection([]string{"a.txt"}, nil, nil)
@@ -1361,7 +1361,7 @@ func signalApp() *App {
 	// Heuristic discovery off, so what comes back is the signal method's work and
 	// not a heuristic finding that happens to agree with it.
 	app.settings.UseHeuristicDiscovery = false
-	app.settings.UseLocalAI = false
+	app.settings.UseLocalLLM = false
 	return app
 }
 
@@ -1388,7 +1388,7 @@ func TestSignalDiscoveryRunsAsPartOfSmartDetection(t *testing.T) {
 	}
 	// The phase ran even with heuristic discovery off: signal-based discovery is a
 	// offline discovery method in its own right.
-	if len(res.Phases) != 1 || res.Phases[0] != PhaseSmart {
+	if len(res.Phases) != 1 || res.Phases[0] != PhaseRules {
 		t.Fatalf("the smart phase must run for the signal method alone, got %v", res.Phases)
 	}
 
@@ -1501,8 +1501,8 @@ func TestAcceptedSignalSuggestionKeepsItsEvidence(t *testing.T) {
 	}
 	// The match class it resolves to is the one its methods imply, not the
 	// user-defined fallback a lost provenance would produce.
-	if got := engine.MatchClassForMethods(accepted.DiscoveryMethods); got != engine.MatchClassSmartDiscovered {
-		t.Errorf("a signal-derived Value must rank as smart_discovered, got %q", got)
+	if got := engine.MatchClassForMethods(accepted.DiscoveryMethods); got != engine.MatchClassRulesDiscovered {
+		t.Errorf("a signal-derived Value must rank as rules_discovered, got %q", got)
 	}
 }
 

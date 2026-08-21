@@ -184,26 +184,26 @@ func detectedCategoriesFromCounts(counts map[string]int) []string {
 //
 // Every one of them is reachable by manual entry and by the local model. The
 // annotated ones are additionally reachable OFFLINE, by a heuristic detector;
-// the rest need the AI or a value the user types, and the frontend label says
+// the rest need the local model or a value the user types, and the frontend label says
 // so.
 const (
 	CatEntityNames     = "entity_names"     // + heuristic: legal-suffix runs
 	CatProjectNames    = "project_names"    // + heuristic: codes beside a project cue
 	CatProductNames    = "product_names"    // + heuristic: trademark mark, product head noun
-	CatBrandNames      = "brand_names"      // AI or manual: a brand is world knowledge
+	CatBrandNames      = "brand_names"      // local model or manual: a brand is world knowledge
 	CatPersonNames     = "person_names"     // + heuristic: title cues, multi-word runs
 	CatIdentifierNames = "identifier_names" // + heuristic: reference and contract codes
-	CatOtherNames      = "other_names"      // AI or manual: "a name, and none of the above"
+	CatOtherNames      = "other_names"      // local model or manual: "a name, and none of the above"
 	CatCustomPatterns  = "custom_patterns"  // the user's own regexes
 	// CatCountryNames is a country or jurisdiction named in the document. It has
 	// its own category because in a two-party contract between two entities of
 	// one country the jurisdiction is part of the identity, and filing it under
 	// other_names loses that distinction in the mapping CSV.
-	CatCountryNames = "country_names" // AI or manual: a gazetteer would fire in prose
+	CatCountryNames = "country_names" // local model or manual: a gazetteer would fire in prose
 	// CatNationalityNames is a nationality or demonym ("Française").
-	CatNationalityNames = "nationality_names" // AI or manual: an ordinary adjective
+	CatNationalityNames = "nationality_names" // local model or manual: an ordinary adjective
 	// CatBusinessSectorNames is an industry or line of business ("Transport").
-	CatBusinessSectorNames = "business_sector_names" // AI or manual: an ordinary noun
+	CatBusinessSectorNames = "business_sector_names" // local model or manual: an ordinary noun
 )
 
 // CategorySelection is the granular per-category switch set the pipeline

@@ -58,8 +58,9 @@ doc-anonymiser/
 ├── embed_test.go              # asserts the frontend is embedded (package main)
 ├── backend/app_e2e_test.go    # headless end-to-end through the bound app layer
 ├── category_parity_test.go    # JS↔Go category parity guard (package main)
-├── detection_parity_test.go   # JS↔Go discovery-method, match-class and
-│                              #   signal-source parity guards (package main)
+├── detection_parity_test.go   # JS↔Go discovery-method, match-class,
+│                              #   signal-source and detection-PHASE parity guards
+│                              #   (package main)
 ├── dataset_parity_test.go     # no camel-case data attribute is rendered: a browser
 │                              #   lower-cases attribute NAMES, so dataset.x is dead
 ├── icon_parity_test.go        # every icon name used exists in ICONS and every ICONS
@@ -73,7 +74,11 @@ doc-anonymiser/
 │                              #   sniffed formats, the occurrence kinds, and a
 │                              #   sentence in copy.js for every reason, warning
 │                              #   and blocked-treatment CODE (package main)
-├── copy_guard_test.go         # no em dashes in Go user-facing strings (package main)
+├── copy_guard_test.go         # no em dashes, and no retired ROUTE NAME, in a Go
+│                              #   user-facing string (package main)
+├── vocabulary_guard_test.go   # no retired IDENTIFIER survives anywhere outside
+│                              #   docs/: every one is a string at a boundary, so a
+│                              #   survivor is not a compile error (package main)
 ├── uitest_parity_test.go      # keeps the two UI harnesses on ONE probes.js (package main)
 ├── frontend/                  # THE GUI — vanilla ES modules, embedded via go:embed
 │   ├── CLAUDE.md              # frontend charter (see above)
@@ -213,7 +218,8 @@ doc-anonymiser/
   disabled state with a tooltip ("Requires Ollama, which was not detected
   on 127.0.0.1:11434") when unavailable. The deterministic pipeline must be
   fully usable without Ollama. User-visible copy never contains em dashes
-  (enforced by copy_guard_test.go and frontend/copy.test.js).
+  (enforced by copy_guard_test.go and frontend/copy.test.js), and never a retired
+  route name (the same two guards).
 - **Converters are pure Go and one-way:** `backend/engine/convert/*` may use
   only the Go standard library, excelize, and ledongthuc/pdf (pinned in §7).
   No CGo, ever. Binary formats convert TO markdown on import for preview and
@@ -278,18 +284,23 @@ doc-anonymiser/
   | **Custom pattern matching** | The user's own regular expressions | Direct matches |
   | **Manual Value declaration** | A Value the user typed | An accepted Value |
 
-  Two terms are RETIRED from the interface and survive only as engine
-  identifiers, because a label is a display string and an identifier is a
-  contract. **Smart detection** was one name over three unrelated mechanisms
-  (pattern matching, which acts without review, plus two discovery methods,
-  which do not), so it could never say which of them found what; it survives as
-  `PhaseSmart` and `smart_discovered`, which the interface labels "Heuristic
-  discovery". **Local AI** said nothing about what runs; it survives as
-  `local_ai` and `local_ai_discovered`, labelled "Local LLM discovery". The name
-  is LLM-specific rather than model-generic because an encoder-model route would
-  be its own section: a different dependency, different settings and different
-  failure modes. Guarded by `copy_guard_test.go` and `frontend/copy.test.js`,
-  which fail on either phrase in a user-facing string.
+  Two terms are RETIRED, from the interface AND from the identifiers.
+  **Smart detection** was one name over three unrelated mechanisms (pattern
+  matching, which acts without review, plus two discovery methods, which do not),
+  so it could never say which of them found what. **Local AI** said nothing about
+  what runs; its replacement is LLM-specific rather than model-generic because an
+  encoder-model route would be its own section, with a different dependency,
+  different settings and different failure modes.
+
+  The labels went first and the identifiers followed, in that order and as two
+  separate changes, because a label is a display string and an identifier is a
+  contract: the identifiers are persisted, so renaming them costs every saved
+  session and every saved profile on disk (`SessionVersion` 11), and that is a
+  price to pay deliberately rather than inside a UI change. Two guards keep both
+  halves true: `copy_guard_test.go` with `frontend/copy.test.js` fail on either
+  retired PHRASE in a user-facing string, and `vocabulary_guard_test.go` fails on
+  any retired IDENTIFIER anywhere in the tree outside `docs/`, which is where the
+  change orders keep the record of what was renamed.
 
   Not every method produces Suggestions, and the difference is what the review
   gate is about. Pattern matching produces DIRECT MATCHES, applied without
@@ -329,7 +340,7 @@ doc-anonymiser/
   | `manual` | the user typed it |
   | `signal` | signal-based discovery |
   | `heuristic` | heuristic discovery |
-  | `local_ai` | Local LLM discovery |
+  | `local_llm` | Local LLM discovery |
 
   The **match class** answers WHICH CLAIM WINS. It is derived from the methods by
   `engine.MatchClassForMethods`, which takes the STRONGEST: corroboration by a
@@ -340,8 +351,8 @@ doc-anonymiser/
   |---|---:|---|
   | `built_in_pattern` | 1 | pass 1 pattern matches, and an already-decided registry entry |
   | `user_defined` | 2 | a manual Value or a custom pattern: the same act by the same person |
-  | `smart_discovered` | 3 | signal-based or heuristic discovery |
-  | `local_ai_discovered` | 4 | Local LLM discovery |
+  | `rules_discovered` | 3 | signal-based or heuristic discovery |
+  | `local_llm_discovered` | 4 | Local LLM discovery |
 
   LOWER WINS. An unknown or empty class ranks with `user_defined` rather than
   last, so a producer that states none is trusted rather than silently demoted:
@@ -741,7 +752,7 @@ doc-anonymiser/
   (`useBuiltInPatterns`), on by default and owning its own scope (document
   country, preset, the eight pattern category groups); **Heuristic discovery**
   (`useHeuristicDiscovery`), on by default and owning the name categories and its
-  own strictness block; and **Local LLM discovery** (`useLocalAI`), off by
+  own strictness block; and **Local LLM discovery** (`useLocalLLM`), off by
   default. Detecting Ollama ENABLES that switch, it never flips it. There is no
   cloud route.
 
@@ -807,7 +818,7 @@ doc-anonymiser/
   + Values + settings + the removal list + the defined terms + the spent
   placeholder numbers + the
   image treatments) to disk is an explicit user action with a warning that the
-  file contains the re-identification key. `SessionVersion` is **10**; a file of
+  file contains the re-identification key. `SessionVersion` is **11**; a file of
   any other version
   is refused, never migrated, and the reasons for each bump are recorded beside
   the constant in `backend/engine/session.go`. There is no migration table and no
@@ -878,7 +889,7 @@ doc-anonymiser/
   small enough that the token cost is noise.
 
   The **discovery** call carries the schema when the user asks for it
-  (`Settings.AIStrictFormat`, off by default) and `"format":"json"` otherwise
+  (`Settings.LLMStrictFormat`, off by default) and `"format":"json"` otherwise
   (`Client.discoveryFormat`). The default is the fast one on measurement: on a
   slide-heavy deck the schema cost about twice the wall clock for recall that was
   equal or slightly worse, and on a 0.8B model it returned nothing at all at every

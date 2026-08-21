@@ -375,9 +375,9 @@ func matchClassWord(matchClass string) string {
 	switch matchClass {
 	case MatchClassBuiltInPattern:
 		return "native detection"
-	case MatchClassSmartDiscovered:
+	case MatchClassRulesDiscovered:
 		return "heuristic discovery"
-	case MatchClassLocalAIDiscovered:
+	case MatchClassLocalLLMDiscovered:
 		return "local LLM discovery"
 	default:
 		return "your own values and patterns"

@@ -62,12 +62,12 @@ func newTestApp(t *testing.T, replyFor func(userPrompt string) string) *App {
 	return app
 }
 
-// aiOnlyApp is newTestApp with the AI route on and the offline route off, so a
+// llmOnlyApp is newTestApp with the local model route on and the offline route off, so a
 // test about what the model proposes is not also reading heuristic findings.
-func aiOnlyApp(t *testing.T, replyFor func(userPrompt string) string) *App {
+func llmOnlyApp(t *testing.T, replyFor func(userPrompt string) string) *App {
 	t.Helper()
 	app := newTestApp(t, replyFor)
-	app.settings.UseLocalAI = true
+	app.settings.UseLocalLLM = true
 	app.settings.UseHeuristicDiscovery = false
 	return app
 }
@@ -76,7 +76,7 @@ func TestDetectionMergesAndDedupesAcrossFiles(t *testing.T) {
 	// Two documents name the same entity with different casing plus one distinct
 	// person each. The merged result carries the entity once, in the spelling
 	// seen first, and both people.
-	app := aiOnlyApp(t, func(user string) string {
+	app := llmOnlyApp(t, func(user string) string {
 		if strings.Contains(user, "doc one") {
 			return `{"entity_names":["Alpine Trust"],"person_names":["Marie Duval"]}`
 		}
@@ -103,7 +103,7 @@ func TestDetectionMergesAndDedupesAcrossFiles(t *testing.T) {
 }
 
 func TestDetectionRespectsTheAllowlist(t *testing.T) {
-	app := aiOnlyApp(t, func(string) string {
+	app := llmOnlyApp(t, func(string) string {
 		return `{"entity_names":["CSSF","Alpine Trust"],"person_names":[]}`
 	})
 	app.docs = []engine.Document{
@@ -125,7 +125,7 @@ func TestDetectionRespectsTheAllowlist(t *testing.T) {
 // mid-scan, so slowness is a cost they can see and stop; refusing leaves them
 // with the offline findings and nothing saying why.
 func TestDetectionScansALargeFileAndWarnsAboutIt(t *testing.T) {
-	app := aiOnlyApp(t, func(string) string { return `{"entity_names":[],"person_names":[]}` })
+	app := llmOnlyApp(t, func(string) string { return `{"entity_names":[],"person_names":[]}` })
 	app.docs = []engine.Document{
 		{Name: "small.txt", Format: engine.FormatTXT, Unit: engine.UnitLine,
 			Markdown: "Alpine Trust is small."},
@@ -158,7 +158,7 @@ func TestDetectionScansALargeFileAndWarnsAboutIt(t *testing.T) {
 // it meaningful is what stops the field, and the interface that renders it, from
 // becoming decoration.
 func TestDetectionSkipsOnlyADocumentWithNoTextToRead(t *testing.T) {
-	app := aiOnlyApp(t, func(string) string { return `{"entity_names":[],"person_names":[]}` })
+	app := llmOnlyApp(t, func(string) string { return `{"entity_names":[],"person_names":[]}` })
 	app.docs = []engine.Document{
 		{Name: "blank.txt", Format: engine.FormatTXT, Unit: engine.UnitLine, Markdown: "  \n\t\n"},
 		{Name: "real.txt", Format: engine.FormatTXT, Unit: engine.UnitLine, Markdown: "Alpine Trust."},
@@ -181,7 +181,7 @@ func TestDetectionSkipsOnlyADocumentWithNoTextToRead(t *testing.T) {
 // decides how to describe it.
 func TestDetectionCancellationKeepsWhatItFound(t *testing.T) {
 	var calls atomic.Int32
-	app := aiOnlyApp(t, func(string) string {
+	app := llmOnlyApp(t, func(string) string {
 		calls.Add(1)
 		return `{"entity_names":["Alpine Trust"],"person_names":[]}`
 	})
@@ -220,7 +220,7 @@ func TestDetectionCancellationKeepsWhatItFound(t *testing.T) {
 // TestDetectionReportsProgressPerFile: one event per file at least, each naming
 // the file, so a long run never looks hung.
 func TestDetectionReportsProgressPerFile(t *testing.T) {
-	app := aiOnlyApp(t, func(string) string { return `{"entity_names":[],"person_names":[]}` })
+	app := llmOnlyApp(t, func(string) string { return `{"entity_names":[],"person_names":[]}` })
 	app.docs = []engine.Document{
 		{Name: "one.txt", Format: engine.FormatTXT, Markdown: "text one"},
 		{Name: "two.txt", Format: engine.FormatTXT, Markdown: "text two"},

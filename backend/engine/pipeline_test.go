@@ -325,7 +325,7 @@ func TestPipelineCancellation(t *testing.T) {
 	}
 }
 
-// TestAcceptProposalsStampsTheAIOrigin: a proposal that survives the
+// TestAcceptProposalsStampsTheLLMOrigin: a proposal that survives the
 // hallucination filter becomes a Value carrying its route, not only its
 // score. The score alone cannot serve as provenance, because it is also what
 // MinConfidence filters on: raising the floor would otherwise reorder which
@@ -354,7 +354,7 @@ func TestOwnershipIsDecidedByRuleNotByDocumentOrder(t *testing.T) {
 	// from the import order.
 	aText := "The " + value + " engagement closed in June.\n"
 	bText := "A separate note about helios and its scope.\n"
-	values := []Value{{Category: CatBrandNames, MainText: value, DiscoveryMethods: []string{MethodLocalAI}}}
+	values := []Value{{Category: CatBrandNames, MainText: value, DiscoveryMethods: []string{MethodLocalLLM}}}
 	patterns := []CustomPattern{{Expr: `helios`}}
 	docA := Document{Name: "a.txt", Format: FormatTXT, Markdown: aText}
 	docB := Document{Name: "b.txt", Format: FormatTXT, Markdown: bText}
@@ -408,10 +408,10 @@ func TestOwnershipIsDecidedByRuleNotByDocumentOrder(t *testing.T) {
 	}
 }
 
-// TestUserDefinedBeatsSmartDiscovered: a custom pattern and a discovered Value
+// TestUserDefinedBeatsRulesDiscovered: a custom pattern and a discovered Value
 // covering the same string resolve to the pattern, because a declaration
 // outranks a guess, and exactly one placeholder exists for the string.
-func TestUserDefinedBeatsSmartDiscovered(t *testing.T) {
+func TestUserDefinedBeatsRulesDiscovered(t *testing.T) {
 	reg := NewRegistry()
 	res, err := Run(context.Background(), PipelineInput{
 		Documents: []Document{{

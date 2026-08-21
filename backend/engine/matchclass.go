@@ -37,16 +37,15 @@ const (
 	// MethodHeuristic is heuristic discovery: spelling, context, frequency and
 	// deterministic gazetteers.
 	MethodHeuristic = "heuristic"
-	// MethodLocalAI is Local LLM discovery. The identifier keeps the AI spelling
-	// because it is persisted in every session file; the interface labels it
-	// "Local LLM discovery".
-	MethodLocalAI = "local_ai"
+	// MethodLocalLLM is Local LLM discovery: a language model running on this
+	// machine read the text and proposed the Value.
+	MethodLocalLLM = "local_llm"
 )
 
 // AllDiscoveryMethods lists the methods a Value can carry, mirrored by frontend
 // state.js DISCOVERY_METHODS and checked by ../../discovery_parity_test.go.
 var AllDiscoveryMethods = []string{
-	MethodManual, MethodSignal, MethodHeuristic, MethodLocalAI,
+	MethodManual, MethodSignal, MethodHeuristic, MethodLocalLLM,
 }
 
 // Match classes: WHICH overlapping claim wins. LOWER RANK WINS.
@@ -59,11 +58,13 @@ const (
 	// MatchClassUserDefined is a manually declared Value or a custom pattern.
 	// Both are the same act by the same person, so they share one rank.
 	MatchClassUserDefined = "user_defined"
-	// MatchClassSmartDiscovered is signal-based or heuristic discovery.
-	MatchClassSmartDiscovered = "smart_discovered"
-	// MatchClassLocalAIDiscovered is Local LLM discovery, labelled
-	// "Local LLM discovery" in the interface.
-	MatchClassLocalAIDiscovered = "local_ai_discovered"
+	// MatchClassRulesDiscovered is signal-based OR heuristic discovery: they share
+	// ONE rank, and the name says what both are, a rule over the text rather than a
+	// model reading it. It stays true if signal-based discovery is ever given its
+	// own rail section, which a name after either half would not.
+	MatchClassRulesDiscovered = "rules_discovered"
+	// MatchClassLocalLLMDiscovered is Local LLM discovery.
+	MatchClassLocalLLMDiscovered = "local_llm_discovered"
 )
 
 // AllMatchClasses lists the classes in precedence order, mirrored by frontend
@@ -71,24 +72,24 @@ const (
 var AllMatchClasses = []string{
 	MatchClassBuiltInPattern,
 	MatchClassUserDefined,
-	MatchClassSmartDiscovered,
-	MatchClassLocalAIDiscovered,
+	MatchClassRulesDiscovered,
+	MatchClassLocalLLMDiscovered,
 }
 
 // matchClassRanks is the superseding order as a lookup.
 var matchClassRanks = map[string]int{
-	MatchClassBuiltInPattern:    1,
-	MatchClassUserDefined:       2,
-	MatchClassSmartDiscovered:   3,
-	MatchClassLocalAIDiscovered: 4,
+	MatchClassBuiltInPattern:     1,
+	MatchClassUserDefined:        2,
+	MatchClassRulesDiscovered:    3,
+	MatchClassLocalLLMDiscovered: 4,
 }
 
 // methodClasses maps one discovery method to the match class it implies.
 var methodClasses = map[string]string{
 	MethodManual:    MatchClassUserDefined,
-	MethodSignal:    MatchClassSmartDiscovered,
-	MethodHeuristic: MatchClassSmartDiscovered,
-	MethodLocalAI:   MatchClassLocalAIDiscovered,
+	MethodSignal:    MatchClassRulesDiscovered,
+	MethodHeuristic: MatchClassRulesDiscovered,
+	MethodLocalLLM:  MatchClassLocalLLMDiscovered,
 }
 
 // MatchClassRank is the superseding order. LOWER WINS.

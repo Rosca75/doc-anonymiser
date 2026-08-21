@@ -24,10 +24,10 @@ import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
 import {
   ALL_CATEGORIES, NAME_CATEGORIES, HARD_PII_CATEGORIES, EXTENDED_PII_CATEGORIES,
   ADVANCED_PII_CATEGORIES, ALWAYS_ON_CATEGORIES,
-  resetState, getState, setState, setUseLocalAI,
-  setAIScope, setCategoryGroup, setUseBuiltInPatterns, setUseHeuristicDiscovery,
+  resetState, getState, setState, setUseLocalLLM,
+  setLLMScope, setCategoryGroup, setUseBuiltInPatterns, setUseHeuristicDiscovery,
   setSignalSource, setSignalDerivation, applyPreset,
-  SIGNAL_SOURCES, SIGNAL_DERIVATIONS, AI_DETAIL_LEVELS,
+  SIGNAL_SOURCES, SIGNAL_DERIVATIONS, LLM_DETAIL_LEVELS,
 } from "./state.js";
 import { renderIdentifyRail } from "./views/identifyrail.js";
 import { textOf, stripTags, all, one, exists } from "./testhtml.js";
@@ -208,7 +208,7 @@ test("every route section names a REAL settings flag, and none names a sentinel"
   assert.deepEqual(keys, {
     "rail-patterns": "useBuiltInPatterns",
     "rail-heuristic": "useHeuristicDiscovery",
-    "rail-local": "useLocalAI",
+    "rail-local": "useLocalLLM",
   });
   resetState();
   const stored = getState().settings;
@@ -231,7 +231,7 @@ test("the presets are the three engine levels, and Custom is not among them", ()
   assert.deepEqual(PRESETS.map(([, label]) => label), ["Soft", "Standard", "Thorough"]);
 });
 
-// --- The AI gate tooltip -------------------------------------------------
+// --- The local-model gate tooltip ----------------------------------------
 
 test("the gate tooltip tells the two reasons apart", () => {
   // Ollama missing and the toggle being off are different problems with
@@ -245,8 +245,8 @@ test("the gate tooltip tells the two reasons apart", () => {
   assert.match(moved, /127\.0\.0\.1:11500/);
   assert.equal(llmDisabledTooltip(0), llmDisabledTooltip(11434), "an unset port falls back to the default");
 
-  const off = llmGateTooltip({ ollama: { available: true }, settings: { useLocalAI: false } });
-  assert.equal(off, CONFIGURE.aiOffTooltip);
+  const off = llmGateTooltip({ ollama: { available: true }, settings: { useLocalLLM: false } });
+  assert.equal(off, CONFIGURE.llmOffTooltip);
   assert.notEqual(off, missing);
 });
 
@@ -299,7 +299,7 @@ test("the confidence read-out is a full sentence at every slider stop", () => {
 function railHTML(patch = {}) {
   resetState();
   if (patch.ollama) setState({ ollama: patch.ollama });
-  if (patch.useLocalAI) setUseLocalAI(true);
+  if (patch.useLocalLLM) setUseLocalLLM(true);
   return railBody(getState());
 }
 
@@ -621,7 +621,9 @@ test("the Load profile section renders AFTER the routes", () => {
   // Ordering by first appearance: the profile title must come after the last
   // route's title, so the section sits at the foot of the rail.
   assert.ok(html.includes(RAIL.profileTitle), "the Load profile section renders");
-  assert.ok(html.indexOf(RAIL.profileTitle) > html.indexOf(RAIL.tabLocalAI),
+  const lastRoute = RAIL_SECTIONS[RAIL_SECTIONS.length - 1][1];
+  assert.ok(html.includes(lastRoute), "the last route renders");
+  assert.ok(html.indexOf(RAIL.profileTitle) > html.indexOf(lastRoute),
     "Load profile is below the last route");
 });
 
@@ -746,27 +748,27 @@ test("the active count still counts a switch-less category as on", () => {
 test("the Local LLM fields are disabled while the route is off", () => {
   const off = railHTML({ ollama: { available: true, models: ["m"], detail: "" } });
   assert.ok("disabled" in one(off, "#ollama-model").attrs);
-  const on = railHTML({ ollama: { available: true, models: ["m"], detail: "" }, useLocalAI: true });
+  const on = railHTML({ ollama: { available: true, models: ["m"], detail: "" }, useLocalLLM: true });
   assert.ok(!("disabled" in one(on, "#ollama-model").attrs));
   // The port is never gated: it is how a user FIXES a connection, so locking
   // it would lock them out of fixing the thing the gate complains about.
   assert.ok(!("disabled" in one(off, "#ollama-port").attrs));
 });
 
-// --- The Local-AI scan scope ---------------------------------------------
+// --- The local-model scan scope ------------------------------------------
 
-/** localAIHTML renders the Local LLM discovery section with documents and an optional
+/** localLLMHTML renders the Local LLM discovery section with documents and an optional
  *  scope, the route switched on and Ollama present so the fields are live. */
-function localAIHTML({ documents = [], scope = null, useLocalAI = true } = {}) {
+function localLLMHTML({ documents = [], scope = null, useLocalLLM = true } = {}) {
   resetState();
   setState({ ollama: { available: true, models: ["m"], detail: "" }, documents });
-  if (useLocalAI) setUseLocalAI(true);
-  if (scope) setAIScope(scope);
+  if (useLocalLLM) setUseLocalLLM(true);
+  if (scope) setLLMScope(scope);
   return sectionById(railBody(getState()), "rail-local");
 }
 
 test("the scan-scope picker defaults to all documents with no page controls", () => {
-  const html = localAIHTML({
+  const html = localLLMHTML({
     documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
   });
   const select = one(html, "#ai-scope-doc");
@@ -779,7 +781,7 @@ test("the scan-scope picker defaults to all documents with no page controls", ()
 });
 
 test("choosing a multi-unit document reveals the Entire/Specific control", () => {
-  const html = localAIHTML({
+  const html = localLLMHTML({
     documents: [{ name: "a.pdf", unit: "page", pageCount: 6 }],
     scope: { docName: "a.pdf", mode: "all" },
   });
@@ -793,7 +795,7 @@ test("choosing a multi-unit document reveals the Entire/Specific control", () =>
 });
 
 test("Specific pages mode reveals a page field and a live read-out", () => {
-  const html = localAIHTML({
+  const html = localLLMHTML({
     documents: [{ name: "a.pdf", unit: "page", pageCount: 20 }],
     scope: { docName: "a.pdf", mode: "pages", pages: "12-15,18" },
   });
@@ -809,7 +811,7 @@ test("Specific pages mode reveals a page field and a live read-out", () => {
 });
 
 test("a malformed page spec shows an inline error", () => {
-  const html = localAIHTML({
+  const html = localLLMHTML({
     documents: [{ name: "a.pdf", unit: "page", pageCount: 20 }],
     scope: { docName: "a.pdf", mode: "pages", pages: "12,oops" },
   });
@@ -820,7 +822,7 @@ test("a malformed page spec shows an inline error", () => {
 });
 
 test("a single-unit document offers no page controls at all", () => {
-  const html = localAIHTML({
+  const html = localLLMHTML({
     documents: [{ name: "note.txt", unit: "line", pageCount: 1 }],
     scope: { docName: "note.txt", mode: "all" },
   });
@@ -862,8 +864,11 @@ test("a category only a detection route or manual entry can produce says so", ()
   // second element, and this turns that comment into something enforced.
   for (const category of ["brand_names", "other_names"]) {
     const [, description] = CATEGORY_LABELS[category];
-    assert.match(description, /AI|add(ed)? by you/i,
-      `${category} cannot be found offline, so its description must say where it comes from`);
+    assert.match(description, /Local LLM discovery/,
+      `${category} cannot be found offline, so its description must NAME the route that ` +
+      `can find it, beside the fact that you can type it yourself`);
+    assert.match(description, /add(ed)? by you/i,
+      `${category} gates manually typed values too, so its description must say so`);
   }
 });
 
@@ -998,7 +1003,7 @@ test("the Built-in patterns switch writes its own flag and no other", async () =
   const s = getState().settings;
   assert.equal(s.useBuiltInPatterns, false, "its own flag moved");
   assert.equal(s.useHeuristicDiscovery, true, "the heuristic route is untouched");
-  assert.equal(s.useLocalAI, false, "and the local route is untouched");
+  assert.equal(s.useLocalLLM, false, "and the local route is untouched");
   // And the signal readings survive it: signal-based discovery matches its own
   // evidence, so the pattern pass being off must not silently clear them.
   for (const source of SIGNAL_SOURCES) {
@@ -1015,7 +1020,7 @@ test("the Heuristic discovery switch writes its own flag and no other", async ()
   const s = getState().settings;
   assert.equal(s.useHeuristicDiscovery, false, "its own flag moved");
   assert.equal(s.useBuiltInPatterns, true, "the pattern route is untouched");
-  assert.equal(s.useLocalAI, false, "and the local route is untouched");
+  assert.equal(s.useLocalLLM, false, "and the local route is untouched");
 });
 
 test("the Local LLM discovery switch writes its own flag and no other", async () => {
@@ -1023,7 +1028,7 @@ test("the Local LLM discovery switch writes its own flag and no other", async ()
   setState({ ollama: { available: true, models: ["m"], detail: "" } });
   await flipRoute(railRoot(), "rail-local", true);
   const s = getState().settings;
-  assert.equal(s.useLocalAI, true, "its own flag moved");
+  assert.equal(s.useLocalLLM, true, "its own flag moved");
   assert.equal(s.useBuiltInPatterns, true, "the pattern route is untouched");
   assert.equal(s.useHeuristicDiscovery, true, "and the heuristic route is untouched");
 });
@@ -1036,7 +1041,7 @@ test("the Local LLM discovery switch writes its own flag and no other", async ()
 
 test("the rail says nothing about a local model scan that has not happened", () => {
   resetState();
-  setUseLocalAI(true);
+  setUseLocalLLM(true);
   const html = railBody(getState());
   assert.ok(!exists(html, "#last-ai-scan"),
     "a read-out with nothing to report only teaches the reader to ignore it");
@@ -1044,8 +1049,8 @@ test("the rail says nothing about a local model scan that has not happened", () 
 
 test("the rail reports the request count and the measured seconds of the last scan", () => {
   resetState();
-  setUseLocalAI(true);
-  setState({ lastAIScan: { requests: 15, silent: 0, secondsPerRequest: 7.2 } });
+  setUseLocalLLM(true);
+  setState({ lastLLMScan: { requests: 15, silent: 0, secondsPerRequest: 7.2 } });
   const readout = one(railBody(getState()), "#last-ai-scan");
   assert.ok(readout, "the last scan must be reported somewhere the user will read it");
   const text = stripTags(readout.inner);
@@ -1058,14 +1063,14 @@ test("the rail reports the request count and the measured seconds of the last sc
 
 test("the rail names total silence, and mentions partial silence without alarm", () => {
   resetState();
-  setUseLocalAI(true);
+  setUseLocalLLM(true);
 
-  setState({ lastAIScan: { requests: 15, silent: 15, secondsPerRequest: 7 } });
+  setState({ lastLLMScan: { requests: 15, silent: 15, secondsPerRequest: 7 } });
   const allSilent = stripTags(one(railBody(getState()), "#last-ai-scan").inner);
   assert.match(allSilent, /nothing for any of them/,
     `every request answering nothing is the case that reads as a clean document: ${allSilent}`);
 
-  setState({ lastAIScan: { requests: 15, silent: 4, secondsPerRequest: 7 } });
+  setState({ lastLLMScan: { requests: 15, silent: 4, secondsPerRequest: 7 } });
   const partial = stripTags(one(railBody(getState()), "#last-ai-scan").inner);
   assert.match(partial, /4 returned nothing/,
     `a partly silent scan says how many, plainly: ${partial}`);
@@ -1078,9 +1083,9 @@ test("the rail reports cut-off requests beside the silent ones, never folded int
   // found nothing, a cut-off one found more than it could finish listing. Only
   // the second means values may be missing from pages that DID return some.
   resetState();
-  setUseLocalAI(true);
+  setUseLocalLLM(true);
 
-  setState({ lastAIScan: { requests: 10, silent: 0, truncated: 2, secondsPerRequest: 7 } });
+  setState({ lastLLMScan: { requests: 10, silent: 0, truncated: 2, secondsPerRequest: 7 } });
   const cut = stripTags(one(railBody(getState()), "#last-ai-scan").inner);
   assert.match(cut, /2 ran out of room/,
     `a cut-off reply must be named as such: ${cut}`);
@@ -1089,12 +1094,12 @@ test("the rail reports cut-off requests beside the silent ones, never folded int
   assert.ok(!/returned nothing/.test(cut),
     `a request that ran out of room is not a silent one: ${cut}`);
 
-  setState({ lastAIScan: { requests: 10, silent: 3, truncated: 2, secondsPerRequest: 7 } });
+  setState({ lastLLMScan: { requests: 10, silent: 3, truncated: 2, secondsPerRequest: 7 } });
   const both = stripTags(one(railBody(getState()), "#last-ai-scan").inner);
   assert.match(both, /3 returned nothing/, `both facts are reported: ${both}`);
   assert.match(both, /2 ran out of room/, `both facts are reported: ${both}`);
 
-  setState({ lastAIScan: { requests: 10, silent: 0, truncated: 0, secondsPerRequest: 7 } });
+  setState({ lastLLMScan: { requests: 10, silent: 0, truncated: 0, secondsPerRequest: 7 } });
   const clean = stripTags(one(railBody(getState()), "#last-ai-scan").inner);
   assert.ok(!/ran out of room/.test(clean),
     `a scan where nothing was cut off must not mention it: ${clean}`);
@@ -1142,7 +1147,7 @@ test("the detail level is a select of exactly the two levels Go validates", () =
   const rail = railBody(getState());
   const select = one(rail, "#ai-detail-level");
   assert.ok(select, "the dial must be in the Local LLM discovery section, or the trade-off has no control");
-  assert.deepEqual(all(select.outer, "option").map((o) => o.attrs.value), AI_DETAIL_LEVELS,
+  assert.deepEqual(all(select.outer, "option").map((o) => o.attrs.value), LLM_DETAIL_LEVELS,
     "the rail must offer the levels the engine sizes and no third one it would refuse");
   assert.ok("disabled" in select.attrs,
     "with the route off it is gated, exactly as the model field is");
@@ -1158,10 +1163,10 @@ test("exactly one detail-level option is marked selected, always", () => {
   assert.deepEqual(marked(railBody(getState())), ["thorough"],
     "a fresh session shows the default it will actually run");
 
-  setState({ settings: { ...getState().settings, aiDetailLevel: "faster" } });
+  setState({ settings: { ...getState().settings, llmDetailLevel: "faster" } });
   assert.deepEqual(marked(railBody(getState())), ["faster"], "a stored choice is what is drawn");
 
-  setState({ settings: { ...getState().settings, aiDetailLevel: "exhaustive" } });
+  setState({ settings: { ...getState().settings, llmDetailLevel: "exhaustive" } });
   assert.deepEqual(marked(railBody(getState())), ["thorough"],
     "a level the rail does not offer falls back to thorough, never to nothing marked");
 });
@@ -1183,22 +1188,22 @@ test("the detail level explains itself through a tooltip, in outcome terms", () 
 
 test("the detail level reaches the settings payload", () => {
   resetState();
-  setUseLocalAI(true);
+  setUseLocalLLM(true);
   setState({ ollama: { available: true, models: ["m:1b"], detail: "" } });
 
   const root = container();
   root.innerHTML = railBody(getState());
-  assert.equal(settingsPayload(getState(), root).aiDetailLevel, "thorough",
+  assert.equal(settingsPayload(getState(), root).llmDetailLevel, "thorough",
     "the default travels explicitly, so Go stores what the rail is showing");
 
   root.querySelector("#ai-detail-level").value = "faster";
-  assert.equal(settingsPayload(getState(), root).aiDetailLevel, "faster",
+  assert.equal(settingsPayload(getState(), root).llmDetailLevel, "faster",
     "choosing a level must reach Go, or the control is decoration");
 
   // A rail rendered without the Local LLM body contributes no element, and the
   // store's value is what travels: switching tabs must not reset the choice.
-  setState({ settings: { ...getState().settings, aiDetailLevel: "faster" } });
-  assert.equal(settingsPayload(getState(), container()).aiDetailLevel, "faster",
+  setState({ settings: { ...getState().settings, llmDetailLevel: "faster" } });
+  assert.equal(settingsPayload(getState(), container()).llmDetailLevel, "faster",
     "with the control off screen the stored choice is what is sent");
 });
 
@@ -1207,11 +1212,11 @@ test("the request estimate is a read-out beside the dial, never a paragraph", ()
   // even when folded, so a read-out added as a hint turns the structural guard
   // red for a reason that reads as unrelated to this control.
   resetState();
-  setUseLocalAI(true);
+  setUseLocalLLM(true);
   assert.ok(!exists(railBody(getState()), "#ai-request-estimate"),
     "before Go has answered there is no number, and a guess the run can contradict is worse than none");
 
-  setState({ aiRequestEstimate: 12 });
+  setState({ llmRequestEstimate: 12 });
   const html = railBody(getState());
   const readout = one(html, "#ai-request-estimate");
   assert.ok(readout, "the cost of the choice must be visible before the user pays it");
@@ -1248,9 +1253,9 @@ test("the reply-format switch renders off, explained, and gated", () => {
 
 test("the reply-format switch reflects a stored on", () => {
   resetState();
-  setUseLocalAI(true);
+  setUseLocalLLM(true);
   setState({ ollama: { available: true, models: ["m:1b"], detail: "" } });
-  setState({ settings: { ...getState().settings, aiStrictFormat: true } });
+  setState({ settings: { ...getState().settings, llmStrictFormat: true } });
   const box = one(railBody(getState()), "#ai-strict-format");
   assert.ok("checked" in box.attrs, "a stored on must draw a ticked box");
   assert.ok(!("disabled" in box.attrs),
@@ -1262,22 +1267,22 @@ test("the reply-format choice reaches the settings payload", () => {
   // Go reads an absent value as off, so an omitted key would make "on"
   // unsayable.
   resetState();
-  setUseLocalAI(true);
+  setUseLocalLLM(true);
   setState({ ollama: { available: true, models: ["m:1b"], detail: "" } });
 
   const root = container();
   root.innerHTML = railBody(getState());
-  assert.equal(settingsPayload(getState(), root).aiStrictFormat, false,
+  assert.equal(settingsPayload(getState(), root).llmStrictFormat, false,
     "an unticked box sends false, not nothing");
 
   root.querySelector("#ai-strict-format").checked = true;
-  assert.equal(settingsPayload(getState(), root).aiStrictFormat, true,
+  assert.equal(settingsPayload(getState(), root).llmStrictFormat, true,
     "ticking the box must reach Go, or the control is decoration");
 
   // A rail rendered without the Local LLM body contributes no element, and the
   // store's value is what travels: switching tabs must not reset the choice.
-  setState({ settings: { ...getState().settings, aiStrictFormat: true } });
-  assert.equal(settingsPayload(getState(), container()).aiStrictFormat, true,
+  setState({ settings: { ...getState().settings, llmStrictFormat: true } });
+  assert.equal(settingsPayload(getState(), container()).llmStrictFormat, true,
     "with the control off screen the stored choice is what is sent");
 });
 
@@ -1286,8 +1291,8 @@ test("the last scan read-out is a read-out, never an explanatory paragraph", () 
   // even when folded, so a read-out added as a hint turns the structural guard
   // above red for a reason that reads as unrelated.
   resetState();
-  setUseLocalAI(true);
-  setState({ lastAIScan: { requests: 3, silent: 0, secondsPerRequest: 2 } });
+  setUseLocalLLM(true);
+  setState({ lastLLMScan: { requests: 3, silent: 0, secondsPerRequest: 2 } });
   const html = railBody(getState());
   assert.deepEqual(all(html, "p.hint").map((p) => stripTags(p.inner).trim()), [],
     "a live fact is a .rail-readout; p.hint is static prose the panel does not carry");

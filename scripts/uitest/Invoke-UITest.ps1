@@ -399,7 +399,7 @@ function Test-ConfigureRail([CdpSession]$cdp) {
         -Hint 'state.js settings.useHeuristicDiscovery defaults to true: it needs nothing installed.'
     Assert-That -Name 'Local LLM discovery is off by default' -Condition ($r.localOn -eq $false) `
         -Expected 'the rail-local route switch unchecked' -Actual "$($r.localOn)" `
-        -Hint 'state.js settings.useLocalAI defaults to false. Detecting Ollama ENABLES this switch, it never flips it.'
+        -Hint 'state.js settings.useLocalLLM defaults to false. Detecting Ollama ENABLES this switch, it never flips it.'
     Assert-That -Name 'every category checkbox is present' `
         -Condition ($r.categories -ge $script:Fixture.categoryCount) `
         -Expected "at least $($script:Fixture.categoryCount) .cat-toggle checkboxes" -Actual "$($r.categories)" `

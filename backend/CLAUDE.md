@@ -69,7 +69,7 @@ Provenance and precedence are SEPARATE fields, and that is the load-bearing
 decision of the model:
 
 - `DiscoveryMethods` is provenance, a SET drawn from `AllDiscoveryMethods`
-  (`manual`, `signal`, `heuristic`, `local_ai`). Several methods can find the
+  (`manual`, `signal`, `heuristic`, `local_llm`). Several methods can find the
   same thing, and accepting a Suggestion keeps all of them, because two routes
   agreeing is corroboration worth showing rather than a fact to overwrite.
 - The **match class** is precedence, derived from the methods by
@@ -110,8 +110,8 @@ be enforced anywhere else:
   parallel check can disagree with the pipeline and then describe something
   that did not happen.
 - `engine/matchclass.go` — the discovery methods, the match classes
-  (`built_in_pattern`, `user_defined`, `smart_discovered`,
-  `local_ai_discovered`), `MatchClassRank` (lower wins) and
+  (`built_in_pattern`, `user_defined`, `rules_discovered`,
+  `local_llm_discovered`), `MatchClassRank` (lower wins) and
   `MatchClassForMethods`. An unknown or empty class ranks with `user_defined`
   rather than last, so a producer that states none is trusted rather than
   silently demoted: ranking it last turns a forgotten stamp into a missing

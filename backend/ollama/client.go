@@ -226,7 +226,7 @@ func (c *Client) Probe() OllamaStatus {
 		return OllamaStatus{
 			Available: false,
 			Detail: fmt.Sprintf(
-				"Ollama not detected on %s, install it from ollama.com and start it to enable the AI features (the app works fine without it). Technical detail: %v",
+				"Ollama not detected on %s, install it from ollama.com and start it to enable Local LLM discovery (the app works fine without it). Technical detail: %v",
 				c.BaseURL, err),
 		}
 	}
@@ -259,7 +259,7 @@ func (c *Client) Probe() OllamaStatus {
 	detail := fmt.Sprintf("Ollama detected on %s with %d model(s).", c.BaseURL, len(names))
 	if len(names) == 0 {
 		detail = fmt.Sprintf(
-			"Ollama detected on %s but no models are installed, run 'ollama pull %s' to enable the AI features.",
+			"Ollama detected on %s but no models are installed, run 'ollama pull %s' to enable Local LLM discovery.",
 			c.BaseURL, DefaultModel)
 	}
 	return OllamaStatus{Available: true, Models: names, Detail: detail}
@@ -1022,7 +1022,7 @@ func suggestionFor(category, name string) (engine.Suggestion, bool) {
 		MainText:   name,
 		Count:      1,
 		Confidence: engine.ConfidenceLLMDefault,
-	}.WithMethod(engine.MethodLocalAI), true
+	}.WithMethod(engine.MethodLocalLLM), true
 }
 
 // salvageSuggestionJSON reads everything a CUT-OFF reply managed to finish

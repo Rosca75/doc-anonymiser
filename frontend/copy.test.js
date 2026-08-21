@@ -247,9 +247,9 @@ test("no user-facing copy names a retired detection route", () => {
   // pattern matching, which acts without review, plus two discovery methods,
   // which do not), and "Local AI" said nothing about what runs. The rail names
   // the mechanism now: Built-in patterns, Heuristic discovery, Local LLM
-  // discovery. The engine identifiers PhaseSmart, smart_discovered and local_ai
-  // keep their spelling, which is why this guard reads the LABELS rather than
-  // grepping the source.
+  // discovery. The engine identifiers PhaseRules, rules_discovered and local_llm
+  // are separate from the labels, which is why this guard reads the LABELS rather
+  // than grepping the source.
   const retired = ["Smart detection", "Smart Detection", "Local AI"];
   const hits = [];
   for (const [name, exported] of Object.entries(COPY)) {

@@ -42,20 +42,20 @@ type Settings struct {
 	OllamaPort int                      `json:"ollamaPort"` // loopback port only
 	Model      string                   `json:"model"`      // Ollama model name
 	// ContextSize is the Ollama num_ctx option.
-	// Default 8192; 0 keeps the model default. Higher values let the AI
+	// Default 8192; 0 keeps the model default. Higher values let the model
 	// read longer documents at once but use more memory.
 	ContextSize int `json:"contextSize"`
 	// Country scopes the country-specific built-in pattern categories. It is an
 	// engine-owned concept (engine/country.go), mirrored in the rail.
 	Country string `json:"country"`
-	// UseLocalAI is the Local LLM discovery ROUTE switch: OFF by default, and
+	// UseLocalLLM is the Local LLM discovery ROUTE switch: OFF by default, and
 	// gated on the live Ollama availability as well, so a stale true can never
 	// start a model that is not there.
 	//
 	// It is a setting rather than a per-call argument so it survives in the
 	// session file and so Go, not the frontend, decides whether a route runs.
-	UseLocalAI bool `json:"useLocalAI"`
-	// AIStrictFormat asks the local model's discovery call for a schema-constrained
+	UseLocalLLM bool `json:"useLocalLLM"`
+	// LLMStrictFormat asks the local model's discovery call for a schema-constrained
 	// reply instead of loose JSON mode: it makes the model answer for every
 	// category rather than only the ones it thought of.
 	//
@@ -68,8 +68,8 @@ type Settings struct {
 	// A POINTER for the reason UseBuiltInPatterns is one: "absent" and "the user
 	// switched it off" must stay distinguishable across a session file. Here nil
 	// reads as off, which is the default, so nothing is lost by silence.
-	AIStrictFormat *bool `json:"aiStrictFormat"`
-	// AIDetailLevel is how much text one local model request carries
+	LLMStrictFormat *bool `json:"llmStrictFormat"`
+	// LLMDetailLevel is how much text one local model request carries
 	// (engine.DetailThorough or engine.DetailFaster).
 	//
 	// It is a setting rather than a constant because the measurement has no
@@ -81,7 +81,7 @@ type Settings struct {
 	//
 	// An empty string is read as thorough, so a payload that says nothing lands
 	// on the safe end: a level nobody chose must not be the one that finds less.
-	AIDetailLevel string `json:"aiDetailLevel"`
+	LLMDetailLevel string `json:"llmDetailLevel"`
 	// UseBuiltInPatterns and UseHeuristicDiscovery are two of the offline
 	// three methods, controlled independently.
 	//
@@ -207,7 +207,7 @@ type App struct {
 	// that must not be able to happen separately, and the same-format export
 	// builds its own allowlist from a.lastReq, so a removal carried only in the
 	// request would be honoured by the pipeline and forgotten by the export.
-	// Settings.UseLocalAI is the precedent:  moved that decision into Go for
+	// Settings.UseLocalLLM is the precedent:  moved that decision into Go for
 	// exactly this reason.
 	//
 	// It is deliberately NOT the allowlist, in state or in the session file: a
@@ -316,7 +316,7 @@ func defaultSettings() Settings {
 		// Thorough is the default because it is the end that FINDS things. The
 		// faster level trades recall for time, and a trade nobody asked for must
 		// not be the one a fresh session makes on their behalf.
-		AIDetailLevel: engine.DetailThorough,
+		LLMDetailLevel: engine.DetailThorough,
 		// The stricter defaults, matching the frontend store: heuristic discovery
 		// over-detecting is the failure mode that matters.
 		HeuristicDiscovery: engine.DefaultHeuristicDiscoveryOptions(),
@@ -422,10 +422,10 @@ func (a *App) Startup(ctx context.Context) {
 		// like dialog imports, so an event carries the result instead.
 		runtime.EventsEmit(a.ctx, "documents:changed", result)
 	})
-	a.warmLocalAI(ctx)
+	a.warmLocalLLM(ctx)
 }
 
-// warmLocalAI loads the local model into Ollama's memory ahead of the first
+// warmLocalLLM loads the local model into Ollama's memory ahead of the first
 // detection run, so the model load is not sitting inside a wait the user is
 // watching.
 //
@@ -447,9 +447,9 @@ func (a *App) Startup(ctx context.Context) {
 // would report a problem the user cannot act on, about a feature they may not
 // have asked for. A warm-up that did not happen costs latency, never
 // correctness.
-func (a *App) warmLocalAI(ctx context.Context) {
+func (a *App) warmLocalLLM(ctx context.Context) {
 	a.mu.Lock()
-	on := a.settings.UseLocalAI
+	on := a.settings.UseLocalLLM
 	llm := a.llm
 	a.mu.Unlock()
 	if !on || llm == nil {
@@ -779,10 +779,10 @@ func (a *App) ApplySettings(s Settings) (OllamaState, error) {
 	// not. An EMPTY level is accepted, because absence is not a mistake; it is
 	// what a session file written before the setting existed carries, and it has
 	// a documented meaning.
-	if !engine.ValidDetailLevel(s.AIDetailLevel) {
+	if !engine.ValidDetailLevel(s.LLMDetailLevel) {
 		return OllamaState{}, fmt.Errorf(
 			"unknown local model detail level %q, expected %s or %s",
-			s.AIDetailLevel, engine.DetailThorough, engine.DetailFaster)
+			s.LLMDetailLevel, engine.DetailThorough, engine.DetailFaster)
 	}
 	if s.MinConfidence < 0 || s.MinConfidence > 1 {
 		return OllamaState{}, fmt.Errorf(
@@ -820,7 +820,7 @@ func (a *App) ApplySettings(s Settings) (OllamaState, error) {
 	a.mu.Lock()
 	// Whether Local LLM discovery was already on decides whether this call is the
 	// moment to pre-load the model: see below.
-	wasOn := a.settings.UseLocalAI
+	wasOn := a.settings.UseLocalLLM
 	// Filled out to the complete set of known sources and derivations, so a payload
 	// that omitted one lands on its DEFAULT rather than on Go's zero value. Reading
 	// an absent key as "off" would silently disable a reading the user never
@@ -829,8 +829,8 @@ func (a *App) ApplySettings(s Settings) (OllamaState, error) {
 	// An absent level is filled out to the default it already means, for the same
 	// reason: what GetSettings answers is what the rail's dropdown marks as
 	// selected, and an empty string marks nothing.
-	if s.AIDetailLevel == "" {
-		s.AIDetailLevel = engine.DetailThorough
+	if s.LLMDetailLevel == "" {
+		s.LLMDetailLevel = engine.DetailThorough
 	}
 	a.settings = s
 	a.llm = ollama.New(fmt.Sprintf("http://127.0.0.1:%d", s.OllamaPort))
@@ -840,7 +840,7 @@ func (a *App) ApplySettings(s Settings) (OllamaState, error) {
 	a.llm.ContextSize = s.ContextSize
 	// nil reads as off, which is the shipped default: a payload that says nothing
 	// about the reply format gets the fast one rather than the slow one.
-	a.llm.StrictFormat = s.AIStrictFormat != nil && *s.AIStrictFormat
+	a.llm.StrictFormat = s.LLMStrictFormat != nil && *s.LLMStrictFormat
 	a.mu.Unlock()
 
 	// Switching the route ON is the moment to pre-load the model, and the only
@@ -849,8 +849,8 @@ func (a *App) ApplySettings(s Settings) (OllamaState, error) {
 	// arrived with the route already on. Warming on the TRANSITION rather than
 	// on every settings write is what keeps an unrelated change (a country, a
 	// confidence slider) from re-posting a load request each time.
-	if !wasOn && s.UseLocalAI {
-		a.warmLocalAI(context.Background())
+	if !wasOn && s.UseLocalLLM {
+		a.warmLocalLLM(context.Background())
 	}
 	// The probe is also where the effective model is settled: the port may have
 	// changed, so the models this call can reach are not necessarily the ones the

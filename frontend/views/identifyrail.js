@@ -16,7 +16,7 @@
 //                    context, frequency and deterministic gazetteers, producing
 //                    Suggestions. It owns the name categories and its own
 //                    strictness block.
-//   Local LLM discovery OFF by default (useLocalAI). The Ollama port (host
+//   Local LLM discovery OFF by default (useLocalLLM). The Ollama port (host
 //                    locked to loopback, CLAUDE.md §8), the model, the detail
 //                    level and the context size. Detecting Ollama enables the
 //                    switch; it never flips it.
@@ -37,26 +37,26 @@
 // it is a list the user curates rather than a setting.
 //
 // Every model-dependent control everywhere in the application gates on
-// llmEnabled(state) = useLocalAI AND ollama.available, so the deterministic
+// llmEnabled(state) = useLocalLLM AND ollama.available, so the deterministic
 // pipeline stays fully usable with Ollama absent.
 
 import {
   applySettings, listOllamaModels, probeOllama, loadSession, saveSession,
-  valuePlaceholders, listRemovedValues, estimateAIRequests,
+  valuePlaceholders, listRemovedValues, estimateLLMRequests,
 } from "../api.js";
 import {
   getState, setState,
-  applyPreset, toggleCategory, selectionPresetName, setUseLocalAI,
+  applyPreset, toggleCategory, selectionPresetName, setUseLocalLLM,
   setUseBuiltInPatterns, setUseHeuristicDiscovery,
   SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
   signalSourceOn, signalDerivationOn, enabledSignalDerivations,
   setSignalSource, setSignalDerivation,
   setCategoryGroup, setMinConfidence, setDocumentCountry,
   setHeuristicDiscoveryOptions, heuristicDiscoveryOptions,
-  setAIScope,
-  aiScopeArg,
+  setLLMScope,
+  llmScopeArg,
   adoptProbe,
-  AI_DETAIL_LEVELS,
+  LLM_DETAIL_LEVELS,
   parsePageSpec,
   buildRunRequest, setValueTables,
   ALL_CATEGORIES,
@@ -87,13 +87,13 @@ export function llmDisabledTooltip(port) {
 }
 
 /**
- * llmGateTooltip(s) picks the right explanation for a disabled AI control:
+ * llmGateTooltip(s) picks the right explanation for a disabled model control:
  * Ollama missing vs the route being switched off. Two different problems with
  * two different fixes, so they must not share one message.
  */
 export function llmGateTooltip(s) {
   if (!s.ollama?.available) return llmDisabledTooltip(s.settings?.ollamaPort);
-  return CONFIGURE.aiOffTooltip;
+  return CONFIGURE.llmOffTooltip;
 }
 
 // RAIL_SECTIONS is the rail's shape: [id, title, settings key that switches
@@ -105,7 +105,7 @@ export function llmGateTooltip(s) {
 export const RAIL_SECTIONS = [
   ["rail-patterns", RAIL.tabPatterns, "useBuiltInPatterns"],
   ["rail-heuristic", RAIL.tabHeuristic, "useHeuristicDiscovery"],
-  ["rail-local", RAIL.tabLocalLLM, "useLocalAI"],
+  ["rail-local", RAIL.tabLocalLLM, "useLocalLLM"],
 ];
 
 // SECTION_HELP is the explanation on each section header, keyed by section id.
@@ -232,7 +232,7 @@ export function renderIdentifyRail(container) {
   wireScope(container);
   wireSmart(container);
   wireSignalSources(container);
-  wireLocalAI(container);
+  wireLocalLLM(container);
   wireProfile(container);
   wireHelpTooltips(container);
   wireGroups(container, (id) => {
@@ -318,7 +318,7 @@ function profileSection(s) {
  * routeSwitch(s, id, key, on) is the on/off control in a section header.
  */
 function routeSwitch(s, id, key, on) {
-  const title = key === "useLocalAI" && !s.ollama?.available
+  const title = key === "useLocalLLM" && !s.ollama?.available
     ? llmDisabledTooltip(s.settings.ollamaPort) : "";
   return `<label class="route-switch"${title ? ` title="${escapeHTML(title)}"` : ""}>` +
     `<input type="checkbox" class="route-toggle" data-route="${escapeHTML(id)}"` +
@@ -333,7 +333,7 @@ function routeSwitch(s, id, key, on) {
  *  nothing under it. */
 function sectionBody(s, id) {
   switch (id) {
-    case "rail-local": return localAISection(s);
+    case "rail-local": return localLLMSection(s);
     case "rail-heuristic": return heuristicSection(s);
     default: return patternsSection(s);
   }
@@ -353,7 +353,7 @@ function wireSectionSwitches(container) {
       // changes only this" is exactly the property a reader of the code cannot
       // verify by reading it.
       const route = ev.target.dataset.route;
-      if (route === "rail-local") setUseLocalAI(on);
+      if (route === "rail-local") setUseLocalLLM(on);
       else if (route === "rail-patterns") setUseBuiltInPatterns(on);
       else if (route === "rail-heuristic") setUseHeuristicDiscovery(on);
       // Turning a route on opens its section: the settings it reads are the
@@ -669,7 +669,7 @@ function confidenceControl(s) {
  * source-tiered rule ("values that only the local model suggested are skipped"),
  * which the engine does not implement: what the setting actually is is a FLOOR
  * on the confidence score every detection carries. The thresholds below mirror
- * where the engine's own scores sit (engine/pii.go: local-AI proposals score
+ * where the engine's own scores sit (engine/pii.go: local-model proposals score
  * 0.8, values the user listed 0.95, pattern matches 1.0), and the sentences name
  * the effect of the floor rather than inventing a rule about sources.
  *
@@ -896,7 +896,7 @@ function wireSmart(container) {
  * exists to avoid.
  */
 function scopeBlock(s, gated) {
-  const scope = s.aiScope ?? { docName: "", mode: "all", pages: "" };
+  const scope = s.llmScope ?? { docName: "", mode: "all", pages: "" };
   const docs = s.documents ?? [];
   const options = [
     `<option value=""${scope.docName ? "" : " selected"}>` +
@@ -971,7 +971,7 @@ function scopeBlock(s, gated) {
  * report is a line that only ever teaches the reader to ignore it.
  */
 function lastScanReadout(s) {
-  const scan = s.lastAIScan;
+  const scan = s.lastLLMScan;
   if (!scan || !(scan.requests > 0)) return "";
   return `<p class="rail-readout" id="last-ai-scan">` +
     `${escapeHTML(RAIL.lastScan(scan.requests, scan.secondsPerRequest, scan.silent, scan.truncated))}</p>`;
@@ -1002,7 +1002,7 @@ function modelOptions(s) {
 
 /**
  * detailLevelOptions(s) is the dropdown's two options, built from the mirrored
- * AI_DETAIL_LEVELS so the rail cannot offer a level Go would refuse.
+ * LLM_DETAIL_LEVELS so the rail cannot offer a level Go would refuse.
  *
  * Exactly one option is marked selected, always: an unset or unrecognised stored
  * level falls back to the first, which is thorough. Leaving nothing marked lets
@@ -1010,9 +1010,9 @@ function modelOptions(s) {
  * is a choice made by option ordering.
  */
 function detailLevelOptions(s) {
-  const current = AI_DETAIL_LEVELS.includes(s.settings.aiDetailLevel)
-    ? s.settings.aiDetailLevel : AI_DETAIL_LEVELS[0];
-  return AI_DETAIL_LEVELS.map((level) =>
+  const current = LLM_DETAIL_LEVELS.includes(s.settings.llmDetailLevel)
+    ? s.settings.llmDetailLevel : LLM_DETAIL_LEVELS[0];
+  return LLM_DETAIL_LEVELS.map((level) =>
     `<option value="${escapeHTML(level)}"${level === current ? " selected" : ""}>` +
     `${escapeHTML(RAIL.detailLevelOptions[level] ?? level)}</option>`).join("");
 }
@@ -1028,16 +1028,16 @@ function detailLevelOptions(s) {
  * guessing while it waits is a number the run can contradict.
  */
 function scanEstimateReadout(s) {
-  const requests = s.aiRequestEstimate;
+  const requests = s.llmRequestEstimate;
   if (!(requests > 0)) return "";
   return `<div class="rail-status">` +
     `<span class="hint" id="ai-request-estimate">${escapeHTML(RAIL.scanEstimate(requests))}</span>` +
     `</div>`;
 }
 
-function localAISection(s) {
+function localLLMSection(s) {
   const ollamaOK = !!s.ollama?.available;
-  const aiOn = !!s.settings.useLocalAI;
+  const aiOn = !!s.settings.useLocalLLM;
   // The model and the context size are gated, the PORT and Re-probe are not:
   // those two are how a user CONNECTS, so gating them would lock someone out of
   // fixing the very connection the gate is complaining about.
@@ -1051,7 +1051,7 @@ function localAISection(s) {
   return `<div class="rail-block">` +
     `<div class="rail-label-row">` +
     `<span class="rail-field-label">${escapeHTML(RAIL.tabLocalLLM)}</span>` +
-    helpTooltip(CONFIGURE.useAIHelp, { label: RAIL.tabLocalLLM }) +
+    helpTooltip(CONFIGURE.useLLMHelp, { label: RAIL.tabLocalLLM }) +
     `</div>` +
     `<div class="rail-status">` +
     `<span class="state-tag${ollamaOK ? "" : " bad"}" title="${escapeHTML(s.ollama?.detail ?? "")}">` +
@@ -1089,7 +1089,7 @@ function localAISection(s) {
     // Off by default, which is the fast end of a trade-off with no single winner.
     `<div class="rail-toggle">` +
     `<label class="cat-row" for="ai-strict-format">` +
-    `<input type="checkbox" id="ai-strict-format"${s.settings.aiStrictFormat ? " checked" : ""}${gated}/>` +
+    `<input type="checkbox" id="ai-strict-format"${s.settings.llmStrictFormat ? " checked" : ""}${gated}/>` +
     `<span class="cat-label">${escapeHTML(RAIL.strictFormat)}</span>` +
     `</label>` +
     helpTooltip(CONFIGURE.strictFormatHelp, { label: RAIL.strictFormat }) +
@@ -1118,7 +1118,7 @@ function localAISection(s) {
 let lastEstimateKey = null;
 
 /**
- * refreshAIEstimate() asks Go what the current scope and detail level would
+ * refreshLLMEstimate() asks Go what the current scope and detail level would
  * cost, and stores the answer for the read-out.
  *
  * It is fired from the rail's wiring rather than from a list of the changes that
@@ -1131,29 +1131,29 @@ let lastEstimateKey = null;
  * control that works without it, and the run itself reports anything genuinely
  * wrong with the scope.
  */
-async function refreshAIEstimate() {
+async function refreshLLMEstimate() {
   const s = getState();
   const names = s.documents.map((d) => d.name);
-  const scope = aiScopeArg(s);
-  const key = JSON.stringify([names, scope, s.settings.aiDetailLevel]);
+  const scope = llmScopeArg(s);
+  const key = JSON.stringify([names, scope, s.settings.llmDetailLevel]);
   if (key === lastEstimateKey) return;
   lastEstimateKey = key;
   if (names.length === 0) {
-    if (getState().aiRequestEstimate !== 0) setState({ aiRequestEstimate: 0 });
+    if (getState().llmRequestEstimate !== 0) setState({ llmRequestEstimate: 0 });
     return;
   }
   try {
-    const requests = await estimateAIRequests(names, scope);
-    if (getState().aiRequestEstimate !== requests) setState({ aiRequestEstimate: requests });
+    const requests = await estimateLLMRequests(names, scope);
+    if (getState().llmRequestEstimate !== requests) setState({ llmRequestEstimate: requests });
   } catch {
     // No bridge, or nothing to estimate: the read-out simply stays away.
     lastEstimateKey = null;
-    if (getState().aiRequestEstimate !== 0) setState({ aiRequestEstimate: 0 });
+    if (getState().llmRequestEstimate !== 0) setState({ llmRequestEstimate: 0 });
   }
 }
 
-function wireLocalAI(container) {
-  refreshAIEstimate();
+function wireLocalLLM(container) {
+  refreshLLMEstimate();
   for (const id of ["#ollama-port", "#ollama-model", "#context-size", "#ai-strict-format",
     "#ai-detail-level"]) {
     container.querySelector(id)?.addEventListener("change", () => pushSettings(container));
@@ -1163,16 +1163,16 @@ function wireLocalAI(container) {
     adoptProbe(await probeOllama());
   });
   // The scan-scope controls write straight to state (no Go round-trip: scope is
-  // a per-run choice, not a saved setting). setAIScope re-renders the rail, so
+  // a per-run choice, not a saved setting). setLLMScope re-renders the rail, so
   // switching to a multi-unit document reveals the mode control, and choosing
   // "Specific pages" reveals the page field. Switching document resets the scope
   // to the whole document.
   container.querySelector("#ai-scope-doc")?.addEventListener("change", (ev) => {
-    setAIScope({ docName: ev.target.value, mode: "all", pages: "" });
+    setLLMScope({ docName: ev.target.value, mode: "all", pages: "" });
   });
   for (const radio of container.querySelectorAll('input[name="ai-scope-mode"]')) {
     radio.addEventListener("change", (ev) => {
-      if (ev.target.checked) setAIScope({ mode: ev.target.value });
+      if (ev.target.checked) setLLMScope({ mode: ev.target.value });
     });
   }
   const pages = container.querySelector("#ai-pages");
@@ -1181,7 +1181,7 @@ function wireLocalAI(container) {
     // without a full repaint that would steal focus from the field. A repaint
     // still happens on "change" (blur) so the stored spec and the rest of the
     // rail stay in step.
-    const doc = getState().documents.find((d) => d.name === getState().aiScope.docName);
+    const doc = getState().documents.find((d) => d.name === getState().llmScope.docName);
     const max = doc ? Math.max(1, doc.pageCount || 1) : 0;
     const unit = RAIL.scopeUnitWord(doc?.unit);
     const refresh = () => {
@@ -1200,7 +1200,7 @@ function wireLocalAI(container) {
       }
     };
     pages.addEventListener("input", refresh);
-    pages.addEventListener("change", () => setAIScope({ pages: pages.value }));
+    pages.addEventListener("change", () => setLLMScope({ pages: pages.value }));
   }
 }
 
@@ -1270,16 +1270,16 @@ export function settingsPayload(s, container) {
     ollamaPort: port ? (parseInt(port.value, 10) || 0) : s.settings.ollamaPort,
     model: model?.value || s.settings.model,
     contextSize: ctxSize ? (parseInt(ctxSize.value, 10) || 0) : (s.settings.contextSize ?? 8192),
-    useLocalAI: !!s.settings.useLocalAI,
+    useLocalLLM: !!s.settings.useLocalLLM,
     // The reply format the local model's discovery call asks for. Sent EXPLICITLY as
     // a boolean, never left out: Go reads an absent value as off, so an omitted
     // key and a cleared checkbox would be the same thing on the wire and there
     // would be no way to say "on".
-    aiStrictFormat: strictFormat ? strictFormat.checked : !!s.settings.aiStrictFormat,
+    llmStrictFormat: strictFormat ? strictFormat.checked : !!s.settings.llmStrictFormat,
     // How much text one local model request carries. Read from the element when the
     // tab is on screen and from the store otherwise, exactly as the model is, so
     // switching tabs never resets it.
-    aiDetailLevel: detailLevel?.value || s.settings.aiDetailLevel || AI_DETAIL_LEVELS[0],
+    llmDetailLevel: detailLevel?.value || s.settings.llmDetailLevel || LLM_DETAIL_LEVELS[0],
     useBuiltInPatterns: s.settings.useBuiltInPatterns !== false,
     useHeuristicDiscovery: s.settings.useHeuristicDiscovery !== false,
     // Which READINGS of which built-in signals may DERIVE Suggestions. Sent as a

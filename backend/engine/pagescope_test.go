@@ -1,4 +1,4 @@
-// engine/pagescope_test.go — the page/segment slicing that scopes the local-AI
+// engine/pagescope_test.go — the page/segment slicing that scopes the local-model
 // scan (CLAUDE.md §5).
 //
 // These tests pin the two invariants that make the feature trustworthy:
@@ -192,7 +192,7 @@ func TestPageRangeOutOfBounds(t *testing.T) {
 	}
 }
 
-// TestPagesMarkdownDiscontiguous covers the discontiguous local-AI scope (CR3):
+// TestPagesMarkdownDiscontiguous covers the discontiguous local-model scope (CR3):
 // a set like {1,3} returns exactly those units, concatenated, with the units
 // between them left out.
 func TestPagesMarkdownDiscontiguous(t *testing.T) {

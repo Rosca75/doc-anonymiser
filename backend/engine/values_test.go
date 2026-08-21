@@ -347,7 +347,7 @@ func TestCuratedSpellings(t *testing.T) {
 func TestDetectEntitiesStampsTheEntitysOrigin(t *testing.T) {
 	text := "Meridian and Delta Industries both appear here.\n"
 	spans := DetectValues(text, []Value{
-		{Category: CatEntityNames, MainText: "Meridian", DiscoveryMethods: []string{MethodLocalAI}},
+		{Category: CatEntityNames, MainText: "Meridian", DiscoveryMethods: []string{MethodLocalLLM}},
 		// No matchClass stated: a value the user typed, which is what declared means.
 		{Category: CatEntityNames, MainText: "Delta Industries"},
 	}, NewEmptyAllowlist())
@@ -356,8 +356,8 @@ func TestDetectEntitiesStampsTheEntitysOrigin(t *testing.T) {
 	for _, s := range spans {
 		got[s.MainText] = s.MatchClass
 	}
-	if got["Meridian"] != MatchClassLocalAIDiscovered {
-		t.Errorf("an AI value must produce AI spans, got %q", got["Meridian"])
+	if got["Meridian"] != MatchClassLocalLLMDiscovered {
+		t.Errorf("a local model value must produce AI spans, got %q", got["Meridian"])
 	}
 	if got["Delta Industries"] != MatchClassUserDefined {
 		t.Errorf("a Value with no matchClass must read as declared, got %q", got["Delta Industries"])

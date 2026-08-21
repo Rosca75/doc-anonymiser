@@ -18,9 +18,12 @@
 //	                   the frontend cannot render is a control the user cannot
 //	                   reach; one Go does not implement is a control that appears
 //	                   to do something and does not.
-//	AI DETAIL LEVELS   how much text one local-AI request carries. Go REFUSES a
+//	LLM DETAIL LEVELS  how much text one local-model request carries. Go REFUSES a
 //	                   level it cannot size, so a level only the frontend offers
 //	                   is an option the user picks and the engine then rejects.
+//	DETECTION PHASES   which route a progress event is about. A phase the
+//	                   frontend does not recognise falls through to "Starting", so
+//	                   a run in flight reports itself as one that has not begun.
 //
 // Every guard also checks that copy.js has a WORD for each identifier, because a
 // chip with no label renders the raw identifier, which is the unexplained jargon
@@ -34,8 +37,14 @@ import (
 	"strings"
 	"testing"
 
+	"doc-anonymiser/backend"
 	"doc-anonymiser/backend/engine"
 )
+
+// phaseBranchRe pulls the phase tokens copy.js WORDS out of phaseName's branches.
+// The switch is a chain of literal comparisons, which is what makes it greppable
+// and is why it stays one.
+var phaseBranchRe = regexp.MustCompile(`phase === "([a-z_]+)"`)
 
 // quotedTokenRe pulls the double-quoted identifiers out of one array literal.
 var quotedTokenRe = regexp.MustCompile(`"([a-z_]+)"`)
@@ -148,6 +157,54 @@ func assertLabelled(t *testing.T, table string, identifiers []string, why string
 	}
 }
 
+// TestEveryDetectionPhaseHasALabel: the progress caption names the route that is
+// running, and it reads the phase token to do it.
+//
+// An unrecognised token is not an error anywhere: phaseName falls through to
+// "Starting", so a run that is half done reports itself as one that has not
+// begun, for the whole of a long phase. That is exactly the failure a caption
+// exists to prevent, so the tokens are held to the words here.
+func TestEveryDetectionPhaseHasALabel(t *testing.T) {
+	raw, err := os.ReadFile("frontend/copy.js")
+	if err != nil {
+		t.Fatalf("could not read frontend/copy.js: %v", err)
+	}
+	handled := map[string]bool{}
+	for _, m := range phaseBranchRe.FindAllStringSubmatch(string(raw), -1) {
+		handled[m[1]] = true
+	}
+	if len(handled) == 0 {
+		t.Fatal("found no `phase === \"...\"` branch in frontend/copy.js phaseName; the guard " +
+			"cannot read a switch it does not recognise, so keep it a chain of literal " +
+			"comparisons")
+	}
+	var missing []string
+	for _, phase := range backend.AllDetectionPhases {
+		if !handled[phase] {
+			missing = append(missing, phase)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("frontend/copy.js phaseName has no branch for: %s\n"+
+			"An unhandled phase falls through to \"Starting\", so a run in flight reports\n"+
+			"itself as one that has not begun, and nothing errors to say so.",
+			strings.Join(missing, ", "))
+	}
+	for phase := range handled {
+		found := false
+		for _, known := range backend.AllDetectionPhases {
+			if phase == known {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("frontend/copy.js phaseName handles %q, which backend.AllDetectionPhases\n"+
+				"does not list: a branch no phase ever reaches is a caption nobody sees.", phase)
+		}
+	}
+}
+
 // TestDiscoveryMethodsAgreeAcrossTheBridge: the same methods on both sides.
 func TestDiscoveryMethodsAgreeAcrossTheBridge(t *testing.T) {
 	js := frontendList(t, "DISCOVERY_METHODS")
@@ -220,7 +277,7 @@ func TestConflictResolutionsAgreeAcrossTheBridge(t *testing.T) {
 	}
 }
 
-// TestAIDetailLevelsAgreeAcrossTheBridge: the same two levels on both sides, in
+// TestLLMDetailLevelsAgreeAcrossTheBridge: the same two levels on both sides, in
 // the same order.
 //
 // The rail's dropdown is built from the frontend list and Go REFUSES a level it
@@ -228,10 +285,10 @@ func TestConflictResolutionsAgreeAcrossTheBridge(t *testing.T) {
 // and the engine then rejects, and one only Go knows is a scan nobody can ask
 // for. Order matters because it is display order, and the first entry is what an
 // unrecognised stored value falls back to.
-func TestAIDetailLevelsAgreeAcrossTheBridge(t *testing.T) {
-	js := frontendList(t, "AI_DETAIL_LEVELS")
+func TestLLMDetailLevelsAgreeAcrossTheBridge(t *testing.T) {
+	js := frontendList(t, "LLM_DETAIL_LEVELS")
 	if strings.Join(js, ",") != strings.Join(engine.AllDetailLevels, ",") {
-		t.Errorf("AI_DETAIL_LEVELS in frontend/state.js is %v, engine.AllDetailLevels is %v.\n"+
+		t.Errorf("LLM_DETAIL_LEVELS in frontend/state.js is %v, engine.AllDetailLevels is %v.\n"+
 			"A level only the frontend offers is refused by ApplySettings the moment it is\n"+
 			"chosen; one only Go sizes is a scan the user cannot ask for.",
 			js, engine.AllDetailLevels)

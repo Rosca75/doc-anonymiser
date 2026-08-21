@@ -113,7 +113,7 @@ type Document struct {
 	UnitCount int
 	Unit      string
 	// Pages holds the working form pre-split into the document's addressable
-	// sub-units, for the page-scoped local-AI scan (CLAUDE.md §5): the user
+	// sub-units, for the page-scoped local-model scan (CLAUDE.md §5): the user
 	// picks one document and a page/segment range and only that text is sent
 	// to the model. It is populated ONLY for formats whose boundaries are not
 	// recoverable from Markdown after the fact: PDF pages (a blank line can

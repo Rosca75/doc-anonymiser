@@ -30,7 +30,7 @@ import { container, fire } from "./testdom.js";
 function running(patch = {}) {
   return {
     discovery: {
-      running: true, phase: "smart", phaseIndex: 0, phaseCount: 1,
+      running: true, phase: "rules", phaseIndex: 0, phaseCount: 1,
       current: 0, total: 3, file: "a.docx",
       chunk: 0, chunkCount: 0, fraction: 0.25, startedAt: Date.now(),
       ...patch,
@@ -59,8 +59,11 @@ test("an out-of-range fraction is clamped rather than rendered as nonsense", () 
 });
 
 test("the caption names the route when more than one is running", () => {
+  // The tokens are the ENGINE's own: app_detect.go PhaseRules and PhaseLocalLLM.
+  // A caption keyed on a token no phase ever carries reads "Starting" for the
+  // whole run, and nothing throws to say so.
   const caption = detectionCaption(running({
-    phase: "ai", phaseIndex: 1, phaseCount: 2, startedAt: null,
+    phase: "local_llm", phaseIndex: 1, phaseCount: 2, startedAt: null,
   }).discovery);
   assert.match(caption, /Local LLM discovery \(2\/2\)/);
   // Two routes read the same files twice; without the route name the second
@@ -69,10 +72,10 @@ test("the caption names the route when more than one is running", () => {
 });
 
 test("the caption reports the position inside a chunked file", () => {
-  // A long AI scan used to sit on one unchanging caption for minutes, which
+  // A long model scan used to sit on one unchanging caption for minutes, which
   // is indistinguishable from a hung run.
   const caption = detectionCaption(running({
-    phase: "ai", chunk: 6, chunkCount: 20, startedAt: null,
+    phase: "local_llm", chunk: 6, chunkCount: 20, startedAt: null,
   }).discovery);
   assert.match(caption, /part 7 of 20/);
 });

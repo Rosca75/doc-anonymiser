@@ -638,7 +638,7 @@ func TestWarmLoadsWithoutGenerating(t *testing.T) {
 }
 
 // TestWarmFailureIsNotFatal documents that Warm's error is safe to ignore,
-// which is what App.warmLocalAI does: a warm-up that did not happen costs
+// which is what App.warmLocalLLM does: a warm-up that did not happen costs
 // latency, never correctness.
 func TestWarmFailureIsNotFatal(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
@@ -879,7 +879,7 @@ func TestSalvageSuggestionJSON(t *testing.T) {
 				if s.Confidence != engine.ConfidenceLLMDefault {
 					t.Errorf("a salvaged suggestion must carry the model's confidence like any other, got %v", s.Confidence)
 				}
-				if !slices.Contains(s.DiscoveryMethods, engine.MethodLocalAI) {
+				if !slices.Contains(s.DiscoveryMethods, engine.MethodLocalLLM) {
 					t.Errorf("a salvaged suggestion must say the model found it, got %v", s.DiscoveryMethods)
 				}
 			}

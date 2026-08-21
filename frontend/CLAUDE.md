@@ -70,7 +70,7 @@ without the runtime. Preserve that behaviour.
   (`useBuiltInPatterns`, on by default, owning the document country, the preset
   and the eight pattern category groups), **Heuristic discovery**
   (`useHeuristicDiscovery`, on by default, owning the name categories and its own
-  strictness block) and **Local LLM discovery** (`useLocalAI`, off by default).
+  strictness block) and **Local LLM discovery** (`useLocalLLM`, off by default).
   There is no cloud route.
 
   Two SWITCH-LESS panels follow them, carrying `.rail-panel` rather than
