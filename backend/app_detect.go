@@ -342,9 +342,9 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, llmScope *LL
 // undone. The category selection and the confidence floor come from the stored
 // settings for the same reason the pipeline takes them from there.
 //
-// A nil or empty selection means "use the preset", which is the pipeline's own
-// reading of the field (engine.Run): the preview must not report a different set
-// of categories from the one a run would use.
+// A nil or empty selection means "use the default selection", which is the
+// pipeline's own reading of the field (engine.Run): the preview must not report a
+// different set of categories from the one a run would use.
 func (a *App) previewBuiltInPatterns(docs []engine.Document, settings Settings,
 	allow *engine.Allowlist, res *DetectionResult,
 ) {
@@ -356,7 +356,7 @@ func (a *App) previewBuiltInPatterns(docs []engine.Document, settings Settings,
 	}
 	sel := settings.Categories
 	if len(sel) == 0 {
-		sel = engine.PresetSelection(engine.Level(settings.Level))
+		sel = engine.DefaultSelection(settings.Country)
 	}
 	res.PatternCategories = engine.ActivePatternCategories(sel, settings.Country)
 	if len(res.PatternCategories) == 0 {

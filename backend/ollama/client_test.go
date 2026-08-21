@@ -397,9 +397,9 @@ func TestAnonymiseNeverCallsOllama(t *testing.T) {
 			Name: "z.txt", Format: engine.FormatTXT,
 			Markdown: "Final note about Zephyr Capital.",
 		}},
-		Values:    []engine.Value{{Category: engine.CatEntityNames, MainText: "Zephyr Capital"}},
-		Level:     engine.LevelMedium,
-		Allowlist: engine.NewEmptyAllowlist(),
+		Values:     []engine.Value{{Category: engine.CatEntityNames, MainText: "Zephyr Capital"}},
+		Categories: engine.DepthSelection(engine.PresetStandard, engine.CountryLU),
+		Allowlist:  engine.NewEmptyAllowlist(),
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)

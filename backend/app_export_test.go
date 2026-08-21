@@ -155,7 +155,7 @@ func TestReportBytesCarryThePictureSection(t *testing.T) {
 		}
 		app.results = &engine.Results{
 			Documents: []engine.ResultDocument{{Name: "deck.pptx"}, {Name: "notes.txt"}},
-			Report:    engine.Report{Level: engine.LevelMedium},
+			Report:    engine.Report{Presets: depthPresets(engine.PresetStandard)},
 		}
 
 		md, name, err := app.reportBytes("md")
@@ -184,8 +184,8 @@ func TestReportBytesCarryThePictureSection(t *testing.T) {
 			t.Errorf("the JSON report is named %q", name)
 		}
 		var payload struct {
-			Level  string `json:"level"`
-			Images []struct {
+			Presets map[string]string `json:"presets"`
+			Images  []struct {
 				Document   string `json:"document"`
 				Kept       int    `json:"kept"`
 				Anonymised []struct {
@@ -198,10 +198,11 @@ func TestReportBytesCarryThePictureSection(t *testing.T) {
 		if err := json.Unmarshal(data, &payload); err != nil {
 			t.Fatalf("the JSON report does not parse: %v", err)
 		}
-		if payload.Level != string(engine.LevelMedium) {
-			t.Errorf("the JSON report's level is %q, want %q: the engine's report is EMBEDDED, so "+
-				"every field a reader of an earlier report knows stays where it was",
-				payload.Level, engine.LevelMedium)
+		wantRow := engine.PresetKey(engine.ScopePatterns, engine.FamilyDepth)
+		if payload.Presets[wantRow] != engine.PresetStandard {
+			t.Errorf("the JSON report's presets are %v, want %s on the %s row: the engine's "+
+				"report is EMBEDDED, so every field a reader of an earlier report knows stays "+
+				"where it was", payload.Presets, engine.PresetStandard, wantRow)
 		}
 		if len(payload.Images) != 1 || len(payload.Images[0].Anonymised) != 1 {
 			t.Fatalf("the JSON report's picture sections are %+v, want one deck with one "+
@@ -222,7 +223,7 @@ func TestReportBytesWithoutPicturesIsUnchanged(t *testing.T) {
 		app.docs = []engine.Document{{Name: "notes.txt", Format: engine.FormatTXT, Markdown: "text"}}
 		app.results = &engine.Results{
 			Documents: []engine.ResultDocument{{Name: "notes.txt"}},
-			Report:    engine.Report{Level: engine.LevelMedium},
+			Report:    engine.Report{Presets: depthPresets(engine.PresetStandard)},
 		}
 
 		md, _, err := app.reportBytes("md")

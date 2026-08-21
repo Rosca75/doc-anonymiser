@@ -251,7 +251,6 @@ func (a *App) sameFormatConfig(name string) (exportfmt.Config, *engine.Document,
 		Values:     req.Values,
 		Patterns:   req.Patterns,
 		Categories: categories,
-		Level:      engine.Level(settings.Level),
 		Country:    settings.Country,
 		Allowlist:  allow,
 		Registry:   reg,
@@ -586,7 +585,7 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 		AllowTerms: req.AllowTerms,
 		Patterns:   req.Patterns,
 		Settings: engine.SessionSettings{
-			Level:                   settings.Level,
+			Presets:                 settings.Presets,
 			Categories:              settings.Categories,
 			OllamaPort:              settings.OllamaPort,
 			Model:                   settings.Model,
@@ -717,7 +716,7 @@ func (a *App) restoredSettings(session engine.Session) Settings {
 	defer a.mu.Unlock()
 
 	restored := Settings{
-		Level:                 session.Settings.Level,
+		Presets:               session.Settings.Presets,
 		Categories:            session.Settings.Categories,
 		OllamaPort:            session.Settings.OllamaPort,
 		Model:                 session.Settings.Model,

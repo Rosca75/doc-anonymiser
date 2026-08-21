@@ -11,13 +11,17 @@ import assert from "node:assert/strict";
 
 import {
   COUNTRIES, DEFAULT_COUNTRY, countryIDCategories, COUNTRY_ID_CATEGORIES,
+  categoryAppliesTo,
 } from "./countries.js";
 
 import {
   getState, setState, resetState, subscribe,
   WIZARD_STEPS, canGoTo, goTo, nextStep,
   goToScreen,
-  applyPreset, toggleCategory, selectionPresetName, presetCategories,
+  applyPreset, toggleCategory, activePreset, activePresets, defaultCategories,
+  depthSelection, presetScopeCategories, presetsFor, presetFamilies, presetKey,
+  findPreset, PRESETS, PRESET_SCOPES, PRESET_SCOPE_PATTERNS, PRESET_SCOPE_NAMES,
+  PRESET_FAMILY_DEPTH,
   adoptCategories, ALWAYS_ON_CATEGORIES,
   setUseLocalLLM, adoptProbe,
   detectionRoutesOn, llmEnabled,
@@ -48,6 +52,24 @@ import {
   groupValues, clearAllValues, valueConflicts, spellingsOf, curate,
   setIntersections, intersectionsFor, foldIntoFamily,
 } from "./state.js";
+
+
+// --- Preset helpers for the tests below ----------------------------------
+//
+// activePreset returns the PRESETS ROW (or null for Custom). The tests read the
+// ID, so this names the two lookups once rather than repeating the ?. dance.
+const patternsRow = () =>
+  activePreset(getState(), PRESET_SCOPE_PATTERNS, PRESET_FAMILY_DEPTH)?.id ?? "custom";
+const namesRow = () =>
+  activePreset(getState(), PRESET_SCOPE_NAMES, PRESET_FAMILY_DEPTH)?.id ?? "custom";
+// applyDepth presses the SAME depth chip in both rows, which is what the old
+// single-level preset did in one click and what most of these tests want as a
+// starting point. It is two calls on purpose: there is no reducer that writes
+// both scopes, because that is the cross-section reach the scoped model removes.
+const applyDepth = (id) => {
+  applyPreset(PRESET_SCOPE_PATTERNS, PRESET_FAMILY_DEPTH, id);
+  applyPreset(PRESET_SCOPE_NAMES, PRESET_FAMILY_DEPTH, id);
+};
 
 test("setState merges and notifies subscribers", () => {
   resetState();
@@ -221,26 +243,28 @@ test("addValues dedupes case-insensitively and defaults to accepted", () => {
   assert.equal(s.values[0].status, "accepted");
 });
 
-test("adding a value enables its category and flips the preset to custom", () => {
+test("adding a value enables its category and flips its row to custom", () => {
   // The reported bug: person values accepted from heuristic discovery under the
   // Soft preset (person_names off) were listed as "ready to replace" and then
   // dropped by the pipeline's category filter. Acceptance must switch the
   // category on, exactly as ticking the box would, so the value survives.
   resetState();
-  applyPreset("soft");
+  applyDepth("soft");
   assert.equal(getState().settings.categories.person_names, false, "soft leaves person names off");
   addValues([{ category: "person_names", mainText: "Oscar Liber" }]);
   assert.equal(getState().settings.categories.person_names, true, "the value's category is now on");
-  assert.equal(selectionPresetName(getState().settings.categories), "custom");
+  assert.equal(namesRow(), "custom");
+  assert.equal(patternsRow(), "soft",
+    "a NAME category moved, so the patterns row is untouched: the rows derive independently");
 });
 
 test("adding a value already on a preset does not flip the preset", () => {
-  // person_names is on at medium, so accepting one must not read as a manual
+  // person_names is on at Standard, so accepting one must not read as a manual
   // divergence: the chip should stay on the named preset.
   resetState();
-  applyPreset("medium");
+  applyDepth("standard");
   addValues([{ category: "person_names", mainText: "Oscar Liber" }]);
-  assert.equal(selectionPresetName(getState().settings.categories), "medium");
+  assert.equal(namesRow(), "standard");
 });
 
 test("acceptedValues filters on status, as the belt to a removed brace", () => {
@@ -414,12 +438,12 @@ test("the import divider state is gone, not merely unused (decision 6)", async (
     "importSplit must be gone from the state shape too");
 });
 
-test("applyPreset fills the expected switches per level", () => {
-  // The tiers are ordered by how much ordinary text each risks catching, and
-  // this walks all three. It mirrors engine.PresetSelection; the pairing itself
-  // is enforced by ../category_parity_test.go.
+test("applyPreset fills the expected switches per depth", () => {
+  // The depths are ordered by how much ordinary text each risks catching, and
+  // this walks all three in both scopes. It mirrors the engine's preset table;
+  // the mirror itself is enforced by ../preset_parity_test.go.
   resetState();
-  applyPreset("soft");
+  applyDepth("soft");
   let c = getState().settings.categories;
   assert.equal(c.email, true);
   assert.equal(c.identifier_names, true, "reference codes are near-PII, so soft has them");
@@ -427,33 +451,118 @@ test("applyPreset fills the expected switches per level", () => {
   assert.equal(c.product_names, false);
   assert.equal(c.amount, false);
 
-  applyPreset("medium");
+  applyDepth("standard");
   c = getState().settings.categories;
   assert.equal(c.person_names, true);
-  assert.equal(c.product_names, true, "products and brands join at medium");
+  assert.equal(c.product_names, true, "products and brands join at Standard");
   assert.equal(c.brand_names, true);
-  assert.equal(c.other_names, false, "the noisiest category waits for advanced");
-  assert.equal(c.date, false, "medium leaves dates off");
+  assert.equal(c.other_names, false, "the noisiest category waits for Thorough");
+  assert.equal(c.date, false, "Standard leaves dates off");
 
-  applyPreset("advanced");
+  applyDepth("thorough");
   c = getState().settings.categories;
   assert.equal(c.date, true);
   assert.equal(c.amount, true);
   assert.equal(c.other_names, true);
-  assert.equal(getState().settings.level, "advanced");
 });
 
-test("toggleCategory flips one switch and flags the selection as custom", () => {
+test("a patterns chip cannot move a name category, and the reverse", () => {
+  // THE point of the scoped model, as a wiring test rather than by inspection: a
+  // chip in one rail section changing a checkbox in another is invisible from the
+  // rail, so nothing on screen would report it.
   resetState();
-  applyPreset("medium");
-  assert.equal(selectionPresetName(getState().settings.categories), "medium");
+  applyDepth("thorough");
+
+  // Pressing Soft under Built-in patterns drops the pattern categories Thorough
+  // added and leaves every name category exactly where Thorough put it.
+  const before = { ...getState().settings.categories };
+  applyPreset(PRESET_SCOPE_PATTERNS, PRESET_FAMILY_DEPTH, "soft");
+  let after = getState().settings.categories;
+  assert.equal(after.amount, false, "the patterns chip did write its own scope");
+  for (const key of presetScopeCategories(PRESET_SCOPE_NAMES)) {
+    assert.equal(after[key], before[key], `${key} is a name category and must not move`);
+  }
+  assert.equal(namesRow(), "thorough", "the names row still reads Thorough");
+
+  // And back the other way.
+  const patternsBefore = { ...getState().settings.categories };
+  applyPreset(PRESET_SCOPE_NAMES, PRESET_FAMILY_DEPTH, "soft");
+  after = getState().settings.categories;
+  assert.equal(after.other_names, false, "the names chip did write its own scope");
+  for (const key of presetScopeCategories(PRESET_SCOPE_PATTERNS)) {
+    assert.equal(after[key], patternsBefore[key],
+      `${key} is a pattern category and must not move`);
+  }
+});
+
+test("applyPreset refuses a row or a preset the table does not hold", () => {
+  // Applied as an empty set, an unknown preset would clear the whole scope in
+  // silence, which is a worse outcome than the chip doing nothing.
+  resetState();
+  applyDepth("standard");
+  const before = { ...getState().settings.categories };
+  assert.equal(applyPreset("pattern", PRESET_FAMILY_DEPTH, "soft"), false, "unknown scope");
+  assert.equal(applyPreset(PRESET_SCOPE_PATTERNS, "regulatory", "gdpr"), false, "unknown family");
+  assert.equal(applyPreset(PRESET_SCOPE_PATTERNS, PRESET_FAMILY_DEPTH, "paranoid"), false,
+    "unknown preset");
+  assert.deepEqual(getState().settings.categories, before, "nothing was written");
+});
+
+test("Soft and Standard are identical in the patterns scope, and the row reads Soft", () => {
+  // A fact about the depths, not a bug: Standard differs from Soft only in the
+  // name categories. The FIRST match in table order wins, so the row settles on
+  // Soft instead of flickering between two chips that both match.
+  const soft = findPreset(PRESET_SCOPE_PATTERNS, PRESET_FAMILY_DEPTH, "soft");
+  const standard = findPreset(PRESET_SCOPE_PATTERNS, PRESET_FAMILY_DEPTH, "standard");
+  assert.deepEqual([...soft.categories].sort(), [...standard.categories].sort());
+
+  resetState();
+  for (const id of ["soft", "standard"]) {
+    applyDepth(id);
+    assert.equal(patternsRow(), "soft", `${id}: the patterns row reads Soft`);
+    assert.equal(namesRow(), id, `${id}: the names row still tells the two apart`);
+  }
+});
+
+test("no preset touches a category with no switch", () => {
+  // custom_patterns has no control in the rail, so a preset must neither set nor
+  // clear it: a stored false would be a pattern editor whose patterns never run.
+  for (const preset of PRESETS) {
+    for (const key of ALWAYS_ON_CATEGORIES) {
+      assert.ok(!preset.categories.includes(key),
+        `${preset.scope}/${preset.id} names the always-on category ${key}`);
+      assert.ok(!presetScopeCategories(preset.scope).includes(key),
+        `scope ${preset.scope} owns the always-on category ${key}`);
+    }
+  }
+});
+
+test("toggleCategory flips one switch and flags its row as custom", () => {
+  resetState();
+  applyDepth("standard");
+  assert.equal(namesRow(), "standard");
   assert.equal(toggleCategory("email", false), true);
   const c = getState().settings.categories;
   assert.equal(c.email, false);
   assert.equal(c.phone, true, "other switches untouched");
-  assert.equal(selectionPresetName(c), "custom");
+  assert.equal(patternsRow(), "custom");
+  assert.equal(namesRow(), "standard", "a PATTERN category moved, so the names row is untouched");
   // Unknown keys are rejected.
   assert.equal(toggleCategory("no_such_category", true), false);
+});
+
+test("activePresets leaves out the row that reads Custom", () => {
+  // Absence is how Custom is representable on the wire: a map that had to name
+  // every row would force the rail to invent a preset for a selection that
+  // matches none.
+  resetState();
+  applyDepth("standard");
+  assert.deepEqual(activePresets(getState()), {
+    "patterns.depth": "soft", // Soft and Standard are identical here
+    "names.depth": "standard",
+  });
+  toggleCategory("email", false);
+  assert.deepEqual(activePresets(getState()), { "names.depth": "standard" });
 });
 
 // --- custom_patterns: no switch, therefore never off ---------------------
@@ -506,26 +615,25 @@ test("setDocumentCountry leaves the switch-less categories on", () => {
   }
 });
 
-test("selectionPresetName recognises each exact preset", () => {
+test("activePreset recognises each exact preset, per row", () => {
   resetState();
-  for (const level of ["soft", "medium", "advanced"]) {
-    assert.equal(selectionPresetName({
-      ...presetCategories(level),
-      ...countryIDCategories(getState().documentCountry),
-    }), level);
+  for (const id of ["soft", "standard", "thorough"]) {
+    applyDepth(id);
+    assert.equal(namesRow(), id);
   }
+  // The patterns row, where Soft and Standard are the same set, reads Soft for
+  // both and Thorough for the third.
+  applyDepth("thorough");
+  assert.equal(patternsRow(), "thorough");
 });
 
 test("buildRunRequest carries the category selection", () => {
   resetState();
-  applyPreset("soft");
+  applyDepth("soft");
   const req = buildRunRequest();
-  // The preset plus the country's identifier switches, which is what the rail
-  // actually shows and therefore what the pipeline must obey.
-  assert.deepEqual(req.categories, {
-    ...presetCategories("soft"),
-    ...countryIDCategories(DEFAULT_COUNTRY),
-  });
+  // The Soft depth in both scopes, scoped to the document country, which is what
+  // the rail actually shows and therefore what the pipeline must obey.
+  assert.deepEqual(req.categories, depthSelection("soft", DEFAULT_COUNTRY));
   toggleCategory("iban", false);
   assert.equal(buildRunRequest().categories.iban, false);
 });
@@ -900,29 +1008,36 @@ test("every category the store knows has a label and an example (CR9)", () => {
   }
 });
 
-test("the extended recognizers are on at every preset (CR9)", () => {
-  // Mirrors engine.PresetSelection; the Go side is pinned in
+test("the extended recognizers are named by every depth preset", () => {
+  // The preset TABLE, not a selection: three of them are national identifiers, so
+  // the selection a document gets has them scoped to its country. What must hold
+  // at every depth is that the preset NAMES them. The Go side is pinned in
   // category_parity_test.go, and the two must not drift.
-  for (const level of ["soft", "medium", "advanced"]) {
-    const sel = presetCategories(level);
+  for (const preset of presetsFor(PRESET_SCOPE_PATTERNS, PRESET_FAMILY_DEPTH)) {
     for (const key of EXTENDED_PII_CATEGORIES) {
-      assert.equal(sel[key], true, `${key} must be on at ${level}`);
+      assert.ok(preset.categories.includes(key), `${key} must be named by ${preset.id}`);
     }
   }
 });
 
-test("adding the new categories did not change what a preset switches ON", () => {
-  // Regression guard for the preset semantics themselves: soft must still
-  // exclude person names, dates, amounts, organisations and places.
-  const soft = presetCategories("soft");
+test("adding the new categories did not change what a depth switches ON", () => {
+  // Regression guard for the depth semantics themselves: Soft must still exclude
+  // person names, dates, amounts, organisations and places. Luxembourg, because
+  // the national identifiers follow the document country and Thorough switching
+  // "everything" on can only mean everything that applies here.
+  const soft = depthSelection("soft", "LU");
   assert.equal(soft.person_names, false);
-  const medium = presetCategories("medium");
-  assert.equal(medium.person_names, true);
-  assert.equal(medium.date, false);
-  assert.equal(medium.amount, false);
-  const advanced = presetCategories("advanced");
+  const standard = depthSelection("standard", "LU");
+  assert.equal(standard.person_names, true);
+  assert.equal(standard.date, false);
+  assert.equal(standard.amount, false);
+  const thorough = depthSelection("thorough", "LU");
   for (const key of ALL_CATEGORIES) {
-    assert.equal(advanced[key], true, `thorough must switch ${key} on`);
+    if (COUNTRY_ID_CATEGORIES.includes(key) && !categoryAppliesTo(key, "LU")) {
+      assert.equal(thorough[key], false, `${key} does not apply in Luxembourg`);
+      continue;
+    }
+    assert.equal(thorough[key], true, `thorough must switch ${key} on`);
   }
 });
 
@@ -931,9 +1046,13 @@ test("setCategoryGroup flips exactly the given keys in one change (CR10)", () =>
   let notifications = 0;
   const unsub = subscribe(() => { notifications++; });
 
-  const group = [...EXTENDED_PII_CATEGORIES];
+  // The three national identifiers among the extended recognizers follow the
+  // document country, so on a fresh Luxembourg session they are already off:
+  // the group to flip is the ones that apply here.
+  const group = EXTENDED_PII_CATEGORIES.filter((key) =>
+    categoryAppliesTo(key, DEFAULT_COUNTRY));
   const changed = setCategoryGroup(group, false);
-  assert.equal(changed, group.length, "all eight started on and must all flip");
+  assert.equal(changed, group.length, "every one that applies started on and must flip");
   assert.equal(notifications, 1, "a whole group must cost exactly one re-render");
 
   const s = getState();
@@ -953,12 +1072,13 @@ test("setCategoryGroup ignores unknown keys and reports no-op runs (CR10)", () =
   assert.equal(setCategoryGroup(undefined, true), 0);
 });
 
-test("a deselected group makes the selection Custom (CR10)", () => {
+test("a deselected group makes its row Custom (CR10)", () => {
   resetState();
-  applyPreset("medium");
-  assert.equal(selectionPresetName(getState().settings.categories), "medium");
+  applyDepth("standard");
+  assert.equal(patternsRow(), "soft");
   setCategoryGroup(EXTENDED_PII_CATEGORIES, false);
-  assert.equal(selectionPresetName(getState().settings.categories), "custom");
+  assert.equal(patternsRow(), "custom");
+  assert.equal(namesRow(), "standard", "the names row is untouched by a pattern group");
 });
 
 test("minConfidence defaults to 0 and round-trips through the setter (CR9)", () => {
@@ -1142,14 +1262,11 @@ test("resetStep(identify) restores the preset and the detection defaults", () =>
 
   assert.equal(resetStep("identify"), true);
   const s = getState();
-  // The preset, with the DEFAULT COUNTRY's identifier switches on top. Every
-  // preset switches all three country-specific identifiers on, because to the
-  // engine they are hard PII, so the reset has to re-apply the country or the
-  // rail would show Luxembourg beside an active German tax identifier.
-  assert.deepEqual(s.settings.categories, {
-    ...presetCategories(s.settings.level),
-    ...countryIDCategories(DEFAULT_COUNTRY),
-  });
+  // The documented default selection, scoped to the DEFAULT COUNTRY. Every depth
+  // preset names all four country-specific identifiers, because to the engine
+  // they are hard PII, so the reset has to scope them or the rail would show
+  // Luxembourg beside an active German tax identifier.
+  assert.deepEqual(s.settings.categories, defaultCategories(DEFAULT_COUNTRY));
   assert.equal(s.documentCountry, DEFAULT_COUNTRY);
   assert.equal(s.settings.minConfidence, 0);
   assert.deepEqual(s.settings.heuristicDiscovery, HEURISTIC_DISCOVERY_DEFAULTS);
@@ -1500,14 +1617,14 @@ test("setDocumentCountry repaints exactly once", () => {
 });
 
 test("a preset does not overrule the country's identifier choice", () => {
-  // presetCategories() switches all three national identifiers ON, because to
-  // the engine they are hard PII. The country is an ORTHOGONAL choice, so
-  // applyPreset re-applies it: picking Soft on a German document must not
-  // silently start looking for Spanish tax numbers.
+  // Every depth preset names all four national identifiers, because to the
+  // engine they are hard PII. The country is an ORTHOGONAL choice, so applyPreset
+  // scopes them: picking Soft on a German document must not silently start
+  // looking for Spanish tax numbers.
   resetState();
   setDocumentCountry("DE");
-  for (const level of ["soft", "medium", "advanced"]) {
-    applyPreset(level);
+  for (const level of ["soft", "standard", "thorough"]) {
+    applyDepth(level);
     const categories = getState().settings.categories;
     assert.equal(categories.de_steuer_id, true, `${level}: Germany's identifier stays on`);
     assert.equal(categories.es_nif, false, `${level}: Spain's must not come back`);
@@ -1516,27 +1633,28 @@ test("a preset does not overrule the country's identifier choice", () => {
 });
 
 test("the preset chip does not read Custom just because of the country", () => {
-  // The three country-driven identifiers are excluded from the preset
-  // comparison. Otherwise a Luxembourg document, where all three are off, would
-  // show "Custom" the instant the user picked Standard, which makes the chips
-  // look broken.
+  // The four country-driven identifiers are masked on BOTH sides of the preset
+  // comparison. Otherwise a Luxembourg document, where three of them are off,
+  // would show "Custom" the instant the user picked Standard, which makes the
+  // chips look broken.
   resetState();
   for (const code of COUNTRIES.map((c) => c.code)) {
     setDocumentCountry(code);
-    for (const level of ["soft", "medium", "advanced"]) {
-      applyPreset(level);
-      assert.equal(selectionPresetName(getState().settings.categories), level,
-        `${code} + ${level} must still read as ${level}`);
+    for (const id of ["soft", "standard", "thorough"]) {
+      applyDepth(id);
+      assert.equal(namesRow(), id, `${code} + ${id} must still read as ${id}`);
+      assert.notEqual(patternsRow(), "custom",
+        `${code} + ${id}: the patterns row must name a preset, not Custom`);
     }
   }
 });
 
 test("a real category change still reads as Custom", () => {
-  // The exclusion must not swallow genuine divergence.
+  // The mask must not swallow genuine divergence.
   resetState();
-  applyPreset("medium");
+  applyDepth("standard");
   toggleCategory("email", false);
-  assert.equal(selectionPresetName(getState().settings.categories), "custom");
+  assert.equal(patternsRow(), "custom");
 });
 
 // --- The Anonymise screen's editing surfaces -----------------------------

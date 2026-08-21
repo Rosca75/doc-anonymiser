@@ -23,16 +23,6 @@ import (
 	"strings"
 )
 
-// Level is the anonymisation level (CLAUDE.md §5). It decides which PII
-// categories fire in pass 1 and which value categories later passes use.
-type Level string
-
-const (
-	LevelSoft     Level = "soft"
-	LevelMedium   Level = "medium" // default
-	LevelAdvanced Level = "advanced"
-)
-
 // Span is one detected occurrence inside a document's markdown working
 // form. Start/End are byte offsets (End exclusive), Original is the exact
 // matched text — kept so the registry can map it to a stable placeholder.
@@ -134,9 +124,9 @@ type piiPattern struct {
 	reject func(text string, start, end int) bool
 }
 
-// Which categories fire at which preset level lives in ONE place since
-// PresetSelection (pipeline.go). The patterns below are
-// unconditional; DetectPIISelected gates them by the selection.
+// Which categories a preset switches on lives in ONE place, the preset table
+// (presets.go). The patterns below are unconditional; DetectPIISelected gates
+// them by the selection.
 
 // The deterministic PII patterns, compiled once at package init
 // (CLAUDE.md §6). Order matters only for readability; overlap resolution

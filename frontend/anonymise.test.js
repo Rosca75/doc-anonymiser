@@ -78,7 +78,7 @@ function reportState(patch = {}) {
         { name: "b.pptx", anonymised: "[PERSON_2] chaired.", byCategory: { person_names: 1 } },
       ],
       report: {
-        level: "medium",
+        presets: { "patterns.depth": "standard", "names.depth": "standard" },
         totalReplacements: 6, byCategory: { person_names: 4, entity_names: 2 },
         values: RUN_VALUES,
         documents: [
@@ -162,9 +162,37 @@ test("the Selected placeholder card edits the replacement value, like the table"
 test("the report note says the preset the run used, and nothing about a local model pass", () => {
   const s = reportState();
   const note = textOf(reportCard(s), "#report-run-note");
-  assert.match(note, /medium/);
+  // Both rows on Standard reads as ONE sentence, which is the common case.
+  assert.match(note, /Ran at the Standard preset/);
   assert.doesNotMatch(note, /deep scan|AI/i,
     "Anonymise runs no discovery method, so the run note must not mention a local model pass");
+});
+
+test("the report note spells out two rows on different presets", () => {
+  // A real state the scoped chips produce in two clicks: patterns at Soft, names
+  // at Thorough. One preset name would have to pick a row and drop the other, so
+  // the note says both.
+  const s = reportState({
+    results: {
+      ...reportState().results,
+      report: {
+        ...reportState().results.report,
+        presets: { "patterns.depth": "soft", "names.depth": "thorough" },
+      },
+    },
+  });
+  const note = textOf(reportCard(s), "#report-run-note");
+  assert.match(note, /Soft preset for built-in patterns/);
+  assert.match(note, /Thorough preset for auto detected values/);
+});
+
+test("the report note says nothing when every row read as Custom", () => {
+  // Custom is not a preset the run can be said to have used, so the note is
+  // absent rather than naming one.
+  const s = reportState({
+    results: { ...reportState().results, report: { ...reportState().results.report, presets: {} } },
+  });
+  assert.equal(all(reportCard(s), "#report-run-note").length, 0);
 });
 
 test("the Report card renders the overlap warnings the run computes, and dismisses them", () => {
@@ -436,7 +464,7 @@ function seedRun() {
     results: {
       documents: [{ name: "a.txt", anonymised: "[PERSON_1].", byCategory: { person_names: 1 } }],
       report: {
-        level: "medium", totalReplacements: 1, byCategory: { person_names: 1 },
+        presets: { "patterns.depth": "standard", "names.depth": "standard" }, totalReplacements: 1, byCategory: { person_names: 1 },
         values: CR9_VALUES, documents: [{ name: "a.txt", values: CR9_VALUES }],
       },
     },
@@ -473,7 +501,7 @@ test("a refused run still shows Add missed Value, the one exit from a blocked sc
     running: false,
     results: {
       documents: [],
-      report: { level: "medium", totalReplacements: 0, byCategory: {} },
+      report: { presets: { "patterns.depth": "standard", "names.depth": "standard" }, totalReplacements: 0, byCategory: {} },
       validation: { blocking: [{ kind: "ambiguity", message: "conflict", fix: "fix it" }] },
     },
     replacedValues: [],
@@ -499,7 +527,7 @@ function blockedFor(conflict) {
     ...getState(),
     results: {
       documents: [],
-      report: { level: "medium", totalReplacements: 0, byCategory: {} },
+      report: { presets: { "patterns.depth": "standard", "names.depth": "standard" }, totalReplacements: 0, byCategory: {} },
       validation: { blocking: [conflict] },
     },
   };
@@ -560,7 +588,7 @@ test("the blocked panel's actions clear the conflict, through the real wiring", 
     running: false,
     results: {
       documents: [],
-      report: { level: "medium", totalReplacements: 0, byCategory: {} },
+      report: { presets: { "patterns.depth": "standard", "names.depth": "standard" }, totalReplacements: 0, byCategory: {} },
       validation: {
         blocking: [{
           kind: "collision", message: "conflict", fix: "fix it", value: "Meridian",
@@ -593,7 +621,7 @@ test("deleting the named value from the blocked panel removes exactly that value
     running: false,
     results: {
       documents: [],
-      report: { level: "medium", totalReplacements: 0, byCategory: {} },
+      report: { presets: { "patterns.depth": "standard", "names.depth": "standard" }, totalReplacements: 0, byCategory: {} },
       validation: {
         blocking: [{
           kind: "ambiguity", message: "conflict", fix: "fix it", value: "Meridian",
@@ -1155,7 +1183,7 @@ function rerunBridge(placeholders, intersections = []) {
   return {
     FastRerun: async () => ({
       documents: [{ name: "a.txt", anonymised: "[ENTITY_1].", byCategory: {} }],
-      report: { level: "medium", totalReplacements: 1, byCategory: {}, values: [], documents: [] },
+      report: { presets: { "patterns.depth": "standard", "names.depth": "standard" }, totalReplacements: 1, byCategory: {}, values: [], documents: [] },
       validation: { blocking: [], warnings: [] },
     }),
     GetMapping: async () => ({ rows: [] }),
@@ -1174,7 +1202,7 @@ function declaredState() {
     results: {
       documents: [{ name: "a.txt", anonymised: "[ENTITY_1]", byCategory: {} }],
       report: {
-        level: "medium", totalReplacements: 1, byCategory: {},
+        presets: { "patterns.depth": "standard", "names.depth": "standard" }, totalReplacements: 1, byCategory: {},
         values: [], documents: [{ name: "a.txt", values: [] }],
       },
       validation: { blocking: [], warnings: [] },

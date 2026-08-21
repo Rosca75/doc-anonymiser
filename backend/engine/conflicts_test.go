@@ -71,7 +71,7 @@ func TestBlockingConflicts(t *testing.T) {
 					{Category: CatEntityNames, MainText: "Atlas"},
 					{Category: CatProjectNames, MainText: "atlas"},
 				},
-				Categories: PresetSelection(LevelMedium),
+				Categories: DepthSelection(PresetStandard, CountryLU),
 			},
 			wantKind:  "ambiguity",
 			wantValue: "atlas",
@@ -83,7 +83,7 @@ func TestBlockingConflicts(t *testing.T) {
 					{Category: CatPersonNames, MainText: "Marie Duval"},
 					{Category: CatPersonNames, MainText: "Marie Dupont"},
 				},
-				Categories: PresetSelection(LevelMedium),
+				Categories: DepthSelection(PresetStandard, CountryLU),
 			},
 			wantKind:  "collision",
 			wantValue: "Marie",
@@ -92,7 +92,7 @@ func TestBlockingConflicts(t *testing.T) {
 			name: "a declared value that is also allowlisted",
 			in: ValidationInput{
 				Values:     []Value{{Category: CatEntityNames, MainText: "CSSF"}},
-				Categories: PresetSelection(LevelMedium),
+				Categories: DepthSelection(PresetStandard, CountryLU),
 				Allowlist:  allowlistWith("CSSF"),
 			},
 			wantKind:  "collision",
@@ -128,7 +128,7 @@ func TestAnInactiveCategoryIsNotAConflict(t *testing.T) {
 	// The values of a switched-off category are not going to be replaced, so
 	// nothing about them can be ambiguous. Refusing the run over them would
 	// block on a decision the user already made.
-	sel := PresetSelection(LevelMedium)
+	sel := DepthSelection(PresetStandard, CountryLU)
 	sel[CatProjectNames] = false
 
 	got := blocking(t, ValidationInput{
@@ -153,9 +153,9 @@ func TestABlockingConflictAbortsBeforeTheRegistryIsTouched(t *testing.T) {
 			{Category: CatEntityNames, MainText: "Atlas"},
 			{Category: CatProjectNames, MainText: "Atlas"},
 		},
-		Level:     LevelMedium,
-		Allowlist: NewEmptyAllowlist(),
-		Registry:  registry,
+		Categories: DepthSelection(PresetStandard, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
+		Registry:   registry,
 	})
 	if err != nil {
 		t.Fatalf("a blocking conflict is reported in the results, not as an error: %v", err)
@@ -194,8 +194,8 @@ func TestOverlapWarningsComeFromTheResolverItself(t *testing.T) {
 		Values: []Value{
 			{Category: CatPersonNames, MainText: "marie.duval@example.com"},
 		},
-		Level:     LevelMedium,
-		Allowlist: NewEmptyAllowlist(),
+		Categories: DepthSelection(PresetStandard, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -231,8 +231,8 @@ func TestOverlapWarningsAreDeduplicatedAndCapped(t *testing.T) {
 		Values: []Value{
 			{Category: CatPersonNames, MainText: "marie.duval@example.com"},
 		},
-		Level:     LevelMedium,
-		Allowlist: NewEmptyAllowlist(),
+		Categories: DepthSelection(PresetStandard, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)

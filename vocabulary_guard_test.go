@@ -51,6 +51,19 @@ var retiredIdentifiers = map[string]string{
 	"aiDetailLevel":  "llmDetailLevel",
 	// The heuristic options type, renamed before this vocabulary was settled.
 	"SmartDetectOptions": "HeuristicDiscoveryOptions",
+	// The level, retired when presets became scoped data. Every one of these is
+	// a string at a boundary: `level` was a session-file key and a settings
+	// field, and the three level identifiers were its values. A survivor would
+	// read as its zero value and the rail would show a preset the run does not
+	// use. The bare word "level" is deliberately NOT listed, because the local
+	// model's detail level is a live setting that legitimately uses it.
+	"PresetSelection":     "DepthSelection (whole selection) or ApplyPreset (one scope)",
+	"LevelSoft":           "PresetSoft",
+	"LevelMedium":         "PresetStandard",
+	"LevelAdvanced":       "PresetThorough",
+	"presetCategories":    "presetSelection",
+	"selectionPresetName": "activePreset",
+	"presetAlsoSets":      "nothing: the cross-section read-out is gone",
 }
 
 // scannedExts are the file kinds that can carry an identifier: source on both
@@ -168,6 +181,13 @@ func isIdentByte(b byte) bool {
 // ones in force. Without it, deleting a constant altogether would satisfy the
 // first check and leave the vocabulary with a hole.
 func TestTheCurrentVocabularyIsWhatTheCodeUses(t *testing.T) {
+	// The preset identifiers are persisted in the session file and the profile
+	// file, so they are checked by VALUE and not only by name.
+	if engine.PresetStandard != "standard" || engine.PresetSoft != "soft" ||
+		engine.PresetThorough != "thorough" {
+		t.Errorf("the depth preset IDs are %q, %q, %q, want soft, standard, thorough",
+			engine.PresetSoft, engine.PresetStandard, engine.PresetThorough)
+	}
 	if engine.MethodLocalLLM != "local_llm" {
 		t.Errorf("MethodLocalLLM is %q, want local_llm", engine.MethodLocalLLM)
 	}
@@ -188,7 +208,12 @@ func TestTheCurrentVocabularyIsWhatTheCodeUses(t *testing.T) {
 	// The settings keys are what a session file carries, so they are checked
 	// through the JSON a save actually writes rather than by naming the fields.
 	raw, err := engine.SaveSession(engine.Session{
-		Settings: engine.SessionSettings{Level: "medium", UseLocalLLM: true},
+		Settings: engine.SessionSettings{
+			Presets: map[string]string{
+				engine.PresetKey(engine.ScopePatterns, engine.FamilyDepth): engine.PresetStandard,
+			},
+			UseLocalLLM: true,
+		},
 	})
 	if err != nil {
 		t.Fatalf("SaveSession: %v", err)

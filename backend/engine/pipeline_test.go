@@ -27,7 +27,7 @@ func runPipeline(t *testing.T, in PipelineInput) *Results {
 }
 
 // TestSuppressRegexPIISkipsPassOne: the "Native detection" master switch, off,
-// must stop the deterministic regex PII pass entirely. Even at LevelAdvanced
+// must stop the deterministic regex PII pass entirely. Even at the Thorough depth
 // (which selects every category) an email and a VAT number survive when
 // SuppressRegexPII is true, and are replaced when it is false. The value pass
 // is unaffected, so a declared value is still replaced in both cases.
@@ -40,7 +40,7 @@ func TestSuppressRegexPIISkipsPassOne(t *testing.T) {
 	suppressed := runPipeline(t, PipelineInput{
 		Documents:        []Document{doc},
 		Values:           []Value{value},
-		Level:            LevelAdvanced,
+		Categories:       DepthSelection(PresetThorough, CountryLU),
 		Country:          CountryLU,
 		Allowlist:        NewEmptyAllowlist(),
 		SuppressRegexPII: true,
@@ -61,7 +61,7 @@ func TestSuppressRegexPIISkipsPassOne(t *testing.T) {
 	on := runPipeline(t, PipelineInput{
 		Documents:        []Document{doc},
 		Values:           []Value{value},
-		Level:            LevelAdvanced,
+		Categories:       DepthSelection(PresetThorough, CountryLU),
 		Country:          CountryLU,
 		Allowlist:        NewEmptyAllowlist(),
 		SuppressRegexPII: false,
@@ -80,10 +80,10 @@ func TestTwoDocumentConsistency(t *testing.T) {
 	docB := Document{Name: "b.txt", Format: FormatTXT, Markdown: "Notes about Alpine Trust and marie.duval@example.com follow."}
 
 	res := runPipeline(t, PipelineInput{
-		Documents: []Document{docA, docB},
-		Values:    []Value{{Category: CatEntityNames, MainText: "Alpine Trust"}},
-		Level:     LevelMedium,
-		Allowlist: NewEmptyAllowlist(),
+		Documents:  []Document{docA, docB},
+		Values:     []Value{{Category: CatEntityNames, MainText: "Alpine Trust"}},
+		Categories: DepthSelection(PresetStandard, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
 	})
 
 	a, b := res.Documents[0].Anonymised, res.Documents[1].Anonymised
@@ -110,10 +110,10 @@ func TestPostPassSpreadsRegistryEntries(t *testing.T) {
 	reg.Assign(CatProjectNames, "Project Borealis") // an earlier run in this session
 
 	res := runPipeline(t, PipelineInput{
-		Documents: []Document{{Name: "a.txt", Format: FormatTXT, Markdown: "Early notes on Project Borealis here."}},
-		Level:     LevelMedium,
-		Allowlist: NewEmptyAllowlist(),
-		Registry:  reg,
+		Documents:  []Document{{Name: "a.txt", Format: FormatTXT, Markdown: "Early notes on Project Borealis here."}},
+		Categories: DepthSelection(PresetStandard, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
+		Registry:   reg,
 	})
 
 	a := res.Documents[0].Anonymised
@@ -125,43 +125,43 @@ func TestPostPassSpreadsRegistryEntries(t *testing.T) {
 	}
 }
 
-// TestLevelMatrix: the same fixture at soft/medium/advanced produces the
+// TestDepthMatrix: the same fixture at Soft, Standard and Thorough produces the
 // expected differing outputs.
-func TestLevelMatrix(t *testing.T) {
+func TestDepthMatrix(t *testing.T) {
 	text := "Marie Duval (marie.duval@example.com) met Alpine Trust about Helios on 2026-07-23 for €5,000."
 	values := []Value{
 		{Category: CatEntityNames, MainText: "Alpine Trust"},
 		{Category: CatPersonNames, MainText: "Marie Duval"},
 		{Category: CatOtherNames, MainText: "Helios"},
 	}
-	run := func(level Level) string {
+	run := func(preset string) string {
 		res := runPipeline(t, PipelineInput{
-			Documents: []Document{{Name: "m.txt", Format: FormatTXT, Markdown: text}},
-			Values:    values,
-			Level:     level,
-			Allowlist: NewEmptyAllowlist(),
-			Registry:  NewRegistry(), // fresh numbering per level for exact goldens
+			Documents:  []Document{{Name: "m.txt", Format: FormatTXT, Markdown: text}},
+			Values:     values,
+			Categories: DepthSelection(preset, CountryLU),
+			Allowlist:  NewEmptyAllowlist(),
+			Registry:   NewRegistry(), // fresh numbering per depth for exact goldens
 		})
 		return res.Documents[0].Anonymised
 	}
 
-	soft := run(LevelSoft)
+	soft := run(PresetSoft)
 	// Soft: hard PII + engagement values; person names, other names, dates
 	// and amounts stay.
 	if soft != "Marie Duval ([EMAIL_1]) met [ENTITY_1] about Helios on 2026-07-23 for €5,000." {
-		t.Errorf("soft output unexpected: %q", soft)
+		t.Errorf("Soft output unexpected: %q", soft)
 	}
 
-	medium := run(LevelMedium)
-	// Medium: + person names. Other names, dates and amounts kept.
-	if medium != "[PERSON_1] ([EMAIL_1]) met [ENTITY_1] about Helios on 2026-07-23 for €5,000." {
-		t.Errorf("medium output unexpected: %q", medium)
+	standard := run(PresetStandard)
+	// Standard: + person names. Other names, dates and amounts kept.
+	if standard != "[PERSON_1] ([EMAIL_1]) met [ENTITY_1] about Helios on 2026-07-23 for €5,000." {
+		t.Errorf("Standard output unexpected: %q", standard)
 	}
 
-	advanced := run(LevelAdvanced)
-	// Advanced: + other names, dates, amounts.
-	if advanced != "[PERSON_1] ([EMAIL_1]) met [ENTITY_1] about [OTHER_1] on [DATE_1] for [AMOUNT_1]." {
-		t.Errorf("advanced output unexpected: %q", advanced)
+	thorough := run(PresetThorough)
+	// Thorough: + other names, dates, amounts.
+	if thorough != "[PERSON_1] ([EMAIL_1]) met [ENTITY_1] about [OTHER_1] on [DATE_1] for [AMOUNT_1]." {
+		t.Errorf("Thorough output unexpected: %q", thorough)
 	}
 }
 
@@ -177,9 +177,9 @@ func TestOccurrenceVariantsRecordVariantSpelling(t *testing.T) {
 			Format:   FormatTXT,
 			Markdown: "Johannes Borch met Borch",
 		}},
-		Values:    []Value{{Category: CatPersonNames, MainText: "Johannes Borch"}},
-		Level:     LevelMedium,
-		Allowlist: NewEmptyAllowlist(),
+		Values:     []Value{{Category: CatPersonNames, MainText: "Johannes Borch"}},
+		Categories: DepthSelection(PresetStandard, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
 	})
 	rd := res.Documents[0]
 	got := rd.OccurrenceSpellings["[PERSON_1]"]
@@ -203,8 +203,8 @@ func TestOccurrenceSpellingsPrunedWhenAllMainText(t *testing.T) {
 			Format:   FormatTXT,
 			Markdown: "Contact marie.duval@example.com now",
 		}},
-		Level:     LevelMedium,
-		Allowlist: NewEmptyAllowlist(),
+		Categories: DepthSelection(PresetStandard, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
 	})
 	if res.Documents[0].OccurrenceSpellings != nil {
 		t.Errorf("mainText-only document should carry no variant map, got %v",
@@ -221,10 +221,10 @@ func TestGridDocumentConsistency(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := runPipeline(t, PipelineInput{
-		Documents: []Document{doc},
-		Values:    []Value{{Category: CatPersonNames, MainText: "Marie Duval"}},
-		Level:     LevelMedium,
-		Allowlist: NewEmptyAllowlist(),
+		Documents:  []Document{doc},
+		Values:     []Value{{Category: CatPersonNames, MainText: "Marie Duval"}},
+		Categories: DepthSelection(PresetStandard, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
 	})
 	rd := res.Documents[0]
 	if rd.Grid[1][0] != "[PERSON_1]" || rd.Grid[1][1] != "[EMAIL_1]" {
@@ -254,9 +254,9 @@ func TestComplexSheetConsistency(t *testing.T) {
 			Name: "workbook.xlsx#Sheet1", Format: FormatXLSXJSON, JSON: blob,
 			Markdown: "```json\n" + blob + "\n```\n",
 		}},
-		Values:    []Value{{Category: CatPersonNames, MainText: "Marie Duval"}},
-		Level:     LevelMedium,
-		Allowlist: NewEmptyAllowlist(),
+		Values:     []Value{{Category: CatPersonNames, MainText: "Marie Duval"}},
+		Categories: DepthSelection(PresetStandard, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
 	})
 	rd := res.Documents[0]
 	if strings.Contains(rd.JSON, "Marie Duval") || strings.Contains(rd.JSON, "marie.duval@") {
@@ -273,9 +273,9 @@ func TestComplexSheetConsistency(t *testing.T) {
 // TestReportContents sanity-checks totals and categories.
 func TestReportContents(t *testing.T) {
 	res := runPipeline(t, PipelineInput{
-		Documents: []Document{{Name: "r.txt", Format: FormatTXT, Markdown: "mail marie.duval@example.com now", Warnings: []string{"the file is empty — nothing to anonymise"}}},
-		Level:     LevelMedium,
-		Allowlist: NewEmptyAllowlist(),
+		Documents:  []Document{{Name: "r.txt", Format: FormatTXT, Markdown: "mail marie.duval@example.com now", Warnings: []string{"the file is empty — nothing to anonymise"}}},
+		Categories: DepthSelection(PresetStandard, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
 	})
 	rep := res.Report
 	if rep.TotalReplacements != 1 || rep.ByCategory[CatEmail] != 1 {
@@ -313,7 +313,7 @@ func TestPipelineCancellation(t *testing.T) {
 		{Name: "1.txt", Format: FormatTXT, Markdown: "text one"},
 		{Name: "2.txt", Format: FormatTXT, Markdown: "text two"},
 	}
-	res, err := Run(ctx, PipelineInput{Documents: docs, Level: LevelMedium, Allowlist: NewEmptyAllowlist()})
+	res, err := Run(ctx, PipelineInput{Documents: docs, Categories: DepthSelection(PresetStandard, CountryLU), Allowlist: NewEmptyAllowlist()})
 	if err == nil {
 		t.Fatal("cancelled run must return the context error")
 	}
@@ -369,12 +369,12 @@ func TestOwnershipIsDecidedByRuleNotByDocumentOrder(t *testing.T) {
 	} {
 		reg := NewRegistry()
 		res, err := Run(context.Background(), PipelineInput{
-			Documents: tc.docs,
-			Values:    values,
-			Patterns:  patterns,
-			Level:     LevelAdvanced, // both types switched on
-			Allowlist: NewEmptyAllowlist(),
-			Registry:  reg,
+			Documents:  tc.docs,
+			Values:     values,
+			Patterns:   patterns,
+			Categories: DepthSelection(PresetThorough, CountryLU), // both types switched on
+			Allowlist:  NewEmptyAllowlist(),
+			Registry:   reg,
 		})
 		if err != nil {
 			t.Fatalf("%s: Run: %v", tc.name, err)
@@ -424,9 +424,9 @@ func TestUserDefinedBeatsRulesDiscovered(t *testing.T) {
 		Values: []Value{{
 			Category: CatProjectNames, MainText: "PRJ-4471", DiscoveryMethods: []string{MethodHeuristic},
 		}},
-		Level:     LevelMedium,
-		Allowlist: NewEmptyAllowlist(),
-		Registry:  reg,
+		Categories: DepthSelection(PresetStandard, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
+		Registry:   reg,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -471,9 +471,9 @@ func TestRunIsDeterministic(t *testing.T) {
 				{Category: CatEntityNames, MainText: "Alpine Trust S.A."},
 				{Category: CatEntityNames, MainText: "Meridian", DiscoveryMethods: []string{MethodHeuristic}},
 			},
-			Level:     LevelMedium,
-			Allowlist: NewEmptyAllowlist(),
-			Registry:  reg,
+			Categories: DepthSelection(PresetStandard, CountryLU),
+			Allowlist:  NewEmptyAllowlist(),
+			Registry:   reg,
 		}
 	}
 	// A mapping fingerprint that ignores the ORDER entries come back in but not
@@ -523,8 +523,8 @@ func TestUnrecognisedValueCategoryWarnsAndDoesNotBlock(t *testing.T) {
 			{Category: "person_names,Person names", MainText: "Meridian"},
 			{Category: CatEntityNames, MainText: "Alpine Trust"},
 		},
-		Level:     LevelMedium,
-		Allowlist: NewEmptyAllowlist(),
+		Categories: DepthSelection(PresetStandard, CountryLU),
+		Allowlist:  NewEmptyAllowlist(),
 	})
 	if len(res.Validation.Blocking) != 0 {
 		t.Fatalf("an unrecognised category must warn, not block: %+v", res.Validation.Blocking)
@@ -553,12 +553,11 @@ func TestUnrecognisedValueCategoryWarnsAndDoesNotBlock(t *testing.T) {
 // is that turning it off is unremarkable.
 func TestSwitchedOffCategoryStaysSilent(t *testing.T) {
 	doc := Document{Name: "a.txt", Format: FormatTXT, Markdown: "Meridian was here."}
-	sel := PresetSelection(LevelMedium)
+	sel := DepthSelection(PresetStandard, CountryLU)
 	sel[CatEntityNames] = false
 	res := runPipeline(t, PipelineInput{
 		Documents:  []Document{doc},
 		Values:     []Value{{Category: CatEntityNames, MainText: "Meridian"}},
-		Level:      LevelMedium,
 		Categories: sel,
 		Allowlist:  NewEmptyAllowlist(),
 	})

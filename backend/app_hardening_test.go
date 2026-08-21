@@ -25,7 +25,7 @@ func TestErrorMessageFormat(t *testing.T) {
 		e3 := app.RunPipeline(RunRequest{}) // no documents
 		_, e4 := engine.LoadSession([]byte("not json"))
 		_, e5 := engine.ExportBytes(engine.ResultDocument{Format: engine.FormatCSV}, "json")
-		_, e6 := app.ApplySettings(Settings{Level: "extreme", OllamaPort: 11434})
+		_, e6 := app.ApplySettings(Settings{Presets: map[string]string{"patterns.depth": "extreme"}, OllamaPort: 11434})
 		return []error{e1, e2, e3, e4, e5, e6}
 	}
 	for i, err := range collect() {

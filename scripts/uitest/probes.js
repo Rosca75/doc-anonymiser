@@ -171,7 +171,7 @@
           occurrenceSpellings: OCCURRENCE_SPELLINGS,
         }],
         report: {
-          level: "medium",
+          presets: { "patterns.depth": "standard", "names.depth": "standard" },
           totalReplacements: 125,
           byCategory: { person_names: 62, entity_names: 61, email: 1, phone: 1 },
           values: VALUES,

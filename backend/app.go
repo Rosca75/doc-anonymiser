@@ -25,19 +25,30 @@ import (
 	"doc-anonymiser/backend/ollama"
 )
 
-// Settings are the user-tweakable options (Configure screen): level (the
-// last chosen preset), the granular category switches, Ollama port (host
-// locked to loopback) and the model name (never hardcoded outside this
-// default — CLAUDE.md §7).
+// Settings are the user-tweakable options (the Identify rail): which preset
+// each chip row is on, the granular category switches, Ollama port (host locked
+// to loopback) and the model name (never hardcoded outside this default —
+// CLAUDE.md §7).
 //
 // Wails bridge payload shape (matched by state.js settings):
 //
-//	{ "level": "medium", "categories": {"email": true, ...},
+//	{ "presets": {"patterns.depth": "standard", "names.depth": "standard"},
+//	  "categories": {"email": true, ...},
 //	  "ollamaPort": 11434, "model": "qwen3.5:0.8b" }
 type Settings struct {
-	Level string `json:"level"` // soft | medium | advanced (last chosen preset)
+	// Presets records which chip each preset row is on, keyed
+	// "<scope>.<family>" (engine.PresetKey). A row with NO key reads as Custom,
+	// which is how a selection matching no preset is representable.
+	//
+	// It is a RECORD of the rail, never an instruction: Categories below is what
+	// the pipeline obeys, and both sides derive the presets from it
+	// (engine.MatchingPresets, state.js activePreset), so the two cannot
+	// disagree about what the next run will do. Storing it at all is what lets a
+	// saved session say which preset the user was on rather than only which
+	// checkboxes were ticked.
+	Presets map[string]string `json:"presets"`
 	// Categories is the granular switch set the pipeline obeys
-	// nil/empty means "use the Level preset".
+	// nil/empty means "use engine.DefaultSelection(Country)".
 	Categories engine.CategorySelection `json:"categories"`
 	OllamaPort int                      `json:"ollamaPort"` // loopback port only
 	Model      string                   `json:"model"`      // Ollama model name
@@ -308,7 +319,11 @@ func (a *App) removedValues() []engine.RemovedValue {
 // gets.
 func defaultSettings() Settings {
 	return Settings{
-		Level:       string(engine.LevelMedium), // documented default
+		// The depth Standard presets, in both scopes: the documented default.
+		Presets: map[string]string{
+			engine.PresetKey(engine.ScopePatterns, engine.FamilyDepth): engine.PresetStandard,
+			engine.PresetKey(engine.ScopeNames, engine.FamilyDepth):    engine.PresetStandard,
+		},
 		OllamaPort:  11434,
 		Model:       ollama.DefaultModel,
 		ContextSize: ollama.DefaultContextSize,
@@ -755,11 +770,13 @@ func (a *App) GetSettings() Settings {
 // (CLAUDE.md §8). Returns the freshly probed status so the UI can update
 // its badge in the same round-trip.
 func (a *App) ApplySettings(s Settings) (OllamaState, error) {
-	switch engine.Level(s.Level) {
-	case engine.LevelSoft, engine.LevelMedium, engine.LevelAdvanced:
-	default:
-		return OllamaState{}, fmt.Errorf(
-			"unknown anonymisation level %q, expected soft, medium or advanced", s.Level)
+	// An unknown preset row or preset ID is REFUSED rather than stored, for the
+	// reason an unknown signal source is: a key no reader resolves is a control
+	// that appears to do something and does not, and here it would also make the
+	// rail claim a preset the engine's table does not hold. The engine owns the
+	// table, so it owns the message too, and the message names what IS valid.
+	if err := engine.ValidatePresets(s.Presets); err != nil {
+		return OllamaState{}, err
 	}
 	if s.OllamaPort < 1 || s.OllamaPort > 65535 {
 		return OllamaState{}, fmt.Errorf(

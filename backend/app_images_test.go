@@ -476,7 +476,7 @@ func TestImageDecisionsSurviveTheSession(t *testing.T) {
 		}
 
 		saved, err := engine.SaveSession(engine.Session{
-			Settings:       engine.SessionSettings{Level: "medium", OllamaPort: 11434},
+			Settings:       engine.SessionSettings{Presets: depthPresets(engine.PresetStandard), OllamaPort: 11434},
 			ImageDecisions: app.imageDecisionsSnapshot(),
 		})
 		if err != nil {
@@ -519,7 +519,7 @@ func TestImageDecisionsSurviveTheSession(t *testing.T) {
 		// configuration the user did not save.
 		if _, err := app.applyRestoredSession(engine.Session{
 			Version:  engine.SessionVersion,
-			Settings: engine.SessionSettings{Level: "medium", OllamaPort: 11434},
+			Settings: engine.SessionSettings{Presets: depthPresets(engine.PresetStandard), OllamaPort: 11434},
 		}); err != nil {
 			t.Fatalf("applyRestoredSession: %v", err)
 		}

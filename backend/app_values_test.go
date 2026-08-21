@@ -218,7 +218,7 @@ func TestRemovalsAndSpentNumbersSurviveTheSessionFile(t *testing.T) {
 	app.mu.Lock()
 	session := engine.Session{
 		Values:               req.Values,
-		Settings:             engine.SessionSettings{Level: "medium", OllamaPort: 11434, Country: engine.CountryLU},
+		Settings:             engine.SessionSettings{Presets: depthPresets(engine.PresetStandard), OllamaPort: 11434, Country: engine.CountryLU},
 		Registry:             app.registry.Export(),
 		PlaceholderOverrides: app.registry.Overrides(),
 		RemovedValues:        app.removed,
@@ -272,20 +272,22 @@ func TestARejectedSessionLoadLeavesTheAppUntouched(t *testing.T) {
 
 	bad := engine.Session{
 		Version: engine.SessionVersion,
-		// A level no build has ever had: ApplySettings refuses it.
-		Settings: engine.SessionSettings{Level: "paranoid", OllamaPort: 11434, Country: engine.CountryLU},
+		// A preset ID no build has ever had: ApplySettings refuses it.
+		Settings: engine.SessionSettings{Presets: map[string]string{"patterns.depth": "paranoid"}, OllamaPort: 11434, Country: engine.CountryLU},
 		Registry: []engine.MappingEntry{
 			{Original: "Someone Else", Placeholder: "[PERSON_1]", Category: engine.CatPersonNames, Count: 1},
 		},
 	}
 	if _, err := app.applyRestoredSession(bad); err == nil {
-		t.Fatal("a session with an unknown level must be refused")
+		t.Fatal("a session naming an unknown preset must be refused")
 	}
 
 	if got := app.ValuePlaceholders(); len(got) != len(before) || got[0].Original != before[0].Original {
 		t.Errorf("the rejected file's registry was installed anyway: %+v", got)
 	}
-	if got := app.GetSettings(); got.Level != settingsBefore.Level || got.Country != settingsBefore.Country {
+	if got := app.GetSettings(); got.Presets[engine.PresetKey(engine.ScopePatterns, engine.FamilyDepth)] !=
+		settingsBefore.Presets[engine.PresetKey(engine.ScopePatterns, engine.FamilyDepth)] ||
+		got.Country != settingsBefore.Country {
 		t.Errorf("the rejected file's settings were installed anyway: %+v", got)
 	}
 }
@@ -296,7 +298,7 @@ func TestACorruptKeyIsRefusedRatherThanCrashing(t *testing.T) {
 	// policy everywhere else in the loader is refuse and say why.
 	corrupt := engine.Session{
 		Version:  engine.SessionVersion,
-		Settings: engine.SessionSettings{Level: "medium", OllamaPort: 11434, Country: engine.CountryLU},
+		Settings: engine.SessionSettings{Presets: depthPresets(engine.PresetStandard), OllamaPort: 11434, Country: engine.CountryLU},
 		Registry: []engine.MappingEntry{
 			{Original: "Alpine Trust", Placeholder: "[ENTITY_1]", Category: engine.CatEntityNames, Count: 1},
 			{Original: "alpine trust", Placeholder: "[PERSON_1]", Category: engine.CatPersonNames, Count: 1},

@@ -16,17 +16,19 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  CATEGORY_GROUPS, PATTERN_GROUPS, NAME_GROUPS, RAIL_SECTIONS, PRESETS,
+  CATEGORY_GROUPS, PATTERN_GROUPS, NAME_GROUPS, RAIL_SECTIONS,
   confidenceEffect, llmGateTooltip,
   llmDisabledTooltip, railBody, settingsPayload,
 } from "./views/identifyrail.js";
 import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
 import {
   ALL_CATEGORIES, NAME_CATEGORIES, HARD_PII_CATEGORIES, EXTENDED_PII_CATEGORIES,
-  ADVANCED_PII_CATEGORIES, ALWAYS_ON_CATEGORIES,
+  THOROUGH_PII_CATEGORIES, ALWAYS_ON_CATEGORIES,
   resetState, getState, setState, setUseLocalLLM,
   setLLMScope, setCategoryGroup, setUseBuiltInPatterns, setUseHeuristicDiscovery,
   setSignalSource, setSignalDerivation, applyPreset,
+  PRESETS, PRESET_SCOPE_PATTERNS, PRESET_SCOPE_NAMES, PRESET_FAMILY_DEPTH,
+  presetsFor,
   SIGNAL_SOURCES, SIGNAL_DERIVATIONS, LLM_DETAIL_LEVELS,
 } from "./state.js";
 import { renderIdentifyRail } from "./views/identifyrail.js";
@@ -36,7 +38,7 @@ import { container, fire } from "./testdom.js";
 // PATTERN_CATEGORIES is every built-in pattern category the store knows, which
 // is what the eight groups of the Built-in patterns section must cover exactly.
 const PATTERN_CATEGORIES = [
-  ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES, ...ADVANCED_PII_CATEGORIES,
+  ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES, ...THOROUGH_PII_CATEGORIES,
 ];
 
 /**
@@ -223,12 +225,19 @@ test("Scope is no longer a section: it is nested in the route it scopes", () => 
   assert.ok(!RAIL_SECTIONS.some(([, label]) => /scope/i.test(label)));
 });
 
-test("the presets are the three engine levels, and Custom is not among them", () => {
-  assert.deepEqual(PRESETS.map(([level]) => level), ["soft", "medium", "advanced"]);
-  assert.ok(!PRESETS.some(([level]) => level === "custom"),
+test("the chip labels come from the mirrored table, and Custom is not in it", () => {
+  // The rail holds NO hand-written list of presets: it renders a row from the
+  // table, so a preset added to the engine and mirrored in state.js appears here
+  // with no second edit. That is what this asserts, by reading the table the rail
+  // reads.
+  for (const scope of [PRESET_SCOPE_PATTERNS, PRESET_SCOPE_NAMES]) {
+    const row = presetsFor(scope, PRESET_FAMILY_DEPTH);
+    assert.deepEqual(row.map((p) => p.id), ["soft", "standard", "thorough"]);
+    // The labels say what they mean, and they are the chips' text.
+    assert.deepEqual(row.map((p) => p.label), ["Soft", "Standard", "Thorough"]);
+  }
+  assert.ok(!PRESETS.some((p) => p.id === "custom"),
     "Custom is a read-out of the current selection, not a preset that can be applied");
-  // The labels say what they mean: soft/medium/advanced read too technical.
-  assert.deepEqual(PRESETS.map(([, label]) => label), ["Soft", "Standard", "Thorough"]);
 });
 
 // --- The local-model gate tooltip ----------------------------------------
@@ -354,17 +363,50 @@ test("Local LLM discovery is OFF by default even when Ollama is detected", () =>
   assert.ok(!("disabled" in local.attrs));
 });
 
-test("Built-in patterns owns the document country and the preset", () => {
+test("Built-in patterns owns the document country and its own preset rows", () => {
   // They are the scope of the pattern pass, so they sit in the section whose
   // switch decides whether that pass runs at all.
   const patterns = sectionById(railHTML(), "rail-patterns");
   assert.ok(exists(patterns, "#document-country"), "the document country");
   assert.ok(exists(patterns, "[data-preset]"), "the presets");
-  assert.ok(exists(patterns, "#preset-also-sets"),
-    "and the read-out naming what else the level switched on");
+  assert.ok(!patterns.includes("#preset-also-sets"),
+    "the cross-section read-out is gone: a chip cannot reach another section now");
   // No stray label row over the groups: under a section already titled "Built-in
   // patterns", a "Categories" heading says nothing and costs a row.
   assert.ok(!patterns.includes("Categories"), "the Categories label row is gone");
+});
+
+test("each section renders only its OWN scope's preset rows", () => {
+  // The chips are addressed "<scope>.<family>.<id>", so the rendered attributes
+  // say which scope each row belongs to. Built-in patterns must carry the patterns
+  // rows and nothing else, Heuristic discovery the names rows and nothing else: a
+  // section rendering the other scope's chips would put a control that changes
+  // another section's checkboxes inside this one.
+  const html = railHTML();
+  for (const [section, scope, other] of [
+    ["rail-patterns", PRESET_SCOPE_PATTERNS, PRESET_SCOPE_NAMES],
+    ["rail-heuristic", PRESET_SCOPE_NAMES, PRESET_SCOPE_PATTERNS],
+  ]) {
+    const chips = all(sectionById(html, section), "[data-preset]")
+      .map((b) => b.attrs["data-preset"]);
+    assert.ok(chips.length, `${section} renders no preset chips at all`);
+    for (const chip of chips) {
+      assert.ok(chip.startsWith(`${scope}.`),
+        `${section} renders the chip ${chip}, which is not in the ${scope} scope`);
+      assert.ok(!chip.startsWith(`${other}.`), `${section} reaches into ${other}`);
+    }
+    // One chip per preset in the row, plus the Custom read-out.
+    assert.equal(chips.length, presetsFor(scope, PRESET_FAMILY_DEPTH).length + 1);
+    assert.ok(chips.includes(`${scope}.${PRESET_FAMILY_DEPTH}.custom`),
+      `${section} renders no Custom read-out`);
+  }
+});
+
+test("Heuristic discovery carries its own preset row", () => {
+  // Its shortcut is its own: before the scoped model the only chips were under
+  // Built-in patterns and they reached across into this section's checkboxes.
+  const heuristic = sectionById(railHTML(), "rail-heuristic");
+  assert.ok(exists(heuristic, "[data-preset]"), "the names preset row");
 });
 
 test("Built-in patterns owns every pattern category and no name category", () => {
@@ -736,11 +778,12 @@ test("the active count still counts a switch-less category as on", () => {
   // The heading's read-out is over ALL_CATEGORIES, so a category with no switch
   // must be counted rather than silently dropped from the denominator.
   resetState();
-  for (const level of ["soft", "medium", "advanced"]) {
-    applyPreset(level);
+  for (const id of ["soft", "standard", "thorough"]) {
+    applyPreset(PRESET_SCOPE_PATTERNS, PRESET_FAMILY_DEPTH, id);
+    applyPreset(PRESET_SCOPE_NAMES, PRESET_FAMILY_DEPTH, id);
     for (const key of ALWAYS_ON_CATEGORIES) {
       assert.equal(getState().settings.categories[key], true,
-        `${key} is on at ${level}, so the "N of M categories on" read-out counts it`);
+        `${key} is on at ${id}, so the "N of M categories on" read-out counts it`);
     }
   }
 });

@@ -293,7 +293,7 @@ func NewDetectionScope(values []Value, patterns []CustomPattern,
 		country = CountryLU
 	}
 	if categories == nil {
-		categories = PresetSelection(LevelMedium)
+		categories = DefaultSelection(country)
 	}
 	return detectionScope{
 		values:           filterValues(values, categories),

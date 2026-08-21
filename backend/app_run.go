@@ -115,7 +115,6 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 	a.mu.Lock()
 	docs := make([]engine.Document, len(a.docs))
 	copy(docs, a.docs)
-	level := engine.Level(a.settings.Level)
 	// The request's selection wins; stored settings are the fallback so
 	// exports and re-runs behave like the last configured run.
 	categories := req.Categories
@@ -142,7 +141,6 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 		Documents:        docs,
 		Values:           req.Values,
 		Patterns:         req.Patterns,
-		Level:            level,
 		Categories:       categories,
 		MinConfidence:    minConfidence,
 		Country:          a.settings.Country,

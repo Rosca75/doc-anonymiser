@@ -103,13 +103,13 @@ func TestRunPipelineRejectsEmptyAndConcurrent(t *testing.T) {
 // configuration.
 func TestApplySettingsRoundTrip(t *testing.T) {
 	app := NewApp()
-	sel := engine.PresetSelection(engine.LevelSoft)
+	sel := engine.DepthSelection(engine.PresetSoft, engine.CountryLU)
 	sel["email"] = false
 
 	// The probe will fail (no server on that port) but ApplySettings must
 	// still store the settings; availability is status, not an error.
 	_, err := app.ApplySettings(Settings{
-		Level:       "soft",
+		Presets:     depthPresets(engine.PresetSoft),
 		Categories:  sel,
 		OllamaPort:  18434,
 		Model:       "custom:3b",
@@ -132,7 +132,7 @@ func TestApplySettingsRoundTrip(t *testing.T) {
 	}
 
 	// Invalid context size is rejected with an actionable message.
-	if _, err := app.ApplySettings(Settings{Level: "soft", OllamaPort: 11434, ContextSize: -1, Country: engine.CountryLU}); err == nil {
+	if _, err := app.ApplySettings(Settings{Presets: depthPresets(engine.PresetSoft), OllamaPort: 11434, ContextSize: -1, Country: engine.CountryLU}); err == nil {
 		t.Error("negative context size must be rejected")
 	}
 }

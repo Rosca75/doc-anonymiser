@@ -51,10 +51,10 @@ func TestPipelineBudget(t *testing.T) {
 
 	start := time.Now()
 	res := runPipeline(t, PipelineInput{
-		Documents: docs,
-		Values:    values,
-		Level:     LevelMedium,
-		Allowlist: NewAllowlist(),
+		Documents:  docs,
+		Values:     values,
+		Categories: DepthSelection(PresetStandard, CountryLU),
+		Allowlist:  NewAllowlist(),
 	})
 	elapsed := time.Since(start)
 

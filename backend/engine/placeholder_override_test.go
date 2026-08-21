@@ -212,7 +212,7 @@ func TestSessionRoundTripsPlaceholderOverrides(t *testing.T) {
 	}
 
 	raw, err := SaveSession(Session{
-		Settings:             SessionSettings{Level: "medium", OllamaPort: 11434},
+		Settings:             SessionSettings{Presets: depthPresets(PresetStandard), OllamaPort: 11434},
 		Registry:             reg.Export(),
 		PlaceholderOverrides: reg.Overrides(),
 	})

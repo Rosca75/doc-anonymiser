@@ -67,10 +67,10 @@ without the runtime. Preserve that behaviour.
 
   The rail is THREE switchable DETECTION ROUTE sections, not tabs, one per
   MECHANISM, each switch bound to a real settings flag: **Built-in patterns**
-  (`useBuiltInPatterns`, on by default, owning the document country, the preset
-  and the eight pattern category groups), **Heuristic discovery**
-  (`useHeuristicDiscovery`, on by default, owning the name categories and its own
-  strictness block) and **Local LLM discovery** (`useLocalLLM`, off by default).
+  (`useBuiltInPatterns`, on by default, owning the document country, its own
+  preset rows and the eight pattern category groups), **Heuristic discovery**
+  (`useHeuristicDiscovery`, on by default, owning the name categories, its own
+  preset rows and its own strictness block) and **Local LLM discovery** (`useLocalLLM`, off by default).
   There is no cloud route.
 
   Two SWITCH-LESS panels follow them, carrying `.rail-panel` rather than
@@ -302,15 +302,18 @@ Windows it steals focus from the window it belongs to.
 - `suggestionmodel.js` — pure Suggestions filter/sort view-model (search,
   category, discovery method, count sort).
 - `countries.js` — the document-country table, MIRRORING the engine's
-  `backend/engine/country.go` exactly as `presetCategories()` mirrors
-  `PresetSelection`: the per-country example strings for the phone / VAT /
-  national-identification labels and which categories each country switches on.
+  `backend/engine/country.go` exactly as `PRESETS` mirrors `engine.AllPresets`:
+  the per-country example strings for the phone / VAT / national-identification
+  labels and which categories each country switches on.
   Since BUILD-06 Phase 1 the country is a real ENGINE setting, not a display
   choice (superseding BUILD-05 decision 2): it decides which country-specific
-  regexes run. It stays an ORTHOGONAL axis to the preset: `applyPreset`
-  re-applies it, and `selectionPresetName` excludes the country-driven
-  categories from its comparison, so picking Standard on a Luxembourg document
-  does not read as "Custom".
+  regexes run. It stays an ORTHOGONAL axis to the presets, and
+  `COUNTRY_ID_CATEGORIES` is what makes that work: `applyPreset` masks the
+  national identifiers by the document country and `activePreset` expects them
+  masked, so picking Standard on a Luxembourg document does not read as
+  "Custom". The engine applies the SAME mask over the same list
+  (`engine.CountryIDCategories`), or the rail and the run report would name
+  different presets for one selection.
 - `toast.js` — the state-backed notice strip (`state.notice`).
 - `modal.js` — the in-app confirm, returning `Promise<boolean>`.
 - `scroll.js` — scroll-position preservation across re-renders.
@@ -414,6 +417,6 @@ Retired names must not come back, and two guards say so mechanically:
 ## Where to look next
 
 - Backend data surface for the UI: `BRIDGE.md` (same folder).
-- Product/domain rules, anonymisation levels, pinned versions: repo-root
+- Product/domain rules, the preset model, pinned versions: repo-root
   `CLAUDE.md`.
 - Backend internals (engine passes, converters, Ollama): `../backend/CLAUDE.md`.

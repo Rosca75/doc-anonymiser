@@ -10,8 +10,9 @@
 //
 //   Built-in patterns ON by default (useBuiltInPatterns). Application-provided
 //                    patterns for structured signals, which MATCH AND REPLACE
-//                    the signal itself. Its scope, the document country, the
-//                    preset and the eight category groups, is nested inside it.
+//                    the signal itself. Its scope, the document country, its own
+//                    preset rows and the eight category groups, is nested inside
+//                    it.
 //   Heuristic discovery ON by default (useHeuristicDiscovery). Spelling,
 //                    context, frequency and deterministic gazetteers, producing
 //                    Suggestions. It owns the name categories and its own
@@ -46,7 +47,7 @@ import {
 } from "../api.js";
 import {
   getState, setState,
-  applyPreset, toggleCategory, selectionPresetName, setUseLocalLLM,
+  applyPreset, toggleCategory, activePreset, activePresets, setUseLocalLLM,
   setUseBuiltInPatterns, setUseHeuristicDiscovery,
   SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
   signalSourceOn, signalDerivationOn, enabledSignalDerivations,
@@ -61,6 +62,7 @@ import {
   buildRunRequest, setValueTables,
   ALL_CATEGORIES,
   NAME_CATEGORIES,
+  PRESET_SCOPE_PATTERNS, PRESET_SCOPE_NAMES, presetFamilies, presetsFor,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import {
@@ -134,14 +136,6 @@ const collapsedGroups = new Set(["rail-local", "rail-quality", "rail-profile"]);
 // close went through a reducer.
 const openSignalSources = new Set();
 
-// PRESETS: engine level → user-facing label. "soft/medium/advanced" reads too
-// technical; Standard and Thorough say what they mean.
-export const PRESETS = [
-  ["soft", "Soft"],
-  ["medium", "Standard"],
-  ["advanced", "Thorough"],
-];
-
 // PATTERN_GROUPS is the built-in pattern categories, grouped by CLASS:
 // [visible title, category keys]. It renders inside the Built-in patterns
 // section, which is what matches them.
@@ -199,7 +193,7 @@ export const CATEGORY_GROUPS = [...PATTERN_GROUPS, ...NAME_GROUPS];
 const GROUPS_BY_TYPE = { pattern: PATTERN_GROUPS, name: NAME_GROUPS };
 
 // The category groups start FOLDED. The rail opens on what a user changes most:
-// the route switches and the scope summary (country, preset). A wall of expanded
+// the route switches and the scope summary (country, presets). A wall of expanded
 // category lists buries those above the fold and makes the panel scroll for a
 // setting most sessions never touch, so each group opens only when its owner
 // reaches for the categories inside it. The IDs match the ones categoryGroups()
@@ -371,7 +365,10 @@ function wireSectionSwitches(container) {
 
 /**
  * patternsSection(s) is what built-in pattern matching looks for: the document
- * country, the preset, and the eight category groups.
+ * country, its own preset rows, and the eight category groups.
+ *
+ * The preset chips here are the PATTERNS rows and nothing else: pressing one
+ * cannot change a checkbox under Heuristic discovery.
  *
  * There is no "Categories" label row over the groups. Under a section already
  * titled "Built-in patterns" that label says nothing, and the panel's height is
@@ -379,7 +376,7 @@ function wireSectionSwitches(container) {
  * own help tooltip instead.
  */
 function patternsSection(s) {
-  return countryBlock(s) + presetBlock(s) +
+  return countryBlock(s) + presetBlock(s, PRESET_SCOPE_PATTERNS) +
     categoryGroups(s, PATTERN_GROUPS, "pattern", !s.settings.useBuiltInPatterns);
 }
 
@@ -392,9 +389,14 @@ function patternsSection(s) {
  * The name categories live HERE, under the route that discovers them offline.
  * Local LLM discovery reads the same one selection (engine.CategorySelection is
  * one setting) and says so rather than rendering a second copy of the boxes.
+ *
+ * Its preset chips are the NAMES rows, which is what makes this section's
+ * shortcut its own: a chip here writes the name categories and touches no
+ * pattern category.
  */
 function heuristicSection(s) {
-  return `<div class="rail-block">` +
+  return presetBlock(s, PRESET_SCOPE_NAMES) +
+    `<div class="rail-block">` +
     labelWithHelp(RAIL.valuesAuto, RAIL.valuesAutoHelp) +
     categoryGroups(s, NAME_GROUPS, "name") +
     `</div>` +
@@ -498,9 +500,9 @@ function signalCategoryRow(s, source, headHTML, tailHTML) {
  * with its explanation one hover or one Tab away. A paragraph under each of these
  * is what made the panel taller than the window.
  */
-function labelWithHelp(text, help) {
+function labelWithHelp(text, help, opts = {}) {
   return `<div class="rail-label-row">` + sectionLabel(text) +
-    helpTooltip(help, { label: text }) + `</div>`;
+    helpTooltip(help, { label: text, ...opts }) + `</div>`;
 }
 
 /** countryBlock(s) is the document country: the broadest choice, so it leads. */
@@ -512,24 +514,31 @@ function countryBlock(s) {
 }
 
 /**
- * presetBlock(s) is the preset chips and the read-out under them.
+ * presetBlock(s, scope) is one chip ROW PER FAMILY that has presets in scope.
  *
- * A preset fills BOTH the pattern categories here and the name categories under
- * Heuristic discovery (CLAUDE.md §5, the anonymisation levels), so a chip pressed
- * in this section reaches across into another one. That is a domain rule rather
- * than a UI one, so the read-out makes it VISIBLE instead of the chip changing a
- * selection the user cannot see from here.
+ * A preset writes only its own scope, so the block is rendered once per section
+ * and each instance carries only that section's rows. There is deliberately no
+ * read-out saying what a chip "also" switched on somewhere else: a chip cannot
+ * reach another section any more, so there is nothing to disclose.
+ *
+ * A family with no presets in this scope renders nothing at all, rather than an
+ * empty row, which is why the loop is over presetFamilies(scope).
  */
-function presetBlock(s) {
-  const namesOn = NAME_CATEGORIES.filter((c) => s.settings.categories?.[c]).length;
-  return `<div class="rail-block">` +
-    labelWithHelp(RAIL.preset, CONFIGURE.presetHelp) +
-    presetChips(s) +
-    // .rail-readout, not .hint: the count changes with the chip, so it is dynamic
-    // information rather than the static prose the panel does not carry.
-    `<p class="rail-readout" id="preset-also-sets">` +
-    `${escapeHTML(RAIL.presetAlsoSets(namesOn))}</p>` +
-    `</div>`;
+function presetBlock(s, scope) {
+  const rows = presetFamilies(scope).map((family) => {
+    const label = RAIL.presetFamilyLabel[family] ?? family;
+    return `<div class="rail-block">` +
+      // An EXPLICIT bubble id per row. The help text is the same sentence in
+      // every row, and helpTooltip derives its id from the text, so two rows
+      // would otherwise share one bubble id and every aria-describedby but the
+      // first would point at the wrong element.
+      labelWithHelp(label, CONFIGURE.presetHelp, {
+        id: `help-preset-${scope}-${family}`,
+      }) +
+      presetChips(s, scope, family) +
+      `</div>`;
+  });
+  return rows.join("");
 }
 
 function countrySelect(s) {
@@ -540,18 +549,34 @@ function countrySelect(s) {
     ` aria-label="${escapeHTML(RAIL.country)}">${options}</select>`;
 }
 
-function presetChips(s) {
-  const current = selectionPresetName(s.settings.categories);
-  const chips = PRESETS.map(([id, label]) => ({ id, label, active: current === id }));
+/**
+ * presetChips(s, scope, family) is one row's chips. The LABELS come from the
+ * mirrored preset table, so a preset added to the engine appears here with no
+ * second edit.
+ *
+ * The data attribute carries the whole address, "<scope>.<family>.<id>", because
+ * the same preset ID can exist in both scopes and a bare ID would not say which
+ * row was pressed.
+ */
+function presetChips(s, scope, family) {
+  const current = activePreset(s, scope, family);
+  const chips = presetsFor(scope, family).map((preset) => ({
+    id: `${scope}.${family}.${preset.id}`,
+    label: preset.label,
+    active: current?.id === preset.id,
+  }));
   // "Custom" is a READ-OUT, not a choice: there is no preset to apply, it is
-  // what the selection reads as once it matches none of the three. Rendering it
+  // what the row reads as once the selection matches none of them. Rendering it
   // as a chip that does nothing when pressed would be a lie, so it is disabled
   // and carries the explanation as its tooltip.
   chips.push({
-    id: "custom", label: "Custom", active: current === "custom",
+    id: `${scope}.${family}.custom`, label: "Custom", active: !current,
     disabled: true, title: CONFIGURE.presetHelp,
   });
-  return chipRow(chips, { attr: "preset", ariaLabel: RAIL.preset });
+  return chipRow(chips, {
+    attr: "preset",
+    ariaLabel: RAIL.presetFamilyLabel[family] ?? family,
+  });
 }
 
 /**
@@ -699,7 +724,10 @@ function wireScope(container) {
   for (const chip of container.querySelectorAll("[data-preset]")) {
     if (chip.disabled) continue; // the Custom read-out
     chip.addEventListener("click", () => {
-      applyPreset(chip.dataset.preset);
+      // "<scope>.<family>.<id>": the whole address, because the same preset ID
+      // exists in both scopes and a bare ID would not say which row was pressed.
+      const [scope, family, id] = String(chip.dataset.preset).split(".");
+      applyPreset(scope, family, id);
       pushSettings(container);
     });
   }
@@ -1262,7 +1290,11 @@ export function settingsPayload(s, container) {
   const strictFormat = container.querySelector("#ai-strict-format");
   const detailLevel = container.querySelector("#ai-detail-level");
   return {
-    level: s.settings.level,
+    // Which preset each chip row is on, DERIVED from the selection travelling in
+    // the same payload rather than stored beside it, so Go can never hold a
+    // preset that disagrees with the categories it was given. A row that matches
+    // no preset contributes no key, which is how Custom is representable.
+    presets: activePresets(s),
     categories: s.settings.categories,
     country: s.settings.country ?? s.documentCountry,
     // A tab that is not on screen contributes nothing: read the store instead of

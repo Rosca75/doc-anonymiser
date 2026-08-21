@@ -73,7 +73,7 @@ func TestSourceTextSurvivesTheWholeFlow(t *testing.T) {
 			{Category: "person_names", MainText: "Marie Duval"},
 			{Category: "entity_names", MainText: "Alpine Trust"},
 		},
-		Categories: engine.PresetSelection(engine.LevelAdvanced),
+		Categories: engine.DepthSelection(engine.PresetThorough, engine.CountryLU),
 	}
 
 	res, err := app.FastRerun(req)
@@ -143,7 +143,7 @@ func TestResultsCarryNoSourceCopy(t *testing.T) {
 	app, atImport := importFixtures(t, "sample.txt")
 	res, err := app.FastRerun(RunRequest{
 		Values:     []engine.Value{{Category: "person_names", MainText: "Marie Duval"}},
-		Categories: engine.PresetSelection(engine.LevelMedium),
+		Categories: engine.DepthSelection(engine.PresetStandard, engine.CountryLU),
 	})
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
@@ -184,13 +184,16 @@ func TestRetiredCategoriesAreFullyGone(t *testing.T) {
 				t.Errorf("%s is still an engine category", retired)
 			}
 		}
-		for _, level := range []engine.Level{engine.LevelSoft, engine.LevelMedium, engine.LevelAdvanced} {
-			if engine.PresetSelection(level)[retired] {
-				t.Errorf("preset %q still switches %s on", level, retired)
+		for _, preset := range engine.AllPresets {
+			for _, category := range preset.Categories {
+				if category == retired {
+					t.Errorf("the %s/%s/%s preset still switches %s on",
+						preset.Scope, preset.Family, preset.ID, retired)
+				}
 			}
 		}
 	}
-	if !engine.PresetSelection(engine.LevelSoft)["entity_names"] {
+	if !engine.DepthSelection(engine.PresetSoft, engine.CountryLU)["entity_names"] {
 		t.Error("entity_names must be on at every preset, as both merged categories were")
 	}
 
@@ -205,7 +208,7 @@ func TestRetiredCategoriesAreFullyGone(t *testing.T) {
 			{Category: "entity_names", MainText: "Alpine Trust"},
 			{Category: "person_names", MainText: "Marie Duval"},
 		},
-		Categories: engine.PresetSelection(engine.LevelMedium),
+		Categories: engine.DepthSelection(engine.PresetStandard, engine.CountryLU),
 	})
 	if err != nil {
 		t.Fatalf("run failed: %v", err)

@@ -116,20 +116,63 @@ func TestFrontendInventsNoCategory(t *testing.T) {
 }
 
 func TestExtendedRecognizersAreOnAtEveryPreset(t *testing.T) {
-	//  made the extended recognizers hard PII, active at every
-	// level. The frontend preset function mirrors this by hand, so pin the
-	// Go side here and the JS side in state.test.js.
+	// The extended recognizers are hard PII, so every depth preset in the
+	// patterns scope names them. The frontend mirrors the preset table, so pin
+	// the Go side here and the JS side in state.test.js.
 	extended := []string{
 		engine.CatCreditCard, engine.CatNHS, engine.CatIPAddress,
 		engine.CatMACAddress, engine.CatCrypto, engine.CatDatabaseURI,
 		engine.CatDESteuerID, engine.CatESNIF,
 	}
-	for _, level := range []engine.Level{engine.LevelSoft, engine.LevelMedium, engine.LevelAdvanced} {
-		sel := engine.PresetSelection(level)
+	for _, preset := range engine.PresetsFor(engine.ScopePatterns, engine.FamilyDepth) {
+		named := map[string]bool{}
+		for _, c := range preset.Categories {
+			named[c] = true
+		}
 		for _, c := range extended {
-			if !sel[c] {
-				t.Errorf("%s: %s must be on at every preset", level, c)
+			if !named[c] {
+				t.Errorf("%s: %s must be named by every depth preset", preset.ID, c)
 			}
+		}
+	}
+}
+
+// TestCountryIDCategoryParity: the four national identifier categories whose
+// SWITCH follows the document country, on both sides.
+//
+// Both sides need the list because both sides answer "which preset is this
+// selection?": the rail derives the active chip from it, and engine.Run derives
+// the run report's presets from it. A mask only one of them applies would have
+// them naming different presets for one selection, and nothing on screen would
+// say which was right.
+func TestCountryIDCategoryParity(t *testing.T) {
+	raw, err := os.ReadFile("frontend/countries.js")
+	if err != nil {
+		t.Fatalf("could not read frontend/countries.js: %v", err)
+	}
+	m := regexp.MustCompile(`(?s)export const COUNTRY_ID_CATEGORIES = \[(.*?)\]`).
+		FindStringSubmatch(string(raw))
+	if m == nil {
+		t.Fatal("frontend/countries.js declares no COUNTRY_ID_CATEGORIES list")
+	}
+	var js []string
+	for _, q := range quotedRe.FindAllStringSubmatch(m[1], -1) {
+		js = append(js, q[1])
+	}
+	got, want := append([]string(nil), js...), append([]string(nil), engine.CountryIDCategories...)
+	sort.Strings(got)
+	sort.Strings(want)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("COUNTRY_ID_CATEGORIES is %v, engine.CountryIDCategories is %v.\n"+
+			"The two sides mask a preset comparison with this list, so a category only one of\n"+
+			"them masks makes the rail and the run report name different presets.", got, want)
+	}
+	// Every member has to be country-scoped in the table that says where a
+	// category applies, or the mask would be a no-op.
+	for _, category := range engine.CountryIDCategories {
+		if engine.CategoryCountries[category] == nil {
+			t.Errorf("%s is in CountryIDCategories but applies everywhere, so masking it "+
+				"changes nothing", category)
 		}
 	}
 }

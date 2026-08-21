@@ -353,7 +353,7 @@ func TestDisablingTheEmailSourceStopsOnlyDiscovery(t *testing.T) {
 
 	// The address itself is still matched and replaced, by the pass that has
 	// nothing to do with this setting.
-	spans := DetectPIISelected(text, PresetSelection(LevelMedium), CountryLU)
+	spans := DetectPIISelected(text, DepthSelection(PresetStandard, CountryLU), CountryLU)
 	found := false
 	for _, s := range spans {
 		if s.Category == CatEmail && s.Original == "pierre.dupont@tpps.com" {
@@ -438,7 +438,7 @@ func TestClearingOneReadingKeepsEmailAnonymisation(t *testing.T) {
 				Allow:     NewEmptyAllowlist(),
 			})
 
-			spans := DetectPIISelected(text, PresetSelection(LevelMedium), CountryLU)
+			spans := DetectPIISelected(text, DepthSelection(PresetStandard, CountryLU), CountryLU)
 			found := false
 			for _, s := range spans {
 				if s.Category == CatEmail && s.Original == "pierre.dupont@tpps.com" {
@@ -653,7 +653,7 @@ func TestClearingTheWebsiteReadingLeavesTheURLAnonymised(t *testing.T) {
 
 	// And the URL is still matched and replaced, which is governed by Built-in
 	// patterns and the url category, not by this setting.
-	spans := DetectPIISelected(text, PresetSelection(LevelSoft), CountryLU)
+	spans := DetectPIISelected(text, DepthSelection(PresetSoft, CountryLU), CountryLU)
 	matched := false
 	for _, sp := range spans {
 		if sp.Category == CatURL && sp.Original == "www.nstar.lu/privacy" {

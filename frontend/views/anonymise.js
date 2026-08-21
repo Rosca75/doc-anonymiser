@@ -47,6 +47,7 @@ import {
   valueKey, deleteValue, removeAllowTerm,
   setIntersections, intersectionsFor, buildIntersectionRequest,
   setAnonymiseTab,
+  PRESET_SCOPES, presetFamilies, presetKey, findPreset,
 } from "../state.js";
 import { escapeHTML } from "../html.js";
 import { renderHighlighted } from "../highlight.js";
@@ -579,14 +580,28 @@ function declaredIntersectionWarnings(s) {
 
 /**
  * runNote(s) surfaces what the run itself did, which the card used to ignore
- * entirely: the preset it ran at.
+ * entirely: the presets its selection matched.
+ *
+ * report.presets is keyed "<scope>.<family>" and Go derives it from the selection
+ * the run OBEYED, so this note can never name a preset the run did not use. A row
+ * that matched none contributes no key, and therefore nothing to say.
  */
 function runNote(s) {
-  const report = s.results?.report ?? {};
-  const parts = [];
-  if (report.level) parts.push(ANONYMISE.reportLevel(report.level));
-  if (!parts.length) return "";
-  return `<p class="hint" id="report-run-note">${escapeHTML(parts.join(". "))}.</p>`;
+  const presets = s.results?.report?.presets ?? {};
+  const rows = [];
+  for (const scope of PRESET_SCOPES) {
+    for (const family of presetFamilies(scope)) {
+      const id = presets[presetKey(scope, family)];
+      if (!id) continue;
+      rows.push({
+        scope: ANONYMISE.presetScopeLabel[scope] ?? scope,
+        preset: findPreset(scope, family, id)?.label ?? id,
+      });
+    }
+  }
+  const sentence = ANONYMISE.reportPresets(rows);
+  if (!sentence) return "";
+  return `<p class="hint" id="report-run-note">${escapeHTML(sentence)}.</p>`;
 }
 
 /**

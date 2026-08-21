@@ -65,10 +65,10 @@ func pdfFixture(t *testing.T, name string) []byte {
 // at medium level.
 func testConfig(entities ...engine.Value) Config {
 	return Config{
-		Values:    entities,
-		Level:     engine.LevelMedium,
-		Allowlist: engine.NewEmptyAllowlist(),
-		Registry:  engine.NewRegistry(),
+		Values:     entities,
+		Categories: engine.DepthSelection(engine.PresetStandard, engine.CountryLU),
+		Allowlist:  engine.NewEmptyAllowlist(),
+		Registry:   engine.NewRegistry(),
 	}
 }
 

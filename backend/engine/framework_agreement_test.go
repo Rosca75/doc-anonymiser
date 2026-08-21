@@ -108,7 +108,7 @@ func fixtureAllowlist() *Allowlist {
 // spellings of the date.
 func TestFrameworkAgreementPatternsFindEveryPatternReachableValue(t *testing.T) {
 	src := loadFixtureMarkdown(t, "framework_agreement.docx")
-	spans := ResolveOverlaps(DetectPIISelected(src, PresetSelection(LevelAdvanced), CountryLU))
+	spans := ResolveOverlaps(DetectPIISelected(src, DepthSelection(PresetThorough, CountryLU), CountryLU))
 
 	found := map[string]string{} // original -> category
 	for _, s := range spans {
@@ -298,11 +298,11 @@ func TestFrameworkAgreementReproduction(t *testing.T) {
 		Documents: []Document{{
 			Name: "framework_agreement.docx", Format: FormatDOCX, Markdown: src,
 		}},
-		Values:    values,
-		Level:     LevelAdvanced,
-		Country:   CountryLU,
-		Allowlist: fixtureAllowlist(),
-		Registry:  NewRegistry(),
+		Values:     values,
+		Categories: DepthSelection(PresetThorough, CountryLU),
+		Country:    CountryLU,
+		Allowlist:  fixtureAllowlist(),
+		Registry:   NewRegistry(),
 	})
 	if err != nil {
 		t.Fatalf("the run failed: %v", err)

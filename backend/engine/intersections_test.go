@@ -10,7 +10,7 @@ import (
 // no confidence floor, Luxembourg, nothing allowlisted.
 func scopeFor(values []Value, patterns []CustomPattern) detectionScope {
 	return NewDetectionScope(values, patterns,
-		PresetSelection(LevelAdvanced), 0, CountryLU, NewEmptyAllowlist(), false)
+		DepthSelection(PresetThorough, CountryLU), 0, CountryLU, NewEmptyAllowlist(), false)
 }
 
 // findIntersection returns the row for one value under one category.
@@ -213,7 +213,7 @@ func TestIntersectionRespectsTheAllowlist(t *testing.T) {
 	allow.Add(value)
 	scope := NewDetectionScope(
 		[]Value{{Category: CatPersonNames, MainText: value}}, nil,
-		PresetSelection(LevelAdvanced), 0, CountryLU, allow, false)
+		DepthSelection(PresetThorough, CountryLU), 0, CountryLU, allow, false)
 
 	if rows := DetectIntersections(docs, scope); len(rows) != 0 {
 		t.Errorf("an allowlisted value is replaced by nothing, so it overlaps nothing, got %+v", rows)
@@ -242,7 +242,7 @@ func TestCheckAgreesWithTheRun(t *testing.T) {
 	reg := NewRegistry()
 	if _, err := Run(context.Background(), PipelineInput{
 		Documents: docs, Values: values,
-		Level: LevelAdvanced, Country: CountryLU,
+		Categories: DepthSelection(PresetThorough, CountryLU), Country: CountryLU,
 		Allowlist: NewEmptyAllowlist(), Registry: reg,
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
