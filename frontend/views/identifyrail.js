@@ -22,9 +22,7 @@
 //                    level and the context size. Detecting Ollama enables the
 //                    switch; it never flips it.
 //
-// Below the routes sit two switch-less panels: Detection quality, holding the
-// match-confidence floor, which governs EVERY route that is on and therefore
-// belongs to none of them; and Load profile.
+// Below the routes sits ONE switch-less panel, Load profile.
 //
 // Signal-based discovery has no section of its own. Its readings hang off the
 // category row of the pattern that produces the evidence, inside Built-in
@@ -52,7 +50,7 @@ import {
   SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
   signalSourceOn, signalDerivationOn, enabledSignalDerivations,
   setSignalSource, setSignalDerivation,
-  setCategoryGroup, setMinConfidence, setDocumentCountry,
+  setCategoryGroup, setRequireChecksum, setDocumentCountry,
   setHeuristicDiscoveryOptions, heuristicDiscoveryOptions,
   setLLMScope,
   llmScopeArg,
@@ -125,10 +123,9 @@ const SECTION_HELP = {
 // every fold went through a reducer.
 //
 // Local LLM discovery starts folded: it is off, and an open panel of disabled
-// fields is noise above the settings that ARE in use. Detection quality and Load
-// profile start folded for the same reason: most sessions never touch either,
-// and the quality panel's header states its value while it is shut.
-const collapsedGroups = new Set(["rail-local", "rail-quality", "rail-profile"]);
+// fields is noise above the settings that ARE in use. Load profile starts folded
+// for the same reason: most sessions never touch it.
+const collapsedGroups = new Set(["rail-local", "rail-profile"]);
 
 // Which signal rows are EXPANDED to show their individual readings. A VIEW
 // preference, like the folded sections: nothing downstream reads it, it must not
@@ -257,21 +254,11 @@ export function railBody(s) {
     });
   }).join("");
 
-  // Two switch-less panels follow the routes. They take the parallel
+  // One switch-less panel follows the routes. It takes the parallel
   // "rail-panel" class rather than "rail-section": that class marks a detection
   // ROUTE, and the render harness counts it to assert how many routes the rail
   // has, so a utility panel wearing it would be counted as a route.
-  const quality = collapsibleGroup("rail-quality", RAIL.qualityTitle, qualitySection(s), {
-    open: !collapsedGroups.has("rail-quality"),
-    cls: "rail-panel",
-    // The live value on the header, so the folded panel still states what the
-    // floor is set to: a shut panel hiding a setting that changes what a run
-    // replaces is a setting nobody knows is there.
-    countLabel: `${Math.round((s.settings.minConfidence ?? 0) * 100)}%`,
-    headRightHTML: helpTooltip(RAIL.qualityHelp, { label: RAIL.qualityTitle }),
-  });
-
-  return routes + quality +
+  return routes +
     collapsibleGroup("rail-profile", RAIL.profileTitle, profileSection(s), {
       open: !collapsedGroups.has("rail-profile"),
       cls: "rail-panel",
@@ -377,7 +364,41 @@ function wireSectionSwitches(container) {
  */
 function patternsSection(s) {
   return countryBlock(s) + presetBlock(s, PRESET_SCOPE_PATTERNS) +
+    checksumToggle(s) +
     categoryGroups(s, PATTERN_GROUPS, "pattern", !s.settings.useBuiltInPatterns);
+}
+
+/**
+ * checksumToggle(s) is the "Only replace when the checksum matches" switch.
+ *
+ * It sits HERE, under Built-in patterns and above the category groups, because
+ * it is about the built-in patterns' own check digits and about nothing else: it
+ * reaches no accepted Value, no custom pattern and no discovery method. A
+ * control that governed all of those would need a panel of its own, and one that
+ * governs one section's matches belongs on that section, directly under the
+ * preset that decides which of those matches run at all.
+ *
+ * It is a CHECKBOX and not a number, because there is one question and it has
+ * two answers. The percentage it replaced was two unrelated questions wearing
+ * one control, and the second of them was wrong: above roughly 0.8 it dropped
+ * Values the user had already accepted, by the score of whatever originally
+ * found them, which contradicts the review gate and is invisible when it
+ * happens.
+ *
+ * It is NOT gated on the section switch: the box has to be readable and
+ * settable while the pass is off, exactly as the category boxes are, so the user
+ * can configure the pass before turning it on.
+ */
+function checksumToggle(s) {
+  return `<div class="rail-block">` +
+    `<div class="rail-toggle">` +
+    `<label class="cat-row" for="require-checksum">` +
+    `<input type="checkbox" id="require-checksum"${s.settings.requireChecksum ? " checked" : ""}/>` +
+    `<span class="cat-label">${escapeHTML(RAIL.requireChecksum)}</span>` +
+    `</label>` +
+    helpTooltip(RAIL.requireChecksumHelp, { label: RAIL.requireChecksum }) +
+    `</div>` +
+    `</div>`;
 }
 
 /**
@@ -405,27 +426,6 @@ function heuristicSection(s) {
       cls: "rail-subgroup",
       headRightHTML: helpTooltip(RAIL.smartTuningHelp, { label: RAIL.smartTuning }),
     });
-}
-
-/**
- * qualitySection(s) is the match-confidence floor, and nothing else.
- *
- * The floor is the one genuinely cross-route control: it governs pass-1 pattern
- * spans, declared Values, custom patterns and every discovery method's output
- * alike, and it decides what a run is allowed to REPLACE rather than what
- * discovery is allowed to suggest. Placing a control that governs three routes
- * inside one of them would mislabel it as that route's own knob, so it gets a
- * switch-less panel of its own.
- *
- * It is NOT the heuristic block's own minimum confidence, which is
- * settings.heuristicDiscovery and lives inside Heuristic discovery because
- * nothing else reads it.
- */
-function qualitySection(s) {
-  return `<div class="rail-block">` +
-    labelWithHelp(CONFIGURE.confidenceTitle, CONFIGURE.confidenceHelp) +
-    confidenceControl(s) +
-    `</div>`;
 }
 
 /**
@@ -660,61 +660,6 @@ function categoryGroups(s, groups, type = "pattern", blockDisabled = false) {
   }).join("");
 }
 
-/**
- * confidenceControl(s) renders the match-confidence floor, inside the switch-less
- * Detection quality panel.
- *
- * It is deliberately NOT gated on any route: every detection carries a score
- * whether or not Ollama is running, and the floor applies to all of them. A
- * slider in whole percent rather than a number field, because the meaningful
- * settings are ranges; the live read-out names what the current position
- * actually excludes.
- */
-function confidenceControl(s) {
-  const percent = Math.round((s.settings.minConfidence ?? 0) * 100);
-  // The value and what it excludes stay INLINE: they change as the slider moves,
-  // and dynamic information the user is watching cannot live behind a hover.
-  return `<div class="rail-slider">` +
-    `<input id="min-confidence" type="range" min="0" max="100" step="5" value="${percent}"` +
-    ` aria-label="${escapeHTML(CONFIGURE.confidenceLabel)}"/>` +
-    `<output id="min-confidence-value" for="min-confidence">${percent}</output>` +
-    `</div>` +
-    // .rail-readout, not .hint: a hint is static prose, which the panel does not
-    // carry any more, while this sentence changes as the slider moves. The two
-    // need different classes so the guard against reintroducing prose can be
-    // structural rather than a list of retired sentences.
-    `<p class="rail-readout" id="min-confidence-effect">${escapeHTML(confidenceEffect(percent))}</p>`;
-}
-
-/**
- * confidenceEffect(percent) puts the current slider position into words, so the
- * user reads what the setting DOES rather than a bare number.
- *
- *  rewrote this copy. The mock-up's version described a
- * source-tiered rule ("values that only the local model suggested are skipped"),
- * which the engine does not implement: what the setting actually is is a FLOOR
- * on the confidence score every detection carries. The thresholds below mirror
- * where the engine's own scores sit (engine/pii.go: local-model proposals score
- * 0.8, values the user listed 0.95, pattern matches 1.0), and the sentences name
- * the effect of the floor rather than inventing a rule about sources.
- *
- * @param {number} percent slider position, 0 to 100
- * @returns {string} a plain-language sentence
- */
-export function confidenceEffect(percent) {
-  if (percent <= 0) return "Nothing is skipped: every detection is replaced.";
-  if (percent <= 80) {
-    return "Nothing is skipped at this setting: every detection the application makes " +
-      "scores at least 80, so this floor is not yet reached.";
-  }
-  if (percent <= 95) {
-    return "Detections scoring below this floor are left alone. In practice that is the " +
-      "weaker ones, proposed rather than matched outright.";
-  }
-  return "Only the strongest detections are replaced, which in practice means the " +
-    "pattern matches. Everything scored lower is left alone.";
-}
-
 function wireScope(container) {
   container.querySelector("#document-country")?.addEventListener("change", (ev) => {
     setDocumentCountry(ev.target.value);
@@ -757,23 +702,14 @@ function wireScope(container) {
     });
   }
 
-  // "input" updates the read-out live while dragging without touching the
-  // store; "change" (on release) commits it, so a drag does not fire one bridge
-  // round-trip per pixel.
-  const confidence = container.querySelector("#min-confidence");
-  if (confidence) {
-    const readout = container.querySelector("#min-confidence-value");
-    const effect = container.querySelector("#min-confidence-effect");
-    confidence.addEventListener("input", () => {
-      const percent = Number(confidence.value);
-      if (readout) readout.textContent = String(percent);
-      if (effect) effect.textContent = confidenceEffect(percent);
-    });
-    confidence.addEventListener("change", () => {
-      setMinConfidence(Number(confidence.value) / 100);
-      return pushSettings(container);
-    });
-  }
+  // The checksum switch writes ITS OWN flag and nothing else: it is about the
+  // built-in patterns' check digits, so it may not reach a category, a preset or
+  // any other route. A wiring test asserts that, because "this control changes
+  // only this" is exactly what a reader of the code cannot verify by reading it.
+  container.querySelector("#require-checksum")?.addEventListener("change", (ev) => {
+    setRequireChecksum(ev.target.checked);
+    pushSettings(container);
+  });
 }
 
 // --- Heuristic discovery: its own strictness -----------------------------
@@ -781,8 +717,9 @@ function wireScope(container) {
 /** smartTuning(s) is heuristic discovery's strictness: the four fields a user
  *  changes when the suggestions themselves are wrong, rather than when the scope
  *  is. Its minimum confidence is this route's own, read by
- *  engine.HeuristicDiscoverContext and by nothing else; the cross-route floor is
- *  the Detection quality panel's slider. */
+ *  engine.HeuristicDiscoverContext and by nothing else, and it governs which
+ *  Suggestions are SHOWN rather than what a run replaces. It is the only
+ *  confidence control left in the rail, which is why it can stay a number. */
 function smartTuning(s) {
   const opts = heuristicDiscoveryOptions(s);
   const fieldRow = (id, label, help, controlHTML) =>
@@ -1322,9 +1259,10 @@ export function settingsPayload(s, container) {
       SIGNAL_SOURCES.map((source) => [source, Object.fromEntries(
         (SIGNAL_DERIVATIONS[source] ?? [])
           .map((d) => [d, signalDerivationOn(s, source, d)]))])),
-    // Read from the store, not the input: setMinConfidence already validated and
-    // stored it, and the block may not be rendered at all.
-    minConfidence: s.settings.minConfidence ?? 0,
+    // Read from the store, not the input: setRequireChecksum already stored it,
+    // and it is sent EXPLICITLY as a boolean rather than left out, because Go
+    // reads an absent value as off and there would then be no way to say "on".
+    requireChecksum: !!s.settings.requireChecksum,
     heuristicDiscovery: heuristicDiscoveryOptions(s),
   };
 }

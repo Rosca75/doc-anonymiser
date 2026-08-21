@@ -597,7 +597,7 @@ func (a *App) SaveSessionToFile(req RunRequest) error {
 			UseBuiltInPatterns:      &settings.UseBuiltInPatterns,
 			UseHeuristicDiscovery:   &settings.UseHeuristicDiscovery,
 			SignalSuggestionSources: engine.NormaliseSignalSources(settings.SignalSuggestionSources),
-			MinConfidence:           settings.MinConfidence,
+			RequireChecksum:         settings.RequireChecksum,
 			HeuristicDiscovery:      &heuristicDiscovery,
 		},
 		Registry:             registry,
@@ -730,7 +730,7 @@ func (a *App) restoredSettings(session engine.Session) Settings {
 		// A missing key falls back to the default rather than to "off", so a file
 		// that says nothing about a source cannot silently disable it.
 		SignalSuggestionSources: engine.NormaliseSignalSources(session.Settings.SignalSuggestionSources),
-		MinConfidence:           session.Settings.MinConfidence,
+		RequireChecksum:         session.Settings.RequireChecksum,
 		HeuristicDiscovery:      a.settings.HeuristicDiscovery,
 	}
 	if session.Settings.UseBuiltInPatterns != nil {

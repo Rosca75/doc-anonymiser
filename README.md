@@ -88,10 +88,12 @@ Suggestion silently answers "reject" on your behalf.
    - **Local LLM discovery** (off by default) hands the documents to a model
      running on your own machine and suggests what it finds.
 
-     Below the three sits **Detection quality**, holding the one setting that
-     applies to all of them: the match-confidence floor, which decides what a run
-     is allowed to replace. Every control explains itself through a small
-     information icon, on hover or by keyboard, so the panel stays a list of
+     Built-in patterns also carries **Only replace when the checksum matches**,
+     off by default. Some identifiers, such as IBANs, have a check digit; when the
+     digits do not add up the match is kept, because a mistyped or partly redacted
+     bank identifier is still one and is still worth replacing. Switch it on to
+     leave those matches alone instead. Every control explains itself through a
+     small information icon, on hover or by keyboard, so the panel stays a list of
      controls rather than a wall of text.
 
    The right half is the review workspace: **Suggestions** waiting for a decision

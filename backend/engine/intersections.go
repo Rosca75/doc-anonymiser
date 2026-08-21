@@ -286,7 +286,7 @@ func matchedTextsFor(t *intersectionTally) []string {
 // exists so the bound App can ask the same question the run asks, with the same
 // inputs, rather than growing a second notion of what a detection is.
 func NewDetectionScope(values []Value, patterns []CustomPattern,
-	categories CategorySelection, minConfidence float32, country string,
+	categories CategorySelection, requireChecksum bool, country string,
 	allow *Allowlist, suppressRegexPII bool,
 ) detectionScope {
 	if country == "" {
@@ -299,7 +299,7 @@ func NewDetectionScope(values []Value, patterns []CustomPattern,
 		values:           filterValues(values, categories),
 		patterns:         patterns,
 		categories:       categories,
-		minConfidence:    minConfidence,
+		requireChecksum:  requireChecksum,
 		country:          country,
 		allow:            allow,
 		suppressRegexPII: suppressRegexPII,

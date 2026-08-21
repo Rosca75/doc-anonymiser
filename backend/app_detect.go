@@ -339,8 +339,9 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, llmScope *LL
 // It reuses the run's OWN allowlist, so a session exclusion and a defined term
 // suppress a previewed match exactly as they suppress a replaced one: a preview
 // that showed a value the user had removed would read as the removal having been
-// undone. The category selection and the confidence floor come from the stored
-// settings for the same reason the pipeline takes them from there.
+// undone. The category selection and the checksum switch come from the stored
+// settings for the same reason the pipeline takes them from there: the preview may
+// promise nothing the run does not make.
 //
 // A nil or empty selection means "use the default selection", which is the
 // pipeline's own reading of the field (engine.Run): the preview must not report a
@@ -363,7 +364,7 @@ func (a *App) previewBuiltInPatterns(docs []engine.Document, settings Settings,
 		return
 	}
 	res.PatternMatches = engine.PreviewPatternMatches(
-		docs, sel, settings.Country, settings.MinConfidence, allow)
+		docs, sel, settings.Country, settings.RequireChecksum, allow)
 }
 
 // builtInOnlyStatus is the status line for a run in which built-in pattern

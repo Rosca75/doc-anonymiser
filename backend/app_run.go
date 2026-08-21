@@ -121,9 +121,9 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 	if categories == nil {
 		categories = a.settings.Categories
 	}
-	// The confidence floor is a SETTING, not a per-run input: it lives in
-	// the Configure screen and applies to every run and fast re-run alike
-	minConfidence := a.settings.MinConfidence
+	// The checksum switch is a SETTING, not a per-run input: it lives in the
+	// Configure rail and applies to every run and fast re-run alike.
+	requireChecksum := a.settings.RequireChecksum
 	// The registry lives for the whole session so placeholders stay
 	// stable across runs and late-imported batches (CLAUDE.md §5).
 	if a.registry == nil {
@@ -142,7 +142,7 @@ func (a *App) runPipelineBlocking(ctx context.Context, req RunRequest) (*engine.
 		Values:           req.Values,
 		Patterns:         req.Patterns,
 		Categories:       categories,
-		MinConfidence:    minConfidence,
+		RequireChecksum:  requireChecksum,
 		Country:          a.settings.Country,
 		Allowlist:        allow,
 		Registry:         reg,

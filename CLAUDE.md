@@ -363,9 +363,12 @@ doc-anonymiser/
   LOWER WINS. An unknown or empty class ranks with `user_defined` rather than
   last, so a producer that states none is trusted rather than silently demoted:
   ranking it last turns a forgotten stamp into a missing replacement instead of
-  an error. `Confidence` is a THIRD, separate thing, feeding `MinConfidence`;
-  with one number doing precedence as well, raising the floor silently reordered
-  which route won.
+  an error. `Confidence` is a THIRD, separate thing, and it is DATA rather than a
+  lever: it orders overlaps after the match class, it feeds the heuristic pass's
+  own floor before a Suggestion is shown, and it is reported. It is not what a run
+  filters on, and a Value is never dropped by it: see the checksum paragraph under
+  pass 1 for the one score a user can ask to have vetoed, and why that is a
+  checkbox rather than a percentage.
 
   The constants live in `backend/engine/matchclass.go`, are mirrored by
   `frontend/state.js DISCOVERY_METHODS` and `MATCH_CLASSES`, and are guarded by
@@ -593,8 +596,23 @@ doc-anonymiser/
      identifier is exactly what a template document contains. Failing closed left
      the IBAN's country and check digits in clear text and let the credit-card
      recognizer claim its 16-digit interior, so the mapping asserted the document
-     held a card that never existed. `MinConfidence` is the user's lever over it,
-     and the default keeps it.
+     held a card that never existed (the card rule's own `reject` guard is what
+     holds that boundary now, independently of the checksum policy).
+
+     **The user's lever over it is one checkbox, off by default:** "Only replace
+     when the checksum matches" (`Settings.RequireChecksum`,
+     `engine.RejectFailedChecksums`), inside Built-in patterns, which drops those
+     matches and NOTHING else. Off is the shipped default and reproduces the
+     behaviour above exactly. It is a boolean and not a threshold because the
+     question has two answers, and because the percentage it replaced was doing a
+     second, wrong thing: above roughly 0.8 it dropped Values the user had already
+     ACCEPTED, by the score of whatever originally found them, which contradicts
+     the review gate and is invisible when it happens. `Confidence` is therefore
+     DATA and not a filter: it orders overlaps, it feeds the heuristic pass's own
+     floor before a Suggestion is shown, and it is reported. The switch reaches
+     pass 1's spans alone, applied in `detectText` before the Value and
+     custom-pattern spans exist, so no accepted Value can be dropped by a
+     confidence comparison anywhere in the pipeline.
   2. Value pass: the accepted Values, expanded into their spellings (initials,
      surname-only, first-name-only, hyphen/space), longest-match-first
      (`backend/engine/values.go`). Derivation stops the moment the spelling
@@ -608,8 +626,8 @@ doc-anonymiser/
   anonymised: ticking "street addresses" changed nothing anybody could see.
   `engine.PreviewPatternMatches` answers it with pass 1's OWN detector through
   pass 1's own gates (the allowlist first, so a session exclusion suppresses a
-  previewed match exactly as it suppresses a replaced one, then the confidence
-  floor, then overlap resolution) over the same regions pass 1 reads, so the
+  previewed match exactly as it suppresses a replaced one, then the checksum
+  switch, then overlap resolution) over the same regions pass 1 reads, so the
   preview cannot promise a match the run does not make. `RunDetection` reports it
   beside the Suggestions (`patternMatches`, `patternCategories`,
   `builtInPatternsOn`) and it runs even when every DISCOVERY route is off, because
@@ -820,14 +838,15 @@ doc-anonymiser/
   user has no way to tell, which is why no fourth summarising boolean exists on
   either side of the bridge.
 
-  Below the routes sit two SWITCH-LESS panels, marked `.rail-panel` rather than
-  `.rail-section` so a utility panel is never counted as a route: **Detection
-  quality**, holding the match-confidence floor, and **Load profile**. The floor
-  governs every route that is on and decides what a run is allowed to REPLACE
-  rather than what discovery may suggest, so placing it inside one route would
-  mislabel it as that route's own knob. It is NOT the heuristic block's own
-  minimum confidence, which lives inside Heuristic discovery because nothing else
-  reads it.
+  Below the routes sits ONE switch-less panel, marked `.rail-panel` rather than
+  `.rail-section` so a utility panel is never counted as a route: **Load
+  profile**. There is no cross-route quality panel, because there is no
+  cross-route control left to hold: the one genuine question the confidence
+  percentage was asking is the checksum checkbox, and that lives on Built-in
+  patterns, which owns the check digits it is about. The only confidence control
+  in the interface is Heuristic discovery's own minimum, inside that section
+  because nothing else reads it and because it governs which Suggestions are
+  SHOWN rather than what a run replaces.
 
   Signal-based discovery has no section of its own: its readings hang off the
   category row of the pattern that produces the evidence, inside Built-in
@@ -867,8 +886,8 @@ doc-anonymiser/
   The Configure panel keeps VISIBLE LABELS short and puts every explanation in a
   help tooltip. A paragraph under each control is read once and then occupies the
   panel forever, which is what put the controls at its foot out of reach. Only
-  DYNAMIC information stays inline: validation errors, the live confidence value,
-  active counts, Ollama availability, detection progress and status. Both the
+  DYNAMIC information stays inline: validation errors, active counts, the live
+  request estimate, Ollama availability, detection progress and status. Both the
   frontend suite and the rendering harness measure it, the harness in pixels.
 
   The category identifiers listed above, and the pattern category constants in
@@ -878,7 +897,7 @@ doc-anonymiser/
   + Values + settings + the removal list + the defined terms + the spent
   placeholder numbers + the
   image treatments) to disk is an explicit user action with a warning that the
-  file contains the re-identification key. `SessionVersion` is **12**; a file of
+  file contains the re-identification key. `SessionVersion` is **13**; a file of
   any other version
   is refused, never migrated, and the reasons for each bump are recorded beside
   the constant in `backend/engine/session.go`. There is no migration table and no

@@ -102,7 +102,21 @@ import (
 //	    run obeys either way, so the failure is not in what the file replaces
 //	    but in what the rail then SAYS it will replace, which is the shape of
 //	    silent disagreement the strict-version rule exists for.
-const SessionVersion = 12
+//	v13: `minConfidence` LEAVES the schema and `requireChecksum` enters it. The
+//	    cross-route confidence floor is gone, because it was doing two unrelated
+//	    things and one of them was wrong: above roughly 0.8 it dropped Values the
+//	    user had already ACCEPTED, by the score of whatever originally found them,
+//	    which answers "reject" on the user's behalf and does so invisibly. What
+//	    remains is the one genuine question it was asking, put in words: whether a
+//	    pattern match whose corroborating checksum failed is replaced. The two are
+//	    not readable as each other in either direction. A v12 file's 0.9 says
+//	    nothing about the checksum question and, read as a boolean, would either
+//	    invent a veto the user never asked for or lose one they did; and a v12
+//	    reader finding no floor falls back to 0, which is right for the pattern
+//	    matches and silently restores the replacement of every accepted Value the
+//	    saved floor had been suppressing. Either way a restored session replaces a
+//	    different set of text than the file describes.
+const SessionVersion = 13
 
 // SessionSettings mirrors the app settings worth persisting. The engine does not
 // interpret them: they round-trip for app.go.
@@ -159,9 +173,16 @@ type SessionSettings struct {
 	// and replaced, which is what Built-in patterns and the category's own switch
 	// do.
 	SignalSuggestionSources SignalSourceSelection `json:"signalSuggestionSources,omitempty"`
-	// MinConfidence is the detection-confidence floor. Absent loads as 0, which
-	// is exactly the "keep every detection" default.
-	MinConfidence float32 `json:"minConfidence,omitempty"`
+	// RequireChecksum is the "Only replace when the checksum matches" switch.
+	// Absent loads as false, which is the shipped default and the behaviour the
+	// application has always had: a failed corroborating checksum lowers a
+	// pattern match's confidence and never vetoes it.
+	//
+	// A plain bool rather than a pointer, unlike the two route switches below,
+	// because absence and the default are the SAME thing here: the default is
+	// false, so a file that says nothing about it was written under exactly what
+	// absence reads as, and nothing is guessed.
+	RequireChecksum bool `json:"requireChecksum,omitempty"`
 	// HeuristicDiscovery is the heuristic tuning. A pointer so "absent" is
 	// distinguishable from "present and all zeroes" (a user who deliberately
 	// turned every filter off): the first fills the defaults, the second must be

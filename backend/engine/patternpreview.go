@@ -10,7 +10,7 @@
 // anonymised.
 //
 // So this is a READ-ONLY preview, and nothing else. It runs the SAME detector
-// pass 1 runs, through the same allowlist and the same confidence floor, and it
+// pass 1 runs, through the same allowlist and the same checksum switch, and it
 // produces no Suggestion, no Value and no state a run consults: the run detects
 // again for itself. It cannot become a review gate, because there is nothing
 // here to accept.
@@ -76,15 +76,16 @@ func ActivePatternCategories(sel CategorySelection, country string) []string {
 //
 // The gates are pass 1's own, in pass 1's order (detectText): the allowlist
 // first (which is also how the session exclusions are enforced, so a removed
-// value does not reappear here), then the confidence floor, then overlap
-// resolution among the pattern spans themselves. Applying the floor before
-// resolution matters for the same reason it matters in the pipeline: a
-// discarded low-confidence span must not suppress a stronger one it overlaps.
+// value does not reappear here), then the checksum switch, then overlap
+// resolution among the pattern spans themselves. requireChecksum is taken as an
+// argument rather than read from anywhere, because the caller has to hand the
+// preview the SAME value it hands the run: a preview promising a replacement the
+// run does not make is the one thing this file may not do.
 //
 // The result is sorted by category (AllPIICategories order), then by count
 // descending, then by text, so a repeated run renders identically.
 func PreviewPatternMatches(docs []Document, sel CategorySelection, country string,
-	minConfidence float32, allow *Allowlist,
+	requireChecksum bool, allow *Allowlist,
 ) []PatternMatch {
 	if country == "" {
 		country = CountryLU
@@ -101,7 +102,10 @@ func PreviewPatternMatches(docs []Document, sel CategorySelection, country strin
 	for _, doc := range docs {
 		for _, text := range previewTexts(doc) {
 			spans := FilterAllowed(DetectPIISelected(text, sel, country), allow)
-			spans = ResolveOverlaps(FilterByMinConfidence(spans, minConfidence))
+			if requireChecksum {
+				spans = RejectFailedChecksums(spans)
+			}
+			spans = ResolveOverlaps(spans)
 			for _, s := range spans {
 				key := s.Category + "\x00" + s.Original
 				entry := byKey[key]

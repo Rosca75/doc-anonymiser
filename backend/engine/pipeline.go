@@ -70,11 +70,17 @@ type PipelineInput struct {
 	// nil means "use DefaultSelection(Country)", the depth Standard presets in
 	// both scopes plus the always-on categories.
 	Categories CategorySelection
-	// MinConfidence drops every detected span scoring below it, on the
-	//  scale. 0 (the default) keeps
-	// everything, which reproduces the pre- behaviour exactly.
-	// See FilterByMinConfidence for what each level currently excludes.
-	MinConfidence float32
+	// RequireChecksum is the "Only replace when the checksum matches" switch,
+	// off by default. On, it drops the built-in pattern matches whose
+	// CORROBORATING checksum did not verify (RejectFailedChecksums) and nothing
+	// else. Off is what the application has always done: a failed checksum
+	// lowers a match's confidence and never vetoes it, because a mistyped or
+	// partly redacted bank identifier is still one.
+	//
+	// It reaches the PATTERN spans alone. An accepted Value is replaced because
+	// the user accepted it, so no setting here may drop one by the score of
+	// whatever originally found it.
+	RequireChecksum bool
 	// Country scopes the country-specific regex categories. Empty falls back to
 	// Luxembourg, the documented application default.
 	Country string
@@ -353,7 +359,7 @@ func Run(ctx context.Context, in PipelineInput) (*Results, error) {
 			values:           values,
 			patterns:         in.Patterns,
 			categories:       sel,
-			minConfidence:    in.MinConfidence,
+			requireChecksum:  in.RequireChecksum,
 			country:          in.Country,
 			allow:            in.Allowlist,
 			suppressRegexPII: in.SuppressRegexPII,
@@ -543,12 +549,15 @@ func filterValues(values []Value, active map[string]bool) []Value {
 // sites is a shape where a swapped pair compiles and silently changes what gets
 // replaced.
 type detectionScope struct {
-	values        []Value
-	patterns      []CustomPattern
-	categories    CategorySelection
-	minConfidence float32
-	country       string
-	allow         *Allowlist
+	values     []Value
+	patterns   []CustomPattern
+	categories CategorySelection
+	// requireChecksum drops pass 1's checksum-failed matches. It is scoped to
+	// pass 1 by construction: detectText applies it before the Value and
+	// custom-pattern spans exist.
+	requireChecksum bool
+	country         string
+	allow           *Allowlist
 	// suppressRegexPII, when true, skips pass 1 (the built-in pattern detectors)
 	// for this run, because Built-in patterns is switched off. The Value and
 	// custom-pattern passes are unaffected.
@@ -836,15 +845,26 @@ func detectText(text string, scope detectionScope) []Span {
 	var spans []Span
 	if !scope.suppressRegexPII {
 		spans = FilterAllowed(DetectPIISelected(text, scope.categories, scope.country), scope.allow)
+		// The checksum switch is applied HERE, while spans holds pass 1's
+		// matches and nothing else. That placement is the guarantee, not a
+		// convenience: an accepted Value carries the score of whatever
+		// originally found it, so a filter reaching it could drop something the
+		// user had already accepted, and would do so invisibly.
+		//
+		// It is also BEFORE overlap resolution, so a dropped match cannot
+		// suppress a stronger one it happens to overlap. The card-inside-an-IBAN
+		// case, the one place that could bite, is guarded independently of the
+		// checksum policy (piiPattern.reject, precededByIBANPrefix), so dropping
+		// the IBAN span cannot hand its interior to the credit-card rule.
+		if scope.requireChecksum {
+			spans = RejectFailedChecksums(spans)
+		}
 	}
 	spans = append(spans, DetectValues(text, scope.values, scope.allow)...)
 	if scope.categories[CatCustomPatterns] {
 		spans = append(spans, DetectCustomPatterns(text, scope.patterns, scope.allow)...)
 	}
-	// The confidence floor is applied BEFORE overlap resolution, so a discarded
-	// low-confidence span cannot suppress a stronger one it happens to overlap.
-	// At the default 0 this is a no-op.
-	return FilterByMinConfidence(spans, scope.minConfidence)
+	return spans
 }
 
 // applySpansToText resolves the overlaps among one region's spans and replaces

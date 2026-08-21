@@ -49,6 +49,20 @@ test("applySession restores each route flag on its own, an absent flag meaning o
     "the local route is not switched on by a file that says nothing about it");
 });
 
+test("applySession restores the checksum switch, an absent flag meaning off", () => {
+  // The safe reading of silence here is the OPPOSITE of a route flag's, and for
+  // the same reason: absence must read as what the file was written under. Off is
+  // the shipped default, so a file that says nothing about the switch was saved
+  // with it off, and reading absence as "on" would leave a checksum-failed bank
+  // identifier in clear in a document the user expects anonymised.
+  resetState();
+  applySession({ settings: { requireChecksum: true } });
+  assert.equal(getState().settings.requireChecksum, true, "an explicit true is restored");
+  resetState();
+  applySession({ settings: {} });
+  assert.equal(getState().settings.requireChecksum, false, "an absent flag restores OFF");
+});
+
 test("applySession with every offline route absent restores them all on", () => {
   resetState();
   applySession({ settings: { level: "medium" } });

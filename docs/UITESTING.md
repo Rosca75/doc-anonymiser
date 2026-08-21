@@ -172,8 +172,10 @@ unknown height is not a contract.
   state with no placeholders anywhere would pass for the wrong reason. The pane is
   also asserted to be non-empty, for the same reason.
 - **the Configure rail is the three route sections**, no `[data-railtab]` chips,
-  Built-in patterns and Heuristic discovery on, Local LLM discovery off, the two
-  switch-less panels below them counted as `.rail-panel` rather than as routes,
+  Built-in patterns and Heuristic discovery on, Local LLM discovery off, the one
+  switch-less panel below them counted as `.rail-panel` rather than as a route,
+  the checksum checkbox inside Built-in patterns and off and actually clickable,
+  no confidence slider anywhere,
   each route's title and switch measured on ONE row with the title unclipped, and
   every switchable category checkbox present **and laid out with a non-zero
   height** (issue 3). Present in the DOM is not the same as reachable. The count

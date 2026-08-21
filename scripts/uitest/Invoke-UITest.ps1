@@ -385,9 +385,21 @@ function Test-ConfigureRail([CdpSession]$cdp) {
     Assert-That -Name 'the rail is three route sections' -Condition ($r.sections -eq 3) `
         -Expected '3 .rail-section elements' -Actual "$($r.sections), routes: $($r.routes -join ', ')" `
         -Hint 'views/identifyrail.js RAIL_SECTIONS defines Built-in patterns, Heuristic discovery and Local LLM discovery, each bound to its own settings flag.'
-    Assert-That -Name 'the two switch-less panels are panels, not routes' -Condition ($r.panels -eq 2) `
-        -Expected '2 .rail-panel elements (Detection quality and Load profile)' -Actual "$($r.panels)" `
-        -Hint 'Neither the confidence floor nor Load profile is a detection route, so neither may wear .rail-section.'
+    Assert-That -Name 'the one switch-less panel is a panel, not a route' -Condition ($r.panels -eq 1) `
+        -Expected '1 .rail-panel element (Load profile)' -Actual "$($r.panels)" `
+        -Hint 'Load profile is a utility rather than a detection route, so it may not wear .rail-section. It is the only panel: the confidence floor that used to sit beside it is one checkbox inside Built-in patterns now.'
+    Assert-That -Name 'the checksum switch is inside Built-in patterns' -Condition ($r.checksumSwitch.section -eq 'rail-patterns') `
+        -Expected '#require-checksum inside section#rail-patterns' -Actual "section $($r.checksumSwitch.section)" `
+        -Hint 'It governs the built-in patterns own corroborating checksums and nothing else, so it belongs on the section that owns them.'
+    Assert-That -Name 'the checksum switch is off by default' -Condition ($r.checksumSwitch.checked -eq $false) `
+        -Expected '#require-checksum unchecked' -Actual "$($r.checksumSwitch.checked)" `
+        -Hint 'state.js settings.requireChecksum defaults to false: keeping a match whose corroborating checksum failed is what the application has always done, because a mistyped or partly redacted bank identifier is still one.'
+    Assert-That -Name 'the checksum switch is clickable, not merely present' -Condition (($r.checksumSwitch.laidOut -eq $true) -and ($r.checksumSwitch.disabled -eq $false)) `
+        -Expected 'a laid-out, enabled checkbox' -Actual "laidOut=$($r.checksumSwitch.laidOut) disabled=$($r.checksumSwitch.disabled)" `
+        -Hint 'It must be settable while the pattern pass itself is off, exactly as the category boxes are.'
+    Assert-That -Name 'no confidence floor survives in the rail' -Condition ($r.confidenceSliders -eq 0) `
+        -Expected '0 #min-confidence range inputs anywhere in the document' -Actual "$($r.confidenceSliders)" `
+        -Hint 'The percentage was two unrelated questions wearing one control, and above roughly 0.8 it dropped Values the user had already accepted. A surviving slider would be a second answer.'
     Assert-That -Name 'the old tab strip is gone' -Condition ($r.railTabs -eq 0) `
         -Expected '0 [data-railtab] chips anywhere in the document' -Actual "$($r.railTabs)" `
         -Hint 'The rail switches sections on and off; it does not tab between them.'

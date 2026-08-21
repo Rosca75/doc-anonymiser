@@ -983,7 +983,7 @@ test("a failed documentation open is recorded as a dismissible shell error", () 
 
 import {
   EXTENDED_PII_CATEGORIES, ALL_CATEGORIES,
-  setCategoryGroup, setMinConfidence,
+  setCategoryGroup, setRequireChecksum,
 } from "./state.js";
 import { CATEGORY_LABELS } from "./copy.js";
 
@@ -1081,22 +1081,28 @@ test("a deselected group makes its row Custom (CR10)", () => {
   assert.equal(namesRow(), "standard", "the names row is untouched by a pattern group");
 });
 
-test("minConfidence defaults to 0 and round-trips through the setter (CR9)", () => {
+test("requireChecksum defaults to off and round-trips through the setter", () => {
+  // Off is what the application has always done: a match whose corroborating
+  // checksum failed is still replaced, because a mistyped or partly redacted
+  // bank identifier is still one. A default that vetoed would silently start
+  // leaving those in the exported document.
   resetState();
-  assert.equal(getState().settings.minConfidence, 0,
-    "the default must keep every detection");
-  assert.equal(setMinConfidence(0.9), 0.9);
-  assert.equal(getState().settings.minConfidence, 0.9);
-  assert.equal(setMinConfidence(0), 0);
-  assert.equal(setMinConfidence(1), 1);
+  assert.equal(getState().settings.requireChecksum, false,
+    "the default must keep the checksum-failed matches");
+  assert.equal(setRequireChecksum(true), true);
+  assert.equal(getState().settings.requireChecksum, true);
+  assert.equal(setRequireChecksum(false), false);
+  assert.equal(getState().settings.requireChecksum, false);
 });
 
-test("minConfidence rejects values outside 0 to 1 (CR9)", () => {
+test("requireChecksum refuses anything that is not a boolean", () => {
+  // The setting decides what a run replaces, so a truthy string coerced to true
+  // would silently change that. A refused value leaves the store alone.
   resetState();
-  for (const bad of [-0.1, 1.1, NaN, "0.5", null, undefined]) {
-    assert.equal(setMinConfidence(bad), null, `${bad} must be rejected`);
+  for (const bad of [1, 0, "true", "", null, undefined, {}]) {
+    assert.equal(setRequireChecksum(bad), null, `${JSON.stringify(bad)} must be refused`);
   }
-  assert.equal(getState().settings.minConfidence, 0, "a rejected value changes nothing");
+  assert.equal(getState().settings.requireChecksum, false, "a refused value changes nothing");
 });
 
 // --- smart-detection tuning and bulk deny --------------------------------
@@ -1205,7 +1211,7 @@ function fullSession() {
   addValues([{ category: "person_names", mainText: "Marie Duval" }]);
   addSuggestions([{ discoveryMethods: ["heuristic"], mainText: "Alpine Trust", category: "entity_names" }]);
   addPattern("PRJ-[0-9]+", null);
-  setMinConfidence(0.9);
+  setRequireChecksum(true);
   setCategoryGroup(["email"], false);
 }
 
@@ -1258,7 +1264,7 @@ test("resetStep(identify) restores the preset and the detection defaults", () =>
   // choices, which used to be a Configure step, and the workspace's values.
   fullSession();
   assert.equal(getState().settings.categories.email, false);
-  assert.equal(getState().settings.minConfidence, 0.9);
+  assert.equal(getState().settings.requireChecksum, true);
 
   assert.equal(resetStep("identify"), true);
   const s = getState();
@@ -1268,7 +1274,7 @@ test("resetStep(identify) restores the preset and the detection defaults", () =>
   // Luxembourg beside an active German tax identifier.
   assert.deepEqual(s.settings.categories, defaultCategories(DEFAULT_COUNTRY));
   assert.equal(s.documentCountry, DEFAULT_COUNTRY);
-  assert.equal(s.settings.minConfidence, 0);
+  assert.equal(s.settings.requireChecksum, false);
   assert.deepEqual(s.settings.heuristicDiscovery, HEURISTIC_DISCOVERY_DEFAULTS);
 });
 
@@ -1740,7 +1746,7 @@ function finishedBatch() {
   dismissWarning("w");
   addAllowTerm("CSSF");
   setDocumentCountry("DE");
-  setMinConfidence(0.9);
+  setRequireChecksum(true);
 }
 
 test("startNewBatch clears everything about THIS batch", () => {
@@ -1779,7 +1785,7 @@ test("startNewBatch KEEPS the settings, the country and the allowlist", () => {
   finishedBatch();
   const before = {
     categories: { ...getState().settings.categories },
-    minConfidence: getState().settings.minConfidence,
+    requireChecksum: getState().settings.requireChecksum,
     heuristicDiscovery: { ...getState().settings.heuristicDiscovery },
     ollamaPort: getState().settings.ollamaPort,
     country: getState().documentCountry,
@@ -1789,7 +1795,7 @@ test("startNewBatch KEEPS the settings, the country and the allowlist", () => {
   startNewBatch();
   const s = getState();
   assert.deepEqual(s.settings.categories, before.categories);
-  assert.equal(s.settings.minConfidence, before.minConfidence);
+  assert.equal(s.settings.requireChecksum, before.requireChecksum);
   assert.deepEqual(s.settings.heuristicDiscovery, before.heuristicDiscovery);
   assert.equal(s.settings.ollamaPort, before.ollamaPort);
   assert.equal(s.documentCountry, before.country, "the country is a setting, not batch data");

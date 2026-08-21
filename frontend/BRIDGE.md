@@ -132,6 +132,7 @@ nested map of readings:
 | `useBuiltInPatterns` | MASTER over the structured signal categories (email, VAT, IBAN, amount, date, …). Off means pass 1 is skipped and no signal category is replaced, whatever `categories` selects; the selection is left intact. Produces DIRECT MATCHES, never Suggestions. The rail labels it **Built-in patterns**. | on |
 | `useHeuristicDiscovery` | Heuristic discovery: spelling, context, frequency and deterministic gazetteers. Produces SUGGESTIONS. The rail labels it **Heuristic discovery**. | on |
 | `signalSuggestionSources` | `{email: {"email.person": bool, "email.organisation": bool}}`, keyed by `engine.AllSignalSources` and then by `engine.SignalDerivations[source]`. Which READINGS of which built-in signals may be used as EVIDENCE to derive Suggestions. Produces SUGGESTIONS. | every reading on |
+| `requireChecksum` | "Only replace when the checksum matches", inside Built-in patterns. On, `engine.RejectFailedChecksums` drops the pattern matches whose CORROBORATING checksum did not verify (`engine.ConfidenceChecksumFailed`) and nothing else. It reaches pass 1's spans alone: an accepted Value, a custom pattern and every discovery method's output are untouched by it. Off is the shipped default and is what the application has always done. | off |
 
 Each of the three route switches is its OWN persisted boolean, and the rail's
 three header switches write one each. There is deliberately no fourth boolean
@@ -327,16 +328,18 @@ methods found it, so route membership is a property of the row.
   Accepting the row carries them across, so ONE Value with its spellings reaches
   the pipeline rather than two rivals, the shorter of which would fire inside the
   longer and leave the rest of the phrase in clear text.
-- `confidence` is a THIRD thing beside provenance and precedence, and it is what
-  the Configure rail's **Minimum confidence** acts on. A local model finding carries
-  `engine.ConfidenceLLMDefault` (0.8), stamped at the Ollama boundary beside the
-  `local_llm` method. `0` means NOT STATED, which the engine reads as a user
-  declaration and scores at `ConfidenceManualDefault` (0.95). The number must
+- `confidence` is a THIRD thing beside provenance and precedence, and it is DATA:
+  it orders overlaps after the match class, it feeds heuristic discovery's own
+  floor before a Suggestion is shown, and it is reported. No rail control filters
+  a run on it, and an accepted Value is never dropped by it. A local model finding
+  carries `engine.ConfidenceLLMDefault` (0.8), stamped at the Ollama boundary
+  beside the `local_llm` method. `0` means NOT STATED, which the engine reads as a
+  user declaration and scores at `ConfidenceManualDefault` (0.95). The number must
   survive the whole way across: `addSuggestions` keeps it on the row,
   `valueFromSuggestion` carries it into the Value, and `addValues` stores it.
-  Dropped anywhere along that chain, an accepted model finding is scored as if
-  the user had typed it, and raising the floor past 80 stops doing what the
-  control says.
+  Dropped anywhere along that chain, an accepted model finding is scored as if the
+  user had typed it, its overlap precedence changes, and the report says something
+  untrue about how it was found.
 - Merging is ONE rule, `engine.MergeSuggestions`, used by every producer:
   case-insensitive dedupe of `mainText` WITHIN a category, summed counts,
   unioned spellings, contexts, methods and evidence, and the STRONGEST
@@ -518,9 +521,12 @@ The run `request` is
   never user-editable state and the frontend never writes it onto a Value.
 - `evidence` travels too, because it is what lets a session file explain a Value
   after a reload.
-- Confidence is a THIRD, separate thing, feeding the `minConfidence` floor. With
-  one field doing precedence as well, raising the floor silently reordered which
-  route won.
+- Confidence is a THIRD, separate thing, and it is DATA rather than a lever. With
+  one field doing precedence as well, raising a floor silently reordered which
+  route won; with it doing "what a run replaces" as well, a floor dropped Values
+  the user had already ACCEPTED, by the score of whatever originally found them.
+  The one score a user may ask to have vetoed is a corroborating checksum that did
+  not pass, and that is `requireChecksum` above.
 
 `suppressRegexPII` is the Built-in patterns switch inverted
 (`!useBuiltInPatterns`): when true, Go skips pass 1 so NO signal category is

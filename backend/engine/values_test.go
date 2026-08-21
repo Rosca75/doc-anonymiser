@@ -343,7 +343,8 @@ func TestCuratedSpellings(t *testing.T) {
 
 // TestDetectEntitiesStampsTheEntitysOrigin: provenance has to survive the
 // accept, or the only trace of which route found a value is its confidence
-// score, and confidence is also the MinConfidence floor's input.
+// score, which is a different question and also one of overlap resolution's
+// comparators.
 func TestDetectEntitiesStampsTheEntitysOrigin(t *testing.T) {
 	text := "Meridian and Delta Industries both appear here.\n"
 	spans := DetectValues(text, []Value{

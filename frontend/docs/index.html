@@ -112,9 +112,9 @@
       <dt>2. Identify</dt>
       <dd>
         One screen with two halves. On the left you choose how the application
-        looks: which detection routes are on, the document country, a preset
-        (Soft, Standard or Thorough) over the individual category checkboxes,
-        and how certain a finding has to be. Each section has its own preset
+        looks: which detection routes are on, the document country, and a preset
+        (Soft, Standard or Thorough) over the individual category checkboxes.
+        Each section has its own preset
         row, and a preset changes only that section's checkboxes: pressing
         Thorough under Built-in patterns never moves a switch under Heuristic
         discovery. Changing any checkbox switches that section's preset display
@@ -187,11 +187,24 @@
       Some information always looks the same, so it can be recognised without
       any guessing: email addresses, phone numbers, web addresses, bank
       account numbers, value added tax numbers, national identification
-      numbers, payment card numbers, network addresses and more. Where a
-      number carries a check digit, for example a payment card, the check is
-      verified so that an ordinary long number is not mistaken for one. These
+      numbers, payment card numbers, network addresses and more. These
       patterns need no AI and no network connection. What they matched is listed
       on the Built-in patterns tab of the Identify step after you run detection.
+    </p>
+    <p>
+      Some of these numbers carry a check digit. There are two kinds, and the
+      difference matters. For a payment card the check digit is the only thing
+      separating the number from an ordinary long number, so it is always
+      verified: without it every sixteen digit run in your document would be
+      read as a card. For a bank account number the country code and the
+      grouping already identify the shape, so the check digit only corroborates
+      it. When those digits do not add up the match is still replaced, and the
+      row is marked "Check failed" so you can see it. That is deliberate: a
+      mistyped, partly redacted or made up bank account number is exactly what a
+      template or a draft contains, and it is still worth replacing. If you would
+      rather leave those alone, switch on <strong>Only replace when the checksum
+      matches</strong> under Built-in patterns on the Identify step. It affects
+      nothing else.
     </p>
     <h3>Values you declare</h3>
     <p>

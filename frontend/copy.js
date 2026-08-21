@@ -171,7 +171,7 @@ export const CONFIGURE = {
   // into a help tooltip. A paragraph under each control is useful the first time
   // and, on every visit after that, is what pushes the panel taller than the
   // window and buries the controls actually in use. Only DYNAMIC information
-  // stays inline: a validation error, the live confidence value, an active count,
+  // stays inline: a validation error, an active count, the live request estimate,
   // Ollama's availability, the run status.
   //
   // Every `...Help` key below is tooltip text. Nothing renders it as a paragraph.
@@ -225,15 +225,6 @@ export const CONFIGURE = {
   // the per-group bulk buttons.
   selectAll: "Select all",
   deselectAll: "Deselect all",
-  // the detection-confidence control. Plain language, with
-  // the two thresholds that actually change something spelled out.
-  confidenceTitle: "Detection confidence",
-  confidenceLabel: "Minimum confidence",
-  confidenceHelp: "Every detection carries a score for how certain it is. Anything below the minimum you set here is left alone. Keep it at 0 to replace everything that is found, which is how the application behaves by default.",
-  // What the floor does at each position is views/identifyrail.js
-  // confidenceEffect(), and it is described there rather than here: the setting
-  // is a floor on a SCORE, and copy calling it a rule about who proposed a
-  // value would describe something the engine does not do.
 };
 
 /**
@@ -254,9 +245,8 @@ export function categoryLabels(examples = {}) {
   return out;
 }
 
-// Identify RAIL copy: the four tabs and the Scope tab's
-// section labels. The category labels and the confidence copy stay in CONFIGURE
-// below, which is where they were and where the parity guard looks.
+// Identify RAIL copy: the route sections and the labels inside them. The category
+// labels stay in CONFIGURE above, which is where the parity guard looks.
 export const RAIL = {
   // The three detection routes, each its own switchable section, each named
   // after the MECHANISM it is. One switch, one mechanism: a section whose
@@ -271,11 +261,16 @@ export const RAIL = {
   tabLocalLLM: "Local LLM discovery",
   tabLocalLLMHelp: "A language model running on this machine reads the documents and suggests Values. It needs Ollama listening on 127.0.0.1, nothing leaves your computer, and nothing it finds is replaced until you accept it.",
 
-  // Detection quality: the switch-less panel holding the match-confidence
-  // floor. The floor governs EVERY route that is on, so placing it inside one
-  // of them would mislabel it as that route's own knob.
-  qualityTitle: "Detection quality",
-  qualityHelp: "One floor over every route that is switched on. It decides what a run is allowed to REPLACE, not what discovery is allowed to suggest: anything scoring below it is left alone.",
+  // The checksum question, inside Built-in patterns: it is about the built-in
+  // patterns' own check digits and nothing else, so it belongs on the section
+  // that owns them rather than in a panel of its own.
+  //
+  // The label states the RULE the user is switching on, and the tooltip says
+  // what the default does and why, because "off" is the surprising half: a
+  // failed check reads as a reason to leave the match alone until you know that
+  // a mistyped or partly redacted bank identifier is still a bank identifier.
+  requireChecksum: "Only replace when the checksum matches",
+  requireChecksumHelp: "Some identifiers, such as IBANs, carry a check digit. When the digits do not add up the match is kept by default, because a mistyped or partly redacted bank identifier is still one and is still worth replacing. Switch this on to leave those matches alone instead. It affects nothing else.",
 
   smartTuning: "Discovery strictness",
   smartTuningHelp: "Heuristic discovery guesses which words are names from how they are written, so it always suggests some things that are not names. These settings decide how strict it is. Set them all to zero, and untick the box, to see everything it can find.",

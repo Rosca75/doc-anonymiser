@@ -39,14 +39,15 @@ type Span struct {
 	// Confidence in [0.0, 1.0]. Deterministic regex hits
 	// default to 1.0; a local model finding to ConfidenceLLMDefault; a declared
 	// Value to ConfidenceManualDefault. Context-word boosting may nudge a
-	// value up (capped at 1.0). Zero means "not scored" and is treated as
-	// 1.0 by the threshold filter for back-compat.
+	// value up (capped at 1.0). Zero means "not scored" and is read as 1.0 by
+	// every comparator, so a producer that states nothing is trusted rather than
+	// ranked last.
 	Confidence float32 `json:"confidence,omitempty"`
 	// MatchClass is the ROUTE that produced this span (matchClass.go). It decides
 	// precedence when two routes claim the same characters, which Confidence
-	// cannot do: confidence is also the input to the MinConfidence floor, so
-	// using it for precedence means raising the floor silently reorders which
-	// route wins. Empty ranks with MatchClassUserDefined.
+	// cannot do: confidence answers "how sure is this", and a producer scoring
+	// lower than another is not the same fact as one whose claim should lose.
+	// Empty ranks with MatchClassUserDefined.
 	MatchClass string `json:"matchClass,omitempty"`
 }
 
@@ -114,8 +115,9 @@ type piiPattern struct {
 	// account number, only that it might be a bad one, and a mistyped,
 	// partly-redacted or synthetic identifier is exactly what a template or test
 	// document contains. Failing closed leaves the country code and check digits
-	// in clear text; producing the span at a reduced score leaves MinConfidence
-	// as the user's lever over it.
+	// in clear text; producing the span at a reduced score leaves the user the
+	// choice, through the "Only replace when the checksum matches" switch
+	// (RejectFailedChecksums).
 	checksum func(string) bool
 	// reject, when set, gets the WHOLE text and the match bounds and may veto
 	// the span on its SURROUNDINGS rather than on its own characters. RE2 has no
@@ -631,29 +633,39 @@ const (
 	// right and the digits do not add up. It sits below every other producer,
 	// because the span is the least certain thing pass 1 emits, and above zero,
 	// because the span still exists and a failed checksum is not a reason to
-	// leave a bank identifier in a document. MinConfidence is the user's lever
-	// over it, and the default (0) keeps it.
+	// leave a bank identifier in a document. Keeping it is the default;
+	// RejectFailedChecksums below is the user asking for the opposite.
 	ConfidenceChecksumFailed float32 = 0.7
 )
 
-// FilterByMinConfidence drops every span scoring below one global minimum,
-// which is the shape the rail's confidence control needs.
+// RejectFailedChecksums drops the pattern matches whose CORROBORATING checksum
+// did not verify, and nothing else. It is what the "Only replace when the
+// checksum matches" switch does, off by default.
 //
-// min <= 0 is a no-op, and that is the documented default: the setting must
-// never quietly remove detections the user did not ask it to remove. A span
-// with Confidence == 0 counts as 1.0, so a producer that states no confidence
-// is trusted rather than filtered away.
+// It is named after what it does rather than after a number, because a caller
+// reading a threshold has to hold the whole score table in their head to know
+// what it excludes. The score table is only this:
 //
-// Examples with the current scale: min 0.85 drops what only the local model found
-// (0.8) and keeps signal-derived findings (0.9), declared Values (0.95) and
-// pattern matches (1.0); min 0.99 keeps only the pattern matches.
-func FilterByMinConfidence(spans []Span, min float32) []Span {
-	if min <= 0 {
-		return spans
-	}
+//	pattern match                  ConfidenceDeterministic  1.0
+//	custom pattern                 ConfidenceDeterministic  1.0
+//	Value the user declared        ConfidenceManualDefault  0.95
+//	Value from a signal Suggestion ConfidenceSignalDerived  0.9
+//	Value from a model Suggestion  ConfidenceLLMDefault     0.8
+//	pattern match, checksum failed ConfidenceChecksumFailed 0.7
+//
+// The comparison is an EQUALITY against the one score pass 1's corroborating
+// checks mint, not a floor under it. A floor is what this replaced, and above
+// roughly 0.8 a floor reached the accepted Values in the rows above: it dropped
+// what the user had already accepted, by the score of whatever originally found
+// it, which answers "reject" on the user's behalf and does so invisibly. An
+// equality cannot grow into that by someone moving a slider.
+//
+// It is applied to the PATTERN spans alone (pipeline.go detectText), so an
+// accepted Value never passes through it at all.
+func RejectFailedChecksums(spans []Span) []Span {
 	out := make([]Span, 0, len(spans))
 	for _, s := range spans {
-		if effectiveConfidence(s) < min {
+		if s.Confidence == ConfidenceChecksumFailed {
 			continue
 		}
 		out = append(out, s)

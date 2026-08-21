@@ -334,7 +334,7 @@ func (a *App) CheckIntersections(req CheckIntersectionsRequest) (*CheckIntersect
 	if categories == nil {
 		categories = a.settings.Categories
 	}
-	minConfidence := a.settings.MinConfidence
+	requireChecksum := a.settings.RequireChecksum
 	country := a.settings.Country
 	a.mu.Unlock()
 
@@ -345,7 +345,7 @@ func (a *App) CheckIntersections(req CheckIntersectionsRequest) (*CheckIntersect
 	entities := engine.FilterRemoved(req.Values, a.removedValues())
 
 	scope := engine.NewDetectionScope(entities, req.Patterns, categories,
-		minConfidence, country, allow, req.SuppressRegexPII)
+		requireChecksum, country, allow, req.SuppressRegexPII)
 
 	return &CheckIntersectionsResult{
 		Intersections: engine.DetectIntersections(docs, scope),

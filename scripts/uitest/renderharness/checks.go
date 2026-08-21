@@ -233,7 +233,18 @@ type railResult struct {
 	SignalRows                    []string `json:"signalRows"`
 	SignalSources                 []string `json:"signalSources"`
 	SignalMasters                 []string `json:"signalMasters"`
-	SignalRowLine                 *struct {
+	ConfidenceSliders             int      `json:"confidenceSliders"`
+	ChecksumSwitch                *struct {
+		Section         string `json:"section"`
+		Checked         *bool  `json:"checked"`
+		Disabled        *bool  `json:"disabled"`
+		LaidOut         *bool  `json:"laidOut"`
+		HasHelp         *bool  `json:"hasHelp"`
+		LabelFullyShown *bool  `json:"labelFullyShown"`
+		FitsTheRail     *bool  `json:"fitsTheRail"`
+		Label           string `json:"label"`
+	} `json:"checksumSwitch"`
+	SignalRowLine *struct {
 		SameRow           *bool  `json:"sameRow"`
 		DrillIsAfterLabel *bool  `json:"drillIsAfterLabel"`
 		HelpIsAfterDrill  *bool  `json:"helpIsAfterDrill"`
@@ -299,11 +310,12 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 		strings.Join(got.Routes, ", "),
 		"views/identifyrail.js RAIL_SECTIONS is the rail's shape, in the order the routes run.")
 
-	r.assert("the two switch-less panels are panels, not routes", got.Panels == 2,
-		"2 .rail-panel elements (Detection quality and Load profile)",
+	r.assert("the one switch-less panel is a panel, not a route", got.Panels == 1,
+		"1 .rail-panel element (Load profile)",
 		fmt.Sprintf("%d", got.Panels),
-		"Detection quality holds the cross-route confidence floor and Load profile is a "+
-			"utility: neither is a detection route, so neither may wear .rail-section.")
+		"Load profile is a utility rather than a detection route, so it may not wear "+
+			".rail-section. It is the ONLY panel: the confidence floor that used to sit "+
+			"beside it is gone, replaced by one checkbox inside Built-in patterns.")
 
 	r.assert("the old tab strip is gone", got.RailTabs == 0,
 		"0 [data-railtab] chips anywhere in the document", fmt.Sprintf("%d", got.RailTabs),
@@ -345,6 +357,58 @@ func checkConfigureRail(c *cdpClient, r *reporter, fx fixture) {
 		fmt.Sprintf("%d of %d have a height after opening every group", got.CategoriesWithSizeAfterExpand, got.Categories),
 		"A folded group is only useful if it opens: collapsibleGroup + wireGroups reveal the "+
 			"checkboxes, and a folded-forever group would be a category the user cannot reach.")
+
+	// The checksum switch. Three separate facts, and each one is a way the control
+	// could be wrong without anything throwing: it has to be in Built-in patterns
+	// (the section that owns the check digits it is about), it has to be OFF (that
+	// is today's behaviour, and a default that vetoed would silently start leaving
+	// mistyped bank identifiers in the exported document), and it has to be
+	// genuinely clickable rather than merely in the DOM.
+	if box := got.ChecksumSwitch; box == nil {
+		r.assert("the checksum switch renders", false,
+			"#require-checksum inside the Built-in patterns section",
+			"it is not in the rail at all",
+			"views/identifyrail.js checksumToggle renders it under the preset row, above the "+
+				"eight category groups.")
+	} else {
+		r.assert("the checksum switch is inside Built-in patterns",
+			box.Section == "rail-patterns",
+			"#require-checksum inside section#rail-patterns", "section "+box.Section,
+			"It governs the built-in patterns' own corroborating checksums and nothing else, "+
+				"so it belongs on the section that owns them rather than in a panel of its own.")
+
+		r.assert("the checksum switch is off by default", boolIs(box.Checked, false),
+			"#require-checksum unchecked", describeBool(box.Checked),
+			"state.js settings.requireChecksum defaults to false: keeping a match whose "+
+				"corroborating checksum failed is what the application has always done, "+
+				"because a mistyped or partly redacted bank identifier is still one.")
+
+		r.assert("the checksum switch is clickable, not merely present",
+			boolIs(box.LaidOut, true) && boolIs(box.Disabled, false),
+			"a laid-out, enabled checkbox",
+			fmt.Sprintf("laidOut=%s disabled=%s", describeBool(box.LaidOut), describeBool(box.Disabled)),
+			"Built-in patterns is open by default, and the box must be settable while the pass "+
+				"itself is off, exactly as the category boxes are: a user configures the pass "+
+				"before switching it on.")
+
+		r.assert("the checksum switch carries its help and fits the rail",
+			boolIs(box.HasHelp, true) && boolIs(box.LabelFullyShown, true) &&
+				boolIs(box.FitsTheRail, true),
+			"a help tooltip beside the label, and neither clipped",
+			fmt.Sprintf("hasHelp=%s labelFullyShown=%s fitsTheRail=%s (%q)",
+				describeBool(box.HasHelp), describeBool(box.LabelFullyShown),
+				describeBool(box.FitsTheRail), box.Label),
+			"The label states the rule and the tooltip carries the default, which is the half a "+
+				"user cannot guess. A label clipped to an ellipsis in the narrowest column of "+
+				"the application is a rule nobody can read.")
+	}
+
+	r.assert("no confidence floor survives in the rail", got.ConfidenceSliders == 0,
+		"0 #min-confidence range inputs anywhere in the document",
+		fmt.Sprintf("%d", got.ConfidenceSliders),
+		"The percentage was two unrelated questions wearing one control, and above roughly "+
+			"0.8 it dropped Values the user had already accepted. One checkbox asks the one "+
+			"question that was real; a surviving slider would be a second answer.")
 
 	// The signal control is a tree hanging off the category row of the signal it
 	// reads, and it is built from the frontend's lists, which the Go parity guard

@@ -60,16 +60,16 @@ func TestDetectionRouteDefaults(t *testing.T) {
 	}
 }
 
-// TestSessionSettingsRoundTrip guards a settings-loss bug found on the way:
-// LoadSessionFromFile rebuilt Settings from a literal that omitted
-// MinConfidence and the heuristic options, so loading a session silently reset the
-// confidence floor to 0 and the smart tuning to the defaults. Both decide what
-// gets replaced, and the user reads "load session" as "restore what I saved".
+// TestSessionSettingsRoundTrip is the guard over the settings a restore is
+// allowed to lose, which is none of them. LoadSessionFromFile rebuilds Settings
+// from a literal, so a field left out of that literal is a setting the user saved
+// and got back at its default. Every field checked here decides what gets
+// replaced, and the user reads "load session" as "restore what I saved".
 func TestSessionSettingsRoundTrip(t *testing.T) {
 	saved := engine.Session{
 		Settings: engine.SessionSettings{
 			Presets: depthPresets(engine.PresetThorough), OllamaPort: 11500, Model: "m:1b", ContextSize: 4096,
-			MinConfidence: 0.85,
+			RequireChecksum: true,
 			HeuristicDiscovery: &engine.HeuristicDiscoveryOptions{
 				MinLength: 7, MinOccurrences: 3, ExcludeCommonWords: false, MinConfidence: 0.4,
 			},
@@ -83,8 +83,8 @@ func TestSessionSettingsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSession: %v", err)
 	}
-	if loaded.Settings.MinConfidence != 0.85 {
-		t.Errorf("the confidence floor did not survive the file: %v", loaded.Settings.MinConfidence)
+	if !loaded.Settings.RequireChecksum {
+		t.Error("the checksum switch did not survive the file")
 	}
 	if loaded.Settings.HeuristicDiscovery == nil || loaded.Settings.HeuristicDiscovery.MinLength != 7 {
 		t.Errorf("the smart tuning did not survive the file: %+v", loaded.Settings.HeuristicDiscovery)
@@ -97,8 +97,8 @@ func TestSessionSettingsRoundTrip(t *testing.T) {
 		t.Fatalf("applyRestoredSession: %v", err)
 	}
 	got := app.GetSettings()
-	if got.MinConfidence != 0.85 {
-		t.Errorf("the restored confidence floor is %v, want 0.85", got.MinConfidence)
+	if !got.RequireChecksum {
+		t.Error("the restored checksum switch is off, want the saved on")
 	}
 	if got.HeuristicDiscovery.MinLength != 7 || got.HeuristicDiscovery.ExcludeCommonWords {
 		t.Errorf("the restored heuristic tuning is %+v, want the saved one", got.HeuristicDiscovery)

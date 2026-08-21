@@ -15,8 +15,8 @@
 // Collapsing them is what a single "matchClass" field did, and it forced a choice
 // between an incomplete provenance record and a non-deterministic precedence
 // rule. Confidence is a third, separate thing: it answers "how much is this
-// trusted" and feeds MinConfidence. With confidence doing precedence too,
-// raising the floor silently reordered which route won.
+// trusted", and it is DATA rather than a lever. With confidence doing precedence
+// too, raising a floor silently reordered which route won.
 package engine
 
 // Discovery methods: HOW a Value or Suggestion was found. A Value carries every

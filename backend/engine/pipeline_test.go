@@ -327,9 +327,9 @@ func TestPipelineCancellation(t *testing.T) {
 
 // TestAcceptProposalsStampsTheLLMOrigin: a proposal that survives the
 // hallucination filter becomes a Value carrying its route, not only its
-// score. The score alone cannot serve as provenance, because it is also what
-// MinConfidence filters on: raising the floor would otherwise reorder which
-// route wins.
+// score. The score alone cannot serve as provenance, because it is also one of
+// overlap resolution's comparators: two routes agreeing would then be
+// indistinguishable from one route being more certain.
 // TestOwnershipIsDecidedByRuleNotByDocumentOrder is the regression the
 // three-phase run exists for.
 //
