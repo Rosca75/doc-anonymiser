@@ -486,7 +486,10 @@ export function applySession(session) {
       signalSuggestionSources: Object.fromEntries(SIGNAL_SOURCES.map((source) =>
         [source, Object.fromEntries((SIGNAL_DERIVATIONS[source] ?? []).map((d) =>
           [d, settings.signalSuggestionSources?.[source]?.[d] !== false]))])),
-      minConfidence: settings.minConfidence ?? 0,
+      // Absent means OFF, which is both the shipped default and what the file
+      // was written under: a session file that says nothing about the checksum
+      // switch was saved with it off.
+      requireChecksum: settings.requireChecksum === true,
       // A session that deliberately turned every heuristic filter off writes
       // zeroes, which must be obeyed; one that says nothing about them gets the
       // shipped defaults. The pointer on the Go side is what keeps those two

@@ -875,15 +875,6 @@ input, select {
    the "this is a lot to scan" note reads as a warning, not body copy. */
 .hint.warn { color: var(--text); border-left: 3px solid var(--warn); padding-left: 0.5rem; }
 
-/* The confidence slider and its read-out sit on one line, so the number and the
-   sentence explaining it are read together. */
-.rail-slider { display: flex; align-items: center; gap: 0.75rem; }
-.rail-slider input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
-.rail-slider output {
-  font-family: var(--font-mono); font-size: 0.85rem;
-  min-width: 2.5rem; text-align: right;
-}
-
 /* One category row: a checkbox, its label, and its example right-aligned and
    truncated. The example is a reminder of the FORMAT, so losing its tail to an
    ellipsis costs nothing (the full string is the title attribute). */

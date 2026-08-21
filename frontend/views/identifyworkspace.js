@@ -1495,11 +1495,12 @@ export function builtInPatternsTab(s) {
  * builtInRow(match) is one matched text: what it says, how often and where, and
  * a badge when a corroborating checksum did not pass.
  *
- * The failed check is SHOWN rather than hidden, because the span is replaced
- * either way (CLAUDE.md §5: a checksum failure lowers confidence, it never
- * vetoes) and a mistyped, partly-redacted or synthetic bank identifier is
- * exactly what a template document holds. The user's lever over it is Minimum
- * confidence in the rail, not this row.
+ * The failed check is SHOWN rather than hidden, because by default the span is
+ * replaced anyway (CLAUDE.md §5: a checksum failure lowers confidence, it never
+ * vetoes on its own) and a mistyped, partly-redacted or synthetic bank
+ * identifier is exactly what a template document holds. The user's lever over it
+ * is "Only replace when the checksum matches", inside Built-in patterns in the
+ * rail, not this row: the row REPORTS, and switching the rule is a setting.
  */
 function builtInRow(match) {
   const files = match.documents ?? [];

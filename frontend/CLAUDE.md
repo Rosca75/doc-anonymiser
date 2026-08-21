@@ -73,11 +73,15 @@ without the runtime. Preserve that behaviour.
   preset rows and its own strictness block) and **Local LLM discovery** (`useLocalLLM`, off by default).
   There is no cloud route.
 
-  Two SWITCH-LESS panels follow them, carrying `.rail-panel` rather than
-  `.rail-section` so a utility panel is never counted as a route: **Detection
-  quality**, holding the cross-route match-confidence floor, and **Load profile**.
-  The floor governs every route that is on, so it belongs to none of them; its
-  header states the live percentage while the panel is folded.
+  ONE switch-less panel follows them, carrying `.rail-panel` rather than
+  `.rail-section` so a utility panel is never counted as a route: **Load
+  profile**. There is no cross-route quality panel, because there is no
+  cross-route control left: the one genuine question the confidence percentage
+  asked is the "Only replace when the checksum matches" checkbox
+  (`setRequireChecksum`), and it renders inside Built-in patterns, under the
+  preset row and above the category groups, because it is about those patterns'
+  own check digits. It is NOT gated on the section switch, exactly as the category
+  boxes are not: a user configures a pass before switching it on.
 
   The workspace has FIVE tabs, and the last two are the same subject split by
   AUTHOR: **Built-in patterns** is read-only and shows what the application's own
@@ -154,7 +158,7 @@ without the runtime. Preserve that behaviour.
   which is what put the controls at its foot out of reach. Every explanation
   goes in `ui.js helpTooltip` beside the label it explains, opening on hover AND
   on keyboard focus. What stays inline is only what CHANGES: a validation error,
-  the live confidence value, the per-group active counts, Ollama availability,
+  the per-group active counts, the live request estimate, Ollama availability,
   run status. Live read-outs carry `.rail-readout`; `p.hint` inside the rail is
   banned, and both the frontend suite and the rendering harness measure it.
 

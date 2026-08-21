@@ -25,7 +25,7 @@ func TestPreviewGroupsByCategoryAndText(t *testing.T) {
 		{Name: "a.md", Markdown: "write to marie.duval@example.com and again marie.duval@example.com"},
 		{Name: "b.md", Markdown: "cc marie.duval@example.com and jean.muller@example.com"},
 	}
-	got := PreviewPatternMatches(docs, selection(CatEmail), CountryLU, 0, nil)
+	got := PreviewPatternMatches(docs, selection(CatEmail), CountryLU, false, nil)
 	if len(got) != 2 {
 		t.Fatalf("want 2 grouped matches, got %d: %+v", len(got), got)
 	}
@@ -53,29 +53,29 @@ func TestPreviewHonoursTheAllowlist(t *testing.T) {
 	docs := []Document{{Name: "a.md", Markdown: "info@example.com and marie.duval@example.com"}}
 	allow := NewEmptyAllowlist()
 	allow.Add("info@example.com")
-	got := PreviewPatternMatches(docs, selection(CatEmail), CountryLU, 0, allow)
+	got := PreviewPatternMatches(docs, selection(CatEmail), CountryLU, false, allow)
 	if len(got) != 1 || got[0].Text != "marie.duval@example.com" {
 		t.Fatalf("want the allowlisted address gone, got %+v", got)
 	}
 }
 
-// TestPreviewHonoursTheConfidenceFloor: MinConfidence is the user's lever over a
+// TestPreviewHonoursTheChecksumSwitch: the switch is the user's lever over a
 // checksum that did not pass, so the preview must obey it or the tab would show
 // rows a run then leaves in place.
-func TestPreviewHonoursTheConfidenceFloor(t *testing.T) {
+func TestPreviewHonoursTheChecksumSwitch(t *testing.T) {
 	// A shape-valid IBAN whose mod-97 check fails scores ConfidenceChecksumFailed
 	// rather than being vetoed (CLAUDE.md §5).
 	docs := []Document{{Name: "a.md", Markdown: "account LU28 0019 4006 4475 0001 please"}}
 
-	kept := PreviewPatternMatches(docs, selection(CatIBAN), CountryLU, 0, nil)
+	kept := PreviewPatternMatches(docs, selection(CatIBAN), CountryLU, false, nil)
 	if len(kept) != 1 {
-		t.Fatalf("want the checksum-failed IBAN previewed at floor 0, got %+v", kept)
+		t.Fatalf("want the checksum-failed IBAN previewed with the switch off, got %+v", kept)
 	}
 	if kept[0].Confidence >= ConfidenceDeterministic {
 		t.Errorf("want the failed check to lower the confidence, got %v", kept[0].Confidence)
 	}
-	if dropped := PreviewPatternMatches(docs, selection(CatIBAN), CountryLU, 1, nil); len(dropped) != 0 {
-		t.Errorf("want it filtered out at floor 1, got %+v", dropped)
+	if dropped := PreviewPatternMatches(docs, selection(CatIBAN), CountryLU, true, nil); len(dropped) != 0 {
+		t.Errorf("want it dropped with the switch on, got %+v", dropped)
 	}
 }
 
@@ -86,10 +86,10 @@ func TestPreviewScopesByCountry(t *testing.T) {
 	docs := []Document{{Name: "a.md", Markdown: "the office is at L-1234 Luxembourg"}}
 	sel := selection(CatPostalCode)
 
-	if got := PreviewPatternMatches(docs, sel, CountryLU, 0, nil); len(got) != 1 {
+	if got := PreviewPatternMatches(docs, sel, CountryLU, false, nil); len(got) != 1 {
 		t.Fatalf("want the Luxembourg postal code previewed under LU, got %+v", got)
 	}
-	if got := PreviewPatternMatches(docs, sel, CountryDE, 0, nil); len(got) != 0 {
+	if got := PreviewPatternMatches(docs, sel, CountryDE, false, nil); len(got) != 0 {
 		t.Errorf("want no postal code under DE, got %+v", got)
 	}
 
@@ -132,7 +132,7 @@ func TestPreviewReadsGridCellsNotTheRenderedTable(t *testing.T) {
 			{"Marie", "marie.duval@example.com"},
 		},
 	}}
-	got := PreviewPatternMatches(docs, selection(CatEmail), CountryLU, 0, nil)
+	got := PreviewPatternMatches(docs, selection(CatEmail), CountryLU, false, nil)
 	if len(got) != 1 || got[0].Count != 1 {
 		t.Fatalf("want the cell's address counted exactly once, got %+v", got)
 	}
@@ -146,9 +146,9 @@ func TestPreviewIsDeterministic(t *testing.T) {
 		Markdown: "x@example.com and y@example.com and z@example.com",
 	}}
 	sel := selection(CatEmail)
-	first := PreviewPatternMatches(docs, sel, CountryLU, 0, nil)
+	first := PreviewPatternMatches(docs, sel, CountryLU, false, nil)
 	for i := 0; i < 5; i++ {
-		again := PreviewPatternMatches(docs, sel, CountryLU, 0, nil)
+		again := PreviewPatternMatches(docs, sel, CountryLU, false, nil)
 		if len(again) != len(first) {
 			t.Fatalf("run %d returned %d matches, first returned %d", i, len(again), len(first))
 		}
@@ -177,7 +177,7 @@ func TestPreviewOnTheRealFixtureShowsAddressesAndPostalCodes(t *testing.T) {
 	}}
 	sel := selection(CatAddress, CatPostalCode)
 
-	got := PreviewPatternMatches(docs, sel, CountryLU, 0, nil)
+	got := PreviewPatternMatches(docs, sel, CountryLU, false, nil)
 	byCategory := map[string]int{}
 	for _, m := range got {
 		byCategory[m.Category]++

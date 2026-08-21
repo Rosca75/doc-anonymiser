@@ -32,7 +32,7 @@ import {
   getState, setState, resetState,
   WIZARD_STEPS, canGoTo, goTo, nextStep,
   isBackward, resetStep, STEP_RESETS,
-  addSuggestions, applyPreset, setMinConfidence,
+  addSuggestions, applyPreset, setRequireChecksum,
   addAllowTerm, defaultCategories,
   PRESET_SCOPE_PATTERNS, PRESET_SCOPE_NAMES, PRESET_FAMILY_DEPTH,
   acceptSuggestion, rejectSuggestion, rejectAllShown,
@@ -53,7 +53,7 @@ const SHAPES = {
     SHAPES.documents();
     applyPreset(PRESET_SCOPE_PATTERNS, PRESET_FAMILY_DEPTH, "thorough");
     applyPreset(PRESET_SCOPE_NAMES, PRESET_FAMILY_DEPTH, "thorough");
-    setMinConfidence(0.9);
+    setRequireChecksum(true);
     addAllowTerm("CSSF");
   },
   suggestions: () => {

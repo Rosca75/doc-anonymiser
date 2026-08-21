@@ -3,9 +3,9 @@
 //
 // views/identifyrail.js imports api.js, which only touches `window` inside
 // its functions, so the module imports cleanly here. Only the PURE exports are
-// exercised: the group tables, the section table, the preset table and the
-// sentence that explains the confidence slider. Everything else in the view is
-// wiring and belongs to the manual pass.
+// exercised: the group tables, the section table, the preset table and what
+// railBody renders. Everything else in the view is wiring and belongs to the
+// wiring tests and the manual pass.
 //
 // Sections are addressed BY ID through sectionById() below, never by position in
 // the rendered list. An index makes a test silently assert about its neighbour
@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 
 import {
   CATEGORY_GROUPS, PATTERN_GROUPS, NAME_GROUPS, RAIL_SECTIONS,
-  confidenceEffect, llmGateTooltip,
+  llmGateTooltip,
   llmDisabledTooltip, railBody, settingsPayload,
 } from "./views/identifyrail.js";
 import { CONFIGURE, RAIL, CATEGORY_LABELS } from "./copy.js";
@@ -26,7 +26,7 @@ import {
   THOROUGH_PII_CATEGORIES, ALWAYS_ON_CATEGORIES,
   resetState, getState, setState, setUseLocalLLM,
   setLLMScope, setCategoryGroup, setUseBuiltInPatterns, setUseHeuristicDiscovery,
-  setSignalSource, setSignalDerivation, applyPreset,
+  setSignalSource, setSignalDerivation, applyPreset, setRequireChecksum,
   PRESETS, PRESET_SCOPE_PATTERNS, PRESET_SCOPE_NAMES, PRESET_FAMILY_DEPTH,
   presetsFor,
   SIGNAL_SOURCES, SIGNAL_DERIVATIONS, LLM_DETAIL_LEVELS,
@@ -259,49 +259,6 @@ test("the gate tooltip tells the two reasons apart", () => {
   assert.notEqual(off, missing);
 });
 
-// --- the confidence read-out, rewritten by -------------------------------
-//
-// The mock-up's copy described a SOURCE-TIERED rule ("values that only the local
-// model suggested are skipped"), which the engine does not implement. What the
-// setting actually is is a FLOOR on the confidence score every detection
-// carries, so the copy describes the floor. These tests pin that it does not
-// drift back into promising the rule the engine does not have.
-
-test("the confidence read-out says nothing is skipped at the default", () => {
-  assert.match(confidenceEffect(0), /Nothing is skipped/);
-});
-
-test("the confidence read-out describes a floor, not a rule about sources", () => {
-  for (let percent = 0; percent <= 100; percent += 5) {
-    const sentence = confidenceEffect(percent);
-    assert.ok(!/only the local model suggested/i.test(sentence),
-      `${percent}: the engine has no source-tiered rule (decision 3): ${sentence}`);
-    assert.ok(!/you listed yourself/i.test(sentence),
-      `${percent}: the floor does not know who listed a value: ${sentence}`);
-  }
-});
-
-test("the confidence read-out changes as the meaningful thresholds are crossed", () => {
-  // Below where any score sits, the floor does nothing.
-  assert.match(confidenceEffect(50), /Nothing is skipped/);
-  // Past it, weaker detections start being left alone...
-  assert.match(confidenceEffect(90), /left alone/);
-  // ...and at the top only the strongest survive.
-  assert.match(confidenceEffect(100), /strongest/);
-  // Each band must actually say something different, or the slider looks dead.
-  const bands = [0, 50, 90, 100].map(confidenceEffect);
-  assert.equal(new Set(bands).size, 4, "every band must read differently");
-});
-
-test("the confidence read-out is a full sentence at every slider stop", () => {
-  for (let percent = 0; percent <= 100; percent += 5) {
-    const sentence = confidenceEffect(percent);
-    assert.ok(sentence.length > 20, `${percent}: too terse`);
-    assert.ok(sentence.endsWith("."), `${percent}: not a sentence`);
-    assert.ok(!sentence.includes("—"), `${percent}: em dash`);
-  }
-});
-
 // --- What the rail actually renders --------------------------------------
 
 /** railHTML() renders the rail from a fresh store, optionally patched. */
@@ -312,23 +269,23 @@ function railHTML(patch = {}) {
   return railBody(getState());
 }
 
-test("the rail renders three routes plus the two switch-less panels", () => {
+test("the rail renders three routes plus the one switch-less panel", () => {
   const html = railHTML();
   // Exactly three DETECTION ROUTE sections carry .rail-section; the render
-  // harness (scripts/uitest/probes.js) counts the same class. Detection quality
-  // and Load profile are switch-less panels with their own .rail-panel class, so
-  // they must NOT be counted as routes.
+  // harness (scripts/uitest/probes.js) counts the same class. Load profile is a
+  // switch-less panel with its own .rail-panel class, so it must NOT be counted
+  // as a route.
   const sections = all(html, "section.rail-section");
   assert.equal(sections.length, 3);
   const titles = sections.map((sec) =>
     stripTags(all(sec.outer, "span.cgroup-title")[0].inner).trim());
   assert.deepEqual(titles, [RAIL.tabPatterns, RAIL.tabHeuristic, RAIL.tabLocalLLM]);
-  // The two panels sit after the routes, in this order.
+  // Load profile is the ONLY panel, and it sits after the routes.
   const panels = all(html, "section.rail-panel").map((sec) =>
     stripTags(all(sec.outer, "span.cgroup-title")[0].inner).trim());
-  assert.deepEqual(panels, [RAIL.qualityTitle, RAIL.profileTitle]);
-  assert.ok(html.indexOf(RAIL.qualityTitle) > html.indexOf(RAIL.tabLocalLLM),
-    "the panels come after the last route");
+  assert.deepEqual(panels, [RAIL.profileTitle]);
+  assert.ok(html.indexOf(RAIL.profileTitle) > html.indexOf(RAIL.tabLocalLLM),
+    "the panel comes after the last route");
 });
 
 test("each route section carries its own help beside its switch", () => {
@@ -426,36 +383,54 @@ test("Heuristic discovery owns the name categories and exactly one subgroup", ()
   assert.ok(exists(heuristic, "#smart-min-length"), "its strictness fields render");
 });
 
-test("Detection quality is a switch-less panel carrying the cross-route floor", () => {
-  // The floor governs every route that is on, so placing it inside one of them
-  // would mislabel it as that route's own knob.
+test("the checksum switch lives in Built-in patterns, above the categories", () => {
+  // It governs the built-in patterns' own check digits and nothing else, so it
+  // belongs on the section that owns them, directly under the preset that
+  // decides which of those patterns run at all.
   const html = railHTML();
-  const quality = sectionAttrs(html, "rail-quality");
-  assert.match(quality.attrs.class, /rail-panel/);
-  assert.ok(!/rail-section/.test(quality.attrs.class),
-    ".rail-section marks a detection ROUTE, which this is not");
-  assert.ok(!exists(quality.outer, "input.route-toggle"), "and it has no switch");
-  assert.ok(exists(quality.outer, "#min-confidence"), "the floor lives here");
-  assert.ok(exists(quality.outer, "output#min-confidence-value"));
-  // Folded by default, so its header has to state the value it is holding.
-  assert.equal(quality.attrs["data-open"], "false");
-  assert.equal(stripTags(one(quality.outer, "span.cgroup-count").inner).trim(), "0%");
+  const patterns = sectionById(html, "rail-patterns");
+  const box = one(patterns, "#require-checksum");
+  assert.equal(box.attrs.type, "checkbox");
+  assert.ok(!("checked" in box.attrs), "off by default: that is today's behaviour");
+  assert.ok(!("disabled" in box.attrs),
+    "it must be settable while the pass is off, exactly as the category boxes are");
+  // Above the category groups, below the preset row.
+  assert.ok(patterns.indexOf("require-checksum") < patterns.indexOf("cat-group-pattern-0"),
+    "the switch reads before the eight category groups");
+  assert.ok(patterns.indexOf("data-preset") < patterns.indexOf("require-checksum"),
+    "and after the preset row");
 
-  // And it is nowhere else: one setting, one control.
-  assert.equal(all(html, "#min-confidence").length, 1);
-  for (const id of ["rail-patterns", "rail-heuristic", "rail-local"]) {
-    assert.ok(!exists(sectionById(html, id), "#min-confidence"),
-      `the cross-route floor must not render inside ${id}`);
+  // One setting, one control, in one section.
+  assert.equal(all(html, "#require-checksum").length, 1);
+  for (const id of ["rail-heuristic", "rail-local", "rail-profile"]) {
+    assert.ok(!exists(sectionById(html, id), "#require-checksum"),
+      `the checksum switch must not render inside ${id}`);
   }
 });
 
-test("the heuristic block's own minimum confidence is not the cross-route floor", () => {
-  // Two different settings that are easy to read as one: this one is read by
-  // heuristic discovery alone, the slider decides what a run replaces.
+test("the checksum switch reflects the stored flag and carries its own help", () => {
+  resetState();
+  setRequireChecksum(true);
+  const box = one(sectionById(railBody(getState()), "rail-patterns"), "#require-checksum");
+  assert.ok("checked" in box.attrs, "the box must read the store, not its own last value");
+  // The label is a real <label for>, so the whole row is clickable and the
+  // checkbox has an accessible name.
+  const patterns = sectionById(railBody(getState()), "rail-patterns");
+  assert.ok(patterns.includes(RAIL.requireChecksum), "the label renders its copy");
+  assert.ok(patterns.includes(RAIL.requireChecksumHelp), "and the tooltip explains the default");
+});
+
+test("the only confidence control left in the rail is heuristic discovery's own", () => {
+  // The cross-route floor is gone. What remains is a different setting: it is
+  // read by heuristic discovery alone and it governs which Suggestions are
+  // SHOWN, before the review gate, rather than what a run replaces.
   const html = railHTML();
   const heuristic = sectionById(html, "rail-heuristic");
   assert.ok(exists(heuristic, "#smart-min-confidence"), "the route's own strictness field");
-  assert.ok(!exists(heuristic, "#min-confidence"), "and not the cross-route floor");
+  assert.equal(all(html, "#min-confidence").length, 0,
+    "no cross-route floor anywhere in the rail");
+  assert.equal(all(html, "section.rail-panel").length, 1,
+    "and no panel left over to hold one");
 });
 
 test("every signal that derives Suggestions has a category row to hang off", () => {
@@ -1076,6 +1051,37 @@ test("the Local LLM discovery switch writes its own flag and no other", async ()
   assert.equal(s.useHeuristicDiscovery, true, "and the heuristic route is untouched");
 });
 
+test("the checksum switch writes its own flag and no other", async () => {
+  // It is inside Built-in patterns, so the thing to prove is that it does NOT
+  // reach that section's other settings: not the route switch above it, not the
+  // preset row it sits under, not one of the eight category groups below it.
+  resetState();
+  const before = {
+    categories: { ...getState().settings.categories },
+    heuristicDiscovery: { ...getState().settings.heuristicDiscovery },
+  };
+  const root = railRoot();
+  const box = root.querySelector("#require-checksum");
+  assert.ok(box, "the checkbox must render inside Built-in patterns");
+  box.checked = true;
+  await fire(box, "change");
+
+  const s = getState().settings;
+  assert.equal(s.requireChecksum, true, "its own flag moved");
+  assert.equal(s.useBuiltInPatterns, true, "the route switch above it is untouched");
+  assert.equal(s.useHeuristicDiscovery, true, "and the other routes with it");
+  assert.equal(s.useLocalLLM, false);
+  assert.deepEqual(s.categories, before.categories, "no category moved");
+  assert.deepEqual(s.heuristicDiscovery, before.heuristicDiscovery,
+    "and heuristic discovery's own minimum confidence is a different setting");
+
+  // It travels to Go on its own key, explicitly, so an omitted key and a cleared
+  // box are not the same thing on the wire.
+  assert.equal(settingsPayload(getState(), root).requireChecksum, true);
+  assert.ok(!("minConfidence" in settingsPayload(getState(), root)),
+    "the retired floor must not still be on the wire");
+});
+
 // --- What the local model actually did last time --------------------------
 //
 // "0 values found" means two different things and only one of them is about the
@@ -1348,7 +1354,7 @@ test("the last scan read-out is a read-out, never an explanatory paragraph", () 
 // The Configure panel spends no permanent vertical space on prose. Every
 // explanation is a help tooltip beside the label it explains, reachable by hover
 // AND by keyboard. What stays inline is only what CHANGES: a validation error,
-// the live confidence value, Ollama's availability, an active count, run status.
+// Ollama's availability, an active count, the request estimate, run status.
 
 test("the Configure panel carries no explanatory paragraphs", () => {
   // The guard is structural, not a list of retired sentences: deleting the eight
@@ -1393,7 +1399,7 @@ test("the dynamic read-outs stay inline, where the user is watching them", () =>
   // A value that changes as a control moves cannot live behind a hover.
   resetState();
   const html = railBody(getState());
-  assert.ok(exists(html, "output#min-confidence-value"), "the live confidence value");
-  assert.ok(exists(html, "#min-confidence-effect"), "and what it currently excludes");
   assert.ok(/\d+\/\d+/.test(html), "the per-group active counts");
+  assert.ok(all(html, "span.cgroup-count").length > 0,
+    "each carried on its group's own header, where the user is looking");
 });

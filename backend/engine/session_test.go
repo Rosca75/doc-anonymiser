@@ -160,12 +160,11 @@ func TestSessionSaveLoadEquality(t *testing.T) {
 		wantWrote string
 	}{
 		{version: 1, wantFix: "start a new session", wantWrote: "an older version"},
-		// The immediately previous version is refused too, not migrated. A v7
-		// file's signalSuggestionSources holds one boolean per source, which
-		// cannot say which READING of a signal the user wanted: a reader
-		// guessing "both" would produce Suggestions the user had switched off,
-		// and a reader guessing "neither" would silently stop a whole method.
-		{version: 7, wantFix: "start a new session", wantWrote: "an older version"},
+		// The IMMEDIATELY previous version is refused too, not migrated. A v12
+		// file carries the retired confidence floor, a number that cannot say
+		// whether the user wanted a checksum-failed match replaced: a reader
+		// guessing either way changes what the restored session anonymises.
+		{version: SessionVersion - 1, wantFix: "start a new session", wantWrote: "an older version"},
 		{version: 99, wantFix: "update the application", wantWrote: "a newer version"},
 	} {
 		badStr := strings.Replace(string(bad),
@@ -261,8 +260,8 @@ func TestExportFileName(t *testing.T) {
 
 // TestLoadSessionWithoutOptionalFields: a session file that omits the optional
 // settings blocks must load, and each missing field must land on the value that
-// reproduces the behaviour of a session that never had it. minConfidence in
-// particular must land on 0, the "keep every detection" default: anything else
+// reproduces the behaviour of a session that never had it. requireChecksum in
+// particular must land on false, which is the shipped default: anything else
 // would mean opening a session quietly changed what gets replaced
 //
 // The version is the CURRENT one on purpose.  refuses a file
@@ -294,9 +293,10 @@ func TestLoadSessionWithoutOptionalFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a session omitting the optional blocks must load, got: %v", err)
 	}
-	if s.Settings.MinConfidence != 0 {
-		t.Errorf("MinConfidence = %v, want 0 so an old session replaces exactly what it always did",
-			s.Settings.MinConfidence)
+	if s.Settings.RequireChecksum {
+		t.Error("RequireChecksum = true from a file that says nothing about it; " +
+			"absence must read as the shipped default, so a restored session replaces " +
+			"exactly what it always did")
 	}
 	// The fields that WERE present must survive untouched.
 	if s.Settings.Presets[PresetKey(ScopePatterns, FamilyDepth)] != PresetStandard ||
@@ -313,10 +313,13 @@ func TestLoadSessionWithoutOptionalFields(t *testing.T) {
 	}
 }
 
-// TestSessionRoundTripsMinConfidence: the new field survives save/load.
-func TestSessionRoundTripsMinConfidence(t *testing.T) {
+// TestSessionRoundTripsRequireChecksum: the switch survives save/load. It has to
+// travel, because it changes what a run replaces, and a restored session that
+// silently lost it would anonymise a checksum-failed identifier the user had
+// deliberately chosen to leave in clear.
+func TestSessionRoundTripsRequireChecksum(t *testing.T) {
 	raw, err := SaveSession(Session{
-		Settings: SessionSettings{Presets: depthPresets(PresetStandard), OllamaPort: 11434, MinConfidence: 0.9},
+		Settings: SessionSettings{Presets: depthPresets(PresetStandard), OllamaPort: 11434, RequireChecksum: true},
 	})
 	if err != nil {
 		t.Fatalf("SaveSession: %v", err)
@@ -325,8 +328,8 @@ func TestSessionRoundTripsMinConfidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSession: %v", err)
 	}
-	if back.Settings.MinConfidence != 0.9 {
-		t.Errorf("MinConfidence = %v, want 0.9", back.Settings.MinConfidence)
+	if !back.Settings.RequireChecksum {
+		t.Error("RequireChecksum did not survive the file")
 	}
 }
 
@@ -502,25 +505,30 @@ func TestSessionRoundTripsImageDecisions(t *testing.T) {
 }
 
 // TestSessionVersionRefusesAnOlderFile: the strict-version rule, at the version
-// the PRESETS became scoped data.
+// the cross-route confidence floor LEFT the schema and the checksum switch
+// entered it.
 //
-// A v11 file carries `level`, one string over both halves of the rail. This build
-// carries `presets`, one preset per scope and family. Neither is readable as the
-// other: a v11 reader finds no level and falls back to its own default, and a v11
-// file's level names presets no row in this build's table holds. The
-// per-category selection is what a run obeys either way, so the failure is not in
-// what the file replaces but in what the rail then SAYS it will replace, which is
-// the shape of silent disagreement the rule exists for.
+// A v12 file carries `minConfidence`, a number that was doing two unrelated
+// things: deciding whether a checksum-failed pattern match is replaced, and,
+// above roughly 0.8, dropping Values the user had already accepted. This build
+// carries `requireChecksum`, which is only the first of those, in words. Neither
+// is readable as the other. A v12 file's 0.9 says nothing about the checksum
+// question and, read as a boolean, either invents a veto the user never asked for
+// or loses one they did; and a v12 reader finding no floor falls back to 0, which
+// silently restores the replacement of every accepted Value the saved floor had
+// been suppressing. Either way a restored session replaces a different set of
+// text than the file describes, which is the shape of silent disagreement the
+// rule exists for.
 //
-// The v11 fixture below spells `level` out, because a file carrying the CURRENT
-// key under the OLD version would not be the file this test is about.
+// The v12 fixture below spells `minConfidence` out, because a file carrying the
+// CURRENT key under the OLD version would not be the file this test is about.
 func TestSessionVersionRefusesAnOlderFile(t *testing.T) {
 	t.Run("errors/older_versions_are_refused", func(t *testing.T) {
-		if SessionVersion != 12 {
-			t.Fatalf("SessionVersion is %d; this test describes the move to 12 and must be "+
+		if SessionVersion != 13 {
+			t.Fatalf("SessionVersion is %d; this test describes the move to 13 and must be "+
 				"rewritten for the version that replaces it", SessionVersion)
 		}
-		for _, older := range []int{9, 10, 11} {
+		for _, older := range []int{10, 11, 12} {
 			raw := fmt.Sprintf(`{"version":%d,"values":[],"allowTerms":[],"patterns":[],`+
 				`"settings":{"ollamaPort":11434,"model":"qwen3.5:0.8b"},`+
 				`"registry":[]}`, older)
@@ -532,7 +540,7 @@ func TestSessionVersionRefusesAnOlderFile(t *testing.T) {
 			}
 			// The message has to name BOTH numbers, or the user is told the file is
 			// wrong without being told what would be right.
-			if !strings.Contains(err.Error(), "12") {
+			if !strings.Contains(err.Error(), "13") {
 				t.Errorf("the refusal does not say which version this build reads:\n%v", err)
 			}
 			if !strings.Contains(err.Error(), fmt.Sprint(older)) {
@@ -544,15 +552,15 @@ func TestSessionVersionRefusesAnOlderFile(t *testing.T) {
 	t.Run("errors/no_migration_path_exists", func(t *testing.T) {
 		// The policy is refusal, never migration: a session file holds the
 		// re-identification key, and a half-migrated one silently reassigns
-		// placeholders. A v11 file carrying the retired `level` key must be refused
-		// on the version alone, before anything reads a field, and the loader must
-		// hold no alias that would turn "advanced" into a preset ID.
-		raw := `{"version":11,"values":[{"category":"person_names","mainText":"Marie Duval",` +
+		// placeholders. A v12 file carrying the retired `minConfidence` key must be
+		// refused on the version alone, before anything reads a field, and the
+		// loader must hold no alias that would turn 0.9 into a boolean.
+		raw := `{"version":12,"values":[{"category":"person_names","mainText":"Marie Duval",` +
 			`"discoveryMethods":["local_llm"]}],"allowTerms":[],"patterns":[],` +
-			`"settings":{"level":"advanced","ollamaPort":11434,"model":"qwen3.5:0.8b"},` +
+			`"settings":{"minConfidence":0.9,"ollamaPort":11434,"model":"qwen3.5:0.8b"},` +
 			`"registry":[]}`
 		if _, err := LoadSession([]byte(raw)); err == nil {
-			t.Fatal("a v11 file carrying the retired level key was accepted; there is no " +
+			t.Fatal("a v12 file carrying the retired minConfidence key was accepted; there is no " +
 				"migration table and no compatibility alias anywhere in the loader")
 		}
 	})

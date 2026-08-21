@@ -122,13 +122,17 @@ type Settings struct {
 	// anonymisation exactly as it was, which is the whole reason the setting is
 	// separate from the category switch.
 	SignalSuggestionSources engine.SignalSourceSelection `json:"signalSuggestionSources"`
-	// MinConfidence is the detection-confidence floor, on
-	// the scale of 0.0 to 1.0. Spans scoring below it are
-	// not replaced. 0 (the default, and what an older session file without
-	// the field loads as) keeps every detection, so the setting can never
-	// silently remove replacements a user did not ask it to remove. See
-	// engine.FilterByMinConfidence for what each level currently excludes.
-	MinConfidence float32 `json:"minConfidence"`
+	// RequireChecksum is the "Only replace when the checksum matches" switch,
+	// inside Built-in patterns. Off by default, which is what the application has
+	// always done: some identifiers carry a check digit, and when the digits do
+	// not add up the match is kept, because a mistyped or partly redacted bank
+	// identifier is still one. On, engine.RejectFailedChecksums drops those
+	// matches, and nothing else.
+	//
+	// It needs no range validation, which is the point of a boolean: the floor it
+	// replaces had two positions nobody could name and one of them dropped Values
+	// the user had already accepted.
+	RequireChecksum bool `json:"requireChecksum"`
 	// HeuristicDiscovery is the heuristic tuning. A SETTING rather than a
 	// per-run argument so it survives in the session file.
 	HeuristicDiscovery engine.HeuristicDiscoveryOptions `json:"heuristicDiscovery"`
@@ -800,10 +804,6 @@ func (a *App) ApplySettings(s Settings) (OllamaState, error) {
 		return OllamaState{}, fmt.Errorf(
 			"unknown local model detail level %q, expected %s or %s",
 			s.LLMDetailLevel, engine.DetailThorough, engine.DetailFaster)
-	}
-	if s.MinConfidence < 0 || s.MinConfidence > 1 {
-		return OllamaState{}, fmt.Errorf(
-			"invalid minimum confidence %v, expected a number between 0 (replace every detection) and 1 (replace only the most certain ones)", s.MinConfidence)
 	}
 	if s.HeuristicDiscovery.MinConfidence < 0 || s.HeuristicDiscovery.MinConfidence > 1 {
 		return OllamaState{}, fmt.Errorf(

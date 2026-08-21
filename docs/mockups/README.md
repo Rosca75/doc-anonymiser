@@ -37,9 +37,11 @@ before reading:
 - `Welcome.dc.html` and `Import.dc.html` still show **five** steps with a
   standalone Configure. `Identify`, `Anonymise` and `Export` show **four**,
   with Configure absorbed into Identify. Four is the target (decision 1).
-- The confidence-slider copy in `Identify.dc.html` describes a source-tiered
-  rule the engine does not implement. The engine's `minConfidence` floor wins
-  and the copy is rewritten (decision 3).
+- `Identify.dc.html` shows a confidence slider. There is none: the control was
+  two unrelated questions wearing one percentage, and one of them dropped Values
+  the user had already accepted. The one real question it asked is a checkbox
+  under Built-in patterns, "Only replace when the checksum matches", off by
+  default (`CLAUDE.md` §5, pass 1).
 
 These files are a historical design record. Do not edit them to match the
 implementation; record deviations in `docs/BUILD-05.md` instead.

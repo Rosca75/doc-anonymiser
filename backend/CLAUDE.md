@@ -75,10 +75,18 @@ decision of the model:
 - The **match class** is precedence, derived from the methods by
   `MatchClassForMethods` taking the strongest, and consumed only by overlap
   resolution, ownership unification and the pre-run intersection check.
-- `Confidence` is a third thing, feeding `MinConfidence`.
+- `Confidence` is a third thing, and it is DATA rather than a filter: it orders
+  overlaps after the match class, it feeds heuristic discovery's own floor before
+  a Suggestion is shown, and it is reported. Nothing a run replaces is decided by
+  comparing it against a threshold, and an accepted Value is never dropped by it.
 
-One field answering two of those questions is what made raising the confidence
-floor silently reorder which route won.
+One field answering two of those questions is what made raising a confidence
+floor silently reorder which route won. One field being read as a lever over what
+a run replaces is what made a floor drop Values the user had already ACCEPTED, by
+the score of whatever originally found them. The single score a user may ask to
+have vetoed is a corroborating checksum that did not pass, and that question is a
+checkbox (`Settings.RequireChecksum`, `engine.RejectFailedChecksums`), off by
+default, applied to pass 1's spans alone.
 
 `SpellingPolicy` (`"automatic"` or `"curated"`) is a string rather than a bool so
 both states have a name on both sides of the bridge and in a session file. It is
@@ -226,7 +234,8 @@ to free.
    `validate` VETOES on the matched text (a shape check, or a checksum that IS
    the recognizer, as Luhn is over a bare digit run); `checksum` only SCORES
    (`ConfidenceChecksumFailed`), because a mistyped or synthetic bank identifier
-   is exactly what must still be anonymised; and `reject` vetoes on the
+   is exactly what must still be anonymised, and `RequireChecksum` is the user
+   asking for the veto instead; and `reject` vetoes on the
    SURROUNDINGS, since RE2 has no lookarounds and some rules are about what sits
    in front of a match (a BIC needs its own cue, an IBAN's interior is not a
    payment card).
@@ -269,12 +278,16 @@ an override took. The renames a user made are recorded rather than inferred
 (`Registry.Overrides`) and persist in the session file; **session files are read
 only by the version that wrote them**, so a file whose `SessionVersion` this
 build does not know is refused with an actionable message instead of
-half-migrated. The current version is **12**, and every older one is refused. The
-reason for the move to 12 is that `level` LEFT the schema and `presets` entered
-it: a single level string cannot say that the pattern categories are at Soft while
-the name categories are at Thorough, which is a selection the scoped chips make in
-two clicks, and the two spellings are not readable as each other in either
-direction. The move to 10 ran BACKWARDS from the usual reason: `Registry.Assign`
+half-migrated. The current version is **13**, and every older one is refused. The
+reason for the move to 13 is that `minConfidence` LEFT the schema and
+`requireChecksum` entered it: the two are not readable as each other in either
+direction, because a saved floor says nothing about the checksum question, and a
+reader finding no floor silently restores the replacement of every accepted Value
+the saved floor had been suppressing. The move to 12 was that `level` LEFT the
+schema and `presets` entered it: a single level string cannot say that the pattern
+categories are at Soft while the name categories are at Thorough, which is a
+selection the scoped chips make in two clicks. The move to 10 ran BACKWARDS from
+the usual reason: `Registry.Assign`
 PANICS on a category with no `placeholderLabels` row, so a v9 file written by a
 later build carrying a `country_names` Value would be accepted by an older v9
 binary and crash it on the next run, and the bump turns that crash into the clear

@@ -412,9 +412,9 @@
      *
      * The Configure choices are switchable DETECTION ROUTE sections rather than
      * peer tabs, one section per mechanism: Built-in patterns on, Heuristic
-     * discovery on, Local LLM discovery off. Two switch-less panels follow them,
-     * Detection quality and Load profile, and they carry .rail-panel rather than
-     * .rail-section so a utility panel is never counted as a route.
+     * discovery on, Local LLM discovery off. ONE switch-less panel follows them,
+     * Load profile, and it carries .rail-panel rather than .rail-section so a
+     * utility panel is never counted as a route.
      *
      * The category groups start FOLDED, so the rail opens on the route switches
      * and the scope summary rather than a wall of category lists; this probe
@@ -522,14 +522,52 @@
       })();
       await clickGroup("rail-local");
 
+      // The checksum switch is inside Built-in patterns, which is OPEN by
+      // default, so it has to be genuinely laid out and not merely in the DOM: a
+      // string test reads a zero-height checkbox as present and the user cannot
+      // click it. It is measured here, beside the route counts, because "which
+      // section is it in" is the whole point of it.
+      const checksumSwitch = (() => {
+        const box = railOf().querySelector("#require-checksum");
+        if (!box) return null;
+        // A collapsible section carries its id on its own header's toggle rather
+        // than as an element id (ui.js collapsibleGroup), and the first
+        // .cgroup-title inside a section IS that header: the titles after it
+        // belong to the groups nested in its body.
+        const section = box.closest("section");
+        const sectionId = section?.querySelector(".cgroup-title")?.dataset.groupToggle ?? "";
+        const row = box.closest(".rail-toggle");
+        const label = row?.querySelector(".cat-label");
+        const rect = box.getBoundingClientRect();
+        return {
+          section: sectionId,
+          checked: box.checked,
+          disabled: box.disabled,
+          laidOut: rect.height > 0 && rect.width > 0,
+          // Its label and its help icon share the row, exactly as the category
+          // rows do, and the rail is narrow enough that this is a real question.
+          hasHelp: !!row?.querySelector("span.help"),
+          labelFullyShown: !label || label.scrollWidth <= label.clientWidth + 1,
+          fitsTheRail: !row || row.scrollWidth <= row.clientWidth + 1,
+          label: (label?.textContent ?? "").trim(),
+        };
+      })();
+
       const rail = railOf();
       const toggles = [...rail.querySelectorAll(".route-toggle")];
       const byRoute = (route) => toggles.find((t) => t.dataset.route === route);
       return {
         sections: rail.querySelectorAll(".rail-section").length,
-        // The switch-less panels, counted separately: .rail-section marks a
+        // The switch-less panel, counted separately: .rail-section marks a
         // detection ROUTE, so a panel wearing it would be counted as one.
         panels: rail.querySelectorAll(".rail-panel").length,
+        // The checksum switch: which section holds it, whether it is off, and
+        // whether it is actually clickable.
+        checksumSwitch,
+        // And no confidence floor survives anywhere: it is the control this
+        // switch replaced, and a leftover slider would be a second answer to a
+        // question that now has one.
+        confidenceSliders: document.querySelectorAll('input[type="range"]#min-confidence').length,
         railTabs: document.querySelectorAll("[data-railtab]").length,
         routes: toggles.map((t) => t.dataset.route),
         // One reading per route switch, because each is its own stored flag: a

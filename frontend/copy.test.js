@@ -264,15 +264,14 @@ test("no user-facing copy names a retired detection route", () => {
     "(Built-in patterns, Heuristic discovery, Local LLM discovery):\n" + hits.join("\n"));
 });
 
-test("the rail's three route sections and its quality panel are named", () => {
+test("the rail's three route sections are named", () => {
   // Each label is one MECHANISM, and each carries its own help: the section
   // switch and the explanation of what it switches must move together.
   const { RAIL } = COPY;
   assert.equal(RAIL.tabPatterns, "Built-in patterns");
   assert.equal(RAIL.tabHeuristic, "Heuristic discovery");
   assert.equal(RAIL.tabLocalLLM, "Local LLM discovery");
-  assert.equal(RAIL.qualityTitle, "Detection quality");
-  for (const key of ["tabPatternsHelp", "tabHeuristicHelp", "tabLocalLLMHelp", "qualityHelp"]) {
+  for (const key of ["tabPatternsHelp", "tabHeuristicHelp", "tabLocalLLMHelp"]) {
     assert.ok(RAIL[key]?.length > 0, `${key} must explain its section`);
   }
   // The retired keys must be gone rather than left as dead exports.
@@ -282,4 +281,26 @@ test("the rail's three route sections and its quality panel are named", () => {
     assert.ok(!(key in RAIL), `RAIL.${key} must be gone`);
   }
   assert.ok(!("groupDeclared" in COPY.CONFIGURE), "CONFIGURE.groupDeclared must be gone");
+});
+
+test("the checksum switch is labelled by its RULE and explained in its tooltip", () => {
+  // The label states what switching it on does. The tooltip carries the half a
+  // user cannot guess: OFF is the default, and off KEEPS a match whose check
+  // digits do not add up, because a mistyped or partly redacted bank identifier
+  // is still a bank identifier.
+  const { RAIL } = COPY;
+  assert.equal(RAIL.requireChecksum, "Only replace when the checksum matches");
+  assert.ok(RAIL.requireChecksumHelp?.includes("check digit"),
+    "the tooltip must say what a checksum IS before saying what the switch does");
+  assert.ok(RAIL.requireChecksumHelp?.includes("kept by default"),
+    "the tooltip must name the default, because keeping a failed match is the surprising half");
+
+  // The retired confidence floor takes its whole vocabulary with it: a leftover
+  // key is copy for a control nobody can reach.
+  for (const key of ["qualityTitle", "qualityHelp"]) {
+    assert.ok(!(key in RAIL), `RAIL.${key} must be gone with the Detection quality panel`);
+  }
+  for (const key of ["confidenceTitle", "confidenceLabel", "confidenceHelp"]) {
+    assert.ok(!(key in COPY.CONFIGURE), `CONFIGURE.${key} must be gone with the confidence floor`);
+  }
 });

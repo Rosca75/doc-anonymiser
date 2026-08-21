@@ -7,10 +7,10 @@ import (
 )
 
 // scopeFor is the detection configuration these tests share: every category on,
-// no confidence floor, Luxembourg, nothing allowlisted.
+// the checksum switch off, Luxembourg, nothing allowlisted.
 func scopeFor(values []Value, patterns []CustomPattern) detectionScope {
 	return NewDetectionScope(values, patterns,
-		DepthSelection(PresetThorough, CountryLU), 0, CountryLU, NewEmptyAllowlist(), false)
+		DepthSelection(PresetThorough, CountryLU), false, CountryLU, NewEmptyAllowlist(), false)
 }
 
 // findIntersection returns the row for one value under one category.
@@ -213,7 +213,7 @@ func TestIntersectionRespectsTheAllowlist(t *testing.T) {
 	allow.Add(value)
 	scope := NewDetectionScope(
 		[]Value{{Category: CatPersonNames, MainText: value}}, nil,
-		DepthSelection(PresetThorough, CountryLU), 0, CountryLU, allow, false)
+		DepthSelection(PresetThorough, CountryLU), false, CountryLU, allow, false)
 
 	if rows := DetectIntersections(docs, scope); len(rows) != 0 {
 		t.Errorf("an allowlisted value is replaced by nothing, so it overlaps nothing, got %+v", rows)

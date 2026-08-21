@@ -123,9 +123,9 @@ const initialState = {
   //   "faster" (larger slices, fewer requests, and nothing found at all on a
   //   small model). Mirrors engine.AllDetailLevels; see LLM_DETAIL_LEVELS below.
   // contextSize is the Ollama num_ctx setting, default 8192.
-  // minConfidence is the detection-confidence floor, 0 to
-  // 1 on the engine's scale. 0 is the default and keeps every detection,
-  // which is exactly the behaviour before the setting existed.
+  // requireChecksum drops the built-in pattern matches whose corroborating
+  //   checksum did not verify. OFF by default, which is what the application has
+  //   always done: a mistyped or partly redacted bank identifier is still one.
   settings: {
     categories: null, ollamaPort: 11434, model: "", country: DEFAULT_COUNTRY,
     contextSize: 8192, useLocalLLM: false, llmStrictFormat: false,
@@ -138,9 +138,9 @@ const initialState = {
       email: { "email.person": true, "email.organisation": true },
       url: { "url.organisation": true },
     },
-    minConfidence: 0,
-    // heuristicDiscovery is the tuning for the offline Smart
-    // detection pass, matching engine.HeuristicDiscoveryOptions field for field.
+    requireChecksum: false,
+    // heuristicDiscovery is the tuning for heuristic discovery, matching
+    // engine.HeuristicDiscoveryOptions field for field.
     // The defaults are the STRICTER ones (engine
     // DefaultHeuristicDiscoveryOptions), because over-detection was the reported
     // problem; a user who wants everything back sets them to 0/false.
@@ -1244,19 +1244,23 @@ export function setDocumentCountry(code) {
 }
 
 /**
- * setMinConfidence(value) stores the detection-confidence floor
- * Values outside 0 to 1 are rejected (returns null)
- * rather than clamped, so a bad caller is visible instead of silently
- * changing what gets replaced.
- * @param {number} value the floor, 0 (keep everything) to 1 (strictest)
- * @returns {number|null} the stored value, or null when rejected
+ * setRequireChecksum(on) stores the "Only replace when the checksum matches"
+ * switch, which drops the built-in pattern matches whose CORROBORATING checksum
+ * did not verify and nothing else.
+ *
+ * A boolean has no invalid position, which is the point of it: the percentage it
+ * replaced had settings nobody could name, and above roughly 0.8 it dropped
+ * Values the user had already accepted. Anything other than a boolean is refused
+ * rather than coerced, so a bad caller is visible instead of silently changing
+ * what a run replaces.
+ *
+ * @param {boolean} on true to drop those matches, false to keep them
+ * @returns {boolean|null} the stored value, or null when refused
  */
-export function setMinConfidence(value) {
-  if (typeof value !== "number" || Number.isNaN(value) || value < 0 || value > 1) {
-    return null;
-  }
-  setState({ settings: { ...state.settings, minConfidence: value } });
-  return value;
+export function setRequireChecksum(on) {
+  if (typeof on !== "boolean") return null;
+  setState({ settings: { ...state.settings, requireChecksum: on } });
+  return on;
 }
 
 // HEURISTIC_DISCOVERY_DEFAULTS mirrors engine.DefaultHeuristicDiscoveryOptions. It is
@@ -1686,7 +1690,7 @@ export const STEP_RESETS = {
       // setDocumentCountry exists to prevent.
       categories: defaultCategories(DEFAULT_COUNTRY),
       country: DEFAULT_COUNTRY,
-      minConfidence: 0,
+      requireChecksum: false,
       heuristicDiscovery: { ...HEURISTIC_DISCOVERY_DEFAULTS },
     },
     values: [],
