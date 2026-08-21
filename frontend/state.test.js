@@ -18,7 +18,8 @@ import {
   WIZARD_STEPS, canGoTo, goTo, nextStep,
   goToScreen,
   applyPreset, toggleCategory, selectionPresetName, presetCategories,
-  setUseLocalAI, setSmartDetection, smartDetectionOn, adoptProbe,
+  adoptCategories, ALWAYS_ON_CATEGORIES,
+  setUseLocalAI, adoptProbe,
   detectionRoutesOn, llmEnabled,
   setUseBuiltInPatterns, setUseHeuristicDiscovery,
   addSuggestions, acceptSuggestion, rejectSuggestion, acceptAllShown,
@@ -221,7 +222,7 @@ test("addValues dedupes case-insensitively and defaults to accepted", () => {
 });
 
 test("adding a value enables its category and flips the preset to custom", () => {
-  // The reported bug: person values accepted from Smart detection under the
+  // The reported bug: person values accepted from heuristic discovery under the
   // Soft preset (person_names off) were listed as "ready to replace" and then
   // dropped by the pipeline's category filter. Acceptance must switch the
   // category on, exactly as ticking the box would, so the value survives.
@@ -455,6 +456,56 @@ test("toggleCategory flips one switch and flags the selection as custom", () => 
   assert.equal(toggleCategory("no_such_category", true), false);
 });
 
+// --- custom_patterns: no switch, therefore never off ---------------------
+
+test("a category with no switch cannot be turned off through toggleCategory", () => {
+  // The rail renders no checkbox for custom_patterns, so a stored false could
+  // only ever come from a caller out of step with the interface, and it would be
+  // invisible from the screen: a pattern editor whose patterns never run.
+  resetState();
+  for (const key of ALWAYS_ON_CATEGORIES) {
+    assert.equal(toggleCategory(key, false), false, `${key} must refuse to be cleared`);
+    assert.equal(getState().settings.categories[key], true, `${key} must still be on`);
+    // Turning it on is a no-op rather than an error: it is already on.
+    assert.equal(toggleCategory(key, true), true);
+    assert.equal(getState().settings.categories[key], true);
+  }
+});
+
+test("every preset leaves the switch-less categories on", () => {
+  resetState();
+  for (const level of ["soft", "medium", "advanced"]) {
+    applyPreset(level);
+    for (const key of ALWAYS_ON_CATEGORIES) {
+      assert.equal(getState().settings.categories[key], true,
+        `${key} must be on after applyPreset("${level}")`);
+    }
+  }
+});
+
+test("adoptCategories forces the switch-less categories on, whatever arrived", () => {
+  // A file written while custom_patterns still had a switch can say false. The
+  // normaliser is why adopting it cannot leave the user with a control-less
+  // category switched off and nothing on screen explaining it.
+  const adopted = adoptCategories({ custom_patterns: false, email: false });
+  for (const key of ALWAYS_ON_CATEGORIES) assert.equal(adopted[key], true);
+  assert.equal(adopted.email, false, "every other key is carried through unchanged");
+  // A fresh map, never the argument: the caller's object is not mutated.
+  const input = { custom_patterns: false };
+  assert.notEqual(adoptCategories(input), input);
+  assert.equal(input.custom_patterns, false);
+});
+
+test("setDocumentCountry leaves the switch-less categories on", () => {
+  // It rewrites the category map wholesale to match the country's identifiers,
+  // which is exactly the kind of adoption the normaliser exists for.
+  resetState();
+  setDocumentCountry("DE");
+  for (const key of ALWAYS_ON_CATEGORIES) {
+    assert.equal(getState().settings.categories[key], true);
+  }
+});
+
 test("selectionPresetName recognises each exact preset", () => {
   resetState();
   for (const level of ["soft", "medium", "advanced"]) {
@@ -523,7 +574,7 @@ test("adoptProbe adopts the model the probe resolved", () => {
   assert.deepEqual(getState().ollama.models, ["a:1", "b:2"]);
 });
 
-test("adoptProbe never flips the Local AI route on", () => {
+test("adoptProbe never flips the Local LLM discovery route on", () => {
   // Detecting Ollama ENABLES the switch, it does not press it: handing a
   // document to a model is the user's decision.
   resetState();
@@ -542,12 +593,11 @@ test("adoptProbe leaves the stored model alone when nothing was resolved", () =>
   assert.equal(getState().ollama.available, false, "the status itself still lands");
 });
 
-test("Smart detection starts on and Local AI starts off", () => {
-  // Every Smart detection method needs nothing installed, so all three run by
-  // default. Local AI hands the document to a model, so the user turns it on
-  // themselves, even when Ollama is detected.
+test("the two offline routes start on and Local LLM discovery starts off", () => {
+  // Built-in patterns and Heuristic discovery need nothing installed, so both run
+  // by default. Local LLM discovery hands the document to a model, so the user
+  // turns it on themselves, even when Ollama is detected.
   resetState();
-  assert.equal(smartDetectionOn(), true);
   assert.equal(getState().settings.useBuiltInPatterns, true);
   assert.equal(getState().settings.useHeuristicDiscovery, true);
   assert.equal(getState().settings.useLocalAI, false);
@@ -556,7 +606,7 @@ test("Smart detection starts on and Local AI starts off", () => {
     "detecting Ollama must not switch the route on");
 });
 
-test("the local AI's reply format starts on the fast end", () => {
+test("the local model's reply format starts on the fast end", () => {
   // The schema finds a little more on a short dense page and on very small
   // documents, and on a slide-heavy one it costs about twice the time for no more
   // values, while on a small model it finds nothing at all. So the default is off,
@@ -570,7 +620,7 @@ test("the local AI's reply format starts on the fast end", () => {
     "the setting must exist in the store, not be implied by its absence");
 });
 
-test("the local AI's detail level starts on the thorough end", () => {
+test("the local model's detail level starts on the thorough end", () => {
   // Thorough is the end that FINDS things: the faster level trades recall for
   // time, and a trade nobody asked for must not be the one a fresh session makes
   // on the user's behalf. It is a real string in the store rather than an absent
@@ -592,41 +642,43 @@ test("AI_DETAIL_LEVELS is exactly the two identifiers Go validates", () => {
     "the default has to be one of the levels the list offers");
 });
 
-test("the Smart detection section state is DERIVED from its methods", () => {
-  // There is no stored section boolean. A fourth flag beside three methods can
-  // disagree with them, and a section claiming to be on while every method is off
-  // is a control that lies about what a run will do.
+test("there is no derived section flag: each route is its own stored boolean", () => {
+  // A section switch must be the flag it claims to be. A fourth boolean summarising
+  // the others can disagree with them, and a section claiming to be on while
+  // nothing it names runs is a control that lies about what a run will do.
   resetState();
-  assert.ok(!("useSmartDetect" in getState().settings),
-    "the section must not be a persisted flag");
-
-  setSmartDetection(false);
-  assert.equal(smartDetectionOn(), false);
-  assert.equal(getState().settings.useBuiltInPatterns, false);
-  assert.equal(getState().settings.useHeuristicDiscovery, false);
-  assert.deepEqual(enabledSignalSources(getState()), []);
-
-  setSmartDetection(true);
-  assert.equal(smartDetectionOn(), true);
-  assert.deepEqual(enabledSignalSources(getState()), SIGNAL_SOURCES);
+  for (const dead of ["useSmartDetect", "smartDetection", "useSmartDetection"]) {
+    assert.ok(!(dead in getState().settings), `${dead} must not be a persisted flag`);
+  }
+  for (const key of ["useBuiltInPatterns", "useHeuristicDiscovery", "useLocalAI"]) {
+    assert.equal(typeof getState().settings[key], "boolean", `${key} must be stored`);
+  }
 });
 
-test("the section reads ON while any single method is still on", () => {
+test("each route reducer writes exactly one flag and leaves the others alone", () => {
   resetState();
-  setSmartDetection(false);
-  setSignalSource("email", true);
-  assert.equal(smartDetectionOn(), true,
-    "one method on means the section contributes something");
+  setUseBuiltInPatterns(false);
+  assert.equal(getState().settings.useBuiltInPatterns, false);
+  assert.equal(getState().settings.useHeuristicDiscovery, true, "untouched");
+  assert.deepEqual(enabledSignalSources(getState()), SIGNAL_SOURCES,
+    "switching the pattern pass off must not clear a signal reading: the readings " +
+    "match their own evidence, and that asymmetry is why the setting is separate");
+
+  resetState();
+  setUseHeuristicDiscovery(false);
+  assert.equal(getState().settings.useHeuristicDiscovery, false);
+  assert.equal(getState().settings.useBuiltInPatterns, true, "untouched");
 });
 
 test("detectionRoutesOn counts the DISCOVERY routes that are enabled", () => {
   resetState();
-  assert.equal(detectionRoutesOn(), 1, "Smart detection alone");
+  assert.equal(detectionRoutesOn(), 1, "the offline discovery phase alone");
   setState({ ollama: { available: true, models: [], detail: "" } });
   setUseLocalAI(true);
   assert.equal(detectionRoutesOn(), 2);
-  setSmartDetection(false);
-  assert.equal(detectionRoutesOn(), 1, "local AI alone");
+  setUseHeuristicDiscovery(false);
+  for (const source of SIGNAL_SOURCES) setSignalSource(source, false);
+  assert.equal(detectionRoutesOn(), 1, "local LLM discovery alone");
   setUseLocalAI(false);
   assert.equal(detectionRoutesOn(), 0, "nothing to run, and the UI must say so");
 });
@@ -635,7 +687,8 @@ test("built-in pattern matching alone gives the detect button nothing to run", (
   // It produces direct matches at anonymisation time, not Suggestions, so it is
   // not a discovery route and must not be counted as one.
   resetState();
-  setSmartDetection(false);
+  setUseHeuristicDiscovery(false);
+  for (const source of SIGNAL_SOURCES) setSignalSource(source, false);
   setUseBuiltInPatterns(true);
   assert.equal(detectionRoutesOn(), 0);
 });
@@ -943,13 +996,13 @@ function seedSuggestions() {
   ]);
 }
 
-test("smart detection ships with the stricter defaults (CR13)", () => {
+test("heuristic discovery ships with the stricter defaults (CR13)", () => {
   resetState();
   assert.deepEqual(getState().settings.heuristicDiscovery, HEURISTIC_DISCOVERY_DEFAULTS);
   assert.equal(HEURISTIC_DISCOVERY_DEFAULTS.excludeCommonWords, true);
   assert.ok(HEURISTIC_DISCOVERY_DEFAULTS.minLength > 0);
   // Requiring two occurrences would throw away single-sighting full
-  // names, which are the most valuable thing smart detection finds.
+  // names, which are the most valuable thing heuristic discovery finds.
   assert.equal(HEURISTIC_DISCOVERY_DEFAULTS.minOccurrences, 1);
 });
 
@@ -2140,24 +2193,22 @@ test("a missing reading key reads as ON at either level, never as off", () => {
     "and a partial map fills the rest from the defaults, not from off");
 });
 
-test("setSmartDetection writes the NESTED shape, so the master keeps working", () => {
-  // The section master reaches signalSuggestionSources wholesale. Writing a boolean
-  // where a map belongs would leave the whole signal method reading as its default
-  // for the rest of the session, so the section switch would appear not to work.
+test("setSignalSource writes the NESTED shape, so the row master keeps working", () => {
+  // The row master reaches signalSuggestionSources wholesale. Writing a boolean
+  // where a map belongs would leave the whole signal reading as its default for
+  // the rest of the session, so the master would appear not to work.
   resetState();
-  setSmartDetection(false);
-  assert.equal(smartDetectionOn(getState()), false);
+  for (const source of SIGNAL_SOURCES) setSignalSource(source, false);
   for (const source of SIGNAL_SOURCES) {
     for (const derivation of SIGNAL_DERIVATIONS[source]) {
       assert.equal(signalDerivationOn(getState(), source, derivation), false,
-        `${derivation} must be off after the section master switched everything off`);
+        `${derivation} must be off after the row master switched everything off`);
     }
   }
 
-  setSmartDetection(true);
-  assert.equal(smartDetectionOn(getState()), true);
+  setSignalSource("email", true);
   assert.deepEqual(enabledSignalDerivations(getState(), "email"), SIGNAL_DERIVATIONS.email,
-    "switching the section back on restores every reading to its default");
+    "switching the row back on restores every reading of that source");
 });
 
 test("switching ONE reading off leaves the category switch alone", () => {
@@ -2298,7 +2349,7 @@ test("an accepted Suggestion carries its folded spellings across", () => {
     "one Value with its spellings reaches the pipeline, not two rivals");
 });
 
-test("an accepted Local AI Suggestion keeps the AI confidence, not the manual one", () => {
+test("an accepted local model Suggestion keeps the model confidence, not the manual one", () => {
   // A CROSS-BRIDGE contract, and the Go constants are its source of truth:
   // engine.ConfidenceLLMDefault is 0.8 and engine.ConfidenceManualDefault is
   // 0.95. The number is asserted literally here because that is what the bridge
@@ -2317,7 +2368,7 @@ test("an accepted Local AI Suggestion keeps the AI confidence, not the manual on
   }]);
   assert.equal(acceptSuggestion("Borealis Fund"), true);
   assert.equal(getState().values[0].confidence, 0.8,
-    "the Local AI score must survive acceptance, or the confidence floor cannot act on it");
+    "the local model score must survive acceptance, or the confidence floor cannot act on it");
 });
 
 test("a Value the user declared states no confidence, which Go reads as a declaration", () => {
@@ -2332,9 +2383,9 @@ test("a Value the user declared states no confidence, which Go reads as a declar
     "a manual Value states no confidence and lets the engine's default serve it");
 });
 
-// --- What the last local AI scan did -------------------------------------
+// --- What the last local model scan did ----------------------------------
 
-test("nothing is claimed about a local AI scan before one has run", () => {
+test("nothing is claimed about a local model scan before one has run", () => {
   resetState();
   assert.equal(getState().lastAIScan, null,
     "an absent scan is null, not a row of zeroes that reads as a scan that found nothing");

@@ -176,14 +176,31 @@ export const CONFIGURE = {
   //
   // Every `...Help` key below is tooltip text. Nothing renders it as a paragraph.
   presetHelp: "Start from a preset, then adjust the checkboxes if you need to. Changing any checkbox switches the preset to Custom.",
-  groupContact: "Contact and account details",
-  // The rail groups by TRIGGER, the user's own model of how a value is found
-  // so these are the names of the three ways it happens.
-  // groupNames was "Names", which said nothing about where the values came
-  // from and sat over a list that also held the user's own regexes.
+  // The eight built-in pattern groups, in the order the rail renders them:
+  // broadest classes first, the contextual one last, matching how the presets
+  // escalate. The classes are the ones the established PII tools converge on
+  // (financial account numbers are their own class, government and tax
+  // identifiers are their own class and are country-scoped, credentials are
+  // separated from network identifiers), plus two deliberate departures: health
+  // identifiers are their own group because health data is an Article 9 special
+  // category under the GDPR, and dates and monetary amounts are their own group
+  // because this application treats them as contextual identifiers rather than
+  // as PII.
+  //
+  // Grouping by CLASS rather than by preset tier is what gives a new recognizer
+  // an obvious home: a group named after a UI shorthand ("only for thorough
+  // anonymisation") tells nobody where a passport number belongs.
+  groupContact: "Contact details",
+  groupLocations: "Locations and addresses",
+  groupFinancial: "Financial accounts",
+  groupGovernment: "Government and tax identifiers",
+  groupHealth: "Health identifiers",
+  groupNetwork: "Network and device identifiers",
+  groupCredentials: "Credentials and secrets",
+  groupContextual: "Dates and monetary amounts",
+  // The name categories a discovery method can emit. Not a built-in pattern
+  // group: it renders under Heuristic discovery, which is what finds them.
   groupDetected: "Auto detected values",
-  groupDeclared: "Your own patterns",
-  groupThorough: "Only for thorough anonymisation",
   // The route's own explanation, plus ONE sentence pointing at the Documentation
   // window. Ollama's own settings decide how fast a scan runs and the app cannot
   // read or change them, so the guidance lives in a page with room for it rather
@@ -202,11 +219,9 @@ export const CONFIGURE = {
   // slices reliably do is send fewer requests and, on a small model, find
   // nothing, so those are what the sentence says. The request count itself is
   // dynamic and belongs in the read-out beside the control, not here.
-  detailLevelHelp: "The local AI reads your document in slices. Smaller slices find the most values and send more requests. Larger slices send fewer requests, and on a small model they can miss values completely. Whether fewer requests is quicker depends on your model and your machine.",
-  aiOffTooltip: "Local AI is turned off. Turn it on with the switch on the Local AI section of Configure.",
+  detailLevelHelp: "The local model reads your document in slices. Smaller slices find the most values and send more requests. Larger slices send fewer requests, and on a small model they can miss values completely. Whether fewer requests is quicker depends on your model and your machine.",
+  aiOffTooltip: "Local LLM discovery is turned off. Turn it on with the switch on the Local LLM discovery section of Configure.",
   allowHint: "Terms in this list survive every pass, even when they also appear as names to replace.",
-  // the group that surfaces the recognizers.
-  groupTechnical: "Payment, tax and technical identifiers",
   // the per-group bulk buttons.
   selectAll: "Select all",
   deselectAll: "Deselect all",
@@ -243,27 +258,34 @@ export function categoryLabels(examples = {}) {
 // section labels. The category labels and the confidence copy stay in CONFIGURE
 // below, which is where they were and where the parity guard looks.
 export const RAIL = {
-  tabSmart: "Smart detection",
-  tabLocalAI: "Local AI",
+  // The three detection routes, each its own switchable section, each named
+  // after the MECHANISM it is. One switch, one mechanism: a section whose
+  // header switch governed several unrelated methods could not tell the user
+  // which of them found what, and the review gate (a direct match is applied
+  // without review, a suggestion is not) is exactly the difference between
+  // them.
+  tabPatterns: "Built-in patterns",
+  tabPatternsHelp: "Application-provided patterns for structured signals: emails, phone numbers, VAT numbers, IBANs and the rest. They MATCH AND REPLACE the signal itself, and they are the only thing here that acts without review. Switching this off leaves the selection intact and skips the pass.",
+  tabHeuristic: "Heuristic discovery",
+  tabHeuristicHelp: "Finds recurring names from spelling, context and frequency, and suggests them for review. Its suggestions are reviewed on this step; nothing is replaced until you accept it.",
+  tabLocalLLM: "Local LLM discovery",
+  tabLocalLLMHelp: "A language model running on this machine reads the documents and suggests Values. It needs Ollama listening on 127.0.0.1, nothing leaves your computer, and nothing it finds is replaced until you accept it.",
 
-  // the three routes are switchable sections, not tabs. Scope stopped
-  // being a section of its own because it is the scope OF smart detection.
-  smartHelp: "Finds Values on this machine, without any AI: application-provided patterns for structured signals, evidence taken from those signals, and rules about how names are written. It uses the categories chosen below.",
+  // Detection quality: the switch-less panel holding the match-confidence
+  // floor. The floor governs EVERY route that is on, so placing it inside one
+  // of them would mislabel it as that route's own knob.
+  qualityTitle: "Detection quality",
+  qualityHelp: "One floor over every route that is switched on. It decides what a run is allowed to REPLACE, not what discovery is allowed to suggest: anything scoring below it is left alone.",
+
   smartTuning: "Discovery strictness",
   smartTuningHelp: "Heuristic discovery guesses which words are names from how they are written, so it always suggests some things that are not names. These settings decide how strict it is. Set them all to zero, and untick the box, to see everything it can find.",
-
-  // Smart detection's three methods, as controls at the top of the section.
-  builtInPatterns: "Built-in patterns",
-  builtInPatternsHelp: "Application-provided patterns for structured signals: emails, phone numbers, VAT numbers, IBANs and the rest. They MATCH AND REPLACE the signal itself, and they are the only thing here that acts without review.",
-  heuristicDiscovery: "Heuristic discovery",
-  heuristicDiscoveryHelp: "Finds recurring names from spelling, context and frequency, and suggests them for review.",
 
   // The signal-based control: a drill-down ON the category row of the signal it
   // reads, opening that signal's individual READINGS. It switches whether a
   // built-in pattern match may be used as EVIDENCE to find related text, and
   // nothing else. This is the label of the button that opens the readings.
   signalSuggestions: "Signal-based suggestions",
-  signalSuggestionsHelp: "A matched signal can also be evidence about text written elsewhere: an email address names a person and an organisation, and both may appear in prose in another file. Those become Suggestions you accept or reject. Clearing a reading here stops those suggestions and does NOT stop the signal itself being anonymised, which is governed by Built-in patterns and the signal's own category.",
+  signalSuggestionsHelp: "A matched signal can also be evidence about text written elsewhere: an email address names a person and an organisation, and both may appear in prose in another file. Those become Suggestions you accept or reject. Clearing a reading here stops those suggestions and does NOT stop the signal itself being anonymised, which is governed by Built-in patterns and the signal's own category. These readings keep working while Built-in patterns is off: they match their own evidence.",
   // One label per engine signal source, enforced by ../detection_parity_test.go.
   // The control is built from the identifier list, so an unlabelled source would
   // render as a checkbox named after a JSON key.
@@ -321,19 +343,28 @@ export const RAIL = {
   country: "Document country",
   countryHelp: "The phone, VAT and national identification examples follow this country's formats, and the matching national identifiers are switched on. It changes nothing else about how detection works.",
   preset: "Preset",
-  categories: "Categories",
-  categoriesHelp: "The structured signals built-in pattern matching looks for. They are matched and replaced directly, without review. Switching Built-in patterns off leaves the selection intact and skips the pass.",
+  /**
+   * presetAlsoSets(n) is the live read-out under the preset chips. A preset
+   * fills BOTH the built-in pattern categories and the name categories, so a
+   * chip pressed under Built-in patterns also changes the selection under
+   * Heuristic discovery. That is a domain rule rather than a UI one, so the
+   * read-out makes it visible instead of hiding it. Dynamic, therefore allowed
+   * inline (CLAUDE.md §5, Configure panel).
+   */
+  presetAlsoSets(n) {
+    return `This level also switched on ${n} auto detected value ${n === 1 ? "category" : "categories"}, under Heuristic discovery.`;
+  },
 
-  //  split the category list in two blocks: the regex-triggered
-  // patterns (found by shape) and the entity categories (found by name). Both
-  // blocks live in the Smart detection section because the category selection is
-  // the ONE scope the whole pipeline reads (CLAUDE.md §5): rendering a second
-  // copy of the same checkboxes inside Local AI would give one setting two
-  // controls, and the second copy would be folded shut and unreachable anyway.
+  // The category selection is the ONE scope the whole pipeline reads (CLAUDE.md
+  // §5). The pattern categories render under Built-in patterns, which is what
+  // matches them; the name categories render under Heuristic discovery, which
+  // is what discovers them. A second copy of either set inside another section
+  // would give one setting two controls.
   valuesAuto: "Auto detected values",
-  valuesAutoHelp: "These categories are used by every detection route you switch on.",
-  // What the Local AI section says INSTEAD of a second copy of the checkboxes.
-  localValuesHelp: "Local AI looks for the same categories chosen under Smart detection above. Switching this route on adds a model pass over them; it does not change what is selected.",
+  valuesAutoHelp: "The names Heuristic discovery and Local LLM discovery look for. Both routes read this one selection.",
+  // What the Local LLM discovery section says INSTEAD of a second copy of the
+  // checkboxes.
+  localValuesHelp: "Local LLM discovery looks for the same categories chosen under Heuristic discovery above. Switching this route on adds a model pass over them; it does not change what is selected.",
 
   /** activeCount(n, total) is the rail heading's read-out. */
   activeCount(n, total) {
@@ -376,7 +407,7 @@ export const RAIL = {
   reprobe: "Check again",
 
   /**
-   * lastScan(requests, secondsEach, silent, truncated) reports what the local AI
+   * lastScan(requests, secondsEach, silent, truncated) reports what the local model
    * did on the last run, measured on this machine and this document.
    *
    * The silent count is only mentioned when there IS one: a scan where most
@@ -406,12 +437,13 @@ export const RAIL = {
     return out;
   },
 
-  // Local-AI SCAN SCOPE. Handing a whole document to a small local model is too
-  // much, so the user can aim the scan at one document and a range of its own
-  // units (pages, slides, rows or lines). This scope applies to the Local AI
-  // route only; Smart detection always reads everything because it is cheap.
+  // The LOCAL LLM SCAN SCOPE. Handing a whole document to a small local model
+  // is too much, so the user can aim the scan at one document and a range of
+  // its own units (pages, slides, rows or lines). This scope applies to Local
+  // LLM discovery only; the offline routes always read everything, because
+  // they are cheap.
   scopeHeading: "Scan scope",
-  scopeHelp: "The local AI reads only what you point it at. Scanning one document, or a few pages of one, keeps a small model focused and the pass quick.",
+  scopeHelp: "The local model reads only what you point it at. Scanning one document, or a few pages of one, keeps a small model focused and the pass quick.",
   scopeAllDocs: "All documents (whole)",
   scopeDoc: "Document",
   scopeEntireDoc: "Entire document",
@@ -462,12 +494,12 @@ export const RAIL = {
   profileSaveDone: "Profile saved. A follow-up batch will reuse these placeholders.",
 };
 
-// Values step copy: the smart-detection tuning block
-//  and the suggestions table.
+// Values step copy: the heuristic-discovery strictness block and the
+// suggestions table.
 export const VALUES = {
-  // Smart detection tuning. It moved to the Identify RAIL's own tab
-  // which RAIL.tabSmart titles, so the block no longer
-  // needs a heading of its own.
+  // Heuristic discovery's strictness fields. They live inside the Heuristic
+  // discovery section of the Identify rail, which RAIL.smartTuning titles, so
+  // the block needs no heading of its own here.
   smartMinLength: "Shortest value",
   smartMinLengthHelp: "Suggestions shorter than this many letters are skipped.",
   smartMinOccurrences: "Fewest occurrences",
@@ -573,11 +605,11 @@ export const WORKSPACE = {
   },
 
   // Run detection. One button now, so its tooltip has to say what the run will
-  // actually include, which depends on whether the local AI can run.
+  // actually include, which depends on whether the local model can run.
   runDetection: "Run detection",
   runOffline: "Reads every imported document and suggests values, without any AI.",
-  runWithAI: "Reads every imported document twice: the offline pass, then the local AI. Nothing leaves your computer.",
-  runNeedsRoute: "No detection route is on. Turn on Smart detection or Local AI in Configure.",
+  runWithAI: "Reads every imported document twice: the offline passes, then the local model. Nothing leaves your computer.",
+  runNeedsRoute: "No detection route is on. Turn on Built-in patterns, Heuristic discovery or Local LLM discovery in Configure.",
   runNeedsDocuments: "Import at least one document first.",
   cancel: "Cancel",
   // The progress caption. It is assembled from these parts rather
@@ -586,8 +618,8 @@ export const WORKSPACE = {
   // where inside this file.
   /** phaseName(phase) turns an engine route token into words. */
   phaseName(phase) {
-    if (phase === "ai") return "Local AI";
-    if (phase === "smart") return "Smart detection";
+    if (phase === "ai") return "Local LLM discovery";
+    if (phase === "smart") return "Heuristic discovery";
     return "Starting";
   },
   /** fileOf(file, index, total) is the position in the batch. */
@@ -672,8 +704,8 @@ export const WORKSPACE = {
   methodLabel: {
     manual: "You",
     signal: "From a signal",
-    heuristic: "Smart detection",
-    local_ai: "Local AI",
+    heuristic: "Heuristic discovery",
+    local_ai: "Local LLM discovery",
   },
   methodTitle: "Which discovery method found this",
 
@@ -684,8 +716,8 @@ export const WORKSPACE = {
   matchClassLabel: {
     built_in_pattern: "a built-in pattern",
     user_defined: "something you declared",
-    smart_discovered: "Smart detection",
-    local_ai_discovered: "Local AI",
+    smart_discovered: "Heuristic discovery",
+    local_ai_discovered: "Local LLM discovery",
   },
 
   // WHY a discovery method produced a row, one entry per engine evidence kind,
@@ -756,7 +788,7 @@ export const WORKSPACE = {
   intersectionAll(value, winner, route, matchedTexts) {
     return `Every occurrence of ${this.intersectedText(value, matchedTexts)} is also matched by ${route} as "${winner}", which takes priority. This value is not replaced under its own type.`;
   },
-  intersectionOrder: "Priority order: built-in patterns, then your own Values and patterns, then Smart detection, then Local AI.",
+  intersectionOrder: "Priority order: built-in patterns, then your own Values and patterns, then heuristic discovery, then local LLM discovery.",
   intersectionFix: "If this value should win instead, switch off the type that covers it, narrow the pattern, or add the covering term to Never anonymise.",
   intersectionAllowWinner: "Never anonymise the covering term",
   /** intersectionAllowed(term) confirms the covering term is now protected. */
@@ -995,10 +1027,10 @@ export const WORKSPACE = {
   // from the review gate: these are DIRECT matches, so there is nothing to
   // accept and no way to reject one from here, and the copy says where the
   // levers are instead of implying there are levers on the rows.
-  builtInHint: "These are the matches the built-in patterns found the last time you ran detection. They are applied without review, so there is nothing to accept here. To change what is found, tick or untick the categories under Smart detection and run detection again.",
+  builtInHint: "These are the matches the built-in patterns found the last time you ran detection. They are applied without review, so there is nothing to accept here. To change what is found, tick or untick the categories in the Built-in patterns section and run detection again.",
   builtInNeverRan: "Run detection to see what the built-in patterns match in your files.",
-  builtInSwitchedOff: "Built-in patterns were switched off when detection last ran, so no signal was matched. Turn Built-in patterns on under Smart detection and run detection again.",
-  builtInNoCategories: "None of the selected signal categories applies to the document country you chose, so no built-in pattern ran. Choose a category under Smart detection, or change the document country.",
+  builtInSwitchedOff: "Built-in patterns were switched off when detection last ran, so no signal was matched. Turn the Built-in patterns section on and run detection again.",
+  builtInNoCategories: "None of the selected signal categories applies to the document country you chose, so no built-in pattern ran. Choose a category in the Built-in patterns section, or change the document country.",
   builtInNoMatchesAtAll: "The built-in patterns matched nothing in these files.",
   /** builtInNoneInCategory is the empty line under a category that ran and found nothing. */
   builtInNoneInCategory: "Nothing matched.",
@@ -1645,10 +1677,10 @@ export const CATEGORY_LABELS = {
   entity_names: ["Entity names", "Companies, teams and internal systems, for example Alpine Trust S.A."],
   project_names: ["Project names", "Engagement and workstream names, for example Project Atlas or ATLAS-2024"],
   product_names: ["Product names", "Named products and platforms, for example Meridian Suite"],
-  brand_names: ["Brand names", "Trade names, found by the AI review or added by you"],
+  brand_names: ["Brand names", "Trade names, found by Local LLM discovery or added by you"],
   person_names: ["Person names", "For example Marie Duval, M. Duval or just Marie"],
   identifier_names: ["Reference codes", "Contract, invoice and case codes, for example INV-88213"],
-  other_names: ["Other names", "A name that fits none of the others, found by the AI review or added by you"],
+  other_names: ["Other names", "A name that fits none of the others, found by Local LLM discovery or added by you"],
   custom_patterns: ["Custom patterns", "The regular expressions you add on the Identify step"],
   date: ["Dates", "For example 15 January 2026 or 15/01/2026"],
   amount: ["Money amounts", "For example EUR 12,500"],
@@ -1666,7 +1698,7 @@ export const CATEGORY_LABELS = {
   bic: ["Bank identifier codes", "The BIC or SWIFT code beside an account, for example BGLLLULL"],
   postal_code: ["Postal codes", "The Luxembourg form, for example L-1855"],
   address: ["Street addresses", "For example 12, rue des Tilleuls"],
-  country_names: ["Country names", "A country or jurisdiction, added by you or found by the AI review"],
-  nationality_names: ["Nationalities", "For example Française, added by you or found by the AI review"],
+  country_names: ["Country names", "A country or jurisdiction, added by you or found by Local LLM discovery"],
+  nationality_names: ["Nationalities", "For example Française, added by you or found by Local LLM discovery"],
   business_sector_names: ["Business sectors", "An industry or line of business, for example Transport"],
 };

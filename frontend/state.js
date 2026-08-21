@@ -22,7 +22,7 @@ import { repend } from "./valuemodel.js";
 //
 //  cut five steps to four: Configure stopped being a screen and
 // became the left rail of Identify, which now owns both the choices
-// (categories, confidence, local AI) and the values those choices produce.
+// (categories, confidence, the local model) and the values those choices produce.
 // The tokens ARE the visible labels this time, capitalised: Import, Identify,
 // Anonymise, Export.
 //
@@ -89,34 +89,33 @@ const initialState = {
   // the LAST CHOSEN PRESET; categories is the granular switch set the
   // pipeline obeys. The categories map is filled below
   // after presetCategories is defined.
-  // The three DETECTION ROUTES, each with its own switch, because
-  // they are three separate ways of finding values and the user turns them on
-  // and off independently:
-  //   (there is no section flag: Smart detection reads ON when any of its
-  //   three methods is on, and a stored fourth boolean could disagree with them.)
-  //   the offline heuristic pass is ON by default, and
-  //                   deactivable. It is now a DERIVED value, written on every
-  //                   settings push = (useBuiltInPatterns || useHeuristicDiscovery), so the
-  //                   section header and any backward-compat reader still see the
-  //                   route as "on" when either half is. Its scope (the
-  //                   categories, the preset, the confidence floor) and its
-  //                   tuning are the settings it reads, which is why the rail
-  //                   nests them inside it.
-  //   useBuiltInPatterns the MASTER SWITCH over the regex signal categories
-  //                   (email, VAT, IBAN, amount, date, ...). ON by default. OFF
-  //                   means no signal category is replaced at anonymisation time,
-  //                   whatever the per-category checkboxes say; the checkboxes
-  //                   keep their selection so turning it back on restores it.
-  //   useHeuristicDiscovery the offline word-frequency pass (engine SmartDetect). ON by
-  //                   default.
+  // THE THREE DETECTION ROUTES. Each is one mechanism with one switch, and
+  // every switch here is a real stored flag: a section switch must be the flag
+  // it claims to be, or the section can read "On" while nothing it names runs.
+  //   useBuiltInPatterns built-in pattern matching, over the structured signal
+  //                   categories (email, VAT, IBAN, amount, date, ...). ON by
+  //                   default. OFF means no signal category is replaced at
+  //                   anonymisation time, whatever the per-category checkboxes
+  //                   say; the checkboxes keep their selection so turning it
+  //                   back on restores it. It does NOT govern whether those
+  //                   signals may DERIVE Suggestions: that is
+  //                   signalSuggestionSources, below, and the two are separate
+  //                   so clearing one cannot silently clear the other.
+  //   useHeuristicDiscovery heuristic discovery: spelling, context, frequency
+  //                   and deterministic gazetteers. ON by default. Its
+  //                   strictness is the heuristicDiscovery block below, which
+  //                   nothing else reads.
   //   useLocalAI the local model (Ollama). OFF by default. Detecting
   //                   Ollama ENABLES the switch, it never flips it: turning on
   //                   a route that sends the document to a model, however
   //                   local, is the user's decision to make.
-  // aiStrictFormat asks the local AI to answer for EVERY category instead of
+  // The scope the routes share (the categories, the preset, the document
+  // country) and the confidence floor are settings of their own, read by
+  // whichever route is on rather than owned by one of them.
+  // aiStrictFormat asks the local model to answer for EVERY category instead of
   //   only the ones it thought of. OFF by default: it sometimes finds a little
   //   more, and usually takes about twice as long.
-  // aiDetailLevel is how much text one local AI request carries: "thorough"
+  // aiDetailLevel is how much text one local model request carries: "thorough"
   //   (the default: smaller slices, the most values, the most requests) or
   //   "faster" (larger slices, fewer requests, and nothing found at all on a
   //   small model). Mirrors engine.AllDetailLevels; see AI_DETAIL_LEVELS below.
@@ -381,9 +380,34 @@ export const ADVANCED_NAME_CATEGORIES = [
 export const NAME_CATEGORIES = [
   ...SOFT_NAME_CATEGORIES, ...MEDIUM_NAME_CATEGORIES, ...ADVANCED_NAME_CATEGORIES,
 ];
-// custom_patterns is the user's own regex. It is declarative rather than
-// detected, which is why it sits on its own here and in its own rail group.
+// custom_patterns is the user's own regex. It is DECLARATIVE rather than
+// detected, which is why it sits on its own: its editor is the workspace's
+// Custom patterns tab, and it has no switch in the rail at all.
 export const DECLARED_CATEGORIES = ["custom_patterns"];
+
+// ALWAYS_ON_CATEGORIES have no switch anywhere in the interface, so they must
+// never be off: a category with no control and a stored `false` is a pattern
+// editor whose patterns never run, and nothing on screen says why.
+//
+// The invariant is enforced at both ends. adoptCategories() forces them on
+// whenever a category map arrives from outside (a preset, a session file, a
+// profile), and toggleCategory() refuses to clear them.
+export const ALWAYS_ON_CATEGORIES = ["custom_patterns"];
+
+/**
+ * adoptCategories(categories) is the ONE normaliser every adopted category map
+ * goes through. It returns a fresh map with ALWAYS_ON_CATEGORIES forced on, so a
+ * file written before those categories lost their switch cannot leave the user
+ * with a control-less category switched off.
+ *
+ * @param {object} categories a category key to boolean map, possibly partial
+ * @returns {object} a fresh map, never the argument
+ */
+export function adoptCategories(categories) {
+  const out = { ...(categories ?? {}) };
+  for (const key of ALWAYS_ON_CATEGORIES) out[key] = true;
+  return out;
+}
 export const ALL_CATEGORIES = [
   ...HARD_PII_CATEGORIES, ...EXTENDED_PII_CATEGORIES, ...ADVANCED_PII_CATEGORIES,
   ...NAME_CATEGORIES, ...DECLARED_CATEGORIES,
@@ -507,9 +531,9 @@ export function signalDerivationOn(s = state, source, derivation) {
  * which is true when ANY of its readings is on.
  *
  * DERIVED, never stored. It is the master the rail shows on the signal's own row,
- * and a persisted fourth flag beside the readings it summarises could disagree
- * with them: a row reading "on" while every reading under it is off lies about
- * what a run does. Same reasoning as smartDetectionOn.
+ * and a persisted flag beside the readings it summarises could disagree with
+ * them: a row reading "on" while every reading under it is off lies about what a
+ * run does.
  *
  * @param {object} s the state
  * @param {string} source one of SIGNAL_SOURCES
@@ -581,7 +605,7 @@ export function setSignalDerivation(source, derivation, on) {
  *
  * It is not a flag of its own (signalSourceOn derives that for display); it is the
  * one gesture that saves the user N clicks to switch a whole signal off, and the
- * gesture the Smart detection section's own master reaches through.
+ * gesture a signal row's own master reaches through.
  *
  * @param {string} source one of SIGNAL_SOURCES
  * @param {boolean} on whether its readings may derive Suggestions
@@ -895,11 +919,11 @@ export function applyPreset(level) {
       // country here is what stops picking a preset silently re-enabling the
       // German tax identifier on a French document. The country is an
       // orthogonal choice, so a preset must not overrule it.
-      categories: {
+      categories: adoptCategories({
         ...presetCategories(level),
         ...countryIDCategories(state.documentCountry),
         matricule: state.documentCountry === "LU",
-      },
+      }),
     },
   });
 }
@@ -911,6 +935,11 @@ export function applyPreset(level) {
  */
 export function toggleCategory(key, on) {
   if (!ALL_CATEGORIES.includes(key)) return false;
+  // A category with no control must not be clearable through the one reducer a
+  // control would use: the rail renders no checkbox for it, so a `false` here
+  // could only ever arrive from a caller that has drifted out of step with the
+  // interface, and it would be invisible and unfixable from the screen.
+  if (ALWAYS_ON_CATEGORIES.includes(key) && !on) return false;
   setState({
     settings: {
       ...state.settings,
@@ -987,7 +1016,10 @@ export function setDocumentCountry(code) {
   }
   setState({
     documentCountry: code,
-    settings: { ...state.settings, country: code, categories: { ...categories, matricule: code === "LU" } },
+    settings: {
+      ...state.settings, country: code,
+      categories: adoptCategories({ ...categories, matricule: code === "LU" }),
+    },
   });
   return code;
 }
@@ -1030,7 +1062,7 @@ export const STRICTNESS_VALUES = ["lenient", "balanced", "strict"];
  * Only the known keys are accepted, and each is
  * validated: a bad value is IGNORED rather than stored, because these
  * options decide what the user gets to review, and a silently broken one
- * would look like Smart detection being broken.
+ * would look like heuristic discovery being broken.
  * @param {object} patch any subset of the options
  * @returns {object} the stored options after the merge
  */
@@ -1089,7 +1121,7 @@ export function selectionPresetName(categories) {
 // --- Local-AI gating --------------------------------------
 
 /**
- * setUseLocalAI(on) records the user's explicit "Use local AI" choice.
+ * setUseLocalAI(on) records the user's explicit "use the local model" choice.
  */
 export function setUseLocalAI(on) {
   setState({ settings: { ...state.settings, useLocalAI: !!on } });
@@ -1170,7 +1202,7 @@ export function parsePageSpec(spec, maxPage) {
 }
 
 /**
- * setAIScope(patch) records which document the local AI reads and, within it,
+ * setAIScope(patch) records which document the local model reads and, within it,
  * whether to scan the whole document ("all") or a set of pages ("pages"). An
  * empty or unknown docName resets the scope to "every document, whole", so a
  * stale selection (a document that was removed) can never send a request for a
@@ -1198,7 +1230,7 @@ export function setAIScope(patch) {
 }
 
 /**
- * aiScopeArg(s) is the scope to hand runDetection, or null when the local AI
+ * aiScopeArg(s) is the scope to hand runDetection, or null when the local model
  * should read every document whole. Kept out of the settings payload on
  * purpose: the scope is a per-run choice, not a saved setting.
  *
@@ -1215,55 +1247,6 @@ export function aiScopeArg(s = state) {
   const max = doc ? Math.max(1, doc.pageCount || 1) : 0;
   const { pages } = parsePageSpec(sc.pages, max);
   return { docName: sc.docName, pages };
-}
-
-/**
- * smartDetectionOn(s) is the Smart detection SECTION's state: on when any of its
- * three methods is on.
- *
- * It is DERIVED, never stored. A fourth persisted boolean would be a second way
- * of saying something the three methods already say, and the two could disagree:
- * a stored "on" beside three methods that are all off is a section that claims to
- * be running and does nothing.
- *
- * @param {object} s the state
- * @returns {boolean} whether Smart detection contributes anything
- */
-export function smartDetectionOn(s = state) {
-  return !!(s.settings.useBuiltInPatterns || s.settings.useHeuristicDiscovery
-    || enabledSignalSources(s).length > 0);
-}
-
-/**
- * setSmartDetection(on) is the section-level master: it switches every one of
- * Smart detection's methods in ONE action.
- *
- * The section switch is a convenience over the children, not a state of its own,
- * so switching the section off means switching the three methods off and nothing
- * else. Switching it back on restores all three to their defaults rather than to
- * whatever they were, because a master that remembers a partial configuration is
- * a master that sometimes appears not to work.
- */
-export function setSmartDetection(on) {
-  const value = !!on;
-  // Every source's every READING, not one flag per source: the stored shape is the
-  // nested one, and writing a boolean where a map belongs would leave the whole
-  // signal method reading as its default for the rest of the session.
-  const sources = {};
-  for (const source of SIGNAL_SOURCES) {
-    sources[source] = {};
-    for (const derivation of SIGNAL_DERIVATIONS[source] ?? []) {
-      sources[source][derivation] = value;
-    }
-  }
-  setState({
-    settings: {
-      ...state.settings,
-      useBuiltInPatterns: value,
-      useHeuristicDiscovery: value,
-      signalSuggestionSources: sources,
-    },
-  });
 }
 
 /**
@@ -1305,14 +1288,18 @@ export function setUseHeuristicDiscovery(on) {
  * the detect button anything to do.
  */
 export function detectionRoutesOn(s = state) {
-  const smartDiscovers = s.settings.useHeuristicDiscovery
+  // Heuristic discovery and signal-based discovery run in ONE phase and count as
+  // one route here, because the question this answers is whether the detect
+  // button has anything to do at all.
+  const offlineDiscovers = s.settings.useHeuristicDiscovery
     || enabledSignalSources(s).length > 0;
-  return (smartDiscovers ? 1 : 0) + (llmEnabled(s) ? 1 : 0);
+  return (offlineDiscovers ? 1 : 0) + (llmEnabled(s) ? 1 : 0);
 }
 
 /**
- * llmEnabled(s) is THE gate for every AI-dependent control (Local AI
- * detection): the master toggle must be on AND Ollama must be reachable.
+ * llmEnabled(s) is THE gate for every control that depends on the local model
+ * (Local LLM discovery): the route's own switch must be on AND Ollama must be
+ * reachable.
  */
 export function llmEnabled(s = state) {
   return !!(s.settings.useLocalAI && s.ollama?.available);
@@ -1440,11 +1427,11 @@ export const STEP_RESETS = {
       // preset alone would leave the rail showing Luxembourg with the German
       // and Spanish tax identifiers active, which is precisely the disagreement
       // setDocumentCountry exists to prevent.
-      categories: {
+      categories: adoptCategories({
         ...presetCategories(state.settings.level),
         ...countryIDCategories(DEFAULT_COUNTRY),
         matricule: true,
-      },
+      }),
       country: DEFAULT_COUNTRY,
       minConfidence: 0,
       heuristicDiscovery: { ...HEURISTIC_DISCOVERY_DEFAULTS },
@@ -1771,7 +1758,7 @@ export function addValues(items) {
       // HOW MUCH this Value is trusted, which is a third thing from provenance
       // and from precedence. 0 means "not stated", which Go reads as a user
       // declaration and scores accordingly, so it is the right default for a
-      // Value the user typed and the wrong one to leave on a Local AI finding:
+      // Value the user typed and the wrong one to leave on a local model finding:
       // that is why the number has to survive the whole way from the bridge to
       // here. Minimum confidence is the control it feeds.
       confidence: typeof item.confidence === "number" ? item.confidence : 0,
@@ -2010,7 +1997,7 @@ export function setBuiltInPatterns(result) {
  * It takes no source argument, and that is the point. Go returns one
  * suggestions list in which each row says which methods found it, so there is
  * no per-route mapping step here to lose anything in. The mapping that existed
- * per route is exactly where the Local AI route's folded spellings used to be
+ * per route is exactly where Local LLM discovery's folded spellings used to be
  * discarded: the row was rebuilt as {text, category} and the rest thrown away.
  *
  * A row already in review MERGES rather than being skipped: its methods,
@@ -2046,7 +2033,7 @@ export function addSuggestions(items) {
       discoveryMethods: item.discoveryMethods ?? [],
       evidence: item.evidence ?? [],
       // HOW MUCH the row is trusted, which the Minimum confidence control acts
-      // on once the row is accepted. A Local AI finding arrives at 0.8; 0 means
+      // on once the row is accepted. A local model finding arrives at 0.8; 0 means
       // "not stated", which Go reads as a user declaration.
       confidence: typeof item.confidence === "number" ? item.confidence : 0,
     };
@@ -2182,7 +2169,7 @@ export function acceptSuggestion(text) {
  * field the other keeps.
  *
  * confidence crosses with the rest. It is a CROSS-BRIDGE contract and the Go
- * constants are its source of truth: a Local AI suggestion arrives at 0.8
+ * constants are its source of truth: a local model suggestion arrives at 0.8
  * (engine.ConfidenceLLMDefault), and dropping it here would hand the engine a
  * 0, which it reads as "not stated" and scores as a manual declaration at 0.95.
  * Raising Minimum confidence would then leave the model's guesses in place,

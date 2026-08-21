@@ -48,14 +48,14 @@ type Settings struct {
 	// Country scopes the country-specific built-in pattern categories. It is an
 	// engine-owned concept (engine/country.go), mirrored in the rail.
 	Country string `json:"country"`
-	// UseLocalAI is the Local AI DETECTION ROUTE switch: OFF by default, and
+	// UseLocalAI is the Local LLM discovery ROUTE switch: OFF by default, and
 	// gated on the live Ollama availability as well, so a stale true can never
 	// start a model that is not there.
 	//
 	// It is a setting rather than a per-call argument so it survives in the
 	// session file and so Go, not the frontend, decides whether a route runs.
 	UseLocalAI bool `json:"useLocalAI"`
-	// AIStrictFormat asks the local AI's discovery call for a schema-constrained
+	// AIStrictFormat asks the local model's discovery call for a schema-constrained
 	// reply instead of loose JSON mode: it makes the model answer for every
 	// category rather than only the ones it thought of.
 	//
@@ -69,7 +69,7 @@ type Settings struct {
 	// switched it off" must stay distinguishable across a session file. Here nil
 	// reads as off, which is the default, so nothing is lost by silence.
 	AIStrictFormat *bool `json:"aiStrictFormat"`
-	// AIDetailLevel is how much text one local AI request carries
+	// AIDetailLevel is how much text one local model request carries
 	// (engine.DetailThorough or engine.DetailFaster).
 	//
 	// It is a setting rather than a constant because the measurement has no
@@ -82,7 +82,7 @@ type Settings struct {
 	// An empty string is read as thorough, so a payload that says nothing lands
 	// on the safe end: a level nobody chose must not be the one that finds less.
 	AIDetailLevel string `json:"aiDetailLevel"`
-	// UseBuiltInPatterns and UseHeuristicDiscovery are two of Smart detection's
+	// UseBuiltInPatterns and UseHeuristicDiscovery are two of the offline
 	// three methods, controlled independently.
 	//
 	// UseBuiltInPatterns is the MASTER over the structured signal categories
@@ -95,13 +95,13 @@ type Settings struct {
 	// UseHeuristicDiscovery is heuristic discovery: spelling, context, frequency
 	// and deterministic gazetteers. ON by default; it needs nothing installed.
 	//
-	// There is deliberately no fourth boolean for the Smart detection SECTION.
+	// There is deliberately no fourth boolean summarising the routes.
 	// The section is on when any of its methods is on, so the section switch is a
 	// UI master that changes these settings in one action rather than a state of
 	// its own that could disagree with them.
 	UseBuiltInPatterns    bool `json:"useBuiltInPatterns"`
 	UseHeuristicDiscovery bool `json:"useHeuristicDiscovery"`
-	// SignalSuggestionSources is Smart detection's third method: which readings of
+	// SignalSuggestionSources drives signal-based discovery: which readings of
 	// which built-in signals may DERIVE Suggestions (engine/signals.go). It is
 	// keyed by source and then by derivation, because one signal supports several
 	// readings through several mechanisms and each is switched on its own.
@@ -153,11 +153,11 @@ type DocumentInfo struct {
 	UnitCount int    `json:"unitCount"`
 	Unit      string `json:"unit"`
 	// PageCount is how many addressable sub-units (pages/slides/rows/lines)
-	// the local AI can be scoped to (CLAUDE.md §5). It can differ from
+	// the local model can be scoped to (CLAUDE.md §5). It can differ from
 	// UnitCount: a DOCX reports its cached page count for the import list but
 	// can only be sliced where Word left break markers, so a document with no
 	// finer boundary than itself reports 1 here. The frontend uses it to size
-	// the page-range control in the Local AI section.
+	// the page-range control in the Local LLM discovery section.
 	PageCount int `json:"pageCount"`
 }
 
@@ -174,7 +174,7 @@ type App struct {
 	// ctx is the Wails runtime context, stored at startup so methods can
 	// open native dialogs and emit events.
 	ctx context.Context
-	// llm is the Ollama client, used ONLY by the Identify-time Local AI
+	// llm is the Ollama client, used ONLY by the Identify-time Local LLM
 	// discovery route. Anonymise never touches it: a run that could reach the
 	// model could mint a value the user never reviewed. engine/* never sees the
 	// concrete client (CLAUDE.md §4, one-file external boundary).
@@ -320,8 +320,8 @@ func defaultSettings() Settings {
 		// The stricter defaults, matching the frontend store: heuristic discovery
 		// over-detecting is the failure mode that matters.
 		HeuristicDiscovery: engine.DefaultHeuristicDiscoveryOptions(),
-		// Smart detection's methods are all on by default: none of them needs
-		// anything installed. The Local AI route is off, because handing the
+		// The offline routes are on by default: neither needs anything
+		// installed. Local LLM discovery is off, because handing the
 		// document to a model is the user's decision to make.
 		UseBuiltInPatterns:      true,
 		UseHeuristicDiscovery:   true,
@@ -439,7 +439,7 @@ func (a *App) Startup(ctx context.Context) {
 // warm-up still in flight when the window closes has nothing left to serve.
 // ApplySettings has no context of its own and passes a background one.
 //
-// It only runs when Local AI is switched on. A user who never uses the route
+// It only runs when Local LLM discovery is switched on. A user who never uses it
 // never pays RAM for a model they did not ask for.
 //
 // Its failure is SWALLOWED. ProbeOllama already owns telling the user that
@@ -781,7 +781,7 @@ func (a *App) ApplySettings(s Settings) (OllamaState, error) {
 	// a documented meaning.
 	if !engine.ValidDetailLevel(s.AIDetailLevel) {
 		return OllamaState{}, fmt.Errorf(
-			"unknown local AI detail level %q, expected %s or %s",
+			"unknown local model detail level %q, expected %s or %s",
 			s.AIDetailLevel, engine.DetailThorough, engine.DetailFaster)
 	}
 	if s.MinConfidence < 0 || s.MinConfidence > 1 {
@@ -790,7 +790,7 @@ func (a *App) ApplySettings(s Settings) (OllamaState, error) {
 	}
 	if s.HeuristicDiscovery.MinConfidence < 0 || s.HeuristicDiscovery.MinConfidence > 1 {
 		return OllamaState{}, fmt.Errorf(
-			"invalid smart detection confidence %v, expected a number between 0 (show every suggestion) and 1 (show only the strongest)", s.HeuristicDiscovery.MinConfidence)
+			"invalid heuristic discovery confidence %v, expected a number between 0 (show every suggestion) and 1 (show only the strongest)", s.HeuristicDiscovery.MinConfidence)
 	}
 	if s.HeuristicDiscovery.MinLength < 0 || s.HeuristicDiscovery.MinOccurrences < 0 {
 		return OllamaState{}, fmt.Errorf(
@@ -818,7 +818,7 @@ func (a *App) ApplySettings(s Settings) (OllamaState, error) {
 	}
 
 	a.mu.Lock()
-	// Whether the Local AI route was already on decides whether this call is the
+	// Whether Local LLM discovery was already on decides whether this call is the
 	// moment to pre-load the model: see below.
 	wasOn := a.settings.UseLocalAI
 	// Filled out to the complete set of known sources and derivations, so a payload
@@ -844,7 +844,7 @@ func (a *App) ApplySettings(s Settings) (OllamaState, error) {
 	a.mu.Unlock()
 
 	// Switching the route ON is the moment to pre-load the model, and the only
-	// one that reaches most sessions: Local AI is off in the defaults a fresh
+	// one that reaches most sessions: Local LLM discovery is off in the defaults a fresh
 	// app starts from, so the warm-up at startup fires only for a session that
 	// arrived with the route already on. Warming on the TRANSITION rather than
 	// on every settings write is what keeps an unrelated change (a country, a

@@ -104,7 +104,7 @@ type ScanChunk struct {
 	ToUnit   int
 }
 
-// ScanChunks divides a document into the slices the local AI reads, one request
+// ScanChunks divides a document into the slices the local model reads, one request
 // each.
 //
 // units is a 1-based list of the document's own units, as the user's scope

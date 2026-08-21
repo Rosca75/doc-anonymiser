@@ -155,7 +155,7 @@ func TestIntersectionReportsFragmentSpellings(t *testing.T) {
 }
 
 // TestIntersectionAutoCoversAI: the two detector routes against each other.
-// Smart detection outranks the local AI, so an auto value covering an AI one
+// Heuristic discovery outranks the local model, so an auto value covering a model one
 // reports the AI value as the loser.
 func TestIntersectionAutoCoversAI(t *testing.T) {
 	docs := []Document{{
@@ -164,7 +164,7 @@ func TestIntersectionAutoCoversAI(t *testing.T) {
 	}}
 
 	rows := DetectIntersections(docs, scopeFor([]Value{
-		// The longer name from Smart detection...
+		// The longer name from heuristic discovery...
 		{Category: CatEntityNames, MainText: "Helios Fund", DiscoveryMethods: []string{MethodHeuristic}},
 		// ...covering the shorter one the AI proposed as a brand.
 		{Category: CatBrandNames, MainText: "Helios", DiscoveryMethods: []string{MethodLocalAI}},
@@ -175,7 +175,7 @@ func TestIntersectionAutoCoversAI(t *testing.T) {
 		t.Fatalf("the AI value must be reported as covered, got %+v", rows)
 	}
 	if row.MatchClass != MatchClassLocalAIDiscovered || row.WinnerMatchClass != MatchClassSmartDiscovered {
-		t.Errorf("Smart detection must supersede the local AI, got %s losing to %s",
+		t.Errorf("heuristic discovery must supersede the local model, got %s losing to %s",
 			row.MatchClass, row.WinnerMatchClass)
 	}
 }

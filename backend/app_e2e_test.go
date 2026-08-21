@@ -41,8 +41,8 @@ func TestDiscoveryPromptsNameNoRetiredCategory(t *testing.T) {
 
 // --- The detection route switches ----------------------------------------
 
-// TestDetectionRouteDefaults: every Smart detection method needs nothing
-// installed, so all three are on; Local AI hands the document to a model, so the
+// TestDetectionRouteDefaults: neither offline route needs anything installed, so
+// both are on; Local LLM discovery hands the document to a model, so the
 // user turns that one on themselves.
 func TestDetectionRouteDefaults(t *testing.T) {
 	s := NewApp().GetSettings()
@@ -56,7 +56,7 @@ func TestDetectionRouteDefaults(t *testing.T) {
 		t.Error("email-derived Suggestions must be on by default")
 	}
 	if s.UseLocalAI {
-		t.Error("the local AI route must be off by default")
+		t.Error("the local model route must be off by default")
 	}
 }
 
@@ -107,7 +107,7 @@ func TestSessionSettingsRoundTrip(t *testing.T) {
 	// safe reading of silence is the shipped default, and reading it as "off"
 	// would silently stop detecting after a reload.
 	if !got.UseBuiltInPatterns || !got.UseHeuristicDiscovery {
-		t.Error("a file that says nothing about Smart detection's methods must restore them ON")
+		t.Error("a file that says nothing about the offline routes must restore them ON")
 	}
 	if !engine.SignalSourceEnabled(got.SignalSuggestionSources, engine.SignalSourceEmail) {
 		t.Error("a file that says nothing about a signal source must restore its default")

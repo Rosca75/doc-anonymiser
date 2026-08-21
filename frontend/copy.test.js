@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { HOME, CARDS, NAV, WORKFLOW, CATEGORY_LABELS, WORKSPACE, ANONYMISE } from "./copy.js";
+import * as COPY from "./copy.js";
 
 const staticDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -221,4 +222,64 @@ test("the Patterns tab ships eight worked examples that each compile and match t
     // not match its own sample teaches the wrong thing.
     assert.match(e.sample, re, `sample ${e.sample} must match ${e.expr}`);
   }
+});
+
+// --- the retired detection vocabulary ------------------------------------
+
+/** copyStrings(value, path) yields [path, string] for every string reachable
+ *  from an exported copy value: plain strings, arrays of them, and nested
+ *  objects such as CATEGORY_LABELS or RAIL.signalDerivationHelp. Functions are
+ *  skipped: what they return is assembled from the strings around them, which
+ *  this walk already sees. */
+function* copyStrings(value, path) {
+  if (typeof value === "string") { yield [path, value]; return; }
+  if (Array.isArray(value)) {
+    for (const [i, v] of value.entries()) yield* copyStrings(v, `${path}[${i}]`);
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [k, v] of Object.entries(value)) yield* copyStrings(v, `${path}.${k}`);
+  }
+}
+
+test("no user-facing copy names a retired detection route", () => {
+  // "Smart detection" was one label over three unrelated mechanisms (built-in
+  // pattern matching, which acts without review, plus two discovery methods,
+  // which do not), and "Local AI" said nothing about what runs. The rail names
+  // the mechanism now: Built-in patterns, Heuristic discovery, Local LLM
+  // discovery. The engine identifiers PhaseSmart, smart_discovered and local_ai
+  // keep their spelling, which is why this guard reads the LABELS rather than
+  // grepping the source.
+  const retired = ["Smart detection", "Smart Detection", "Local AI"];
+  const hits = [];
+  for (const [name, exported] of Object.entries(COPY)) {
+    for (const [where, text] of copyStrings(exported, name)) {
+      for (const phrase of retired) {
+        if (text.includes(phrase)) hits.push(`${where}: ${phrase}`);
+      }
+    }
+  }
+  assert.deepEqual(hits, [],
+    "retired route names found in exported copy; the rail names the mechanism " +
+    "(Built-in patterns, Heuristic discovery, Local LLM discovery):\n" + hits.join("\n"));
+});
+
+test("the rail's three route sections and its quality panel are named", () => {
+  // Each label is one MECHANISM, and each carries its own help: the section
+  // switch and the explanation of what it switches must move together.
+  const { RAIL } = COPY;
+  assert.equal(RAIL.tabPatterns, "Built-in patterns");
+  assert.equal(RAIL.tabHeuristic, "Heuristic discovery");
+  assert.equal(RAIL.tabLocalLLM, "Local LLM discovery");
+  assert.equal(RAIL.qualityTitle, "Detection quality");
+  for (const key of ["tabPatternsHelp", "tabHeuristicHelp", "tabLocalLLMHelp", "qualityHelp"]) {
+    assert.ok(RAIL[key]?.length > 0, `${key} must explain its section`);
+  }
+  // The retired keys must be gone rather than left as dead exports.
+  for (const key of ["tabSmart", "tabLocalAI", "smartHelp", "builtInPatterns",
+    "builtInPatternsHelp", "heuristicDiscovery", "heuristicDiscoveryHelp",
+    "categories", "categoriesHelp"]) {
+    assert.ok(!(key in RAIL), `RAIL.${key} must be gone`);
+  }
+  assert.ok(!("groupDeclared" in COPY.CONFIGURE), "CONFIGURE.groupDeclared must be gone");
 });

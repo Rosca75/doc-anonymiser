@@ -1,6 +1,6 @@
 //go:build live
 
-// ollama/probe_live_test.go — the measurement instrument for the local AI route.
+// ollama/probe_live_test.go — the measurement instrument for the local model route.
 //
 // TIER: none of the three in docs/TESTING.md, and that is deliberate. It needs a
 // real Ollama, a real model and a document that is not in this repository, so it

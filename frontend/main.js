@@ -81,7 +81,7 @@ export function boot(root) {
   // tooltip), never an error.
   probeOllama()
     .then((status) => {
-      // Detecting Ollama ENABLES the Local AI switch, it never flips it
+      // Detecting Ollama ENABLES the Local LLM discovery switch, it never flips it
        // sending the document to a model, however local, is a
        // decision the user makes, not one made for them by an installation
        // they may have done for something else entirely.

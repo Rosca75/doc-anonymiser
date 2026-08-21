@@ -15,7 +15,7 @@
 // same merged list, whichever route it belongs to, because the user is reviewing
 // potential Values rather than a detector's output. Two lists, one per route,
 // forced the frontend to map each into its own state, and the mapping for the
-// Local AI route silently discarded the folded spellings, so a family the engine
+// local model route silently discarded the folded spellings, so a family the engine
 // had already collapsed arrived as a bare string.
 package backend
 
@@ -94,7 +94,7 @@ type DetectionResult struct {
 	Cancelled bool            `json:"cancelled"`
 	Status    string          `json:"status"`
 
-	// AIRequests and AISilentRequests are how many requests the Local AI route
+	// AIRequests and AISilentRequests are how many requests the local model route
 	// sent and how many of those came back with nothing. They exist because
 	// "0 suggestions" means two different things, and only one of them is about
 	// the document: a model that answered nothing fifteen times reads exactly
@@ -170,12 +170,12 @@ func (s *AIScope) active() bool {
 // order, under ONE cancellation context.
 //
 // Which routes run is decided HERE, from the stored settings, not by the caller.
-// The Local AI route additionally requires Ollama to actually answer: probing
+// Local LLM discovery additionally requires Ollama to actually answer: probing
 // rather than trusting the stored flag is what stops a stale "on" from starting
 // a model that is not running. A frontend that asks for a route the user
 // switched off does not get it.
 //
-// aiScope narrows the LOCAL-AI route only (Smart detection always reads every
+// aiScope narrows Local LLM discovery only (the offline routes always read every
 // file); nil leaves the AI route reading every document whole.
 //
 // It always emits exactly one terminal event before returning.
@@ -223,7 +223,8 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 	// stale "on" from starting a model that is not running.
 	useLocalAI := settings.UseLocalAI && llm.Probe().Available
 	phases := []string{}
-	// The Smart PHASE is Smart detection's two DISCOVERY methods: heuristic
+	// PhaseSmart, which the interface labels "Heuristic discovery", is the two
+	// offline DISCOVERY methods: heuristic
 	// discovery and signal-based discovery. Built-in pattern matching is not a
 	// discovery method and therefore not a phase: it produces direct matches at
 	// anonymisation time, so its switch does not appear here.
@@ -251,7 +252,8 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 		if res.BuiltInPatternsOn {
 			res.Status = builtInOnlyStatus(res)
 		} else {
-			res.Status = "no detection route is switched on, turn on Smart detection or Local AI in Configure"
+			res.Status = "no detection route is switched on, turn on Built-in patterns, " +
+				"Heuristic discovery or Local LLM discovery in Configure"
 		}
 		a.emit("detection:done", res)
 		return res, nil
@@ -297,14 +299,14 @@ func (a *App) RunDetection(fileNames []string, allowTerms []string, aiScope *AIS
 	// model to categorise "Borch" and "Johannes Borch" as two separate names.
 	res.Suggestions = engine.FoldValueFamilies(res.Suggestions, allow)
 
-	// With the Local AI route on, the model also RE-FILES what Smart detection
+	// With Local LLM discovery on, the model also RE-FILES what the offline phase
 	// found (only main texts and short context snippets travel, never documents).
 	// A classification failure degrades to the heuristic categories with a note:
 	// the findings are the point, the labels are polish.
 	if useLocalAI && ctx.Err() == nil && len(res.Suggestions) > 0 {
 		if err := a.refineCategories(ctx, llm, docs, settings.AIDetailLevel, aiScope, res); err != nil && ctx.Err() == nil {
 			res.Errors = append(res.Errors,
-				fmt.Sprintf("the local AI could not refine the categories, the offline guesses were kept: %v", err))
+				fmt.Sprintf("the local model could not refine the categories, the offline guesses were kept: %v", err))
 		}
 		// Re-fold, because a refined CATEGORY can create a family that did not
 		// exist a moment ago: folding only ever happens within one category, so
@@ -361,7 +363,7 @@ func (a *App) previewBuiltInPatterns(docs []engine.Document, settings Settings,
 func builtInOnlyStatus(res *DetectionResult) string {
 	if len(res.PatternCategories) == 0 {
 		return "built-in pattern matching is on but none of the selected categories applies to the document country, " +
-			"choose categories in Configure or turn on Smart detection or Local AI"
+			"choose categories in Configure or turn on Heuristic discovery or Local LLM discovery"
 	}
 	if len(res.PatternMatches) == 0 {
 		return "no discovery route is switched on, and the built-in patterns matched nothing in these files"
@@ -432,10 +434,10 @@ func (a *App) CancelDetection() {
 	}
 }
 
-// refineCategories asks the local model to categorise what Smart detection
+// refineCategories asks the local model to categorise what the offline phase
 // found, and applies whatever it recognised.
 //
-// Only Smart detection's own Suggestions are sent. Re-filing the model's own
+// Only the offline phase's own Suggestions are sent. Re-filing the model's own
 // findings would be asking it to grade its own work, and it would let one pass
 // overwrite a category the same model had just chosen.
 //
@@ -542,7 +544,7 @@ func (a *App) signalDiscoveryOn(s Settings) bool {
 	return false
 }
 
-// runSmartPhase is Smart detection's discovery half: heuristic discovery over
+// runSmartPhase runs PhaseSmart, the offline discovery half: heuristic discovery over
 // every document, plus signal-based discovery over the whole batch.
 //
 // Every document is scanned; one cancelled mid-scan contributes what it found
@@ -602,7 +604,7 @@ func mergeInto(existing []engine.Suggestion, batches [][]engine.Suggestion) []en
 	return engine.MergeSuggestions(append([][]engine.Suggestion{existing}, batches...)...)
 }
 
-// scanUnit pairs a document with the indices of its OWN units the local AI
+// scanUnit pairs a document with the indices of its OWN units the local model
 // should read for it: every unit normally, or the selected pages when scoped.
 //
 // It carries indices rather than joined text because the text of one request is
@@ -616,7 +618,7 @@ type scanUnit struct {
 	units []int
 }
 
-// slices turns one scanUnit into the requests the local AI actually sends, at
+// slices turns one scanUnit into the requests the local model actually sends, at
 // the given detail level and under the given per-request ceiling. It is the ONE
 // place a scope becomes text, so the discovery call and the classification call
 // cannot disagree about what the scope selected.
@@ -670,7 +672,7 @@ func scopedUnits(docs []engine.Document, scope *AIScope) (units []scanUnit, prob
 	}
 	if scope.active() && !scopeMatched {
 		problems = append(problems, fmt.Sprintf(
-			"the local AI was scoped to %q, which is not among the imported documents; import it or clear the scope",
+			"the local model was scoped to %q, which is not among the imported documents; import it or clear the scope",
 			scope.DocName))
 	}
 	return units, problems
@@ -727,13 +729,13 @@ func planAIScan(docs []engine.Document, llm *ollama.Client, level string, scope 
 		if len(slices) == 0 {
 			plan.skipped = append(plan.skipped, DetectionSkip{
 				Name:   u.doc.Name,
-				Reason: "no text for the local AI to read. Smart detection still read it.",
+				Reason: "no text for the local model to read. Heuristic discovery still read it.",
 			})
 			continue
 		}
 		if len(slices) > ollama.LargeScanRequests {
 			plan.problems = append(plan.problems, fmt.Sprintf(
-				"%q needs %d local AI requests and will take a while; cancel and scope the local AI to a page range if that is longer than you want to wait",
+				"%q needs %d local model requests and will take a while; cancel and scope the local model to a page range if that is longer than you want to wait",
 				u.doc.Name, len(slices)))
 		}
 		// The source text for the hallucination filter is the scanned text
@@ -753,7 +755,7 @@ func planAIScan(docs []engine.Document, llm *ollama.Client, level string, scope 
 // detail level imply, so the rail can show the cost of a choice BEFORE the user
 // pays it.
 //
-// It answers "if the Local AI route runs, this is what it would send": it does
+// It answers "if Local LLM discovery runs, this is what it would send": it does
 // not probe Ollama and it does not care whether the route is switched on,
 // because the question the rail asks is what the choice in front of the user
 // would cost. It reaches no model and mutates nothing, so it is safe to call on
@@ -784,7 +786,7 @@ func (a *App) EstimateAIRequests(fileNames []string, aiScope *AIScope) (int, err
 	return planAIScan(docs, llm, level, aiScope).requests(), nil
 }
 
-// runLocalAIPhase is the Local AI route: one request per slice, with the slices
+// runLocalAIPhase is Local LLM discovery: one request per slice, with the slices
 // aligned to each document's OWN units by the engine.
 //
 // A large document is scanned and WARNED about, never refused. The user asked for
@@ -826,7 +828,7 @@ func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *
 		// thing to forget.
 		if res.AIRequests > 0 && res.AISilentRequests == res.AIRequests {
 			res.Errors = append(res.Errors, fmt.Sprintf(
-				"the local AI model %q returned nothing for all %d request(s), so this run found no values through it; a larger model usually changes that",
+				"the local model model %q returned nothing for all %d request(s), so this run found no values through it; a larger model usually changes that",
 				llm.Model, res.AIRequests))
 		}
 	}()
@@ -868,7 +870,7 @@ func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *
 		if outcome.Truncated > 0 {
 			word := scanUnitWord(job.unit)
 			res.Errors = append(res.Errors, fmt.Sprintf(
-				"the local AI ran out of room on %d of %d request(s) for %q, so those %ss may be missing values; what the model had already listed was kept. Scan fewer %ss at a time, or try another model",
+				"the local model ran out of room on %d of %d request(s) for %q, so those %ss may be missing values; what the model had already listed was kept. Scan fewer %ss at a time, or try another model",
 				outcome.Truncated, outcome.Requests, job.name, word, word))
 		}
 		// Partial per-slice proposals survive a mid-file cancellation.
@@ -882,7 +884,7 @@ func (a *App) runLocalAIPhase(ctx context.Context, docs []engine.Document, llm *
 			// One file the model choked on must not throw away the other
 			// nine, so this is a recorded problem rather than a returned error.
 			res.Errors = append(res.Errors,
-				fmt.Sprintf("the local AI failed on %q: %v", job.name, err))
+				fmt.Sprintf("the local model failed on %q: %v", job.name, err))
 		}
 	}
 }
@@ -954,7 +956,7 @@ func detectionStatus(res *DetectionResult, docCount int) string {
 	}
 }
 
-// aiRequestSummary is the trailing clause naming what the local AI was asked,
+// aiRequestSummary is the trailing clause naming what the local model was asked,
 // and empty when the route did not run, so a Smart-only run's summary is
 // unchanged.
 func aiRequestSummary(res *DetectionResult) string {
@@ -972,8 +974,8 @@ func aiRequestSummary(res *DetectionResult) string {
 		clauses = append(clauses, fmt.Sprintf("%d ran out of room", res.AITruncatedRequests))
 	}
 	if len(clauses) == 0 {
-		return fmt.Sprintf(" (local AI: %d request(s))", res.AIRequests)
+		return fmt.Sprintf(" (local model: %d request(s))", res.AIRequests)
 	}
-	return fmt.Sprintf(" (local AI: %d request(s), %s)",
+	return fmt.Sprintf(" (local model: %d request(s), %s)",
 		res.AIRequests, strings.Join(clauses, ", "))
 }

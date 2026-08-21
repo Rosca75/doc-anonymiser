@@ -472,7 +472,7 @@ function spellingsOfSuggestion(row) {
  *
  * A SET, not one badge, because two routes agreeing is worth seeing: the user
  * judging a Suggestion is deciding how much to trust it, and "the heuristic and
- * the local AI both found this" is a different position from either alone.
+ * the local model both found this" is a different position from either alone.
  */
 function methodChips(methods) {
   const list = (methods ?? []).filter((m) => DISCOVERY_METHODS.includes(m));
@@ -1618,7 +1618,7 @@ function wire(container, s, shown) {
  * detection call.
  *
  * Everything this function used to decide now belongs to Go: which routes run,
- * which files the local AI can read, what happens when one file fails, and
+ * which files the local model can read, what happens when one file fails, and
  * when the run is over. What is left here is what a view should do: start it,
  * fold the findings into the store, and report what came back, INCLUDING the
  * cancelled flag and the per-file problems the old code discarded.
@@ -1634,7 +1634,7 @@ function wireDetection(container) {
     if (all.length === 0) return;
 
     // ONE call for the whole run. Go decides which routes are on,
-    // skips what the local AI cannot read and says so, keeps going past a
+    // skips what the local model cannot read and says so, keeps going past a
     // file that failed, and always ends the run with a terminal event that
     // clears the progress bar. The old two-call sequence could not do any of
     // that: it had two cancellation slots with a dead zone between them, and
@@ -1651,7 +1651,7 @@ function wireDetection(container) {
       const result = await runDetection(all, getState().allowlist, aiScopeArg());
       // ONE list, one call. Every row already says which methods found it, so
       // there is no per-route mapping step here for a field to fall out of: the
-      // Local AI route's folded spellings used to be lost in exactly such a step.
+      // Local LLM route's folded spellings used to be lost in exactly such a step.
       const added = addSuggestions(result?.suggestions ?? []);
 
       // The built-in patterns' read-only preview, replaced wholesale: it
@@ -1659,7 +1659,7 @@ function wireDetection(container) {
       // older run would show matches from a category since switched off.
       setBuiltInPatterns(result);
 
-      // What the local AI actually did, kept for the rail's read-out. A run
+      // What the local model actually did, kept for the rail's read-out. A run
       // that found nothing is not the same fact as a document that holds
       // nothing, and the request count is what separates them.
       if ((result?.aiRequests ?? 0) > 0) {

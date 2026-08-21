@@ -4,7 +4,7 @@
 // App against a MOCK Ollama server.
 //
 // TIER: integration (docs/TESTING.md). Each test drives App.RunDetection with
-// the Local AI route on, answered by an httptest stand-in for Ollama, and
+// Local LLM discovery on, answered by an httptest stand-in for Ollama, and
 // asserts the wiring: cross-file merge and dedupe, the allowlist veto on model
 // proposals, oversized-file skipping, cancellation keeping partial work, and
 // per-file progress. It stays hermetic (loopback httptest, zero real network),
@@ -171,7 +171,7 @@ func TestDetectionSkipsOnlyADocumentWithNoTextToRead(t *testing.T) {
 	if len(res.Skipped) != 1 || res.Skipped[0].Name != "blank.txt" {
 		t.Fatalf("a whitespace-only document is the one thing left to skip, got %+v", res.Skipped)
 	}
-	if !strings.Contains(res.Skipped[0].Reason, "Smart detection") {
+	if !strings.Contains(res.Skipped[0].Reason, "Heuristic discovery") {
 		t.Errorf("the reason must say the file was still read offline, got %q", res.Skipped[0].Reason)
 	}
 }

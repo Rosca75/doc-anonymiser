@@ -558,7 +558,7 @@ type TruncatedReplyError struct {
 
 // Error names the fix the user actually has. Sending less text per request is
 // the lever that exists at any detail level: the scan scope on the Identify
-// step aims the local AI at fewer pages at a time.
+// step aims the local model at fewer pages at a time.
 func (e *TruncatedReplyError) Error() string {
 	return fmt.Sprintf(
 		"the model %q ran out of room and its reply was cut off after %d tokens; the values it had already listed were kept, so this request may be missing the rest. Scan fewer pages at a time, or try another model, if values look missing",
@@ -764,7 +764,7 @@ func trimContext(context string) string {
 	return strings.TrimSpace(string(runes[:classifyContextRunes]))
 }
 
-// ClassifySuggestions re-files Smart detection's Suggestions through the local
+// ClassifySuggestions re-files the offline routes' Suggestions through the local
 // model: they travel in byte-budgeted batches, each reply is parsed with the
 // usual tolerant parser, and any returned text that is not one of the INPUT main
 // texts verbatim is dropped (hallucination filter), as is anything the allowlist
@@ -962,7 +962,7 @@ func stripCodeFence(reply string) string {
 // object are all shapes a real model returns, and each one would otherwise cost
 // the whole slice.
 //
-// Every Suggestion it produces is stamped with the Local AI discovery method
+// Every Suggestion it produces is stamped with the local model discovery method
 // HERE, at the boundary, so no caller has to remember to do it and nothing the
 // model found can reach the review list without saying where it came from.
 func parseSuggestionJSON(reply string) ([]engine.Suggestion, error) {
@@ -1006,7 +1006,7 @@ func parseSuggestionJSON(reply string) ([]engine.Suggestion, error) {
 // ONE place that happens, so a complete reply and a salvaged one cannot be
 // stamped differently.
 //
-// The Local AI score is stamped here, beside the provenance and for the same
+// The local model score is stamped here, beside the provenance and for the same
 // reason: this is the one place a model finding enters the system, so neither
 // can be forgotten by a caller. Without it the Suggestion arrives with
 // confidence 0, which valueConfidence reads as "not stated" and therefore as a

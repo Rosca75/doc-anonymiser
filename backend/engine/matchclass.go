@@ -37,7 +37,9 @@ const (
 	// MethodHeuristic is heuristic discovery: spelling, context, frequency and
 	// deterministic gazetteers.
 	MethodHeuristic = "heuristic"
-	// MethodLocalAI is Local AI discovery.
+	// MethodLocalAI is Local LLM discovery. The identifier keeps the AI spelling
+	// because it is persisted in every session file; the interface labels it
+	// "Local LLM discovery".
 	MethodLocalAI = "local_ai"
 )
 
@@ -59,7 +61,8 @@ const (
 	MatchClassUserDefined = "user_defined"
 	// MatchClassSmartDiscovered is signal-based or heuristic discovery.
 	MatchClassSmartDiscovered = "smart_discovered"
-	// MatchClassLocalAIDiscovered is Local AI discovery.
+	// MatchClassLocalAIDiscovered is Local LLM discovery, labelled
+	// "Local LLM discovery" in the interface.
 	MatchClassLocalAIDiscovered = "local_ai_discovered"
 )
 
@@ -100,7 +103,7 @@ var methodClasses = map[string]string{
 //
 //	states none
 //
-// @return 1 (built-in pattern) through 4 (Local AI); 2 for anything unrecognised
+// @return 1 (built-in pattern) through 4 (local LLM); 2 for anything unrecognised
 func MatchClassRank(class string) int {
 	if rank, ok := matchClassRanks[class]; ok {
 		return rank
@@ -111,7 +114,7 @@ func MatchClassRank(class string) int {
 // MatchClassForMethods reduces a Value's discovery methods to the ONE class
 // precedence uses: the strongest applicable one.
 //
-// A Value found by both heuristic discovery and the local AI is trusted as far
+// A Value found by both heuristic discovery and the local model is trusted as far
 // as its strongest finder, because the weaker method agreeing with a stronger
 // one is corroboration, not doubt. Provenance keeps both; precedence needs one
 // answer, and this is where the set becomes it.

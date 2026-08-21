@@ -1,4 +1,4 @@
-// engine/discover.go — the Smart detection tier: a
+// engine/discover.go — the heuristic discovery tier: a
 // fully OFFLINE heuristic discovery pass that always works without
 // Ollama. It proposes suggestion values from how names are written, for
 // the review screen; nothing it finds is ever replaced without explicit
@@ -53,7 +53,7 @@ import (
 //
 // It is one type for every route on purpose. Two shapes, one per route, is a
 // mapping seam: the frontend had to convert each into its own state, and the
-// conversion for Local AI dropped the folded spellings on the floor. One shape
+// conversion for the local model dropped the folded spellings on the floor. One shape
 // means the review workspace treats a signal finding, a heuristic finding and a
 // model finding identically, which is also what the user is being asked to do.
 //
@@ -73,7 +73,7 @@ type Suggestion struct {
 	// Count is how many times the exact main text occurs.
 	Count int `json:"count"`
 	// Contexts holds up to maxSuggestionContexts snippets of ±60 runes around
-	// occurrences, for the review workspace and for Local AI classification
+	// occurrences, for the review workspace and for local model classification
 	// prompts.
 	Contexts []string `json:"contexts,omitempty"`
 	// Confidence is the score of this suggestion, 0.0 to 1.0. It is not the same

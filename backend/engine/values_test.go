@@ -365,7 +365,7 @@ func TestDetectEntitiesStampsTheEntitysOrigin(t *testing.T) {
 }
 
 func TestOneLegalSuffixTableServesBothDetectionAndExpansion(t *testing.T) {
-	// Two tables meant smart detection could propose "Bidco SCSp" from a form
+	// Two tables meant heuristic discovery could propose "Bidco SCSp" from a form
 	// only IT knew, and the expansion could then not produce "Bidco".
 	proposed := HeuristicDiscoverWithOptions("Bidco SCSp signed the deed.\n",
 		NewEmptyAllowlist(), HeuristicDiscoveryOptions{})

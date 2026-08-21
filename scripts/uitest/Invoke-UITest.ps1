@@ -382,22 +382,28 @@ function Test-ConfigureRail([CdpSession]$cdp) {
             -Hint 'views/identify.js renders the rail section and hands it to renderIdentifyRail.'
         return
     }
-    Assert-That -Name 'the rail is two route sections' -Condition ($r.sections -eq 2) `
-        -Expected '2 .rail-section elements' -Actual "$($r.sections), routes: $($r.routes -join ', ')" `
-        -Hint 'views/identifyrail.js RAIL_SECTIONS defines Smart detection and Local AI.'
+    Assert-That -Name 'the rail is three route sections' -Condition ($r.sections -eq 3) `
+        -Expected '3 .rail-section elements' -Actual "$($r.sections), routes: $($r.routes -join ', ')" `
+        -Hint 'views/identifyrail.js RAIL_SECTIONS defines Built-in patterns, Heuristic discovery and Local LLM discovery, each bound to its own settings flag.'
+    Assert-That -Name 'the two switch-less panels are panels, not routes' -Condition ($r.panels -eq 2) `
+        -Expected '2 .rail-panel elements (Detection quality and Load profile)' -Actual "$($r.panels)" `
+        -Hint 'Neither the confidence floor nor Load profile is a detection route, so neither may wear .rail-section.'
     Assert-That -Name 'the old tab strip is gone' -Condition ($r.railTabs -eq 0) `
         -Expected '0 [data-railtab] chips anywhere in the document' -Actual "$($r.railTabs)" `
         -Hint 'The rail switches sections on and off; it does not tab between them.'
-    Assert-That -Name 'Smart detection is on by default' -Condition ($r.smartOn -eq $true) `
-        -Expected 'the rail-smart route switch checked' -Actual "$($r.smartOn)" `
-        -Hint 'Every Smart detection method defaults on, so the derived section state reads on.'
-    Assert-That -Name 'Local AI is off by default' -Condition ($r.localOn -eq $false) `
+    Assert-That -Name 'Built-in patterns is on by default' -Condition ($r.patternsOn -eq $true) `
+        -Expected 'the rail-patterns route switch checked' -Actual "$($r.patternsOn)" `
+        -Hint 'state.js settings.useBuiltInPatterns defaults to true: it needs nothing installed.'
+    Assert-That -Name 'Heuristic discovery is on by default' -Condition ($r.heuristicOn -eq $true) `
+        -Expected 'the rail-heuristic route switch checked' -Actual "$($r.heuristicOn)" `
+        -Hint 'state.js settings.useHeuristicDiscovery defaults to true: it needs nothing installed.'
+    Assert-That -Name 'Local LLM discovery is off by default' -Condition ($r.localOn -eq $false) `
         -Expected 'the rail-local route switch unchecked' -Actual "$($r.localOn)" `
         -Hint 'state.js settings.useLocalAI defaults to false. Detecting Ollama ENABLES this switch, it never flips it.'
     Assert-That -Name 'every category checkbox is present' `
         -Condition ($r.categories -ge $script:Fixture.categoryCount) `
         -Expected "at least $($script:Fixture.categoryCount) .cat-toggle checkboxes" -Actual "$($r.categories)" `
-        -Hint 'state.js ALL_CATEGORIES plus the country-specific ID categories must all reach the rail.'
+        -Hint 'Every SWITCHABLE state.js category must reach the rail. custom_patterns is excluded on purpose: it is declarative, permanently on, and edited on the workspace Custom patterns tab.'
     Assert-That -Name 'the category groups are folded by default' `
         -Condition ($r.categories -gt 0 -and $r.categoriesWithSize -eq 0) `
         -Expected 'no category checkbox laid out until its group is opened' `
@@ -446,26 +452,32 @@ function Test-ConfigureRail([CdpSession]$cdp) {
             -Expected 'no horizontal overflow in .signal-row-head' -Actual "$($line.widths)" `
             -Hint 'The rail is the narrowest column in the application and the page body never scrolls sideways.'
     }
-    # "Side by side" is a claim about geometry, so geometry answers it: markup order
-    # proves nothing, since a column-flex parent stacks the same markup.
-    $pair = $r.methodPairRow
-    if ($null -eq $pair) {
-        Assert-That -Name 'the two plain method switches render' -Condition $false `
-            -Expected '#smart-built-in and #smart-heuristic in the rail' -Actual 'one of them is missing' `
-            -Hint 'views/identifyrail.js smartMethods renders both inside .rail-toggle-pair.'
-        return
+    # Each route's switch is ON that route's own header, beside its title and its
+    # help icon. That the three fit one line each is a claim about geometry, so
+    # geometry answers it: a column-flex header stacks the same markup, and a title
+    # clipped by the controls beside it is a route whose name cannot be read.
+    Assert-That -Name 'every route section has a measurable header' `
+        -Condition ($r.routeHeaders.Count -eq 3 -and -not ($r.routeHeaders -contains $null)) `
+        -Expected '3 headers, each carrying a .cgroup-title, a .route-toggle and a .route-state' `
+        -Actual "$($r.routeHeaders.Count) measured" `
+        -Hint 'views/identifyrail.js railBody puts the help tooltip and routeSwitch in each section headRightHTML.'
+    foreach ($head in $r.routeHeaders) {
+        if ($null -eq $head) { continue }
+        Assert-That -Name "$($head.route): title and switch share one row" `
+            -Condition ($head.sameRow -eq $true -and $head.switchIsToTheRight -eq $true) `
+            -Expected 'the switch centred on the title line and starting after it ends' `
+            -Actual "sameRow=$($head.sameRow), toTheRight=$($head.switchIsToTheRight)" `
+            -Hint 'style.css .cgroup-head is a flex row with the head-right group at its end.'
+        Assert-That -Name "$($head.route): the route name is not clipped" `
+            -Condition ($head.titleFullyShown -eq $true -and $head.titleLines -eq 1 -and $head.fitsTheRail -eq $true) `
+            -Expected 'the whole title on one line, no horizontal overflow' `
+            -Actual "$($head.titleFullyShown), lines=$($head.titleLines), fits=$($head.fitsTheRail) ($($head.widths))" `
+            -Hint 'copy.js RAIL.tabPatterns, tabHeuristic and tabLocalLLM stay short precisely because the rail is the narrowest column and each title shares its row with a help icon and an On/Off switch.'
+        Assert-That -Name "$($head.route): the switch is explained beside it" `
+            -Condition ($head.hasHelp -eq $true) `
+            -Expected 'a help tooltip on the section header' -Actual "$($head.hasHelp)" `
+            -Hint 'The switch says whether the mechanism runs; the tooltip says what it is, and the panel carries no explanatory prose.'
     }
-    Assert-That -Name 'Built-in patterns and Heuristic discovery share one row' -Condition ($pair.sameRow -eq $true) `
-        -Expected 'the two checkboxes at the same y (within 2px)' `
-        -Actual "built-in at y=$($pair.builtInTop), heuristic at y=$($pair.heuristicTop)" `
-        -Hint 'style.css .rail-toggle-pair is a two-column grid. The rail height is its scarcest resource and these are its shortest labels.'
-    Assert-That -Name 'they are ordered left to right, not overlapping' -Condition ($pair.heuristicIsToTheRight -eq $true) `
-        -Expected 'Heuristic discovery starting after Built-in patterns ends' -Actual "$($pair.heuristicIsToTheRight)" `
-        -Hint 'Two switches at the same y that overlap are one unreadable control.'
-    Assert-That -Name 'halving the row did not truncate either label' -Condition ($pair.labelsFullyShown -eq $true) `
-        -Expected 'both .cat-label elements showing their whole text' `
-        -Actual "$($pair.labelsFullyShown) ($($pair.labelWidths -join '; '))" `
-        -Hint 'A pair of ellipses is worse than two rows. Below the rail measure the pair stacks instead.'
 }
 
 # Opening a signal's drill-down must REVEAL its readings, and each must be
@@ -795,7 +807,7 @@ function Test-StrictnessFields([CdpSession]$cdp) {
     if ($r.PSObject.Properties.Name -contains 'error' -and $r.error) {
         Assert-That -Name 'the strictness probe runs' -Condition $false `
             -Expected 'the Discovery strictness block in the rail' -Actual $r.error `
-            -Hint 'views/identifyrail.js smartSection nests it under Smart detection.'
+            -Hint 'views/identifyrail.js heuristicSection nests it under Heuristic discovery.'
         return
     }
     Assert-That -Name 'the strictness select shows its longest option in full' `

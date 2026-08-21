@@ -30,7 +30,7 @@ type Intersection struct {
 	// the user sees it, the category it is filed under, and the class that
 	// decided the contest. MatchClass is what the frontend turns into the NAME of
 	// the winning method or route: the copy says "a built-in pattern" or "the
-	// local AI", never an internal rank.
+	// local model", never an internal rank.
 	Value      string `json:"value"`
 	Category   string `json:"category"`
 	MatchClass string `json:"matchClass"`

@@ -34,7 +34,7 @@ import (
 //
 // Version history (reason for each bump, newest last):
 //
-//	v5: added the two Smart detection sub-switches. A v4 file has neither, and a
+//	v5: added the two offline route sub-switches. A v4 file has neither, and a
 //	    v4 reader would not know the built-in patterns can be off, so the
 //	    versions are not interchangeable.
 //	v6: the Value shape lost the per-value list of spellings the expansion had to
@@ -88,9 +88,9 @@ type SessionSettings struct {
 	Model       string            `json:"model"`
 	ContextSize int               `json:"contextSize,omitempty"`
 	Country     string            `json:"country,omitempty"`
-	// UseLocalAI is the Local AI detection route switch.
+	// UseLocalAI is the Local LLM discovery route switch.
 	UseLocalAI bool `json:"useLocalAI,omitempty"`
-	// AIStrictFormat is the local AI's discovery reply format: schema-constrained
+	// AIStrictFormat is the local model's discovery reply format: schema-constrained
 	// when true, Ollama's loose JSON mode otherwise. A POINTER so "absent" and
 	// "the user switched it off" stay distinguishable, exactly as the two method
 	// switches below are pointers.
@@ -107,19 +107,19 @@ type SessionSettings struct {
 	// reads as thorough, which is what a file written without the field was
 	// written under. No version bump, for the reason given above.
 	AIDetailLevel string `json:"aiDetailLevel,omitempty"`
-	// UseBuiltInPatterns and UseHeuristicDiscovery are two of Smart detection's
+	// UseBuiltInPatterns and UseHeuristicDiscovery are two of the offline
 	// three methods. Both are POINTERS because their default is TRUE: with a
 	// plain bool, "absent" and "the user switched it off" are the same value,
 	// and the wrong reading of the two silently changes what a restored session
 	// detects.
 	//
-	// There is deliberately no persisted switch for the Smart detection SECTION.
+	// There is deliberately no persisted switch summarising the routes.
 	// The section is on when any of its methods is on, so a fourth boolean would
 	// be a second way of saying something the three already say, and the two
 	// could disagree.
 	UseBuiltInPatterns    *bool `json:"useBuiltInPatterns,omitempty"`
 	UseHeuristicDiscovery *bool `json:"useHeuristicDiscovery,omitempty"`
-	// SignalSuggestionSources is Smart detection's third method: which readings of
+	// SignalSuggestionSources drives signal-based discovery: which readings of
 	// which built-in signals may DERIVE Suggestions (signals.go), keyed by source
 	// and then by derivation. It does not govern whether those signals are matched
 	// and replaced, which is what Built-in patterns and the category's own switch

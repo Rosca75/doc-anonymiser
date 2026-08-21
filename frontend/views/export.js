@@ -26,7 +26,7 @@ import {
   getSameFormatMetadata, saveSameFormat,
 } from "../api.js";
 import {
-  getState, setState, addValues, presetCategories,
+  getState, setState, addValues, presetCategories, adoptCategories,
   setMetaReview, setExportDir, startNewBatch, setDocumentCountry,
   HEURISTIC_DISCOVERY_DEFAULTS, SIGNAL_SOURCES, SIGNAL_DERIVATIONS,
 } from "../state.js";
@@ -465,15 +465,15 @@ export function applySession(session) {
       // which cannot happen for a session this build wrote; the preset is the
       // safe reading either way and beats an empty selection that silently
       // anonymises nothing.
-      categories: settings.categories ?? presetCategories(settings.level),
+      categories: adoptCategories(settings.categories ?? presetCategories(settings.level)),
       ollamaPort: settings.ollamaPort,
       model: settings.model,
       contextSize: settings.contextSize,
       useLocalAI: settings.useLocalAI,
-      // Absent means ON for every Smart detection method: they are the shipped
-      // defaults, and a file that says nothing about one must not restore it
-      // switched off. There is no section flag to restore, because the section
-      // state is derived from these.
+      // Absent means ON for both offline routes: they are the shipped defaults,
+      // and a file that says nothing about one must not restore it switched off.
+      // Each of the three route switches is restored from its OWN key; there is
+      // no fourth section flag to restore.
       useBuiltInPatterns: settings.useBuiltInPatterns !== false,
       useHeuristicDiscovery: settings.useHeuristicDiscovery !== false,
       // Same rule per READING: a key the file omits falls back to the default

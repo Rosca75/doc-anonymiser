@@ -5,7 +5,8 @@
 //
 //   the rail a third of the width: WHAT to look for (country, preset, the
 //                   22 categories, the confidence floor) and HOW (smart
-//                   detection, local AI). This is what used to be a Configure
+//                   patterns, heuristic discovery, local LLM discovery). This is
+//                   the left half of the Identify step, and what used to be a Configure
 //                   step of its own;  folded it in, because choosing
 //                   what to detect and reviewing what was detected is one task,
 //                   not two screens. It is big enough to deserve its own file,

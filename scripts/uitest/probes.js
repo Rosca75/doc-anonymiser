@@ -270,7 +270,10 @@
       docName: DOC_NAME,
       placeholderPattern: PLACEHOLDER_RE.source,
       tooltipOriginal: "Marie Duval",
-      categoryCount: 30,
+      // Every state.js ALL_CATEGORIES entry that has a SWITCH. custom_patterns
+      // has none: it is declarative, permanently on, and edited on the
+      // workspace's Custom patterns tab, so the rail renders no checkbox for it.
+      categoryCount: 29,
     }),
 
     /**
@@ -408,10 +411,15 @@
      * configureRail() reports the shape of the Identify screen's left rail.
      *
      * The Configure choices are switchable DETECTION ROUTE sections rather than
-     * peer tabs: Smart detection on, Local AI off. The category groups start
-     * FOLDED, so the rail opens on the route switches and the scope summary
-     * rather than a wall of category lists; this probe measures both that they
-     * are folded by default and that opening a group lays its checkboxes out.
+     * peer tabs, one section per mechanism: Built-in patterns on, Heuristic
+     * discovery on, Local LLM discovery off. Two switch-less panels follow them,
+     * Detection quality and Load profile, and they carry .rail-panel rather than
+     * .rail-section so a utility panel is never counted as a route.
+     *
+     * The category groups start FOLDED, so the rail opens on the route switches
+     * and the scope summary rather than a wall of category lists; this probe
+     * measures both that they are folded by default and that opening a group lays
+     * its checkboxes out.
      */
     async configureRail() {
       // The store is read for the lists the rail is meant to RENDER, so an
@@ -469,11 +477,11 @@
 
       for (const id of catGroupIds) await clickGroup(id);
 
-      // The Local AI section is folded by default, so its controls are in the DOM
-      // at zero height: a string test reads them as present and a user reads them
-      // as absent. Open it, measure the detail level (a label and a select on one
-      // line, in the narrowest column of the application), then fold it back so
-      // the probes after this one see the default rail.
+      // The Local LLM discovery section is folded by default, so its controls are
+      // in the DOM at zero height: a string test reads them as present and a user
+      // reads them as absent. Open it, measure the detail level (a label and a
+      // select on one line, in the narrowest column of the application), then fold
+      // it back so the probes after this one see the default rail.
       await clickGroup("rail-local");
       const detailLevelRow = (() => {
         const row = [...railOf().querySelectorAll(".rail-field-row")]
@@ -519,9 +527,16 @@
       const byRoute = (route) => toggles.find((t) => t.dataset.route === route);
       return {
         sections: rail.querySelectorAll(".rail-section").length,
+        // The switch-less panels, counted separately: .rail-section marks a
+        // detection ROUTE, so a panel wearing it would be counted as one.
+        panels: rail.querySelectorAll(".rail-panel").length,
         railTabs: document.querySelectorAll("[data-railtab]").length,
         routes: toggles.map((t) => t.dataset.route),
-        smartOn: byRoute("rail-smart")?.checked ?? null,
+        // One reading per route switch, because each is its own stored flag: a
+        // single "the offline route is on" answer could not say which of the two
+        // mechanisms the user actually left running.
+        patternsOn: byRoute("rail-patterns")?.checked ?? null,
+        heuristicOn: byRoute("rail-heuristic")?.checked ?? null,
         localOn: byRoute("rail-local")?.checked ?? null,
         categories: rail.querySelectorAll(".cat-toggle").length,
         // Folded by default, so zero are laid out now; all of them once opened.
@@ -543,29 +558,39 @@
           .map((b) => b.dataset.source),
         signalRowLine,
         detailLevelRow,
-        // The two plain Smart-detection methods share ONE row. "Side by side" is a
-        // claim about geometry, so it is answered with geometry: equal tops, and
-        // one to the left of the other. Markup order proves neither, since a
-        // column-flex parent stacks the same markup.
-        methodPairRow: (() => {
-          const builtIn = rail.querySelector("#smart-built-in");
-          const heuristic = rail.querySelector("#smart-heuristic");
-          if (!builtIn || !heuristic) return null;
-          const a = builtIn.getBoundingClientRect();
-          const b = heuristic.getBoundingClientRect();
+        // Each route's switch sits on that route's OWN header, beside its title
+        // and its help icon. "On the same row, and the title not truncated by
+        // them" is a claim about geometry, so geometry answers it: markup order
+        // proves nothing, because a column-flex header stacks the same markup and
+        // an overflowing title is clipped without anything throwing.
+        routeHeaders: [...rail.querySelectorAll("section.rail-section")].map((section) => {
+          const head = section.querySelector(".cgroup-head");
+          const title = head?.querySelector(".cgroup-title");
+          const state = head?.querySelector(".route-state");
+          const box = head?.querySelector(".route-toggle");
+          if (!head || !title || !state || !box) return null;
+          const t = title.getBoundingClientRect();
+          const st = state.getBoundingClientRect();
           return {
-            builtInTop: Math.round(a.top),
-            heuristicTop: Math.round(b.top),
-            sameRow: Math.abs(a.top - b.top) <= 2,
-            heuristicIsToTheRight: b.left > a.right,
-            // Neither label may be truncated to nothing by the halving: a pair of
-            // ellipses is worse than two rows.
-            labelWidths: [...rail.querySelectorAll(".rail-toggle-pair .cat-label")]
-              .map((el) => `${(el.textContent ?? "").trim()}: ${el.clientWidth} of ${el.scrollWidth}px`),
-            labelsFullyShown: [...rail.querySelectorAll(".rail-toggle-pair .cat-label")]
-              .every((el) => el.scrollWidth <= el.clientWidth + 1),
+            route: box.dataset.route ?? "",
+            title: (title.textContent ?? "").trim(),
+            // Vertical CENTRES, not tops: the header is a flex row with
+            // align-items centre, so a short title and a taller switch label are
+            // on one line while their tops differ by half the height difference.
+            sameRow: Math.abs((t.top + t.height / 2) - (st.top + st.height / 2)) <= 2,
+            switchIsToTheRight: st.left >= t.right - 1,
+            // The title must not be clipped to an ellipsis by the switch and the
+            // help icon beside it: a route the user cannot read the name of is
+            // a switch with no label.
+            titleFullyShown: title.scrollWidth <= title.clientWidth + 1,
+            titleLines: title.getClientRects().length,
+            hasHelp: !!head.querySelector("span.help"),
+            widths: `${(title.textContent ?? "").trim()}: ${title.clientWidth} of ${title.scrollWidth}px`,
+            // The header never overflows the rail, which is the narrowest column
+            // in the application and the one the page must not scroll sideways for.
+            fitsTheRail: head.scrollWidth <= head.clientWidth + 1,
           };
-        })(),
+        }),
       };
     },
 
@@ -1104,9 +1129,9 @@
 
       // Scrolling the panel to its foot and measuring the LAST control is the
       // question that matters. The panel is allowed to scroll: it holds
-      // twenty-four category checkboxes and the window is what it is. What is not
-      // allowed is a foot the user cannot get to, which is what a paragraph under
-      // every control produced.
+      // every category checkbox and the window is what it is. What is not allowed
+      // is a foot the user cannot get to, which is what a paragraph under every
+      // control produced.
       const footReachable = await (async () => {
         // The LAST SECTION's header, not the last .rail-block: a block inside a
         // folded section has zero height by design, so measuring one would report
@@ -1283,7 +1308,14 @@
       // ABOVE it. Both are read as viewport x, so the comparison is the one the
       // eye makes.
       const nestedLabel = subgroup.querySelector(".rail-field-label");
-      const sectionLabel = rail.querySelector(".rail-section > .cgroup-body .section-label");
+      // Anchored on the DOCUMENT COUNTRY label, the first labelled block in the
+      // rail (it leads the Built-in patterns section). A positional selector
+      // would silently re-point at another section's first label the moment the
+      // sections change, and the comparison would then be against nothing in
+      // particular.
+      const sectionLabel = rail.querySelector("#document-country")
+        ?.closest(".rail-block")?.querySelector(".section-label")
+        ?? rail.querySelector(".rail-section .cgroup-body .section-label");
 
       return {
         selectWidth: Math.round(select.getBoundingClientRect().width),

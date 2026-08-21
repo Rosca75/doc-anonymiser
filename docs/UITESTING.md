@@ -171,11 +171,16 @@ unknown height is not a contract.
   in it, so there is real anonymised text for a view to reach for by mistake; a
   state with no placeholders anywhere would pass for the wrong reason. The pane is
   also asserted to be non-empty, for the same reason.
-- **the Configure rail is the two route sections**, no `[data-railtab]` chips,
-  Smart detection on, Local AI off, and every category checkbox present **and
-  laid out with a non-zero height** (issue 3). Present in the DOM is not the same
-  as reachable. The count is an EQUALITY against the fixture, not a floor: with a
-  floor, adding a category and leaving the fixture behind keeps the harness green.
+- **the Configure rail is the three route sections**, no `[data-railtab]` chips,
+  Built-in patterns and Heuristic discovery on, Local LLM discovery off, the two
+  switch-less panels below them counted as `.rail-panel` rather than as routes,
+  each route's title and switch measured on ONE row with the title unclipped, and
+  every switchable category checkbox present **and laid out with a non-zero
+  height** (issue 3). Present in the DOM is not the same as reachable. The count
+  is an EQUALITY against the fixture, not a floor: with a floor, adding a category
+  and leaving the fixture behind keeps the harness green. `custom_patterns` is
+  outside that count on purpose: it is declarative, permanently on, and has no
+  switch in the rail at all.
 - **the Configure panel spends 0px on prose, keeps its explanations, does not
   make the page scroll, and has a reachable foot.** Prose is measured in PIXELS
   rather than counted by class, because a paragraph given a different class would

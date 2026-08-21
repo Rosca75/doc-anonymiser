@@ -62,7 +62,7 @@ test("the caption names the route when more than one is running", () => {
   const caption = detectionCaption(running({
     phase: "ai", phaseIndex: 1, phaseCount: 2, startedAt: null,
   }).discovery);
-  assert.match(caption, /Local AI \(2\/2\)/);
+  assert.match(caption, /Local LLM discovery \(2\/2\)/);
   // Two routes read the same files twice; without the route name the second
   // pass looks like the first one starting over.
   assert.match(caption, /a\.docx \(1 of 3\)/);
