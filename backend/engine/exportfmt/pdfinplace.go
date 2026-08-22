@@ -39,6 +39,7 @@ import (
 
 	asposepdf "github.com/aspose-pdf-foss/aspose-pdf-foss-for-go"
 
+	"doc-anonymiser/backend/engine"
 	"doc-anonymiser/backend/engine/convert"
 )
 
@@ -565,4 +566,33 @@ func pdfLeakLabel(cfg Config, needle string) string {
 		}
 	}
 	return redactTerm(needle)
+}
+
+// --- shared PDF export vocabulary ---------------------------------------
+//
+// These three live here because the in-place export is the only PDF export.
+// They are separate declarations rather than inlined at their call sites
+// because each answers a question the whole path asks repeatedly.
+
+// pdfMetaPart is the MetaField.Part marker for PDF Info fields. The review
+// panel is format-agnostic by design, so the format's name has to travel in
+// the field rather than in the panel.
+const pdfMetaPart = "pdf:Info"
+
+// allowlisted is a nil-safe allowlist check. A nil allowlist allows nothing,
+// which is what a Config built without one means: the veto is opt-in.
+func allowlisted(a *engine.Allowlist, term string) bool {
+	return a != nil && a.Contains(term)
+}
+
+// redactTerm shortens an original for an error message (first rune, then one
+// star per remaining rune). A refusal has to be actionable without repeating
+// the sensitive value into a log or a screenshot, and the placeholder beside
+// it is what identifies which value it was.
+func redactTerm(s string) string {
+	rs := []rune(s)
+	if len(rs) <= 1 {
+		return s
+	}
+	return string(rs[0]) + strings.Repeat("*", len(rs)-1)
 }

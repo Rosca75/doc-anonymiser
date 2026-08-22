@@ -353,10 +353,10 @@ NOT cached: they are the largest thing the feature holds.
   with rectangles, the model splits a line where two fragments merely share a
   baseline and joins a wrapped continuation only when the geometry agrees, and
   the working markdown is DERIVED from the model, so the import's text and the
-  export's locations can never disagree about what a line is. The
-  ledongthuc-based extractor stays beside it with no production caller, as the
-  deep tier's comparison baseline, until the owner's decommissioning gate
-  (root `CLAUDE.md` §7).
+  export's locations can never disagree about what a line is. It is the ONLY
+  PDF extractor in the module: G4's recorded per-category floors
+  (`exportfmt.referenceFloors`) are what guard extraction against regression,
+  so no second parser is carried to compare against.
 - `engine/ooxml/` holds the plumbing docx, pptx and xlsx share: pulling a named
   `docProps/` part out of the archive, token-scanning named elements out of an
   XML part, and reading the cached counts (`<Pages>`, `<Slides>`). Both
@@ -379,10 +379,10 @@ NOT cached: they are the largest thing the feature holds.
   an occurrence the whole ladder cannot locate REFUSES the export naming the
   .md way out; the save is `RemoveUnusedObjects()` then `WriteTo`, never a
   naked `WriteTo`; and the whole-file leak scan (`exportfmt/pdfscan.go`) runs
-  over the produced bytes as a BLOCKING self-check. The regenerated exporter
-  (`exportfmt/pdf.go`, fpdf) stays compiled with no production caller until
-  the owner's decommissioning gate, and is never a fallback behind the
-  refusal.
+  over the produced bytes as a BLOCKING self-check. There is no regenerated
+  PDF exporter to fall back to, deliberately: the refusal names the .md
+  export, and a second PDF writer kept for a rare failure path would be
+  unreviewed code in the leak-critical path.
 - **The same-format export makes TWO passes over one part, text first and then
   pictures, deliberately sequential rather than merged.** A merged splice set
   would have to reconcile a text replacement that falls INSIDE a picture element
@@ -426,8 +426,7 @@ NOT cached: they are the largest thing the feature holds.
 Authoritative table is in the root `CLAUDE.md` §7. Key pins: Go 1.26.x,
 Wails v2.13.x (v2 API only, never v3 idioms), `xuri/excelize/v2` v2.9.x,
 `aspose-pdf-foss-for-go` v0.7.0 (vendored; the PDF import and in-place
-export), `ledongthuc/pdf` (2025-05-11 commit) and `go-pdf/fpdf` v0.9.0 (both
-without a production caller, awaiting the owner's decommissioning gate).
+export, and the module's ONE PDF library).
 Default Ollama model `qwen3.5:0.8b` (a setting, never hardcoded outside
 defaults).
 

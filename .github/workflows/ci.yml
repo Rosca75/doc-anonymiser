@@ -111,6 +111,20 @@ jobs:
           go vet -tags=integration,deep ./...
           go build -tags=integration,deep ./...
 
+      # Windows-target guard, run on the LINUX runner. The application is pure
+      # Go with no CGo (CLAUDE.md's P0 pattern), so it cross-compiles, and this
+      # is the only job on push that compiles the Windows-only packages at all:
+      # the vendored Wails tree reaches webview2runtime through wv2installer,
+      # which is `//go:build windows`, so a missing //go:embed target or a
+      # Windows-only compile error there is invisible to every step above and
+      # would first appear when a tag triggers the release build. Cross-compiling
+      # costs one build of the changed packages, not a windows-latest runner.
+      - name: Windows-target compile guard (cross-compiled)
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: go build -tags=integration,deep ./...
+
       # The unit tier itself: -race every push (race instrumentation costs
       # ~5-10x, so it runs here and not on the integration job), plus coverage,
       # which gates on this tier only.

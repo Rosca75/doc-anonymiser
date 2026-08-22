@@ -5,6 +5,16 @@
 /build/*
 !/build/appicon.png
 *.exe
+# ...except a vendored one. `go mod vendor` copies the Windows binary that the
+# vendored Wails tree embeds (webview2runtime's
+# //go:embed MicrosoftEdgeWebview2Setup.exe) into vendor/, where the rule above
+# would keep it untracked: a vendored file is part of the SOURCE of a build,
+# never its output. Without this negation a clean clone's vendor tree is
+# incomplete and every Windows build fails with
+# `pattern MicrosoftEdgeWebview2Setup.exe: no matching files found`, which no
+# Linux job can see. The negation must stay AFTER the rule it negates: the last
+# matching pattern wins.
+!vendor/**/*.exe
 
 # Wails may generate a frontend dist folder on some setups
 /frontend/dist
@@ -28,6 +38,13 @@ Thumbs.db
 # Screenshots and browser logs from the rendering harnesses. They are evidence
 # for ONE run, uploaded by CI on failure and deleted locally on success.
 /scripts/uitest/artifacts/
+
+# --- Eyeball artefacts from the PDF redaction tests ---
+# Renders written by the integration tier so a human can LOOK at what a
+# redaction produced. Nothing reads them, every run rewrites them, and a file
+# that reappears in `git status` after merely running the tests teaches people
+# to ignore `git status`. Evidence for ONE run, like the UI artefacts above.
+/backend/testdata/golden/
 
 # --- Deterministic audit layer output (docs/audit.md) ---
 # Tool binaries, raw tool output and SARIF files: evidence for ONE run,

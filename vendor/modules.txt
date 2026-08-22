@@ -14,9 +14,6 @@ github.com/bep/debounce
 # github.com/go-ole/go-ole v1.3.0
 ## explicit; go 1.12
 github.com/go-ole/go-ole
-# github.com/go-pdf/fpdf v0.9.0
-## explicit; go 1.20
-github.com/go-pdf/fpdf
 # github.com/godbus/dbus/v5 v5.1.0
 ## explicit; go 1.12
 github.com/godbus/dbus/v5
@@ -54,9 +51,6 @@ github.com/leaanthony/slicer
 # github.com/leaanthony/u v1.1.1
 ## explicit; go 1.21
 github.com/leaanthony/u
-# github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
-## explicit; go 1.24.1
-github.com/ledongthuc/pdf
 # github.com/mattn/go-colorable v0.1.13
 ## explicit; go 1.15
 github.com/mattn/go-colorable

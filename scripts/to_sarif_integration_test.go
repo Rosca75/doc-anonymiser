@@ -25,22 +25,46 @@
 package scripts
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
-// pythonExe finds an interpreter, preferring the names that exist on the
-// owner's Windows laptop, where "python3" is not one of them.
+// pythonExe finds a WORKING interpreter. Resolving a name on PATH is not
+// enough to know one is there: Windows ships App Execution Aliases for
+// "python" and "python3" under WindowsApps that exist as executables, are
+// found by exec.LookPath, and then refuse to run, printing an
+// install-from-the-Store message and exiting non-zero. A name that resolves to
+// one of those shadows a real interpreter installed elsewhere on the same
+// PATH, so trusting LookPath turns a machine that HAS Python into a wall of
+// exit-code failures.
+//
+// So each candidate is PROVEN by running it: an interpreter that cannot
+// report its own version is not one, and the search moves on.
 func pythonExe(t *testing.T) string {
 	t.Helper()
+	var tried []string
 	for _, name := range []string{"python3", "python", "py"} {
-		if p, err := exec.LookPath(name); err == nil {
+		p, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		out, err := exec.Command(p, "--version").CombinedOutput()
+		if err == nil && bytes.HasPrefix(bytes.TrimSpace(out), []byte("Python")) {
 			return p
 		}
+		// Record WHICH candidate lied, so a skip on a machine that looks like
+		// it has Python says why it was not usable.
+		tried = append(tried, fmt.Sprintf("%s (%s) did not report a version", name, p))
+	}
+	if len(tried) > 0 {
+		t.Skipf("no working Python interpreter: %s. On Windows this is usually the Store alias shadowing a real install: disable it in Settings > Apps > Advanced app settings > App execution aliases, or put the real interpreter's directory earlier on PATH", strings.Join(tried, "; "))
 	}
 	t.Skip("no Python interpreter on PATH; skipping the SARIF converter tests")
 	return ""

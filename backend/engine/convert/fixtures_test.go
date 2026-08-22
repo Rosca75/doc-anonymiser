@@ -43,7 +43,7 @@ var allFixtures = []string{
 	"report.docx", "deck.pptx", "images.docx", "images.pptx",
 	"workbook.xlsx", "textlayer.pdf", "scanned.pdf",
 	"pdf_gate_text.pdf", "pdf_gate_surfaces.pdf", "pdf_gate_images.pdf",
-	"pdf_gate_fragments.pdf",
+	"pdf_gate_fragments.pdf", "pdf_no_tounicode.pdf",
 }
 
 // fixture returns the named testdata file, generating it first if missing.
@@ -92,6 +92,8 @@ func generateFixture(t *testing.T, name string) []byte {
 		return buildPDFGateImages(t)
 	case "pdf_gate_fragments.pdf":
 		return buildPDFGateFragments()
+	case "pdf_no_tounicode.pdf":
+		return buildNoToUnicodePDF()
 	default:
 		t.Fatalf("unknown fixture %q", name)
 		return nil
@@ -325,14 +327,42 @@ func buildImageOnlyPDF() []byte {
 // assemblePDF wraps a content stream into a complete one-page PDF file
 // with a correct xref table.
 func assemblePDF(content string) []byte {
-	objects := []string{
+	return writePDFObjects([]string{
 		"<< /Type /Catalog /Pages 2 0 R >>",
 		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
 		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
 		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
 		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-	}
+	})
+}
 
+// buildNoToUnicodePDF constructs a page drawn with a /Type0 /Identity-H font
+// that carries NO /ToUnicode CMap and no embedded font program.
+//
+// Nothing can map its glyph codes back to characters, which is the shape
+// convert.ErrUnmappablePDF refuses: a file with a real text layer, undamaged and
+// not scanned, whose extracted text contains no letters. It is its own fixture
+// because the refusal needs a test of its own now that the only real-world
+// example of the failure, a deck printed through Microsoft Print To PDF,
+// extracts correctly again.
+func buildNoToUnicodePDF() []byte {
+	// Identity-H takes two-byte codes, so the drawn string is hex.
+	content := "BT /F1 24 Tf 72 700 Td <002400250026002700280003002400250026> Tj ET\n"
+	return writePDFObjects([]string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+		// The Type0 font, deliberately WITHOUT /ToUnicode.
+		"<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+NoMap /Encoding /Identity-H /DescendantFonts [6 0 R] >>",
+		"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /AAAAAA+NoMap /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 7 0 R /DW 600 >>",
+		"<< /Type /FontDescriptor /FontName /AAAAAA+NoMap /Flags 4 /FontBBox [0 0 1000 1000] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 >>",
+	})
+}
+
+// writePDFObjects serialises numbered objects into a complete PDF with a
+// correct xref table.
+func writePDFObjects(objects []string) []byte {
 	var buf bytes.Buffer
 	buf.WriteString("%PDF-1.4\n")
 	offsets := make([]int, len(objects)+1) // index 0 is the free object

@@ -17,6 +17,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -93,11 +95,23 @@ func findChromium() (string, error) {
 		tried = append(tried, "$PLAYWRIGHT_BROWSERS_PATH (not set)")
 	}
 
+	// A name resolving on PATH is not evidence a browser is there. Windows
+	// ships App Execution Aliases that resolve and then refuse to run, and a
+	// wrapper script for an uninstalled snap does the same on Linux: both
+	// SHADOW a real binary further down the same PATH. So each candidate is
+	// PROVEN by asking it for its version, and one that cannot answer is
+	// passed over rather than returned and failed on later.
 	for _, name := range []string{"chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome"} {
-		if path, err := exec.LookPath(name); err == nil {
-			return path, nil
+		path, err := exec.LookPath(name)
+		if err != nil {
+			tried = append(tried, name+" (not on PATH)")
+			continue
 		}
-		tried = append(tried, name+" (on PATH)")
+		if !reportsAVersion(path) {
+			tried = append(tried, name+" (on PATH but did not report a version)")
+			continue
+		}
+		return path, nil
 	}
 
 	return "", fmt.Errorf(
@@ -106,6 +120,16 @@ func findChromium() (string, error) {
 			"  fix:        install Chromium, or set CHROME to an existing Chrome/Chromium binary,\n"+
 			"              for example CHROME=/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
 		strings.Join(tried, ", "))
+}
+
+// reportsAVersion runs a candidate browser with --version and reports whether
+// it answered. A short timeout is part of the check: a stub that hangs is as
+// useless as one that errors, and the harness must not wait on it.
+func reportsAVersion(path string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "--version").CombinedOutput()
+	return err == nil && len(bytes.TrimSpace(out)) > 0
 }
 
 func isExecutableFile(path string) bool {
