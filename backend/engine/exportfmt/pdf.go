@@ -28,6 +28,7 @@ import (
 	"github.com/go-pdf/fpdf"
 
 	"doc-anonymiser/backend/engine"
+	"doc-anonymiser/backend/engine/convert"
 )
 
 // pdfMetaPart is the MetaField.Part marker for PDF Info fields (the
@@ -40,7 +41,9 @@ const pdfMetaPart = "pdf:Info"
 // import, and re-checking here keeps the export path honest.
 func ExportPDF(anonymised string, reviewed []MetaField, cfg Config) ([]byte, error) {
 	if strings.TrimSpace(anonymised) == "" {
-		return nil, fmt.Errorf("No text layer found, this PDF is likely scanned. OCR is not supported; convert it externally first.")
+		// The one definition of the scanned-PDF sentence, so the wording
+		// cannot drift from the import refusal it mirrors.
+		return nil, fmt.Errorf("%s", convert.ErrScannedPDF)
 	}
 
 	doc := fpdf.New("P", "mm", "A4", "")
