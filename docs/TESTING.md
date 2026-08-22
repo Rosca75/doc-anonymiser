@@ -207,6 +207,20 @@ is how the mistake comes back.
   each remaining hunk to the RECORDED REASON it is not a defect rather than only
   counting them: a bare budget lets a new defect hide inside it the moment an
   accounted-for one is fixed.
+- **The owner-authored synthetic set is the second recorded exception to "a
+  committed generator builds every binary fixture".**
+  `backend/testdata/framework_contract.pdf`, `nstar_contoso_flyer.pdf` (each
+  with an `_anon` counterpart) and `working_deck.pptx` /
+  `working_deck_anon.pptx` were authored by the owner as SYNTHETIC stand-ins
+  for the confidential reference documents: every name, company and code in
+  them is invented, and no string in them comes from any real document, so
+  they are safe to read, quote and assert against in tests. They exist because
+  a generator cannot reproduce what makes them useful, which is a real
+  authoring tool's output (Word/PowerPoint print-to-PDF fragment structure,
+  justified paragraphs, e-seal blocks, flyer layouts): the same reason the
+  framework-agreement pair above is committed rather than generated. They
+  cannot be regenerated from code; treat them as read-only inputs, exactly
+  like the framework-agreement pair.
 - **Precision and recall are asserted with NUMBERS.** The review list a user
   actually reads is a product decision, and a change that floods it again has to
   fail the build rather than be noticed months later on a real document. The

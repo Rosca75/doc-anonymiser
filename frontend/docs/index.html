@@ -91,6 +91,17 @@
       refused: converting it would need optical character recognition, which
       this application does not do.
     </p>
+    <p>
+      A PDF can also be exported as a same-format copy: the original file with
+      the text replaced in place. Replaced words are redrawn in a substitute
+      font, or drawn as white text on a black redaction box where the
+      replacement cannot fit its line, and the review panel counts each kind
+      before you save. When a replacement cannot be located in the original
+      layout at all, the export refuses and names the .md export as the way
+      out, because a copy that silently missed a replacement would look
+      finished while still carrying the original text. Every produced PDF is
+      re-scanned whole before it is handed back.
+    </p>
   </section>
 
   <section id="steps">
@@ -331,10 +342,11 @@
     </p>
     <p>
       The tab is offered for Word and PowerPoint documents. For a PDF it says
-      so and there is nothing to do: a PDF is saved by rebuilding it from the
-      anonymised text, so every picture in the original is already gone from
-      the file the application writes. Excel workbooks are not reviewed, and
-      text, CSV and Markdown files have no pictures in them.
+      so and there is nothing to decide yet: the same-format PDF export keeps
+      the original file with only the text replaced, so its pictures pass
+      through exactly as they are. A PDF whose pictures must not leave this
+      machine should be exported as .md instead. Excel workbooks are not
+      reviewed, and text, CSV and Markdown files have no pictures in them.
     </p>
     <p>
       Your decisions are saved with a session, and the exported report names
@@ -444,10 +456,19 @@
         survive every pass, including the AI ones.
       </dd>
 
-      <dt>A PDF was refused</dt>
+      <dt>A PDF was refused on import</dt>
       <dd>
         It has no text layer, which means it is a scan or an image. Convert it
         to a text bearing document with another tool first, then import that.
+      </dd>
+
+      <dt>A PDF export was refused</dt>
+      <dd>
+        One or more replacements could not be located in the original file's
+        layout, and a copy that silently missed one would look finished while
+        still carrying the original text. The refusal names each placeholder
+        and page. Export the document as .md instead, which always contains
+        the fully anonymised text.
       </dd>
     </dl>
   </section>

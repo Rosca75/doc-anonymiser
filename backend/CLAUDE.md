@@ -346,8 +346,17 @@ NOT cached: they are the largest thing the feature holds.
 ## Converters (`engine/convert/`) and same-format export (`engine/exportfmt/`)
 
 - Converters are **pure Go and one-way**: binary formats convert TO markdown
-  on import (docx, pptx, xlsx via excelize, pdf via ledongthuc/pdf —
-  experimental). Only the standard library + the pinned excelize / pdf libs.
+  on import (docx, pptx, xlsx via excelize, pdf via the vendored
+  aspose-pdf-foss-for-go library — experimental). Only the standard library +
+  the pinned libs. PDF extraction goes through the FRAGMENT LINE MODEL
+  (`convert/pdflayout.go`): the library's layout extraction returns fragments
+  with rectangles, the model splits a line where two fragments merely share a
+  baseline and joins a wrapped continuation only when the geometry agrees, and
+  the working markdown is DERIVED from the model, so the import's text and the
+  export's locations can never disagree about what a line is. The
+  ledongthuc-based extractor stays beside it with no production caller, as the
+  deep tier's comparison baseline, until the owner's decommissioning gate
+  (root `CLAUDE.md` §7).
 - `engine/ooxml/` holds the plumbing docx, pptx and xlsx share: pulling a named
   `docProps/` part out of the archive, token-scanning named elements out of an
   XML part, and reading the cached counts (`<Pages>`, `<Slides>`). Both
@@ -362,6 +371,18 @@ NOT cached: they are the largest thing the feature holds.
   once at import and never written, moved or modified. If pure-Go PDF quality
   is unacceptable, the recorded fallback is a wazero WASM extractor (P3), not
   CGo.
+- **The PDF export is IN-PLACE replacement** (`exportfmt/pdfinplace.go`): the
+  produced file is the original's bytes with the pipeline's replacements
+  applied through the location ladder (`exportfmt/pdfladder.go`; the rungs,
+  the fits-check, the redaction gesture and the refusal are specified in root
+  `CLAUDE.md` §5's PDF rules). Three disciplines hold the leak-critical path:
+  an occurrence the whole ladder cannot locate REFUSES the export naming the
+  .md way out; the save is `RemoveUnusedObjects()` then `WriteTo`, never a
+  naked `WriteTo`; and the whole-file leak scan (`exportfmt/pdfscan.go`) runs
+  over the produced bytes as a BLOCKING self-check. The regenerated exporter
+  (`exportfmt/pdf.go`, fpdf) stays compiled with no production caller until
+  the owner's decommissioning gate, and is never a fallback behind the
+  refusal.
 - **The same-format export makes TWO passes over one part, text first and then
   pictures, deliberately sequential rather than merged.** A merged splice set
   would have to reconcile a text replacement that falls INSIDE a picture element
@@ -404,8 +425,11 @@ NOT cached: they are the largest thing the feature holds.
 
 Authoritative table is in the root `CLAUDE.md` §7. Key pins: Go 1.26.x,
 Wails v2.13.x (v2 API only, never v3 idioms), `xuri/excelize/v2` v2.9.x,
-`ledongthuc/pdf` (2025-05-11 commit), `go-pdf/fpdf` v0.9.0. Default Ollama
-model `qwen3.5:0.8b` (a setting, never hardcoded outside defaults).
+`aspose-pdf-foss-for-go` v0.7.0 (vendored; the PDF import and in-place
+export), `ledongthuc/pdf` (2025-05-11 commit) and `go-pdf/fpdf` v0.9.0 (both
+without a production caller, awaiting the owner's decommissioning gate).
+Default Ollama model `qwen3.5:0.8b` (a setting, never hardcoded outside
+defaults).
 
 ## Where to look next
 

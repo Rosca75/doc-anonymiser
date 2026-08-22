@@ -126,6 +126,12 @@ doc-anonymiser/
 │   │   ├── csvmd.go           # CSV ⇄ markdown-table conversion (round-trip)
 │   │   ├── convert/           # binary-format → markdown converters (pure Go, one-way)
 │   │   │   ├── docx.go / pptx.go / xlsx.go / pdf.go
+│   │   │   ├── pdflayout.go   # the PDF fragment line model: rectangles per
+│   │   │                      #   fragment, a split rule (fragments merely
+│   │   │                      #   sharing a baseline are not one line) and a
+│   │   │                      #   geometry-gated wrapped-line join; the working
+│   │   │                      #   markdown is DERIVED from it, and the in-place
+│   │   │                      #   export locates against the same model
 │   │   ├── presets.go        # presets as scoped DATA: one row per scope, so a
 │   │   │                      #   preset FAMILY is a chip row and adding one is a
 │   │   │                      #   table row rather than a rewrite
@@ -154,7 +160,13 @@ doc-anonymiser/
 │   │   │                      #   sniffer and the thumbnailer. Its own package
 │   │   │                      #   because convert/ and exportfmt/ both need it
 │   │   │                      #   and neither may own it
-│   │   └── exportfmt/         # same-format export: rewrite of original bytes (docx/pptx/xlsx, pdf experimental)
+│   │   └── exportfmt/         # same-format export: rewrite of original bytes.
+│   │                          #   docx/pptx/xlsx splice the archive; the pdf
+│   │                          #   export (EXPERIMENTAL) replaces text IN PLACE
+│   │                          #   through a location ladder (pdfladder.go,
+│   │                          #   pdfinplace.go), refuses on an unlocatable
+│   │                          #   occurrence, and runs the whole-file leak scan
+│   │                          #   (pdfscan.go) as a blocking self-check
 │   ├── ollama/
 │   │   └── client.go          # THE ONLY FILE that talks to Ollama (net/http)
 │   └── testdata/              # fixture documents for unit tests (lives with the engine that uses it).
@@ -232,15 +244,18 @@ doc-anonymiser/
   (enforced by copy_guard_test.go and frontend/copy.test.js), and never a retired
   route name (the same two guards).
 - **Converters are pure Go and one-way:** `backend/engine/convert/*` may use
-  only the Go standard library, excelize, and ledongthuc/pdf (pinned in §7).
+  only the Go standard library, excelize, and the vendored
+  aspose-pdf-foss-for-go library (pinned in §7; ledongthuc/pdf stays pinned as
+  the deep tier's comparison baseline until the owner's decommissioning gate).
   No CGo, ever. Binary formats convert TO markdown on import for preview and
   processing. The app can additionally write a NEW anonymised copy in the
   source format (docx/pptx/xlsx, and experimentally pdf) at export time; this
   copy is produced by rewriting a copy of the original bytes held in memory
-  (`backend/engine/exportfmt/`). The source file on disk is read once at import
-  and never written, moved, or modified. If pure-Go PDF extraction quality
-  proves unacceptable, the recorded fallback is a wazero-embedded WASM
-  extractor (P3 pattern) — not a CGo binding.
+  (`backend/engine/exportfmt/`); the PDF copy is the original's own structure
+  with the text replaced IN PLACE, never a regenerated layout. The source file
+  on disk is read once at import and never written, moved, or modified. If
+  pure-Go PDF extraction quality proves unacceptable, the recorded fallback is
+  a wazero-embedded WASM extractor (P3 pattern) — not a CGo binding.
 
 ## 5. Domain rules
 
@@ -272,12 +287,51 @@ doc-anonymiser/
     import including CSV round-trip export; COMPLEX → structured JSON
     rendered in a fenced code block, anonymised as text. Trailing empty
     rows/columns trimmed via data-bounds detection.
-  - `.pdf` → per-page text extraction with the spacing-repair heuristic
-    (collapse runs of single uppercase characters split by kerning; collapse
-    doubled spaces). PDF support is EXPERIMENTAL and labelled as such in the
-    UI. A PDF yielding no extractable text is rejected with: "No text layer
-    found, this PDF is likely scanned. OCR is not supported; convert it
-    externally first."
+  - `.pdf` → per-page extraction through the vendored library's layout mode:
+    text FRAGMENTS with rectangles, grouped into lines by the model in
+    `convert/pdflayout.go`. Two rules shape a line, each against measured
+    evidence: a line SPLITS where the gap between two fragments exceeds a
+    plausible word space (expressed as a multiple of the font size, never a
+    point value: fragments that merely share a baseline are not one line, and
+    reading them as one manufactures a value that was never contiguous text),
+    and a wrapped continuation JOINS its line only when the geometry agrees
+    (baselines within 1.6 line heights, a shared left margin, the first line
+    reaching its block's right edge, no terminal punctuation), because joining
+    on punctuation alone glues headings together and invents names. The
+    spacing-repair heuristic then runs over the derived text (collapse runs of
+    single uppercase characters split by kerning; collapse doubled spaces).
+    PDF support is EXPERIMENTAL and labelled as such in the UI. A PDF yielding
+    no extractable text is rejected with: "No text layer found, this PDF is
+    likely scanned. OCR is not supported; convert it externally first." A file
+    so damaged that no page opens gets its OWN message naming the damage: the
+    scanned sentence would send the user to an OCR tool that cannot help.
+
+    The PDF EXPORT is in-place replacement: the produced file is the
+    original's bytes with the pipeline's replacements applied
+    (`exportfmt/pdfinplace.go`), never a regenerated layout. Each replaced
+    string is found through a LOCATION LADDER, each rung more expensive and
+    less precise than the one above: (1) literal search, replaced in line only
+    when the grown placeholder provably stays clear of its same-line
+    neighbours (it redraws at the same size and grows rightward, without
+    reflow); (2) a whitespace-tolerant search, redacted; (3) a FRAGMENT WALK
+    over the line model, whitespace-insensitive and ligature-folded, for a
+    value split across draw operations or spelt differently from any
+    extraction, redacted as the union of its fragments' rectangles; (4) a
+    wrapped match, head and tail redacted with the placeholder over the head.
+    Every redaction draws its placeholder as the annotation's own overlay text
+    in EXPLICIT white (the apply path draws it black otherwise, which is
+    extractable text nobody can see). An occurrence the whole ladder cannot
+    locate REFUSES the export, naming the placeholder, the page and the .md
+    export as the way out: a half-anonymised PDF that looks finished is worse
+    than a refusal. The save is `RemoveUnusedObjects()` then `WriteTo`, never
+    a naked `WriteTo` (§7's pin row says why), and the whole-file leak scan
+    runs over the produced bytes as a BLOCKING self-check. Non-content
+    surfaces follow the docx precedent: annotation contents, outline titles,
+    the Info dictionary and the XMP packet are rewritten through the same span
+    machinery plus the metadata review; embedded file attachments and
+    JavaScript actions are DROPPED from the produced copy and reported, never
+    silent. The ladder's rung counts reach the export review panel and the run
+    report.
 - **Process order (fixed):** 1) import → convert to markdown working form,
   2) anonymise, 3) export. CSV imports are converted to a markdown table for
   preview/processing but retain their grid model so they can round-trip back
@@ -664,7 +718,7 @@ doc-anonymiser/
   |---|---|---|
   | `.pptx` | full | pictures are DrawingML blips in the slides, layouts and masters, with their bytes in `ppt/media/*` |
   | `.docx` | full | pictures are `w:drawing`, or the legacy `w:pict` Word still writes, with their bytes in `word/media/*` |
-  | `.pdf` | not offered, one explanatory line | the PDF export REGENERATES the file from the anonymised text, so every picture in a source PDF is already absent from everything this application writes |
+  | `.pdf` | not offered yet, one explanatory line | the in-place PDF export keeps the original file with only the text replaced, so its pictures pass through EXACTLY as they arrived, and the explanatory line says so with the .md export as the way out for a picture that must not leave |
   | `.xlsx` | not offered | the owner's decision: a spreadsheet's pictures are not worth the complexity |
   | `.csv` `.txt` `.md` | not offered | there are no pictures in them |
 
@@ -986,9 +1040,9 @@ doc-anonymiser/
 | Model tag quantisation | K-quant or `Q8_0`, never `-bf16` / `-f16` | BF16 has no fast CPU dot-product kernel without AVX512-BF16, so ggml converts every weight to FP32 inside the dot product and the model runs several times slower on the target laptop. The plain `qwen3.5:0.8b` (`Q8_0`) and `qwen3.5:4b` (`Q4_K_M`) tags are already correct; this rule exists to stop someone "upgrading" to a BF16 build for quality |
 | Frontend | vanilla JS (ES2020), embedded via go:embed | no npm, no bundler |
 | github.com/xuri/excelize/v2 | v2.9.x | XLSX reading; pure Go, MIT licence |
-| github.com/ledongthuc/pdf | v0.0.0-20250511090121-5959a4027728 | pure-Go PDF text extraction (BSD-3); limited by design — see §5 PDF rules. Pinned to the 2025-05-11 commit (go.mod `go 1.24.1`), adopted with the Go 1.26 upgrade: the older 2024-02-01 commit crashes under Go 1.26 (`malformed PDF: cross-reference table not found`), which the 2025 commit fixes |
+| github.com/ledongthuc/pdf | v0.0.0-20250511090121-5959a4027728 | pure-Go PDF text extraction (BSD-3). NO production caller: the production extraction goes through aspose-pdf-foss-for-go, and this library survives only as the deep tier's comparison baseline (`convert.PDFWithPagesLedongthuc`) and the retained regenerated exporter's self-check reader. It leaves, with both, only after the owner explicitly confirms the in-place path's tests are successful against the tagged pre-change release (the decommissioning gate). Pinned to the 2025-05-11 commit (go.mod `go 1.24.1`): the older 2024-02-01 commit crashes under Go 1.26 |
 | github.com/pdfcpu/pdfcpu | NOT ADDED (evaluated at BUILD-02 Phase 13, 2026-07-24) | in-place PDF rewriting was rejected (subset-font glyph availability), so pdfcpu's metadata role is covered by fpdf (new file's Info dict) + ledongthuc/pdf (reading the original's Info dict). The earlier Go-version incompatibility no longer applies under the Go 1.26 pin, but pdfcpu stays out for the functional reason above |
-| github.com/go-pdf/fpdf | v0.9.0 | pure-Go PDF writer for the regenerated-PDF same-format fallback (BUILD-02 Phase 13); MIT; go.mod requires Go 1.20 (compatible with the Go 1.26 pin) |
+| github.com/go-pdf/fpdf | v0.9.0 | pure-Go PDF writer behind the RETAINED regenerated-PDF exporter (`exportfmt.ExportPDF`), which has NO production caller: the production PDF export is the in-place replacement. It is never a fallback behind the in-place export's refusal (the refusal names the .md export instead), and it leaves under the same decommissioning gate as the ledongthuc row. MIT; go.mod requires Go 1.20 |
 | github.com/aspose-pdf-foss/aspose-pdf-foss-for-go | v0.7.0, pinned EXACTLY and **vendored** | pure-Go PDF read/edit/write library behind the in-place PDF export (change-13). MIT; zero third-party dependencies (its go.mod is the module line and `go 1.24`). Pinned to the exact gate-verified version because the module is pre-1.0 and moving fast: **a version bump is never automatic** and re-runs the change-13b gate first (the boundary inventory in `pdf_boundary_test.go`, the save-semantics proof, the extraction counts). The library ships AI copilots that POST document text to a configured endpoint; they live in its `ai` subpackage, which is never imported, never vendored, and whose symbols `pdf_boundary_test.go` forbids repository-wide. Save discipline: `RemoveUnusedObjects()` before every `WriteTo`, because a naked `WriteTo` serialises orphaned pre-edit objects (measured at the 13b gate; both halves pinned by test) |
 | Arimo, Tinos, Cousine, Carlito fonts (bundled inside aspose-pdf-foss-for-go, not a Go module) | as vendored at v0.7.0 | SIL OFL 1.1, metric-compatible substitutes the library redraws replaced text in. Data with a licence, like the Material Symbols and font8x8 rows, not code with a dependency |
 | github.com/aspose-pdf/aspose-pdf-go-cpp | NOT ADDED (evaluated at change-13 planning, 2026-08-21) | the SAME VENDOR's other product: a wrapper over a proprietary native shared library. Rejected: commercial licence with an evaluation watermark and four-page limit until `SetLicense()`, per-platform native binaries beside the executable, and "no CGo compiler, but a native blob anyway" is the letter of the P0 rule without its purpose. `purego` was rejected with it: it would only exist to reach this product, and the FOSS module needs no FFI at all |

@@ -268,6 +268,7 @@ function metaReviewPanel(docName, review) {
     `<div class="card-body stack">` +
     `<p class="hint">${escapeHTML(EXPORT.reviewHint)}</p>` +
     grid +
+    pdfTextNote(review.pdfText) +
     imageNote(review.images) +
     `<div class="add-row">` +
     `<span class="hint">${escapeHTML(EXPORT.fileName)}</span>` +
@@ -302,6 +303,28 @@ function imageNote(summary) {
   if (total === 0) return "";
   const text = changed > 0 ? EXPORT.imagesChanged(summary) : EXPORT.imagesAllKept(total);
   return `<p class="hint image-note">${escapeHTML(text)}</p>`;
+}
+
+/**
+ * pdfTextNote(plan) is the in-place PDF export's line above the review's
+ * export button: what the location ladder will do to the text, and, when
+ * something cannot be located at all, that the export WILL refuse and the
+ * .md export is the way out.
+ *
+ * Go answers with the plan for a .pdf review only, and nothing at all for the
+ * other formats, and nothing at all is what this renders then: the OOXML
+ * exports splice by offset and have no ladder to describe.
+ *
+ * @param {{counts: {literal:number, tolerant:number, fragment:number, wrapped:number},
+ *          unlocated?: Array<{placeholder:string, page:number}>}|null|undefined} plan
+ * @returns {string} the line's HTML, or "" when there is nothing to say
+ */
+function pdfTextNote(plan) {
+  if (!plan) return "";
+  if (plan.unlocated?.length) {
+    return `<p class="hint pdf-text-note pdf-text-refusal">${escapeHTML(EXPORT.pdfUnlocated(plan.unlocated.length))}</p>`;
+  }
+  return `<p class="hint pdf-text-note">${escapeHTML(EXPORT.pdfLadder(plan.counts))}</p>`;
 }
 
 // --- The footer -----------------------------------------------------------
@@ -535,6 +558,9 @@ function wireDocuments(container) {
             // Absent for a format with no image review, which is what makes the
             // panel say nothing rather than "0 images".
             images: meta?.images ?? null,
+            // Absent for every format but .pdf: only the in-place PDF export
+            // has a location ladder to describe.
+            pdfText: meta?.pdfText ?? null,
           });
         } catch (err) {
           notify(String(err?.message ?? err), "warn");
