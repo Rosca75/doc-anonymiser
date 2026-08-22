@@ -1482,7 +1482,7 @@ export const IMAGES = {
   // user changes file reads as a bug, and this sentence is the answer to the
   // question a missing tab would raise.
   reason: {
-    pdf_images_removed: "PDF export rebuilds the document as text, so every image in a PDF is already removed from the exported file. There is nothing to review here.",
+    pdf_images_removed: "The PDF export keeps the original file with only the text replaced, so its pictures pass through exactly as they are. Reviewing a PDF's pictures is not supported yet; if a picture must not leave this machine, export the document as .md instead.",
     format_not_supported: "Image review is available for Word and PowerPoint files. This document has no images to review.",
   },
 
@@ -1601,7 +1601,7 @@ export const EXPORT = {
     return `.${ext} (same format)`;
   },
   nativeCaption: "Keeps the original layout. Your source file is not changed.",
-  pdfCaption: "Experimental: a simplified layout, not a copy of the original design. Your source file is not changed.",
+  pdfCaption: "Experimental: the original file with the text replaced in place. Replaced words are redrawn in a substitute font, or drawn on a redaction box where they cannot fit. Your source file is not changed.",
   plainCaption: "A plain export of the anonymised text.",
   copyTooltip: "Copy the anonymised text",
   /** savedPlain / copied report a per-document action. */
@@ -1642,6 +1642,36 @@ export const EXPORT = {
   imagesAllKept(n) {
     if (n === 1) return "This copy keeps the document's one image, exactly as it is.";
     return `This copy keeps all ${n} of the document's images, exactly as they are.`;
+  },
+  /**
+   * pdfLadder(counts) is what the in-place PDF export will do to the text,
+   * stated on the review panel one line above the button that writes the
+   * file: a redrawn word and a redaction box look different on the page, so
+   * the user should expect each before opening the copy.
+   *
+   * The rungs are broken out rather than totalled, for the reason the image
+   * treatments are: "12 replacements" alone does not say whether the words
+   * were redrawn in line or boxed out.
+   */
+  pdfLadder(counts) {
+    const total = (counts?.literal ?? 0) + (counts?.tolerant ?? 0)
+      + (counts?.fragment ?? 0) + (counts?.wrapped ?? 0);
+    if (total === 0) return "This copy replaces no text in the original layout.";
+    const parts = [];
+    if (counts?.literal) parts.push(`${counts.literal} redrawn in line`);
+    if (counts?.tolerant) parts.push(`${counts.tolerant} on a redaction box`);
+    if (counts?.fragment) parts.push(`${counts.fragment} boxed across text fragments`);
+    if (counts?.wrapped) parts.push(`${counts.wrapped} boxed across a line wrap`);
+    return `${total} replacement${total === 1 ? "" : "s"} will be made inside the original layout (${parts.join(", ")}).`;
+  },
+  /**
+   * pdfUnlocated(n) warns that the export WILL refuse: n replacements exist
+   * in the working text but nowhere the ladder can find them in the file's
+   * layout, and a copy that silently missed them would look finished while
+   * still carrying the original text.
+   */
+  pdfUnlocated(n) {
+    return `${n} replacement${n === 1 ? "" : "s"} cannot be located in the original layout, so this export will be refused. Export the document as .md instead, which always contains the fully anonymised text.`;
   },
   property: "Property",
   current: "Current",

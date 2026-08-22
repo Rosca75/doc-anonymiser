@@ -43,6 +43,7 @@ var allFixtures = []string{
 	"report.docx", "deck.pptx", "images.docx", "images.pptx",
 	"workbook.xlsx", "textlayer.pdf", "scanned.pdf",
 	"pdf_gate_text.pdf", "pdf_gate_surfaces.pdf", "pdf_gate_images.pdf",
+	"pdf_gate_fragments.pdf",
 }
 
 // fixture returns the named testdata file, generating it first if missing.
@@ -89,6 +90,8 @@ func generateFixture(t *testing.T, name string) []byte {
 		return buildPDFGateSurfaces(t)
 	case "pdf_gate_images.pdf":
 		return buildPDFGateImages(t)
+	case "pdf_gate_fragments.pdf":
+		return buildPDFGateFragments()
 	default:
 		t.Fatalf("unknown fixture %q", name)
 		return nil
@@ -693,6 +696,50 @@ func buildPDFGateSurfaces(t *testing.T) []byte {
 		{Body: "<< /Type /Outlines /First 8 0 R /Last 8 0 R /Count 1 >>"},
 		{Body: "<< /Title (Confidential Halvorsen review) /Author (Nadia Okonkwo) /Producer (fixture generator) >>"},
 	}, "/Info 11 0 R ")
+}
+
+// buildPDFGateFragments: one landscape slide-shaped page whose text
+// reproduces the fragment geometry a real deck exhibits, in Courier so every
+// coordinate is exact (Courier advances 0.6 em per glyph, so a 6-character
+// word at 28 pt is 100.8 pt wide, no font metrics needed):
+//
+//   - "Sylvie" and "Renard" drawn as TWO text operations on one baseline with
+//     a 6.7 pt gap (a real word space at 28 pt): one name, never one string
+//     inside any single operation, so a literal search cannot find it whole.
+//   - "Jean Paul" and "Aubry" the same, 8.0 pt gap: the longest run of the
+//     value findable in one operation is 2 of its 3 tokens.
+//   - "Bertrand" and "Malraux" on one baseline with a 384.8 pt gap: two
+//     labels at opposite ends of the slide that merely share a baseline.
+//     Reading them as one line MANUFACTURES a person name that was never
+//     contiguous text; the extraction's split rule must keep them apart.
+//   - a 12 pt two-line paragraph wrapping the value "Nordwind Associates"
+//     across the break, for the join rule and the wrapped ladder rung.
+//
+// Every name is invented; none comes from any real document.
+func buildPDFGateFragments() []byte {
+	line := func(size int, x float64, y int, text string) string {
+		esc := strings.NewReplacer(`\`, `\\`, `(`, `\(`, `)`, `\)`).Replace(text)
+		return fmt.Sprintf("BT /F1 %d Tf %.1f %d Td (%s) Tj ET\n", size, x, y, esc)
+	}
+	content := "" +
+		// 28 pt Courier: glyph 16.8 pt. "Sylvie" 72..172.8; gap 6.7.
+		line(28, 72, 500, "Sylvie") + line(28, 179.5, 500, "Renard") +
+		// "Jean Paul" 9 glyphs 72..223.2; gap 8.0.
+		line(28, 72, 452, "Jean Paul") + line(28, 231.2, 452, "Aubry") +
+		// "Bertrand" 72..206.4; gap 384.8 puts "Malraux" at 591.2.
+		line(28, 72, 404, "Bertrand") + line(28, 591.2, 404, "Malraux") +
+		// 12 pt Courier: glyph 7.2 pt. The wrap: 13 pt baseline drop, shared
+		// left margin, the first line reaching the block's right edge.
+		line(12, 72, 340, "The contract was signed for Nordwind") +
+		line(12, 72, 327, "Associates by the managing director")
+
+	return assembleRawPDF([]rawPDFObject{
+		{Body: "<< /Type /Catalog /Pages 2 0 R >>"},
+		{Body: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"},
+		{Body: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 960 540] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"},
+		{Body: "<< >>", Stream: []byte(content)},
+		{Body: "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>"},
+	}, "")
 }
 
 // buildPDFGateImages: a JPEG XObject placed on BOTH pages through one shared

@@ -467,9 +467,10 @@ A decision is attached to the ASSET and applies to every place it appears, so a
 logo on five slides is one question and one answer.
 
 **`applicable: false` is an ANSWER, not a failure.** `reason` is a CODE the
-frontend maps to its own copy, never a sentence: `"pdf_images_removed"` (the
-PDF export regenerates the file from text, so a source PDF's pictures are
-already absent from everything the application writes) and
+frontend maps to its own copy, never a sentence: `"pdf_images_removed"` (a
+PDF's pictures have no review yet: the in-place export keeps the original
+file with only the text replaced, so its pictures pass through exactly as
+they are, and the copy behind the code says so) and
 `"format_not_supported"` (xlsx, csv, txt, md). `warnings` are codes too:
 `"unreadable_part"` and `"linked_images"`.
 
@@ -549,7 +550,7 @@ session file exactly like one accepted on Identify.
 |---|---|---|
 | `exportDocumentFormats(name)` | name | offered extensions (default first) for one result document |
 | `saveDocument(name, ext)` | name, ext | opens a save dialog for one document |
-| `getSameFormatMetadata(name, ext)` | name, ext | `{fields, filename, images?}`: document properties with proposed replacements, the proposed anonymised filename, and what this save will do to the document's PICTURES, for the review panel |
+| `getSameFormatMetadata(name, ext)` | name, ext | `{fields, filename, images?, pdfText?}`: document properties with proposed replacements, the proposed anonymised filename, what this save will do to the document's PICTURES, and, for a `.pdf`, what the in-place export's location ladder will do to the TEXT, for the review panel |
 | `saveSameFormat(name, ext, fields, filename)` | name, ext, reviewed fields, filename | writes the same-format copy with the REVIEWED metadata and filename |
 | `chooseExportFolder()` | — | opens the native FOLDER picker and resolves to the chosen path, or `""` when cancelled. Picks only; writes nothing (BUILD-05 Phase 3) |
 | `exportAllZipTo(dir)` | folder path | writes the batch zip into that folder with NO second dialog and resolves to the full path written. The only dialog-free write in the contract, allowed because the folder was chosen explicitly and the zip carries no re-identification key (decision 4). An existing archive is never overwritten, the new one is numbered |
@@ -569,6 +570,19 @@ line above the button that writes the file. The all-kept case is the one that
 earns the line: a user who never opened the IMAGE tab has decided nothing, and
 this is the last surface that can tell them the pictures are leaving exactly as
 they arrived.
+
+`pdfText` is PRESENT only for a `.pdf` review. The in-place PDF export applies
+the pipeline's replacements INSIDE the original file through a location ladder
+(replace in line, redact after a tolerant match, redact across text fragments,
+redact across a line wrap), and the plan is its dry run:
+`{counts: {literal, tolerant, fragment, wrapped}, unlocated?: [{placeholder, page}]}`.
+The panel states the counts one line above the button that writes the file,
+because a redrawn word and a redaction box look different on the page. A
+non-empty `unlocated` means the export WILL refuse (a copy that silently
+missed a replacement would look finished while still carrying the original
+text), and the panel says so with the `.md` export as the way out; the
+refusal itself arrives as `saveSameFormat`'s rejection, naming each
+placeholder and page.
 
 The exported REPORT carries the same answer in full. Its JSON gains an `images`
 key, one entry per document that has pictures, shaped

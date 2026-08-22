@@ -1,7 +1,10 @@
 // engine/convert/pdf.go — .pdf → markdown text (one-way), EXPERIMENTAL.
 //
-// Uses ledongthuc/pdf (pinned, CLAUDE.md §7) for per-page plain-text
-// extraction, followed by the nb1 spacing-repair heuristic. PDF text
+// Extraction reads the PDF through the vendored pure-Go library's layout
+// extraction (pdflayout.go): fragments with rectangles, grouped into lines by
+// the split and join rules the line model owns, so the text the pipeline
+// detects on is text that was actually contiguous on the page. The derived
+// text then gets the nb1 spacing-repair heuristic, line by line. PDF text
 // extraction is limited by design (CLAUDE.md §5): PDFs store positioned
 // glyph runs, not words, so kerning can split words apart. Two repairs are
 // applied per line (ported from the nb1 notebook):
@@ -13,7 +16,15 @@
 //  2. Whitespace collapse: runs of spaces become one space.
 //
 // A PDF with no extractable text is rejected with the exact actionable
-// message from CLAUDE.md §5 — it is almost certainly a scan.
+// message from CLAUDE.md §5 — it is almost certainly a scan. A file so
+// damaged that no page survives the open gets its OWN message, because
+// telling the user their truncated file "is likely scanned" sends them to an
+// OCR tool that cannot help.
+//
+// The ledongthuc-based extractor is kept beside the production one, with no
+// production caller: it is the deep tier's comparison baseline, and it leaves
+// together with its dependency under the owner's decommissioning gate
+// (CLAUDE.md §7's pin rows).
 package convert
 
 import (
@@ -49,40 +60,24 @@ func PDF(raw []byte) (markdown string, warnings []string, err error) {
 //
 // The pages slice is what the page-scoped local-model scan addresses (CLAUDE.md
 // §5): the user picks "pages 2 to 4" and only those page texts are sent to the
-// model. joining pages with pdfPageSeparator reproduces markdown exactly, so
+// model. Joining pages with pdfPageSeparator reproduces markdown exactly, so
 // the two returns never drift.
 func PDFWithPages(raw []byte) (markdown string, pages []string, warnings []string, err error) {
-	// ledongthuc/pdf can panic on malformed files (it was written for
-	// well-formed input). A panic must become an actionable error, never
-	// crash the app — hence the recover.
-	defer func() {
-		if r := recover(); r != nil {
-			markdown, pages, warnings = "", nil, nil
-			err = fmt.Errorf(
-				"the PDF could not be parsed (internal reader error: %v), the file may be damaged or use unsupported features; try re-printing it to PDF and importing again", r)
-		}
-	}()
-
-	reader, err := pdflib.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	layouts, err := PDFLayouts(raw)
 	if err != nil {
+		return "", nil, nil, err
+	}
+	if len(layouts) == 0 {
+		// The library salvage-opens truncated files with the pages still in
+		// the bytes, so ZERO pages means nothing survived: the file is
+		// damaged, not scanned, and the scanned message would mislead.
 		return "", nil, nil, fmt.Errorf(
-			"the file is not a readable PDF (%v), if it is password-protected, remove the password first", err)
+			"the PDF could not be read as pages, the file is likely damaged or truncated; re-export or re-print the original to PDF and import that file instead")
 	}
 
 	var repaired bool
-	for i := 1; i <= reader.NumPage(); i++ {
-		page := reader.Page(i)
-		if page.V.IsNull() {
-			continue
-		}
-		// nil font map: we only want plain text, not styled runs.
-		text, err := page.GetPlainText(nil)
-		if err != nil {
-			// One unreadable page degrades to a warning; the remaining
-			// pages are still worth anonymising.
-			warnings = append(warnings, fmt.Sprintf("page %d could not be extracted (%v), its text is missing from the output", i, err))
-			continue
-		}
+	for _, layout := range layouts {
+		text := PDFPageText(layout)
 		fixed := RepairPDFText(text)
 		if fixed != text {
 			repaired = true
@@ -93,13 +88,86 @@ func PDFWithPages(raw []byte) (markdown string, pages []string, warnings []strin
 	}
 
 	if len(pages) == 0 {
-		// The exact scanned-PDF message from CLAUDE.md §5.
+		// Pages opened but none carries text: the exact scanned-PDF message
+		// from CLAUDE.md §5.
 		return "", nil, nil, fmt.Errorf("%s", ErrScannedPDF)
 	}
 
 	warnings = append(warnings, "PDF text extraction is EXPERIMENTAL, always review the converted text before anonymising")
 	if repaired {
 		warnings = append(warnings, "spacing repair was applied to fix kerning artefacts, verify that words were re-joined correctly")
+	}
+	return strings.Join(pages, pdfPageSeparator) + "\n", pages, warnings, nil
+}
+
+// PDFPageText is THE derivation of one page's pipeline text from its line
+// model, BEFORE the spacing repair. The exporter uses it too (repairing the
+// result exactly as PDFWithPages does), so what the pipeline detected on and
+// what the exporter searches for are the same string by construction.
+func PDFPageText(layout PDFPageLayout) string {
+	return layout.text()
+}
+
+// classifyPDFOpenError turns the library's open error into the actionable
+// message the import shows, keeping the password case distinguishable: an
+// encrypted file has a remedy (remove the password) a damaged one does not.
+func classifyPDFOpenError(err error) error {
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "encrypt") || strings.Contains(msg, "password") {
+		return fmt.Errorf(
+			"the PDF is password-protected (%w); remove the password (open it and save an unprotected copy) and import that copy instead", err)
+	}
+	return fmt.Errorf(
+		"the file is not a readable PDF (%w), if it is password-protected, remove the password first", err)
+}
+
+// pdfDamagedError wraps a parser panic or a page-read failure into the
+// actionable damaged-file message.
+func pdfDamagedError(cause interface{}) error {
+	return fmt.Errorf(
+		"the PDF could not be parsed (internal reader error: %v), the file may be damaged or use unsupported features; try re-printing it to PDF and importing again", cause)
+}
+
+// PDFWithPagesLedongthuc is the ledongthuc-based extractor: per-page plain
+// text plus the same spacing repair. It has NO production caller; the deep
+// tier measures the production extractor against it on the reference
+// documents, and it is deleted together with its dependency once the owner
+// confirms the decommissioning gate.
+func PDFWithPagesLedongthuc(raw []byte) (markdown string, pages []string, warnings []string, err error) {
+	// ledongthuc/pdf can panic on malformed files (it was written for
+	// well-formed input). A panic must become an actionable error, never
+	// crash the app — hence the recover.
+	defer func() {
+		if r := recover(); r != nil {
+			markdown, pages, warnings = "", nil, nil
+			err = pdfDamagedError(r)
+		}
+	}()
+
+	reader, err := pdflib.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		return "", nil, nil, fmt.Errorf(
+			"the file is not a readable PDF (%w), if it is password-protected, remove the password first", err)
+	}
+
+	for i := 1; i <= reader.NumPage(); i++ {
+		page := reader.Page(i)
+		if page.V.IsNull() {
+			continue
+		}
+		// nil font map: we only want plain text, not styled runs.
+		text, err := page.GetPlainText(nil)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("page %d could not be extracted (%v), its text is missing from the output", i, err))
+			continue
+		}
+		fixed := RepairPDFText(text)
+		if strings.TrimSpace(fixed) != "" {
+			pages = append(pages, strings.TrimSpace(fixed))
+		}
+	}
+	if len(pages) == 0 {
+		return "", nil, nil, fmt.Errorf("%s", ErrScannedPDF)
 	}
 	return strings.Join(pages, pdfPageSeparator) + "\n", pages, warnings, nil
 }
@@ -142,13 +210,13 @@ func RepairPDFText(s string) string {
 // the whole Unicode "Alphabetic Presentation Forms" Latin ligature block
 // (U+FB00..U+FB06). "ﬅ"/"ﬆ" (long-s t / s t) both fold to "st".
 var ligatureReplacer = strings.NewReplacer(
-	"\uFB00", "ff",
-	"\uFB01", "fi",
-	"\uFB02", "fl",
-	"\uFB03", "ffi",
-	"\uFB04", "ffl",
-	"\uFB05", "st",
-	"\uFB06", "st",
+	"ﬀ", "ff",
+	"ﬁ", "fi",
+	"ﬂ", "fl",
+	"ﬃ", "ffi",
+	"ﬄ", "ffl",
+	"ﬅ", "st",
+	"ﬆ", "st",
 )
 
 // foldLigatures replaces every ligature glyph in the text with its ASCII
@@ -156,6 +224,14 @@ var ligatureReplacer = strings.NewReplacer(
 // allocation when the text contains no ligature.
 func foldLigatures(s string) string {
 	return ligatureReplacer.Replace(s)
+}
+
+// FoldPDFLigatures is foldLigatures for the in-place PDF export: the pipeline
+// text is ligature-folded, so a locator comparing pipeline strings against
+// raw fragment text must fold the fragments the same way or a value spelt
+// with a ligature on the page can never be matched.
+func FoldPDFLigatures(s string) string {
+	return foldLigatures(s)
 }
 
 // repairLine fixes one line: interleaved-capitals first, then whitespace

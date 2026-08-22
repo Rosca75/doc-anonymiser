@@ -162,7 +162,7 @@ the owner made or must make, `mine` for a call this plan makes and argues,
 | D1 | The dependency is `aspose-pdf-foss-for-go`, pinned exactly at v0.7.0 and **vendored**; the C++ product and `purego` are rejected and recorded as rejected | above, and Q6 | mine, gated by D15 |
 | D2 | Whether `WriteTo` is a full rewrite is proved with bytes in 13b, never assumed; an incremental-update output is an automatic NO-GO | Q1 | 13b |
 | D3 | Every export runs a **whole-file leak check**: every stream in the produced PDF is decompressed and scanned for every registry original (string-object encodings included), and the export FAILS naming the surface that leaked. It replaces the body-only `assertNoOriginals` | Q1 | mine |
-| D4 | Surfaces the text pass cannot reach are anonymised through the existing metadata review (Info, XMP) or scrubbed as text at export (annotations, form values, outlines), and the rest are **dropped from the produced copy** (page thumbnails, embedded attachments, JavaScript actions), each drop reported | Q1, Q3 | mine; OQ4 confirmed by the owner, 2026-08-21 |
+| D4 | Surfaces the text pass cannot reach are anonymised through the existing metadata review (Info, XMP) or scrubbed as text at export (annotations, form values, outlines), and the rest are **dropped from the produced copy** (embedded attachments, JavaScript actions), each drop reported. AMENDED by F28 (2026-08-22): page thumbnails move to 13d's picture scope, because a `/Thumb` is a rendered PICTURE of the un-anonymised page, not text, and the library at v0.7.0 exposes no API over it | Q1, Q3, F28 | mine; OQ4 confirmed by the owner, 2026-08-21 |
 | D5 | Binding is **string-driven**, registry original to placeholder, with a fixed fallback ladder: `ReplaceText`, else redact-and-redraw (`NewRedactAnnotation` + `ApplyRedactions` + `Page.AddText` fitted to the original rectangle down to a floor), else a solid redaction box with no caption; every rung is counted and reported | Q2 | mine |
 | D6 | An occurrence that cannot be **located** at all blocks the export with an actionable refusal naming the placeholder and the page; a half-anonymised PDF that looks finished is worse than a refusal. OQ5 is answered: there is NO regenerated-layout fallback behind the refusal, which names the `.md` export as the way out, and `fpdf` leaves | Q2 | mine; OQ5 confirmed by the owner, 2026-08-21 |
 | D7 | Extraction stays **page-shaped** (`Document.Pages`, so `PageCount`, `engine.ScanChunks` and `pagescope.go` are untouched); the working markdown remains the body text in reading order; annotations, form field values and outline titles are NOT added to the markdown and are scrubbed at export through the same span machinery, following the existing docx header/footer precedent, with the extra hits reported as the docx `document_extras` warning is | Q3 | mine |
@@ -691,6 +691,17 @@ image tests moving with it; the export review panel's `images` field and the
 report's picture section covering PDF; `SessionVersion` 13 to 14 with its
 reason line (D16); every implied document edit.
 
+**Revisions forced by 13c's findings (2026-08-22):** page thumbnails join this
+batch's scope (F28, amending D4): a `/Thumb` is a rendered picture of the
+un-anonymised page, the library at v0.7.0 exposes no API over it, and the text
+export cannot reach it, so 13d either drops it through the picture plumbing it
+builds or records the library gap with its mitigation; a produced PDF carrying
+a thumbnail of the un-anonymised page fails the batch. And the retirement of
+`ReasonPDFImagesRemoved` / `pdf_images_removed` (D10) inherits a changed
+sentence: since 13c the copy behind the code states that pictures PASS THROUGH
+unchanged (F29), so the retirement replaces that sentence with the real
+review, not the old already-removed claim.
+
 **Revisions forced by 13b's findings (2026-08-21):** the twice-placed asset
 question is settled with evidence: `ImageInfos()` lists per PLACEMENT and the
 shared object decodes identically from both, so the content-hash identity (D9)
@@ -718,8 +729,8 @@ obligation and not a suggestion.
 |---|---|---|---|
 | 13 (this plan) | done | 2026-08-21 planning session | plan and 13b order written; owner answered OQ1 to OQ5 the same day (§9), 13b cleared to start |
 | 13b | done, CONDITIONAL GO; reference halves measured 2026-08-22 | 2026-08-21 implementation session, 2026-08-22 owner's deep run | every criterion measurable without the reference documents PASSES (G1, G2, G3, G9 hard requirements; G4, G5, G6 fixture halves; G7 prototyped). On the reference documents G4, G5 and G8 PASS and G7 does NOT: 10 of 48 occurrences on the 15-slide deck are UNLOCATED, so the gate reopens on that criterion and 13c's ladder scope grows (§11, findings F17 to F21) |
-| 13c | scoped; order written 2026-08-22 (`docs/change-13c.md`) | | the owner accepted the fragment-aware ladder enlargement on 2026-08-22, which was this batch's entry condition (§5's revisions of that date, findings F19 and F20) |
-| 13d | scoped, not written | | order to be written after 13b's GO, revised after 13c; scope revised by 13b's findings (see §5) |
+| 13c | implemented, steps 1 to 10 and 12; step 11 GATED and not run; acceptance criterion 3 (the G7 census) packaged for the owner | 2026-08-22 implementation session | the fragment line model, the fragment-aware ladder, the in-place export with its refusal and blocking leak scan, the non-content surfaces, the copy, the panel counts and every implied document edit are in (findings F23 to F29). The dependency removals wait for the owner's tests-successful confirmation (D12), so `ledongthuc/pdf`, `fpdf` and the regenerated exporter ship beside the new path with no production caller. The G7 census is an ASSERTION in `pdffoss_gate_deep_test.go` (UNLOCATED must be 0); the implementing environment holds no reference documents (F4), so the owner's `task test:deep` run is the verification |
+| 13d | scoped, not written; scope revised by 13c (F28, F29) | | order to be written after 13c's owner verification; scope revised by 13b's findings (see §5) and by 13c's: page thumbnails join the picture scope (F28), and the `pdf_images_removed` retirement inherits a changed sentence (F29) |
 
 ---
 
@@ -752,6 +763,13 @@ with the decision each finding forced. Measurements land here, as counts.
 | F20 | owner's deep run, 2026-08-22 | the 2-page PDF's census over the PIPELINE's text leaves 1 UNLOCATED, a 2-token `person_names` value. It is absent VERBATIM from the library's raw extraction, carries no ligature the fold would have rewritten, and its two tokens do not share a baseline | a value the pipeline holds can be one that NO extraction contains verbatim, because the reflow and the spacing repair rewrite the text detection runs on. So 13c's ladder cannot locate by string equality with the pipeline's spelling alone, and the wrapped rung's geometry rule (tail above head, within 3 line heights) does not catch this occurrence |
 | F22 | owner's deep run, 2026-08-22 | `main` does not build on WINDOWS from a clean clone. `go mod vendor` wrote `vendor/github.com/wailsapp/wails/v2/internal/webview2runtime/MicrosoftEdgeWebview2Setup.exe` and `.gitignore`'s `*.exe` rule stopped git tracking it, so the committed vendor tree is incomplete and `go build .` fails with `pattern MicrosoftEdgeWebview2Setup.exe: no matching files found`. Nothing catches it: the package is reached only through `internal/wv2installer`, which is Windows-only, so every Go job in `ci.yml` runs on `ubuntu-latest` and never builds it, and the one Windows job is tag-or-dispatch gated AND `continue-on-error`. `release.yml`'s `wails build -platform windows/amd64` would fail on the next tag. It is the ONLY file affected: the two other `.exe` files in the vendored modules' cached copies sit under `testdata/`, which `go mod vendor` never copies | F12's all-or-nothing vendoring has a second cost the batch did not see: the repository's own ignore rules can silently truncate the vendored tree, and the platform that catches it is the one CI does not run. The fix is one negation in `.gitignore` (`!vendor/**/*.exe`) plus committing the 1.8 MB file, and it is the OWNER's call because `*.exe` is ignored deliberately; the alternative is taking `vendor/` out of git, which contradicts D1's auditable-in-tree requirement. Until it is fixed, a Windows checkout needs the file copied in from the module cache by hand |
 | F21 | owner's deep run, 2026-08-22 | G8 and G5 on the reference documents. Import: 8.6 ms incumbent against 5.8 ms library on the 2-page PDF (the library is FASTER), 3.1 ms against 23.2 ms on the 15-slide deck. No-edit `WriteTo`: 4.5 ms and 31.1 ms. Rasterised round trip: 0 differing pixels on every page rendered (2 and 3) | G8 and G5's reference halves PASS with room to spare: the largest export measured is 31 ms against a 30 s budget. The order's "within 3x the incumbent" import guidance is exceeded on the deck (7.5x) at 23 ms absolute, which is exactly why the encoded budget carries a 2 s floor beneath the ratio; no action |
+| F23 | 13c, 2026-08-22 | the split threshold that separates the two measured gap populations is 3 word spaces (0.75 of the smaller adjacent font size): at every plausible size from 12 pt to 28 pt the five real word spacings (6.7 to 8.6 pt) stay under it and the five baseline-sharing gaps (42.9 to 948.4 pt) exceed it, with the nearest must-split gap still 5x the 28 pt threshold | `pdfSplitGapSpaces = 3.0` in `convert/pdflayout.go`, unit-pinned over all ten gaps at both sizes; the rule stays a multiple of the font size, never a point value, exactly as the order requires |
+| F24 | 13c, 2026-08-22 | join-rule calibration on `framework_contract.pdf`: the contract's genuine wraps sit at 1.52 to 1.68 line heights (20.2 to 21.0 pt drops at a 13.3 pt line height), just OVER the order's "about 1.5", so the gate is 1.6 line heights with a 1 em right-edge slack. Detection counts, incumbent / after 1a / after 1a+1b: `framework_contract.pdf` entity_names 2/1/2 (1b recovers the wrapped two-token organisation 1a alone loses), person_names 10/10/9 (two heading half-artifacts merge into one artifact when the title block joins: one row fewer to review, no real value lost), product_names 1/0/0 (see F25); `nstar_contoso_flyer.pdf` identical in every category (9 categories, 36 values); `pdf_gate_fragments.pdf` person_names 0/1/1 and entity_names 0/0/1 (the split and the join each recover a value the incumbent never saw) | 1b SHIPS beside 1a: its one cost on the fixtures is the merge of two review-list artifacts into one, and its gain is the wrapped organisation the order names. The gate constants live beside the rules with the calibration reasoning |
+| F25 | 13c, 2026-08-22 | `framework_contract.pdf` product_names 1 to 0 under 1a: the incumbent read the page header's three separate cells (a reference code, a spacer, the document-type label) as ONE line, and the heuristic proposed the label as a product name from that manufactured context. The split keeps the three cells apart; the label survives verbatim on its own line, and the heuristic's heading gate then declines it | recorded as the measured cost of 1a on the fixtures: the dropped suggestion is document furniture (the file's own type label), not a client identifier, and the string itself stays in the working text where a manual declaration can still reach it. G4's per-category letter is traded against F19's manufactured-value class, which is the whole point of the rule |
+| F26 | 13c, 2026-08-22 | both body gestures repaint more than the matched rectangle: `ReplaceText` re-emits its fragment and `ApplyRedactions` repositions the line's surviving glyphs through kerning gaps, so the rest of the REPLACED LINE drifts sub-pixel (measured 380 and 53 differing pixels on the two gate-fixture pages; every drift inside the line, none outside it) | acceptance criterion 5's "pixels outside replaced regions identical" is asserted per LINE: the replaced line is the replaced region, and every other line and the rest of the page must render pixel-identical, which the integration suite pins |
+| F27 | 13c, 2026-08-22 | `Document.Info()` at v0.7.0 returns Info-dictionary strings as the file's RAW bytes: a UTF-16BE value (the encoding fpdf and most writers use) comes back as byte salad with its BOM intact, so the review showed garbage and the scrub could not match a name stored two bytes per character | every Info read decodes through the leak scanner's own UTF-16BE decoder (`decodePDFInfoText`), so the review, the scrub and the scanner agree on what the text is |
+| F28 | 13c, 2026-08-22 | Q1's table says page thumbnails (`/Thumb`) are dropped from the produced copy, but the library at v0.7.0 exposes no API over page thumbnail entries, and a thumbnail is not TEXT the span machinery can scrub: it is a rendered PICTURE of the un-anonymised page | the drop moves to 13d, whose subject is the PDF's pictures: D4 is amended (thumbnails are 13d's), 13d's scope gains the decision (drop `/Thumb` through whatever picture plumbing 13d builds, or record the library gap and its mitigation). Until then the leak scan reports image streams it cannot decode rather than passing them silently, and none of the committed fixtures a produced file is built from carries a thumbnail forward |
+| F29 | 13c, 2026-08-22 | the IMAGE tab's PDF sentence ("every image in a PDF is already removed") became FALSE the moment the export stopped regenerating: an in-place copy carries the original's pictures through unchanged, and a reassurance that says otherwise is a leak wearing a sentence | the copy behind `pdf_images_removed` now states the pass-through and names the .md export as the way out for a picture that must not leave; the IDENTIFIER keeps its name until 13d retires it with its `vocabulary_guard_test.go` entry (D10), because a label is a display string and an identifier is a contract |
 
 ---
 
@@ -891,3 +909,27 @@ of a real deck's values, and it would fire for strings that were never in the
 document, which is the worst of both outcomes: an export refused for a leak
 that does not exist. **13c cannot be written against the ladder as scoped**;
 the scope revision below is the entry condition now.
+
+### The re-run G7 census — 13c, 2026-08-22
+
+13c's answer to both halves is in: extraction splits a line where two
+fragments merely share a baseline (so a manufactured string is never offered
+to detection, F19's first cause), and the ladder gained the fragment-walk rung
+(so a value split across draw operations, or spelt differently from any
+extraction, is located by walking the line model, F19's second cause and
+F20's). The census itself is now an ASSERTION rather than a log line:
+`pdffoss_gate_deep_test.go` runs detection's needles page by page through the
+PRODUCTION ladder over the PRODUCTION pipeline text and FAILS unless UNLOCATED
+is 0 on each reference document, naming the findings log as where any survivor
+must be explained.
+
+The implementing environment does not hold the reference documents (F4), so
+the numbers themselves are the owner's to take: run `task test:deep` with
+`DOC_ANONYMISER_REFERENCE_PDF` and `DOC_ANONYMISER_REFERENCE_DECK` set. On the
+committed fixtures the same machinery measures: the F19-geometry fixture
+(`pdf_gate_fragments.pdf`, same-baseline gaps 6.7 to 948.4 pt, values whose
+longest searchable run is 1 to 3 of 2 to 5 tokens) exports with its two
+split-across-operations names located by the fragment rung and its wrapped
+organisation by the wrapped rung, UNLOCATED 0; and a value the old extraction
+would have manufactured neither reaches detection nor causes a refusal. This
+note is amended with the owner's counts when that run lands.

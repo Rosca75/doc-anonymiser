@@ -200,6 +200,51 @@ test("the properties review names one changed picture in the singular", () => {
     "1 image will be changed in this copy (1 removed).");
 });
 
+/** openPdfReview(pdfText) puts a .pdf properties review on screen carrying
+ *  that ladder plan, which is the shape Go answers GetSameFormatMetadata
+ *  with for a PDF. */
+function openPdfReview(pdfText) {
+  resetState();
+  setMetaReview("report.pdf", {
+    ext: "pdf", filename: "report_anon.pdf", fields: [], images: null, pdfText,
+  });
+  return renderToString();
+}
+
+test("the pdf review breaks the ladder counts out by rung", () => {
+  // A redrawn word and a redaction box look different on the page, so the
+  // panel says which the copy will carry before the file is written.
+  const html = openPdfReview({ counts: { literal: 8, tolerant: 2, fragment: 1, wrapped: 1 } });
+  assert.equal(textOf(html, ".pdf-text-note"),
+    "12 replacements will be made inside the original layout (8 redrawn in line, 2 on a redaction box, 1 boxed across text fragments, 1 boxed across a line wrap).");
+});
+
+test("the pdf review warns that an unlocated replacement will refuse the export", () => {
+  // A refusal must never be a surprise: the panel is the last surface before
+  // the export button, so the warning and the way out live here.
+  const html = openPdfReview({
+    counts: { literal: 3, tolerant: 0, fragment: 0, wrapped: 0 },
+    unlocated: [{ placeholder: "[PERSON_2]", page: 4 }],
+  });
+  const note = textOf(html, ".pdf-text-refusal");
+  assert.match(note, /will be refused/);
+  assert.match(note, /\.md instead/);
+});
+
+test("the pdf review says so when the copy replaces no text", () => {
+  const html = openPdfReview({ counts: { literal: 0, tolerant: 0, fragment: 0, wrapped: 0 } });
+  assert.equal(textOf(html, ".pdf-text-note"),
+    "This copy replaces no text in the original layout.");
+});
+
+test("a non-pdf review renders no ladder line at all", () => {
+  // Go answers with no plan for the OOXML formats: they splice by offset and
+  // have no ladder to describe, so the panel says nothing rather than zeros.
+  const html = openReview({ kept: 1, boxed: 0, blurred: 0, removed: 0 });
+  assert.equal(exists(html, ".pdf-text-note"), false,
+    "a pptx review must render no pdf ladder line");
+});
+
 test("the properties review says nothing about pictures for a format with none", () => {
   // Go answers with no summary at all for a PDF and for an .xlsx, and a line
   // reading "0 images" on a PDF would contradict the IMAGE tab, which says a PDF

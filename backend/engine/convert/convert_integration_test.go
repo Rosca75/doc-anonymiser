@@ -5,7 +5,7 @@
 //
 // TIER: integration (docs/TESTING.md). Each test decodes a committed BINARY
 // fixture (.docx/.pptx/.xlsx/.pdf) through the real format machinery: the
-// standard-library zip reader, excelize, and ledongthuc/pdf. That is
+// standard-library zip reader, excelize, and the vendored PDF library. That is
 // real-format behaviour, which the integration tier owns; the unit tier next
 // door keeps only the fixture-free logic (RepairPDFText, the non-zip
 // rejection). These are also the one end-to-end happy path per input format
@@ -14,6 +14,7 @@
 package convert
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -150,6 +151,44 @@ func TestPDFScannedRejected(t *testing.T) {
 	}
 	if err.Error() != ErrScannedPDF {
 		t.Errorf("error = %q, want exactly %q", err.Error(), ErrScannedPDF)
+	}
+}
+
+// TestPDFDamagedIsNotScanned pins the two refusals apart: a file so damaged
+// that no page survives the open gets the damaged-file message, never the
+// scanned-PDF one, because "this is likely scanned" sends the user to an OCR
+// tool that cannot help a truncated file.
+func TestPDFDamagedIsNotScanned(t *testing.T) {
+	raw := fixture(t, "pdf_gate_text.pdf")
+	truncated := raw[:len(raw)/10]
+	_, _, err := PDF(truncated)
+	if err == nil {
+		t.Fatal("a file truncated to 10% was accepted")
+	}
+	if err.Error() == ErrScannedPDF {
+		t.Fatalf("a damaged file got the scanned-PDF message; the two need different sentences")
+	}
+	if !strings.Contains(err.Error(), "damaged") {
+		t.Errorf("damaged-file error %q does not tell the user the file is damaged", err)
+	}
+}
+
+// TestPDFEncryptedIsDistinguishable pins the password refusal: an encrypted
+// file has a remedy a damaged one does not, and the message must say it.
+func TestPDFEncryptedIsDistinguishable(t *testing.T) {
+	doc := gateOpen(t, fixture(t, "pdf_gate_text.pdf"))
+	doc.SetPassword("les-mots-de-passe", "les-mots-de-passe")
+	doc.RemoveUnusedObjects()
+	var buf bytes.Buffer
+	if _, err := doc.WriteTo(&buf); err != nil {
+		t.Fatalf("writing the encrypted fixture: %v", err)
+	}
+	_, _, err := PDF(buf.Bytes())
+	if err == nil {
+		t.Fatal("a password-protected file was accepted without the password")
+	}
+	if !strings.Contains(err.Error(), "password") {
+		t.Errorf("encrypted-file error %q does not name the password remedy", err)
 	}
 }
 

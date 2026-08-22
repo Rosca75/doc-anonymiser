@@ -28,8 +28,15 @@ custom fields) and the export filename go through the same anonymisation
 with an explicit review step; nothing is rewritten silently. The app never
 modifies your original files: when you choose a same-format export, it
 writes a new anonymised copy and your source file is left exactly as it
-was. PDF support is experimental: it reads the text layer only and does
-not perform OCR, so scanned PDFs cannot be processed.
+was. PDF files can also export a same-format anonymised copy, and it is the
+original file with the text replaced in place: replaced words are redrawn in
+a substitute font, or drawn as white text on a black redaction box where the
+replacement cannot fit its line, and the export refuses (pointing you to the
+`.md` export) rather than writing a copy that silently missed a replacement.
+Every produced PDF is re-scanned whole, every stream decompressed, before it
+is handed back. PDF support is experimental: it reads the text layer only and
+does not perform OCR, so scanned PDFs cannot be processed, and a PDF's
+pictures are not reviewed yet and pass through exactly as they are.
 
 It replaces emails, phone numbers, IBANs, national IDs, VAT numbers, person
 names, client names, project names and more with stable placeholders such as
@@ -124,10 +131,11 @@ Suggestion silently answers "reject" on your behalf.
    contacts the model, so nothing can be replaced that you did not accept.
 4. **Export**: save the anonymised documents through a save dialog
    (single files, a zip of everything, or the clipboard). CSV files come
-   back out as CSV; Word, PowerPoint and Excel files can export a
-   same-format copy with layout preserved (PDF experimentally, as a
-   simplified regenerated layout), each behind a document-properties
-   review. Your original files are never modified.
+   back out as CSV; Word, PowerPoint, Excel and (experimentally) PDF files
+   can export a same-format copy with layout preserved, each behind a
+   document-properties review. The PDF copy is the original file with the
+   text replaced in place, never a rebuilt layout. Your original files are
+   never modified.
 
 ## Images
 
@@ -162,9 +170,10 @@ Where the review is offered:
 
 - **Word and PowerPoint**: fully reviewed, and your decisions reach the
   same-format copy.
-- **PDF**: not offered, and nothing is lost by it. A PDF export rebuilds the
-  document from the anonymised text, so every picture in a source PDF is already
-  absent from the file the app writes.
+- **PDF**: not offered yet. The same-format PDF export keeps the original file
+  with only the text replaced, so its pictures pass through exactly as they
+  are; the app says so before you save, and a document whose pictures must not
+  leave should be exported as `.md` instead.
 - **Excel**: not offered. A spreadsheet's pictures are left as they are.
 - **Text, CSV and Markdown**: there are no pictures in them.
 

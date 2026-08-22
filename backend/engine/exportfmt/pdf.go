@@ -1,20 +1,21 @@
-// engine/exportfmt/pdf.go — EXPERIMENTAL same-format PDF export
+// engine/exportfmt/pdf.go — the REGENERATED PDF export, retained without a
+// production caller.
 //
-// Evaluation outcome: in-place body
-// text replacement inside PDF content streams was NOT adopted. Subset
-// fonts frequently lack the glyphs a placeholder needs, and pixel
-// stability cannot be guaranteed. The recorded fallback (13c) is
-// implemented instead: a REGENERATED PDF built from the anonymised
-// working text via go-pdf/fpdf (pure Go, MIT, pinned in CLAUDE.md §7),
-// with a simplified layout: one page per source page where the page
-// breaks are known (the import converter separates pages by blank
-// lines), plain paragraphs otherwise, and the reviewed metadata written
-// into the new file's Info dictionary.
+// The production PDF export is the in-place replacement (pdfinplace.go): the
+// original file's bytes with the pipeline's replacements applied. This file
+// is the previous mechanism, a new simplified PDF built from the anonymised
+// working text via go-pdf/fpdf, and it stays compiled, tested and unwired
+// until the owner explicitly confirms the in-place path's tests are
+// successful against the tagged pre-change release (the decommissioning gate
+// in CLAUDE.md §7's pin rows); it is then deleted together with its
+// dependency, never re-wired as a fallback: the refusal names the .md export
+// as the way out, and a second PDF writer kept for a rare failure path would
+// be unreviewed code in the leak-critical path.
 //
-// Body coverage guarantee (13d): before returning, the produced PDF is
-// re-extracted with the SAME ledongthuc reader the importer uses and the
-// export FAILS with an actionable error if any registry original is
-// still readable — a leaky file is never shipped silently.
+// Body coverage guarantee: before returning, the produced PDF is re-extracted
+// with the ledongthuc reader and the export FAILS with an actionable error if
+// any registry original is still readable — a leaky file is never shipped
+// silently.
 package exportfmt
 
 import (
@@ -27,41 +28,12 @@ import (
 	"github.com/go-pdf/fpdf"
 
 	"doc-anonymiser/backend/engine"
+	"doc-anonymiser/backend/engine/convert"
 )
-
-// pdfInfoFields are the Info-dictionary keys offered for review
-// in stable order.
-var pdfInfoFields = []string{"Title", "Author", "Subject", "Keywords", "Creator", "Producer"}
 
 // pdfMetaPart is the MetaField.Part marker for PDF Info fields (the
 // review panel is format-agnostic by design).
 const pdfMetaPart = "pdf:Info"
-
-// ExtractPDFMetadata reads the Info dictionary of the original PDF with
-// the already-pinned ledongthuc reader (no new parser dependency).
-func ExtractPDFMetadata(raw []byte) ([]MetaField, error) {
-	reader, err := ledongthuc.NewReader(bytes.NewReader(raw), int64(len(raw)))
-	if err != nil {
-		return nil, fmt.Errorf("the PDF could not be parsed (%v); re-import the original file and try again", err)
-	}
-	info := reader.Trailer().Key("Info")
-	if info.IsNull() {
-		return nil, nil // no Info dictionary: nothing to review
-	}
-	var out []MetaField
-	for _, name := range pdfInfoFields {
-		v := info.Key(name)
-		if v.IsNull() {
-			continue
-		}
-		text := v.Text()
-		if strings.TrimSpace(text) == "" {
-			continue
-		}
-		out = append(out, MetaField{Part: pdfMetaPart, Name: name, Value: text})
-	}
-	return out, nil
-}
 
 // ExportPDF regenerates an anonymised PDF from the working text
 // (ResultDocument.Anonymised) with the reviewed metadata. anonymised
@@ -69,7 +41,9 @@ func ExtractPDFMetadata(raw []byte) ([]MetaField, error) {
 // import, and re-checking here keeps the export path honest.
 func ExportPDF(anonymised string, reviewed []MetaField, cfg Config) ([]byte, error) {
 	if strings.TrimSpace(anonymised) == "" {
-		return nil, fmt.Errorf("No text layer found, this PDF is likely scanned. OCR is not supported; convert it externally first.")
+		// The one definition of the scanned-PDF sentence, so the wording
+		// cannot drift from the import refusal it mirrors.
+		return nil, fmt.Errorf("%s", convert.ErrScannedPDF)
 	}
 
 	doc := fpdf.New("P", "mm", "A4", "")
