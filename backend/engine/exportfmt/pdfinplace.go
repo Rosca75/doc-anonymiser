@@ -66,8 +66,12 @@ func ExtractPDFMetadata(raw []byte) (fields []MetaField, err error) {
 	info, err := doc.Info()
 	if err == nil {
 		for _, f := range []struct{ name, value string }{
-			{"Title", info.Title}, {"Author", info.Author}, {"Subject", info.Subject},
-			{"Keywords", info.Keywords}, {"Creator", info.Creator}, {"Producer", info.Producer},
+			{"Title", info.Title},
+			{"Author", info.Author},
+			{"Subject", info.Subject},
+			{"Keywords", info.Keywords},
+			{"Creator", info.Creator},
+			{"Producer", info.Producer},
 		} {
 			value := decodePDFInfoText(f.value)
 			if strings.TrimSpace(value) == "" {
@@ -82,8 +86,10 @@ func ExtractPDFMetadata(raw []byte) (fields []MetaField, err error) {
 	// than carrying it through unchecked, and reports the drop.
 	if xmp, xerr := doc.XMP(); xerr == nil && !xmp.IsEmpty() {
 		for _, f := range []struct{ name, value string }{
-			{"Title", xmp.Title}, {"Author", strings.Join(xmp.Authors, "; ")},
-			{"Description", xmp.Description}, {"CreatorTool", xmp.CreatorTool},
+			{"Title", xmp.Title},
+			{"Author", strings.Join(xmp.Authors, "; ")},
+			{"Description", xmp.Description},
+			{"CreatorTool", xmp.CreatorTool},
 		} {
 			if strings.TrimSpace(f.value) == "" {
 				continue
@@ -218,7 +224,7 @@ func locatePDFWork(doc *asposepdf.Document, layouts []convert.PDFPageLayout, cfg
 			switch located.rung {
 			case rungLiteral:
 				counts.Literal += len(located.occurrences)
-				work[pi].replace = append(work[pi].replace, pdfReplace{original: j.original, placeholder: j.placeholder})
+				work[pi].replace = append(work[pi].replace, pdfReplace(j))
 			case rungTolerant:
 				counts.Tolerant += len(located.occurrences)
 			case rungFragment:

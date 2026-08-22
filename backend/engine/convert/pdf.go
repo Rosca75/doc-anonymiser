@@ -115,10 +115,10 @@ func classifyPDFOpenError(err error) error {
 	msg := strings.ToLower(err.Error())
 	if strings.Contains(msg, "encrypt") || strings.Contains(msg, "password") {
 		return fmt.Errorf(
-			"the PDF is password-protected (%v); remove the password (open it and save an unprotected copy) and import that copy instead", err)
+			"the PDF is password-protected (%w); remove the password (open it and save an unprotected copy) and import that copy instead", err)
 	}
 	return fmt.Errorf(
-		"the file is not a readable PDF (%v), if it is password-protected, remove the password first", err)
+		"the file is not a readable PDF (%w), if it is password-protected, remove the password first", err)
 }
 
 // pdfDamagedError wraps a parser panic or a page-read failure into the
@@ -147,7 +147,7 @@ func PDFWithPagesLedongthuc(raw []byte) (markdown string, pages []string, warnin
 	reader, err := pdflib.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
 		return "", nil, nil, fmt.Errorf(
-			"the file is not a readable PDF (%v), if it is password-protected, remove the password first", err)
+			"the file is not a readable PDF (%w), if it is password-protected, remove the password first", err)
 	}
 
 	for i := 1; i <= reader.NumPage(); i++ {

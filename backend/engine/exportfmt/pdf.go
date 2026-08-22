@@ -30,10 +30,6 @@ import (
 	"doc-anonymiser/backend/engine"
 )
 
-// pdfInfoFields are the Info-dictionary keys offered for review
-// in stable order.
-var pdfInfoFields = []string{"Title", "Author", "Subject", "Keywords", "Creator", "Producer"}
-
 // pdfMetaPart is the MetaField.Part marker for PDF Info fields (the
 // review panel is format-agnostic by design).
 const pdfMetaPart = "pdf:Info"

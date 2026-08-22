@@ -100,7 +100,7 @@ func locatePDFValue(value, placeholder string, s pdfSearcher, layout convert.PDF
 	// in place: it falls to the redaction gesture instead, where the box is
 	// the original's own size.
 	if matches := s.search(value, false); len(matches) > 0 {
-		if allReplacementsFit(matches, placeholder, value, layout) {
+		if allReplacementsFit(matches, placeholder, layout) {
 			return pdfLocated{rung: rungLiteral, replaceInPlace: true, occurrences: rectsPerMatch(matches)}
 		}
 		return pdfLocated{rung: rungTolerant, occurrences: rectsPerMatch(matches)}
@@ -146,7 +146,7 @@ const pdfPlaceholderEmWidth = 0.62
 
 // allReplacementsFit is rung 1's gate: for every match, the replacement's
 // estimated grown rectangle stays clear of whatever follows on the same line.
-func allReplacementsFit(matches []asposepdf.TextMatch, placeholder, value string, layout convert.PDFPageLayout) bool {
+func allReplacementsFit(matches []asposepdf.TextMatch, placeholder string, layout convert.PDFPageLayout) bool {
 	for _, m := range matches {
 		if !replacementFits(m, placeholder, layout) {
 			return false
