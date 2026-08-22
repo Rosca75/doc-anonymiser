@@ -138,6 +138,13 @@ type SameFormatMeta struct {
 	// written: a user who never opened the IMAGE tab is otherwise never told
 	// that the pictures are going out exactly as they came in.
 	Images *imaging.Summary `json:"images,omitempty"`
+	// PdfText is the in-place PDF export's dry-run: how many replacements each
+	// ladder rung locates, and what nothing could locate. ABSENT for every
+	// other format. It travels with the review because the panel is the last
+	// surface before the file is written: a redrawn word and a redaction box
+	// are things the user should expect before opening the copy, and a refusal
+	// should never be a surprise.
+	PdfText *exportfmt.PDFTextPlan `json:"pdfText,omitempty"`
 }
 
 // GetSameFormatMetadata extracts the document properties of one imported
@@ -178,6 +185,15 @@ func (a *App) GetSameFormatMetadata(name, ext string) (*SameFormatMeta, error) {
 	if summary, ok := a.imageSummaryFor(name); ok {
 		meta.Images = &summary
 	}
+	if ext == "pdf" {
+		// The ladder's dry run: the same locate pass the export will make, so
+		// the panel cannot promise what the export will not do.
+		plan, err := exportfmt.PlanPDFText(src.Raw, cfg)
+		if err != nil {
+			return nil, err
+		}
+		meta.PdfText = plan
+	}
 	return meta, nil
 }
 
@@ -189,18 +205,21 @@ func (a *App) SaveSameFormat(name, ext string, reviewed []exportfmt.MetaField, f
 	var data []byte
 	var err error
 	if ext == "pdf" {
-		// EXPERIMENTAL regenerated PDF: built from
-		// the anonymised working text with the reviewed metadata; the
-		// exporter runs a leak self-check before returning bytes.
-		rd, ferr := a.findResultDoc(name)
-		if ferr != nil {
-			return ferr
-		}
-		cfg, _, cerr := a.sameFormatConfig(name)
+		// EXPERIMENTAL in-place PDF export: the original bytes with the
+		// pipeline's replacements applied through the location ladder. An
+		// occurrence the whole ladder cannot locate refuses the export (the
+		// .md export is the way out), and the whole-file leak scan blocks a
+		// produced file that still carries a registry original.
+		cfg, src, cerr := a.sameFormatConfig(name)
 		if cerr != nil {
 			return cerr
 		}
-		data, err = exportfmt.ExportPDF(rd.Anonymised, reviewed, cfg)
+		result, perr := exportfmt.ExportPDFInPlace(src.Raw, reviewed, cfg)
+		if perr != nil {
+			return perr
+		}
+		data = result.Data
+		a.reportPDFExport(name, result)
 	} else {
 		data, err = a.sameFormatBytes(name, ext)
 		if err == nil && len(reviewed) > 0 {
@@ -260,6 +279,30 @@ func (a *App) sameFormatConfig(name string) (exportfmt.Config, *engine.Document,
 		// one of them and forgotten by the other.
 		Images: a.imagePlanFor(name),
 	}, src, nil
+}
+
+// reportPDFExport records what an in-place PDF export did, in the run
+// report's warnings, where the docx export's document_extras already lives:
+// the ladder rung counts (the honest description of what the produced file
+// looks like), the hits in surfaces the preview never showed, every dropped
+// surface, and any stream the leak scan could only read raw.
+func (a *App) reportPDFExport(name string, result *exportfmt.PDFExportResult) {
+	c := result.Counts
+	a.appendReportWarning(fmt.Sprintf(
+		"pdf_text_rungs: in %q, %d replacement(s) were redrawn in line, %d redacted where the text was found through a tolerant match, %d located across text fragments and %d across a line wrap",
+		name, c.Literal, c.Tolerant, c.Fragment, c.Wrapped))
+	if result.Extras > 0 {
+		a.appendReportWarning(fmt.Sprintf(
+			"document_extras: %d replacement(s) were made in parts of %q that the preview does not show (annotations, outline titles or metadata)",
+			result.Extras, name))
+	}
+	for _, drop := range result.Dropped {
+		a.appendReportWarning(fmt.Sprintf("pdf_dropped: in %q, %s", name, drop))
+	}
+	for _, u := range result.Unscannable {
+		a.appendReportWarning(fmt.Sprintf(
+			"pdf_unscannable: in %q, the leak self-check could not decode one stream and scanned it as raw bytes only (%s)", name, u))
+	}
 }
 
 // appendReportWarning adds a warning to the latest report (results view

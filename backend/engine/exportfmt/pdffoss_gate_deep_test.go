@@ -1,8 +1,9 @@
 //go:build deep
 
 // engine/exportfmt/pdffoss_gate_deep_test.go — the adoption gate's
-// reference-document measurements (docs/change-13b.md step 9; criteria G4,
-// G5, G7 and G8 on the owner's real documents).
+// reference-document measurements (criteria G4, G5, G7 and G8 on the owner's
+// real documents), against the PRODUCTION extraction and the PRODUCTION
+// location ladder.
 //
 // Deep tier: it reads confidential documents that live OUTSIDE the
 // repository, measures wall clock, and its results depend on the machine. The
@@ -29,8 +30,7 @@ import (
 )
 
 // referenceDocs lists the env-var-supplied confidential documents. The deck
-// entry applies only when the owner supplies it as a PDF pair
-// (docs/change-13b.md step 9).
+// entry applies only when the owner supplies it as a PDF pair.
 var referenceDocs = []struct {
 	label  string
 	envVar string
@@ -52,22 +52,6 @@ func referenceBytes(t *testing.T, envVar string) []byte {
 		t.Fatalf("%s names %s, which could not be read (%v); fix the path or unset the variable", envVar, path, err)
 	}
 	return raw
-}
-
-// repairEachLine applies the converter's own spacing repair line by line, the
-// way convert.PDFWithPages applies it to the incumbent's pages.
-//
-// The G4 comparison needs it on BOTH sides. The incumbent's pages arrive
-// already repaired, so comparing them against a raw library extraction
-// measures the absence of the repair rather than the library, and the repair
-// is not going away: it keeps running over whichever extractor feeds the
-// pipeline.
-func repairEachLine(text string) string {
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		lines[i] = convert.RepairPDFText(line)
-	}
-	return strings.Join(lines, "\n")
 }
 
 // countAll totals a per-category count map.
@@ -111,119 +95,105 @@ func TestPDFFossGateReferenceDocuments(t *testing.T) {
 		t.Run("extraction/"+ref.label, func(t *testing.T) {
 			raw := referenceBytes(t, ref.envVar)
 
-			// G8 baseline: the incumbent's import wall clock, measured first
-			// so the budget has a denominator from the same machine and run.
+			// G8 baseline: the retained ledongthuc extractor's import wall
+			// clock, measured first so the budget has a denominator from the
+			// same machine and run.
 			startIncumbent := time.Now()
-			_, incumbentPages, _, err := convert.PDFWithPages(raw)
+			_, incumbentPages, _, err := convert.PDFWithPagesLedongthuc(raw)
 			incumbentImport := time.Since(startIncumbent)
 			if err != nil {
-				t.Fatalf("the incumbent extractor failed on the reference document: %v", err)
+				t.Fatalf("the ledongthuc extractor failed on the reference document: %v", err)
 			}
 
 			startLib := time.Now()
-			doc, err := asposepdf.OpenStream(bytes.NewReader(raw))
-			if err != nil {
-				t.Fatalf("the library could not open the reference document: %v", err)
-			}
-			libTexts, err := doc.ExtractText()
-			if err != nil {
-				t.Fatalf("the library could not extract the reference document: %v", err)
-			}
+			_, libraryPages, _, err := convert.PDFWithPages(raw)
 			libImport := time.Since(startLib)
+			if err != nil {
+				t.Fatalf("the production extractor failed on the reference document: %v", err)
+			}
 
-			// G8: the recommended budget is import within 3x the incumbent
-			// (docs/change-13b.md step 1); the measured numbers land in the
-			// findings log.
-			t.Logf("G8 %s: incumbent import %v, library import %v (pages: incumbent %d, library %d)",
-				ref.label, incumbentImport, libImport, len(incumbentPages), len(libTexts))
+			// G8: import within 3x the baseline, with a 2 s absolute floor
+			// beneath the ratio; the measured numbers land in the findings
+			// log as counts and durations.
+			t.Logf("G8 %s: baseline import %v, production import %v (pages: %d and %d)",
+				ref.label, incumbentImport, libImport, len(incumbentPages), len(libraryPages))
 			if libImport > 3*incumbentImport && libImport > 2*time.Second {
-				t.Errorf("G8 %s: library import %v exceeds 3x the incumbent's %v", ref.label, libImport, incumbentImport)
+				t.Errorf("G8 %s: production import %v exceeds 3x the baseline's %v", ref.label, libImport, incumbentImport)
 			}
 
 			// G4: detection counts per category over each extraction. The
-			// library must find at least what the incumbent finds, per
-			// category. Both sides carry the spacing repair (repairEachLine
-			// says why); the raw total is logged beside it so the repair's
-			// own contribution stays visible.
+			// production extraction (fragment split, wrapped join, spacing
+			// repair) must find at least what the baseline finds, per
+			// category.
 			incumbentText := strings.Join(incumbentPages, "\n\n")
-			libraryText := repairEachLine(strings.Join(libTexts, "\n\n"))
-			t.Logf("G4 %s: values found in the library's extraction before the repair %d, after it %d",
-				ref.label,
-				countAll(detectionCounts(t, ref.label+"_library_raw", strings.Join(libTexts, "\n\n"))),
-				countAll(detectionCounts(t, ref.label+"_library_repaired", libraryText)))
-
+			libraryText := strings.Join(libraryPages, "\n\n")
 			incumbentCounts := detectionCounts(t, ref.label+"_incumbent", incumbentText)
-			libCounts := detectionCounts(t, ref.label+"_library", libraryText)
+			libCounts := detectionCounts(t, ref.label+"_production", libraryText)
+			t.Logf("G4 %s: totals, baseline %d, production %d", ref.label, countAll(incumbentCounts), countAll(libCounts))
 			for cat, n := range incumbentCounts {
-				t.Logf("G4 %s category %s: incumbent %d, library %d", ref.label, cat, n, libCounts[cat])
+				t.Logf("G4 %s category %s: baseline %d, production %d", ref.label, cat, n, libCounts[cat])
 				if libCounts[cat] < n {
-					t.Errorf("G4 %s: category %s regressed from %d to %d values under the library's extraction", ref.label, cat, n, libCounts[cat])
+					t.Errorf("G4 %s: category %s regressed from %d to %d values under the production extraction", ref.label, cat, n, libCounts[cat])
 				}
 			}
 			for cat, n := range libCounts {
 				if _, ok := incumbentCounts[cat]; !ok {
-					t.Logf("G4 %s: category %s found ONLY by the library's extraction: %d values", ref.label, cat, n)
+					t.Logf("G4 %s: category %s found ONLY by the production extraction: %d values", ref.label, cat, n)
 				}
 			}
 
-			// D8: how many lines would the spacing repair still change, per
-			// extractor's raw output.
-			repairCount := func(text string) int {
-				n := 0
-				for _, line := range strings.Split(text, "\n") {
-					if convert.RepairPDFText(line) != line {
-						n++
-					}
-				}
-				return n
+			// G7: the ladder census, re-run against the PRODUCTION ladder
+			// over the PRODUCTION pipeline text: for every string detection
+			// would replace on a page, which rung locates it there. The
+			// target is known now, so this is an ASSERTION, not a log line:
+			// UNLOCATED must be 0, or every survivor is explained in the
+			// findings log (docs/change-13.md §7) before the batch is
+			// accepted.
+			doc, layouts, err := openPDFForExport(raw)
+			if err != nil {
+				t.Fatalf("opening the reference document for the census: %v", err)
 			}
-			t.Logf("D8 %s: lines the spacing repair would change in the library's extraction: %d", ref.label, repairCount(strings.Join(libTexts, "\n")))
-
-			// G7: the ladder census. For every value detection would replace,
-			// which rung locates it: the literal search, the
-			// whitespace-tolerant pattern, the wrapped two-fragment step, or
-			// none (UNLOCATED, D6's refusal).
-			//
-			// WHICH EXTRACTION THE NEEDLES COME FROM DECIDES THE ANSWER, so
-			// the census runs over both and names each. Needles drawn from
-			// the library's own extraction can never be WRAPPED: a value that
-			// extraction split across a line break is not one value there to
-			// begin with, so it is never a needle, and the census reports
-			// zero wrapped occurrences by construction rather than by
-			// measurement. The needles the EXPORT ladder is actually handed
-			// are whatever the pipeline decided to replace, over a text with
-			// its wrapped lines reassembled; the incumbent's extraction
-			// already reads that way, so it stands in for the post-13c
-			// pipeline text until that reassembly exists.
-			for _, src := range []struct{ label, text string }{
-				{"pipeline text (line-reassembled)", incumbentText},
-				{"the library's own extraction", libraryText},
-			} {
-				var literal, tolerant, wrapped, unlocated int
-				for _, m := range gatherNeedles(t, src.text) {
-					switch {
-					case searchCount(t, doc, m, asposepdf.SearchOptions{}) > 0:
+			var literal, tolerant, fragment, wrapped, unlocated int
+			pages := doc.Pages()
+			for pi, page := range pages {
+				if pi >= len(layouts) {
+					break
+				}
+				pageText := convert.RepairPDFText(convert.PDFPageText(layouts[pi]))
+				searcher := livePDFSearcher{page: page}
+				for _, needle := range gatherNeedles(t, pageText) {
+					located := locatePDFValue(needle, "[CENSUS]", searcher, layouts[pi])
+					switch located.rung {
+					case rungLiteral:
 						literal++
-					case searchCount(t, doc, tolerantPattern(m), asposepdf.SearchOptions{Regex: true}) > 0:
+					case rungTolerant:
 						tolerant++
-					case wrappedLocatable(t, doc, m):
+					case rungFragment:
+						fragment++
+					case rungWrapped:
 						wrapped++
 					default:
 						unlocated++
 					}
 				}
-				t.Logf("G7 %s ladder census, needles from %s: literal %d, tolerant-pattern %d, wrapped %d, UNLOCATED %d",
-					ref.label, src.label, literal, tolerant, wrapped, unlocated)
+			}
+			t.Logf("G7 %s ladder census (production ladder, production pipeline text): literal %d, tolerant %d, fragment %d, wrapped %d, UNLOCATED %d",
+				ref.label, literal, tolerant, fragment, wrapped, unlocated)
+			if unlocated != 0 {
+				t.Errorf("G7 %s: %d occurrence(s) remain UNLOCATED; the acceptance target is 0. Each survivor must be explained in docs/change-13.md §7 (counts only, never the strings) before 13c is accepted",
+					ref.label, unlocated)
 			}
 
-			// G5 on the real file: open, WriteTo, rasterise, count.
+			// G5 and G8 on the real file: open, save with the production
+			// discipline, rasterise, count.
 			var buf bytes.Buffer
 			startExport := time.Now()
+			doc.RemoveUnusedObjects()
 			if _, err := doc.WriteTo(&buf); err != nil {
 				t.Fatalf("WriteTo on the reference document: %v", err)
 			}
 			exportClock := time.Since(startExport)
-			t.Logf("G8 %s: no-edit WriteTo wall clock %v (budget: 30s per document)", ref.label, exportClock)
+			t.Logf("G8 %s: no-edit save wall clock %v (budget: 30s per document)", ref.label, exportClock)
 			if exportClock > 30*time.Second {
 				t.Errorf("G8 %s: export took %v, over the 30s budget", ref.label, exportClock)
 			}
@@ -231,8 +201,12 @@ func TestPDFFossGateReferenceDocuments(t *testing.T) {
 			if err != nil {
 				t.Fatalf("re-opening the round-tripped reference document: %v", err)
 			}
-			for p := 1; p <= doc.PageCount() && p <= 3; p++ {
-				a, err := doc.RenderImage(p, asposepdf.RenderOptions{DPI: 72})
+			original, err := asposepdf.OpenStream(bytes.NewReader(raw))
+			if err != nil {
+				t.Fatalf("re-opening the original reference document: %v", err)
+			}
+			for p := 1; p <= original.PageCount() && p <= 3; p++ {
+				a, err := original.RenderImage(p, asposepdf.RenderOptions{DPI: 72})
 				if err != nil {
 					t.Fatalf("rendering page %d before: %v", p, err)
 				}
@@ -275,71 +249,6 @@ func gatherNeedles(t *testing.T, markdown string) []string {
 		}
 	}
 	return out
-}
-
-// searchCount counts SearchText matches document-wide, treating an error as
-// zero (an unsearchable needle is exactly what the census is counting).
-func searchCount(t *testing.T, doc *asposepdf.Document, query string, opts asposepdf.SearchOptions) int {
-	t.Helper()
-	matches, err := doc.SearchText(query, opts)
-	if err != nil {
-		return 0
-	}
-	return len(matches)
-}
-
-// tolerantPattern derives the RE2 pattern D5's second matching tier uses: the
-// literal with every space seam tolerating the repairs the converter applies
-// (an optional space at each inter-character seam the repair may have
-// collapsed, and any whitespace run where the text has one space).
-func tolerantPattern(literal string) string {
-	var sb strings.Builder
-	for _, r := range literal {
-		if r == ' ' {
-			sb.WriteString(`\s+`)
-			continue
-		}
-		sb.WriteString(regexpQuoteRune(r))
-		sb.WriteString(` ?`)
-	}
-	return strings.TrimSuffix(sb.String(), ` ?`)
-}
-
-// regexpQuoteRune escapes one rune for RE2.
-func regexpQuoteRune(r rune) string {
-	if strings.ContainsRune(`\.+*?()|[]{}^$`, r) {
-		return `\` + string(r)
-	}
-	return string(r)
-}
-
-// wrappedLocatable prototypes the wrapped-match rung: the value's head is
-// findable at some line, its tail at some line, and at least one head/tail
-// pair sits on vertically adjacent lines.
-func wrappedLocatable(t *testing.T, doc *asposepdf.Document, value string) bool {
-	t.Helper()
-	fields := strings.Fields(value)
-	if len(fields) < 2 {
-		return false
-	}
-	for split := 1; split < len(fields); split++ {
-		head := strings.Join(fields[:split], " ")
-		tail := strings.Join(fields[split:], " ")
-		headMatches, err1 := doc.SearchText(head)
-		tailMatches, err2 := doc.SearchText(tail)
-		if err1 != nil || err2 != nil {
-			continue
-		}
-		for _, h := range headMatches {
-			for _, ta := range tailMatches {
-				if h.PageNumber == ta.PageNumber && ta.Rect.URY < h.Rect.LLY &&
-					h.Rect.LLY-ta.Rect.URY < 3*(h.Rect.URY-h.Rect.LLY) {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }
 
 // deepPixelDiff counts differing pixels between two renders. The integration
