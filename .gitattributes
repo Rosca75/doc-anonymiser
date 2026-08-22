@@ -34,6 +34,13 @@
 *.jpg  binary
 *.jpeg binary
 
+# Vendored binaries are source, not output: the Wails tree embeds a Windows
+# installer executable via //go:embed, so it is committed (see .gitignore's
+# `!vendor/**/*.exe`). Mark it binary explicitly rather than trusting text=auto
+# to guess: a byte rewritten by end-of-line conversion is a corrupt executable
+# that still compiles.
+*.exe  binary
+
 # Text test fixtures whose exact bytes matter must be checked out with LF on
 # every platform (not just normalised to LF in the repo).
 testdata/*.csv text eol=lf

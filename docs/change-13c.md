@@ -33,13 +33,13 @@ location speak the same language: fragments with rectangles.
   G5 and G8 pass; G4 passes on both reference documents; G7 fails and this
   order is the answer to it. The owner accepted the fragment-aware enlargement
   on 2026-08-22.
-- **Prerequisite, not a gate on writing code:** F22. `main` does not build on
-  Windows from a clean clone, because `.gitignore`'s `*.exe` rule stopped git
-  tracking a file `go mod vendor` wrote into the Wails tree. This batch's
-  acceptance CANNOT be checked on the target platform until that is fixed, and
-  the fix is the owner's call between the two options recorded in F22. If it is
-  still open when this batch starts, say so and continue: the work is
-  verifiable on Linux throughout.
+- **Resolved after the batch:** F22. `main` did not build on Windows from a
+  clean clone, because `.gitignore`'s `*.exe` rule stopped git tracking a file
+  `go mod vendor` wrote into the Wails tree. The owner chose the negation
+  (`!vendor/**/*.exe`) over dropping `vendor/` from git, so the 1.8 MB embedded
+  installer is committed, `.gitattributes` marks `*.exe binary`, and a
+  `GOOS=windows` cross-compile step on the Linux runner now fails the build for
+  the whole class rather than leaving it to the next tag.
 - **Binding for the last step:** OQ3's decommissioning gate. The old PDF path
   is removed only after the owner explicitly confirms the tests are successful,
   against their tag and release as the rollback point. Until that confirmation
@@ -264,15 +264,26 @@ that pictures are handled: that is 13d. `frontend/copy.js` owns every sentence;
 Go returns CODES. No em dashes, no retired route name; `copy_guard_test.go` and
 `frontend/copy.test.js` enforce both.
 
-### Step 11 — The dependency removals, gated
+### Step 11 — The dependency removals, gated — DONE 2026-08-22
 
-**Do not run this step until the owner has explicitly confirmed the tests are
-successful** (OQ3, F3). Until then the new path ships beside the old code and
-the removals wait as a follow-up commit under this order.
+The gate was taken: the owner confirmed the in-place path's tests on the two
+reference documents (G7 UNLOCATED 0 on both) and accepted the one G4 shortfall
+as the split rule refusing text that was never contiguous, not as a regression.
 
-Then: `ledongthuc/pdf` and `go-pdf/fpdf` leave `go.mod`, `go.sum` and
-`vendor/`, the regenerated-layout export code is deleted, and a grep for the
-removed imports returns nothing outside `docs/`. D12's arithmetic is +1 and −2.
+`ledongthuc/pdf` and `go-pdf/fpdf` are out of `go.mod`, `go.sum` and
+`vendor/`; the regenerated-layout export (`exportfmt/pdf.go`) and the baseline
+extractor (`convert.PDFWithPagesLedongthuc`) are deleted; a grep for either
+import returns nothing outside `docs/`. D12's arithmetic is +1 and −2.
+
+Two things had to move with them rather than simply disappear:
+
+- **`convert.PDFPages` was a production caller.** The unit count read the page
+  count through the retired parser, which made it a second opinion nobody
+  reconciled: it could report pages the extractor never opened, while the
+  page-scoped model scan addresses the extractor's pages. It now reads the
+  count through the same library the extraction goes through.
+- **G4 lost its comparison and gained recorded floors.** See
+  `exportfmt.referenceFloors` and `referenceFloorTolerance`, and F23 below.
 
 ### Step 12 — Reconciliation (the last step, an obligation)
 

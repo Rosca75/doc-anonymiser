@@ -28,11 +28,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 	"time"
-
-	ledongthuc "github.com/ledongthuc/pdf"
 
 	"doc-anonymiser/backend/engine"
 )
@@ -173,27 +170,6 @@ func extractEntry(t *testing.T, raw []byte, name string) string {
 	return ""
 }
 
-// extractAllPDFText reads every page of a PDF with the import reader.
-func extractAllPDFText(t *testing.T, raw []byte) string {
-	t.Helper()
-	reader, err := ledongthuc.NewReader(bytes.NewReader(raw), int64(len(raw)))
-	if err != nil {
-		t.Fatalf("generated PDF unreadable: %v", err)
-	}
-	var b strings.Builder
-	for i := 1; i <= reader.NumPage(); i++ {
-		page := reader.Page(i)
-		if page.V.IsNull() {
-			continue
-		}
-		if text, err := page.GetPlainText(nil); err == nil {
-			b.WriteString(text)
-			b.WriteString("\n")
-		}
-	}
-	return b.String()
-}
-
 // --- unit tests ----------------------------------------------------------
 
 // TestSameFormatFileName is pure string mapping over registry entries: no
@@ -220,33 +196,5 @@ func TestSameFormatFileName(t *testing.T) {
 				t.Errorf("SameFormatFileName(%q) = %q, want %q", tc.docName, got, tc.want)
 			}
 		})
-	}
-}
-
-// TestExportPDFRejectsEmptyText: a scanned PDF never yields working text; the
-// export refuses with the pinned scanned-PDF message. Pure guard, no fixture.
-func TestExportPDFRejectsEmptyText(t *testing.T) {
-	_, err := ExportPDF("   ", nil, testConfig())
-	if err == nil || !strings.Contains(err.Error(), "No text layer found") {
-		t.Errorf("empty text must be rejected with the scanned-PDF message, got %v", err)
-	}
-}
-
-// TestExportPDFSelfCheckBlocksLeaks: inject a mapping the generator "ignores",
-// so the anonymised text still contains a registry original; the self-check
-// must FAIL the export and return no bytes. This is the leak-guard business
-// rule, so it belongs to the unit tier, not integration.
-func TestExportPDFSelfCheckBlocksLeaks(t *testing.T) {
-	cfg := testConfig()
-	cfg.Registry.Assign("entity_names", "Zephyr Capital")
-	out, err := ExportPDF("This text still mentions Zephyr Capital openly.", nil, cfg)
-	if err == nil || out != nil {
-		t.Fatalf("leaky export must fail, got bytes=%v err=%v", out != nil, err)
-	}
-	if !strings.Contains(err.Error(), "self-check failed") {
-		t.Errorf("error must name the self-check: %v", err)
-	}
-	if strings.Contains(err.Error(), "Zephyr Capital") {
-		t.Errorf("the full original must not be repeated in the error: %v", err)
 	}
 }

@@ -25,7 +25,6 @@ import (
 
 	asposepdf "github.com/aspose-pdf-foss/aspose-pdf-foss-for-go"
 
-	"doc-anonymiser/backend/engine"
 	"doc-anonymiser/backend/engine/convert"
 )
 
@@ -37,6 +36,46 @@ var referenceDocs = []struct {
 }{
 	{"reference_pdf", "DOC_ANONYMISER_REFERENCE_PDF"},
 	{"reference_deck", "DOC_ANONYMISER_REFERENCE_DECK"},
+}
+
+// referenceFloors is G4: the minimum number of values each category must
+// yield per reference document, as a FLOOR rather than as a comparison
+// against a second extractor.
+//
+// A floor is what the question reduces to when there is one extraction path.
+// Comparing two parsers asks the stronger question, and it is answerable only
+// for as long as a whole second parser is carried in the tree to answer it;
+// carrying one for a test is a dependency in the shipped module, a second
+// reading of every document, and a number that moves when the comparison
+// library moves. A recorded floor asks the part that matters (does this
+// extraction still find what it found when this was measured) and costs
+// nothing.
+//
+// The numbers were measured on the owner's machine on 2026-08-22, over the
+// production extraction, through detectionCounts. Counts only: no string from
+// either document appears here, which is the rule the file header states.
+//
+// To RE-BASELINE (the right move when the reference documents themselves
+// change, and the only move that is not a silent weakening): run this test,
+// read the "G4 <label> category <cat>" log lines, and write the new numbers
+// in. Do it as its own change, never folded into an extraction change: a
+// commit that both alters extraction and moves the floor it is measured
+// against cannot be reviewed.
+var referenceFloors = map[string]map[string]int{
+	"reference_pdf": {
+		"entity_names": 1,
+		"email":        4,
+		"phone":        2,
+		"date":         3,
+		"postal_code":  1,
+		"address":      1,
+		"person_names": 20,
+	},
+	"reference_deck": {
+		"date":             1,
+		"person_names":     27,
+		"identifier_names": 2,
+	},
 }
 
 // referenceBytes reads one reference document, skipping with an actionable
@@ -54,38 +93,6 @@ func referenceBytes(t *testing.T, envVar string) []byte {
 	return raw
 }
 
-// countAll totals a per-category count map.
-func countAll(counts map[string]int) int {
-	total := 0
-	for _, n := range counts {
-		total += n
-	}
-	return total
-}
-
-// detectionCounts runs the offline detection the gate compares: pass 1's
-// preview over every category plus heuristic discovery at defaults, over one
-// extraction, and returns values-found-per-category. Counts only.
-func detectionCounts(t *testing.T, name, markdown string) map[string]int {
-	t.Helper()
-	counts := map[string]int{}
-	doc, err := engine.Load(name+".md", []byte(markdown))
-	if err != nil {
-		t.Fatalf("loading the extraction as a document: %v", err)
-	}
-	sel := engine.CategorySelection{}
-	for _, cat := range engine.AllPIICategories {
-		sel[cat] = true
-	}
-	for _, m := range engine.PreviewPatternMatches([]engine.Document{doc}, sel, engine.CountryLU, false, nil) {
-		counts[m.Category]++
-	}
-	for _, s := range engine.HeuristicDiscoverWithOptions(markdown, nil, engine.DefaultHeuristicDiscoveryOptions()) {
-		counts[s.Category]++
-	}
-	return counts
-}
-
 // TestPDFFossGateReferenceDocuments takes every reference-document
 // measurement in one pass per document, so each file is opened and extracted
 // once per extractor rather than once per criterion.
@@ -95,16 +102,6 @@ func TestPDFFossGateReferenceDocuments(t *testing.T) {
 		t.Run("extraction/"+ref.label, func(t *testing.T) {
 			raw := referenceBytes(t, ref.envVar)
 
-			// G8 baseline: the retained ledongthuc extractor's import wall
-			// clock, measured first so the budget has a denominator from the
-			// same machine and run.
-			startIncumbent := time.Now()
-			_, incumbentPages, _, err := convert.PDFWithPagesLedongthuc(raw)
-			incumbentImport := time.Since(startIncumbent)
-			if err != nil {
-				t.Fatalf("the ledongthuc extractor failed on the reference document: %v", err)
-			}
-
 			startLib := time.Now()
 			_, libraryPages, _, err := convert.PDFWithPages(raw)
 			libImport := time.Since(startLib)
@@ -112,76 +109,35 @@ func TestPDFFossGateReferenceDocuments(t *testing.T) {
 				t.Fatalf("the production extractor failed on the reference document: %v", err)
 			}
 
-			// G8: import within 3x the baseline, with a 2 s absolute floor
-			// beneath the ratio; the measured numbers land in the findings
-			// log as counts and durations.
-			t.Logf("G8 %s: baseline import %v, production import %v (pages: %d and %d)",
-				ref.label, incumbentImport, libImport, len(incumbentPages), len(libraryPages))
-			if libImport > 3*incumbentImport && libImport > 2*time.Second {
-				t.Errorf("G8 %s: production import %v exceeds 3x the baseline's %v", ref.label, libImport, incumbentImport)
+			// G8: import inside an ABSOLUTE budget. It used to be a ratio
+			// against the second extractor's wall clock on the same run,
+			// which was the better measurement while that extractor existed
+			// and is unavailable now that it does not. 10s is generous
+			// against the measured tens of milliseconds precisely so that it
+			// catches an order-of-magnitude regression and nothing else: a
+			// tight budget on a machine-dependent number is a test that fails
+			// for reasons nobody can act on.
+			t.Logf("G8 %s: production import %v (%d pages)", ref.label, libImport, len(libraryPages))
+			if libImport > 10*time.Second {
+				t.Errorf("G8 %s: production import took %v, over the 10s budget; extraction has regressed by an order of magnitude", ref.label, libImport)
 			}
 
-			// G4: detection counts per category over each extraction. The
-			// production extraction (fragment split, wrapped join, spacing
-			// repair) must find at least what the baseline finds, per
-			// category.
-			incumbentText := strings.Join(incumbentPages, "\n\n")
+			// G4: detection counts per category over the production
+			// extraction, against the recorded floors. See referenceFloors
+			// for why this is a floor and not a comparison, and
+			// referenceFloorTolerance for how much one category may move.
 			libraryText := strings.Join(libraryPages, "\n\n")
-			incumbentCounts := detectionCounts(t, ref.label+"_incumbent", incumbentText)
 			libCounts := detectionCounts(t, ref.label+"_production", libraryText)
-			t.Logf("G4 %s: totals, baseline %d, production %d", ref.label, countAll(incumbentCounts), countAll(libCounts))
-			for cat, n := range incumbentCounts {
-				t.Logf("G4 %s category %s: baseline %d, production %d", ref.label, cat, n, libCounts[cat])
-				if libCounts[cat] < n {
-					t.Errorf("G4 %s: category %s regressed from %d to %d values under the production extraction", ref.label, cat, n, libCounts[cat])
-				}
-			}
-			for cat, n := range libCounts {
-				if _, ok := incumbentCounts[cat]; !ok {
-					t.Logf("G4 %s: category %s found ONLY by the production extraction: %d values", ref.label, cat, n)
-				}
-			}
+			assertCategoryFloors(t, "G4 "+ref.label, referenceFloors[ref.label], libCounts)
 
-			// G7: the ladder census, re-run against the PRODUCTION ladder
-			// over the PRODUCTION pipeline text: for every string detection
-			// would replace on a page, which rung locates it there. The
-			// target is known now, so this is an ASSERTION, not a log line:
-			// UNLOCATED must be 0, or every survivor is explained in the
-			// findings log (docs/change-13.md §7) before the batch is
-			// accepted.
-			doc, layouts, err := openPDFForExport(raw)
+			// G7: the ladder census, through the shared helper the
+			// integration tier runs over the committed fixtures. Same
+			// measurement, same assertion; this tier only adds scale.
+			reportCensus(t, ref.label, runLadderCensus(t, raw))
+
+			doc, _, err := openPDFForExport(raw)
 			if err != nil {
-				t.Fatalf("opening the reference document for the census: %v", err)
-			}
-			var literal, tolerant, fragment, wrapped, unlocated int
-			pages := doc.Pages()
-			for pi, page := range pages {
-				if pi >= len(layouts) {
-					break
-				}
-				pageText := convert.RepairPDFText(convert.PDFPageText(layouts[pi]))
-				searcher := livePDFSearcher{page: page}
-				for _, needle := range gatherNeedles(t, pageText) {
-					located := locatePDFValue(needle, "[CENSUS]", searcher, layouts[pi])
-					switch located.rung {
-					case rungLiteral:
-						literal++
-					case rungTolerant:
-						tolerant++
-					case rungFragment:
-						fragment++
-					case rungWrapped:
-						wrapped++
-					default:
-						unlocated++
-					}
-				}
-			}
-			t.Logf("G7 %s ladder census (production ladder, production pipeline text): literal %d, tolerant %d, fragment %d, wrapped %d, UNLOCATED %d",
-				ref.label, literal, tolerant, fragment, wrapped, unlocated)
-			if unlocated != 0 {
-				t.Errorf("G7 %s: %d occurrence(s) remain UNLOCATED; the acceptance target is 0. Each survivor must be explained in docs/change-13.md §7 (counts only, never the strings) before 13c is accepted",
-					ref.label, unlocated)
+				t.Fatalf("opening the reference document for the round trip: %v", err)
 			}
 
 			// G5 and G8 on the real file: open, save with the production
@@ -218,37 +174,6 @@ func TestPDFFossGateReferenceDocuments(t *testing.T) {
 			}
 		})
 	}
-}
-
-// gatherNeedles runs the same offline detection the counts use and returns
-// the strings a run would replace: pattern-preview texts plus heuristic
-// suggestion main texts. The strings stay inside this process; only counts
-// derived from them are logged.
-func gatherNeedles(t *testing.T, markdown string) []string {
-	t.Helper()
-	doc, err := engine.Load("needles.md", []byte(markdown))
-	if err != nil {
-		t.Fatalf("loading extraction: %v", err)
-	}
-	sel := engine.CategorySelection{}
-	for _, cat := range engine.AllPIICategories {
-		sel[cat] = true
-	}
-	seen := map[string]bool{}
-	var out []string
-	for _, m := range engine.PreviewPatternMatches([]engine.Document{doc}, sel, engine.CountryLU, false, nil) {
-		if !seen[m.Text] {
-			seen[m.Text] = true
-			out = append(out, m.Text)
-		}
-	}
-	for _, s := range engine.HeuristicDiscoverWithOptions(markdown, nil, engine.DefaultHeuristicDiscoveryOptions()) {
-		if !seen[s.MainText] {
-			seen[s.MainText] = true
-			out = append(out, s.MainText)
-		}
-	}
-	return out
 }
 
 // deepPixelDiff counts differing pixels between two renders. The integration

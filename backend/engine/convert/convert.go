@@ -3,7 +3,7 @@
 // leave as markdown text (plus, for xlsx, per-sheet Grid/JSON models).
 //
 // Hard rules for this package (CLAUDE.md §4, "Converters are pure Go"):
-//   - Only the Go standard library, excelize and ledongthuc/pdf. No CGo.
+//   - Only the Go standard library, excelize and aspose-pdf-foss-for-go. No CGo.
 //   - One-way: the app NEVER exports back to these binary formats.
 //   - No imports of package engine (engine imports us, not the reverse) and
 //     no filesystem access — bytes in, bytes/strings out.

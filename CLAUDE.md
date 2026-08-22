@@ -245,8 +245,12 @@ doc-anonymiser/
   route name (the same two guards).
 - **Converters are pure Go and one-way:** `backend/engine/convert/*` may use
   only the Go standard library, excelize, and the vendored
-  aspose-pdf-foss-for-go library (pinned in §7; ledongthuc/pdf stays pinned as
-  the deep tier's comparison baseline until the owner's decommissioning gate).
+  aspose-pdf-foss-for-go library (pinned in §7, and carrying one patched file,
+  `cmap.go`, for the reason recorded there). There is exactly ONE PDF
+  library in the module: a second parser kept to check the first is a
+  dependency in the shipped binary, a second reading of every document, and a
+  moving reference, and G4's recorded floors ask the part of that question
+  worth asking.
   No CGo, ever. Binary formats convert TO markdown on import for preview and
   processing. The app can additionally write a NEW anonymised copy in the
   source format (docx/pptx/xlsx, and experimentally pdf) at export time; this
@@ -300,11 +304,29 @@ doc-anonymiser/
     on punctuation alone glues headings together and invents names. The
     spacing-repair heuristic then runs over the derived text (collapse runs of
     single uppercase characters split by kerning; collapse doubled spaces).
-    PDF support is EXPERIMENTAL and labelled as such in the UI. A PDF yielding
-    no extractable text is rejected with: "No text layer found, this PDF is
-    likely scanned. OCR is not supported; convert it externally first." A file
-    so damaged that no page opens gets its OWN message naming the damage: the
-    scanned sentence would send the user to an OCR tool that cannot help.
+    PDF support is EXPERIMENTAL and labelled as such in the UI. Three refusals,
+    each with its OWN message, because each is a different problem with a
+    different remedy and the wrong sentence sends the user somewhere useless.
+    A PDF yielding no extractable text is rejected with: "No text layer found,
+    this PDF is likely scanned. OCR is not supported; convert it externally
+    first." A file so damaged that no page opens gets a message naming the
+    damage: the scanned sentence would send the user to an OCR tool that cannot
+    help. And a file whose text layer cannot be read as CHARACTERS is rejected
+    with `convert.ErrUnmappablePDF`, which names re-exporting from the
+    authoring application as the way out.
+
+    That third refusal exists because its failure is otherwise SILENT, and
+    silence here is a data-protection failure rather than a rough edge. A
+    producer that embeds subset fonts with no usable ToUnicode CMap (Microsoft
+    Print To PDF is the common one on this market's laptops) yields a text layer
+    of thousands of characters, not one of which is a letter. The file is not
+    scanned and not damaged, so neither other refusal fires; detection then
+    truthfully reports finding nothing, and a user is entitled to read "nothing
+    found" as "nothing to anonymise" in a document full of names. The gate is a
+    share of unmappable characters (`convert.maxUnmappableShare`, 0.3), chosen
+    to sit in the wide empty gap between a healthy document's measured 0.0 to
+    0.2 per cent and such a file's 100 per cent, so it can never refuse a
+    readable document over a page of symbols.
 
     The PDF EXPORT is in-place replacement: the produced file is the
     original's bytes with the pipeline's replacements applied
@@ -1031,7 +1053,7 @@ doc-anonymiser/
 
 | Component | Version | Notes |
 |---|---|---|
-| Go | 1.26.x | toolchain in go.mod (pinned to 1.26.5); CI uses the floating 1.26.x. Moved off 1.23.x (now unsupported: Go only patches the two newest majors) to adopt Wails v2.13 and the current ledongthuc/pdf, which require Go >= 1.24/1.25 |
+| Go | 1.26.x | toolchain in go.mod (pinned to 1.26.5); CI uses the floating 1.26.x. Moved off 1.23.x (now unsupported: Go only patches the two newest majors) to adopt Wails v2.13, which requires Go >= 1.25 |
 | Wails | v2.13.x | v2 API only — do NOT use Wails v3 idioms. v2.13.0 requires Go >= 1.25 (its go.mod says `go 1.25.0`) |
 | wails CLI (CI) | v2.13.x | pinned in ci.yml and release.yml — same row as the library: the CLI and go.mod versions are a coupled pair; CI must fail with an actionable message if they diverge |
 | Ollama HTTP API | as of 2026: `GET /api/tags`, `POST /api/chat` with `"format"` carrying either `"json"` or a JSON **Schema** (per call, see §8), `"stream":false`, `"think":false` and `"keep_alive"` | probed at startup; if `/api/tags` succeeds but `/api/chat` returns 404 without a model-not-found body, show "Ollama too old, please update". `think` and `keep_alive` are TOP-LEVEL fields, never entries in `options`: Ollama's options object is a map, so a key it does not recognise there is dropped in silence |
@@ -1040,10 +1062,10 @@ doc-anonymiser/
 | Model tag quantisation | K-quant or `Q8_0`, never `-bf16` / `-f16` | BF16 has no fast CPU dot-product kernel without AVX512-BF16, so ggml converts every weight to FP32 inside the dot product and the model runs several times slower on the target laptop. The plain `qwen3.5:0.8b` (`Q8_0`) and `qwen3.5:4b` (`Q4_K_M`) tags are already correct; this rule exists to stop someone "upgrading" to a BF16 build for quality |
 | Frontend | vanilla JS (ES2020), embedded via go:embed | no npm, no bundler |
 | github.com/xuri/excelize/v2 | v2.9.x | XLSX reading; pure Go, MIT licence |
-| github.com/ledongthuc/pdf | v0.0.0-20250511090121-5959a4027728 | pure-Go PDF text extraction (BSD-3). NO production caller: the production extraction goes through aspose-pdf-foss-for-go, and this library survives only as the deep tier's comparison baseline (`convert.PDFWithPagesLedongthuc`) and the retained regenerated exporter's self-check reader. It leaves, with both, only after the owner explicitly confirms the in-place path's tests are successful against the tagged pre-change release (the decommissioning gate). Pinned to the 2025-05-11 commit (go.mod `go 1.24.1`): the older 2024-02-01 commit crashes under Go 1.26 |
-| github.com/pdfcpu/pdfcpu | NOT ADDED (evaluated at BUILD-02 Phase 13, 2026-07-24) | in-place PDF rewriting was rejected (subset-font glyph availability), so pdfcpu's metadata role is covered by fpdf (new file's Info dict) + ledongthuc/pdf (reading the original's Info dict). The earlier Go-version incompatibility no longer applies under the Go 1.26 pin, but pdfcpu stays out for the functional reason above |
-| github.com/go-pdf/fpdf | v0.9.0 | pure-Go PDF writer behind the RETAINED regenerated-PDF exporter (`exportfmt.ExportPDF`), which has NO production caller: the production PDF export is the in-place replacement. It is never a fallback behind the in-place export's refusal (the refusal names the .md export instead), and it leaves under the same decommissioning gate as the ledongthuc row. MIT; go.mod requires Go 1.20 |
-| github.com/aspose-pdf-foss/aspose-pdf-foss-for-go | v0.7.0, pinned EXACTLY and **vendored** | pure-Go PDF read/edit/write library behind the in-place PDF export (change-13). MIT; zero third-party dependencies (its go.mod is the module line and `go 1.24`). Pinned to the exact gate-verified version because the module is pre-1.0 and moving fast: **a version bump is never automatic** and re-runs the change-13b gate first (the boundary inventory in `pdf_boundary_test.go`, the save-semantics proof, the extraction counts). The library ships AI copilots that POST document text to a configured endpoint; they live in its `ai` subpackage, which is never imported, never vendored, and whose symbols `pdf_boundary_test.go` forbids repository-wide. Save discipline: `RemoveUnusedObjects()` before every `WriteTo`, because a naked `WriteTo` serialises orphaned pre-edit objects (measured at the 13b gate; both halves pinned by test) |
+| github.com/ledongthuc/pdf | REMOVED (decommissioned 2026-08-22) | was the pure-Go PDF text extractor, then the deep tier's comparison baseline. Removed with the regenerated exporter once the in-place path's tests were confirmed: the production extraction is aspose-pdf-foss-for-go's layout mode, and G4's per-category floors (`exportfmt.referenceFloors`) replace the live comparison. Do NOT re-add it to answer an extraction question: a second parser in the module reads every document twice and gives the gate a reference that moves on its own |
+| github.com/pdfcpu/pdfcpu | NOT ADDED (evaluated at BUILD-02 Phase 13, 2026-07-24) | in-place PDF rewriting was rejected (subset-font glyph availability), and the metadata role pdfcpu was evaluated for is covered by aspose-pdf-foss-for-go, which reads and rewrites the Info dictionary of the original file in place. The earlier Go-version incompatibility no longer applies under the Go 1.26 pin, but pdfcpu stays out for the functional reason above |
+| github.com/go-pdf/fpdf | REMOVED (decommissioned 2026-08-22) | was the PDF writer behind the regenerated-PDF exporter. There is no regenerated PDF export: the PDF export is the in-place replacement, and its refusal names the .md export as the way out rather than falling back to a second writer. A second PDF writer kept for a rare failure path is unreviewed code in the leak-critical path, which is the reason not to re-add one |
+| github.com/aspose-pdf-foss/aspose-pdf-foss-for-go | v0.7.0, pinned EXACTLY and **vendored**, with ONE PATCHED FILE | pure-Go PDF read/edit/write library behind the in-place PDF export (change-13). MIT; zero third-party dependencies (its go.mod is the module line and `go 1.24`). Pinned to the exact gate-verified version because the module is pre-1.0 and moving fast: **a version bump is never automatic** and re-runs the change-13b gate first (the boundary inventory in `pdf_boundary_test.go`, the save-semantics proof, the extraction counts). The library ships AI copilots that POST document text to a configured endpoint; they live in its `ai` subpackage, which is never imported, never vendored, and whose symbols `pdf_boundary_test.go` forbids repository-wide. Save discipline: `RemoveUnusedObjects()` before every `WriteTo`, because a naked `WriteTo` serialises orphaned pre-edit objects (measured at the 13b gate; both halves pinned by test). **`cmap.go` carries a LOCAL PATCH**, the one file in `vendor/` that is not upstream's: upstream reads a ToUnicode CMap line by line, but a CMap is a token program in which a newline is ordinary whitespace, so a producer may legally write the whole program on one line. Microsoft Print To PDF does, and against such a file upstream builds an EMPTY map and every glyph of a `/Type0 /Identity-H` font extracts as U+FFFD: a text layer with no letters in it, which is silent and which detection can only report as finding nothing. The patch scans tokens instead. It is pinned by `TestOneLineToUnicodeCMapIsDecoded`, which is what fails if `go mod vendor` re-copies the upstream file, and it is removed when upstream ships the fix. A version bump therefore checks this file first |
 | Arimo, Tinos, Cousine, Carlito fonts (bundled inside aspose-pdf-foss-for-go, not a Go module) | as vendored at v0.7.0 | SIL OFL 1.1, metric-compatible substitutes the library redraws replaced text in. Data with a licence, like the Material Symbols and font8x8 rows, not code with a dependency |
 | github.com/aspose-pdf/aspose-pdf-go-cpp | NOT ADDED (evaluated at change-13 planning, 2026-08-21) | the SAME VENDOR's other product: a wrapper over a proprietary native shared library. Rejected: commercial licence with an evaluation watermark and four-page limit until `SetLicense()`, per-platform native binaries beside the executable, and "no CGo compiler, but a native blob anyway" is the letter of the P0 rule without its purpose. `purego` was rejected with it: it would only exist to reach this product, and the FOSS module needs no FFI at all |
 | golangci-lint (audit tool, `tools/go.mod`) | v2.12.2 | v2 config format (`version: "2"`) and v2 output flags (`--output.sarif.path`); the v1 flags do not exist |

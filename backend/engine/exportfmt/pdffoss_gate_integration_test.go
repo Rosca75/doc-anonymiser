@@ -760,8 +760,15 @@ func renderPNG(t *testing.T, doc *asposepdf.Document, pageNum int) []byte {
 	return buf.Bytes()
 }
 
-// writeGolden commits an eyeball artefact under testdata/golden/, the
-// repository's home for regenerable committed outputs.
+// writeGolden writes an eyeball artefact under testdata/golden/, so a human can
+// LOOK at what a redaction produced.
+//
+// The directory is gitignored, deliberately. Nothing reads these files, so they
+// are evidence for one run rather than a golden comparison, and committing an
+// output that every run rewrites puts two modified binaries in `git status`
+// after merely running the tests. A repository where running the tests dirties
+// the tree teaches people to stop reading `git status`, which is the thing that
+// catches a real accidental change.
 func writeGolden(t *testing.T, name string, data []byte) {
 	t.Helper()
 	dir := filepath.Join("..", "..", "testdata", "golden")

@@ -221,6 +221,43 @@ is how the mistake comes back.
   framework-agreement pair above is committed rather than generated. They
   cannot be regenerated from code; treat them as read-only inputs, exactly
   like the framework-agreement pair.
+
+  `working_deck.pdf` belongs to that set and carries a SECOND job: it is a deck
+  printed through Microsoft Print To PDF, so its fonts are `/Type0 /Identity-H`
+  with one-line ToUnicode CMaps, and it is the only fixture whose text arrives
+  through the patched `cmap.go` at all. `TestOneLineToUnicodeCMapIsDecoded`
+  PINS that patch: it is what fails if `go mod vendor` re-copies upstream's
+  file, and its failure message says so, because otherwise the loss shows up as
+  this document refusing to import and reads as a fixture problem.
+- **One fixture is GENERATED to be unreadable.** `pdf_no_tounicode.pdf` is a
+  page drawn with a `/Type0 /Identity-H` font carrying no ToUnicode CMap at all,
+  so nothing can map its glyphs to characters. It is the test for
+  `convert.ErrUnmappablePDF`, the third PDF refusal, and it exists as its own
+  generated fixture because the refusal needs a test that does not depend on a
+  library bug staying unfixed.
+- **The ladder census and the per-category floors gate on the INTEGRATION tier,
+  not only the deep one.** An occurrence the location ladder cannot locate
+  REFUSES a user's PDF export, so `TestPDFLadderCensusOverCommittedFixtures`
+  runs the production ladder over the committed fixtures on every push and
+  fails on any UNLOCATED occurrence; `committedFloors` beside it asserts that no
+  category quietly stops yielding values. The deep tier runs the SAME helpers
+  (`runLadderCensus`, `assertCategoryFloors`, in the untagged
+  `exportfmt/pdfcensus_test.go`) over the owner's confidential reference
+  documents, so that tier adds scale rather than being the only place the rule
+  is enforced. Two things are deliberate: the census FAILS when it examined zero
+  occurrences, because a document detection finds nothing in proves nothing
+  about the ladder, and the whole rung distribution is logged even on a pass,
+  because occurrences migrating from the literal rung to the fragment walk is a
+  statement about extraction worth seeing before it becomes a refusal.
+- **A test that depends on an external program must PROVE it, not detect it.**
+  Resolving a name on PATH is not evidence the program is there: Windows ships
+  App Execution Aliases for `python` and `python3` that resolve, refuse to run
+  and SHADOW a real interpreter further down the same PATH, and a wrapper for an
+  uninstalled snap does the same on Linux. So `pythonExe` and the render
+  harness's browser search both run their candidate and require it to answer
+  before using it, and a candidate that cannot is passed over with a message
+  naming what was tried. Trusting the name turns a machine that HAS the tool
+  into a wall of exit-code failures nobody can act on.
 - **Precision and recall are asserted with NUMBERS.** The review list a user
   actually reads is a product decision, and a change that floods it again has to
   fail the build rather than be noticed months later on a real document. The

@@ -27,7 +27,7 @@ package convert
 import (
 	"bytes"
 
-	pdflib "github.com/ledongthuc/pdf"
+	asposepdf "github.com/aspose-pdf-foss/aspose-pdf-foss-for-go"
 
 	"doc-anonymiser/backend/engine/ooxml"
 )
@@ -82,9 +82,16 @@ func PptxSlides(raw []byte) int {
 // converter's signature stays "bytes in, markdown and warnings out". The cost
 // is one extra parse of an in-memory buffer, once per imported file.
 //
-// The recover mirrors PDF()'s: ledongthuc/pdf was written for well-formed input
-// and can panic on damaged files. A panic here must cost the user a page count,
-// never the import.
+// It reads the count through the SAME library the extraction goes through, so
+// the number the unit count reports and the number of pages the pipeline
+// actually detected on cannot disagree. A second PDF parser answering this one
+// question would be a second opinion nobody reconciles: it would report pages
+// the extractor never opened, and the page-scoped model scan addresses the
+// extractor's pages.
+//
+// The recover mirrors PDFLayouts()'s: the parser reads arbitrary bytes and can
+// panic on a damaged file. A panic here must cost the user a page count, never
+// the import.
 //
 // @param raw the whole .pdf, already in memory
 // @return the page count, or 0 when the file cannot be read
@@ -94,13 +101,9 @@ func PDFPages(raw []byte) (pages int) {
 			pages = 0
 		}
 	}()
-	reader, err := pdflib.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	doc, err := asposepdf.OpenStream(bytes.NewReader(raw))
 	if err != nil {
 		return 0
 	}
-	n := reader.NumPage()
-	if n < 0 {
-		return 0
-	}
-	return n
+	return len(doc.Pages())
 }

@@ -20,24 +20,70 @@
 // damaged that no page survives the open gets its OWN message, because
 // telling the user their truncated file "is likely scanned" sends them to an
 // OCR tool that cannot help.
-//
-// The ledongthuc-based extractor is kept beside the production one, with no
-// production caller: it is the deep tier's comparison baseline, and it leaves
-// together with its dependency under the owner's decommissioning gate
-// (CLAUDE.md §7's pin rows).
 package convert
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
-
-	pdflib "github.com/ledongthuc/pdf"
 )
 
 // ErrScannedPDF is the CLAUDE.md §5 rejection message for PDFs without a
 // text layer. Kept as a variable so the UI test can assert the exact text.
 const ErrScannedPDF = "No text layer found, this PDF is likely scanned. OCR is not supported; convert it externally first."
+
+// ErrUnmappablePDF is the rejection message for a PDF whose text layer cannot
+// be read as CHARACTERS. Kept as a variable for the same reason as
+// ErrScannedPDF: the exact text is asserted.
+//
+// It is a THIRD refusal beside the scanned one and the damaged one, and it
+// needs its own words because it is a different problem with a different
+// remedy. The file has a text layer, so the scanned message would send the
+// user to an OCR tool they do not need; the file is not damaged either, so the
+// damaged message would tell them to re-print a file that opens perfectly.
+// What is missing is the mapping from the glyphs the file draws back to
+// characters, which happens when a producer embeds subset fonts without a
+// usable ToUnicode CMap.
+//
+// This refusal exists because the alternative is SILENT. A document like this
+// extracts thousands of characters, none of which is a letter, so detection
+// finds nothing and the interface truthfully reports nothing found. A user is
+// entitled to read that as "there is nothing to anonymise" and export, and the
+// document is full of names. An honest refusal is the only safe answer.
+const ErrUnmappablePDF = "The text in this PDF cannot be read as characters: its fonts carry no usable character map, so every glyph extracts as unknown. Nothing can be detected in it, and a run would report finding nothing in a document that is not empty. This is common in files written by Microsoft Print To PDF. Re-export the original to PDF from the application that made it (in Word or PowerPoint, File then Save as, choosing PDF) and import that file instead."
+
+// unmappableRune is what an extractor yields for a glyph it cannot map back to
+// a character.
+const unmappableRune = '\ufffd'
+
+// maxUnmappableShare is the share of non-blank characters that may be
+// unmappable before the extraction is refused.
+//
+// 0.3 sits in a wide empty gap rather than on a boundary, which is why it is
+// not tuned finer. Measured over the committed fixtures, a healthy document
+// runs 0.0% to 0.2% (a stray symbol glyph, a logo drawn as text), and a
+// document whose fonts carry no usable map runs 100%. Anything from a few
+// percent to ninety would separate the two equally well; a third is chosen so
+// that a document which is mostly readable is never refused for a page of
+// symbols, while one nobody can detect in is always refused.
+const maxUnmappableShare = 0.3
+
+// unmappableShare is the fraction of non-blank runes that came back unmappable.
+func unmappableShare(text string) float64 {
+	total, bad := 0, 0
+	for _, r := range text {
+		if r == ' ' || r == '\n' || r == '\t' || r == '\r' {
+			continue
+		}
+		total++
+		if r == unmappableRune {
+			bad++
+		}
+	}
+	if total == 0 {
+		return 0
+	}
+	return float64(bad) / float64(total)
+}
 
 // pdfPageSeparator joins consecutive PDF pages in the working markdown. It is
 // also the boundary the page-scoped local-model scan slices on, which is why the
@@ -93,6 +139,13 @@ func PDFWithPages(raw []byte) (markdown string, pages []string, warnings []strin
 		return "", nil, nil, fmt.Errorf("%s", ErrScannedPDF)
 	}
 
+	// The text layer exists but may be unreadable AS TEXT. Checked after the
+	// scanned refusal (that one is about there being no text at all) and
+	// before any warning, because this is a refusal and not a caveat.
+	if unmappableShare(strings.Join(pages, pdfPageSeparator)) > maxUnmappableShare {
+		return "", nil, nil, fmt.Errorf("%s", ErrUnmappablePDF)
+	}
+
 	warnings = append(warnings, "PDF text extraction is EXPERIMENTAL, always review the converted text before anonymising")
 	if repaired {
 		warnings = append(warnings, "spacing repair was applied to fix kerning artefacts, verify that words were re-joined correctly")
@@ -126,50 +179,6 @@ func classifyPDFOpenError(err error) error {
 func pdfDamagedError(cause interface{}) error {
 	return fmt.Errorf(
 		"the PDF could not be parsed (internal reader error: %v), the file may be damaged or use unsupported features; try re-printing it to PDF and importing again", cause)
-}
-
-// PDFWithPagesLedongthuc is the ledongthuc-based extractor: per-page plain
-// text plus the same spacing repair. It has NO production caller; the deep
-// tier measures the production extractor against it on the reference
-// documents, and it is deleted together with its dependency once the owner
-// confirms the decommissioning gate.
-func PDFWithPagesLedongthuc(raw []byte) (markdown string, pages []string, warnings []string, err error) {
-	// ledongthuc/pdf can panic on malformed files (it was written for
-	// well-formed input). A panic must become an actionable error, never
-	// crash the app — hence the recover.
-	defer func() {
-		if r := recover(); r != nil {
-			markdown, pages, warnings = "", nil, nil
-			err = pdfDamagedError(r)
-		}
-	}()
-
-	reader, err := pdflib.NewReader(bytes.NewReader(raw), int64(len(raw)))
-	if err != nil {
-		return "", nil, nil, fmt.Errorf(
-			"the file is not a readable PDF (%w), if it is password-protected, remove the password first", err)
-	}
-
-	for i := 1; i <= reader.NumPage(); i++ {
-		page := reader.Page(i)
-		if page.V.IsNull() {
-			continue
-		}
-		// nil font map: we only want plain text, not styled runs.
-		text, err := page.GetPlainText(nil)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("page %d could not be extracted (%v), its text is missing from the output", i, err))
-			continue
-		}
-		fixed := RepairPDFText(text)
-		if strings.TrimSpace(fixed) != "" {
-			pages = append(pages, strings.TrimSpace(fixed))
-		}
-	}
-	if len(pages) == 0 {
-		return "", nil, nil, fmt.Errorf("%s", ErrScannedPDF)
-	}
-	return strings.Join(pages, pdfPageSeparator) + "\n", pages, warnings, nil
 }
 
 // RepairPDFText applies the nb1 spacing-repair heuristic to extracted PDF

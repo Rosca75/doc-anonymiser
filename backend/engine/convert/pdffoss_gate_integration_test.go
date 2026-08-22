@@ -8,8 +8,10 @@
 // vendored PDF library over them, which is real-format I/O rather than pure
 // logic. Deterministic and hermetic: no network, no service.
 //
-// The question: does the library's extraction read AT LEAST what the current
-// ledongthuc-based converter reads, on files whose planted content is known?
+// The question: does the library's own default (visual reading order)
+// extraction read AT LEAST what the production LINE MODEL reads, on files
+// whose planted content is known? The two are different readings of the same
+// library, and the fixture is what keeps them from drifting apart silently.
 // Counts and presence checks only; the reference-document half of G4 is the
 // deep tier.
 package convert
@@ -20,7 +22,6 @@ import (
 	"testing"
 
 	asposepdf "github.com/aspose-pdf-foss/aspose-pdf-foss-for-go"
-	pdflib "github.com/ledongthuc/pdf"
 )
 
 // gateOpen opens fixture bytes through the library's bytes-only entry point,
@@ -59,19 +60,19 @@ func TestPDFFossGateExtraction(t *testing.T) {
 	t.Run("extraction/parity_every_planted_name_in_both_extractors", func(t *testing.T) {
 		raw := fixture(t, "pdf_gate_text.pdf")
 
-		_, incumbentPages, _, err := PDFWithPages(raw)
+		_, productionPages, _, err := PDFWithPages(raw)
 		if err != nil {
-			t.Fatalf("the incumbent extractor failed on the gate fixture: %v", err)
+			t.Fatalf("the production extractor failed on the gate fixture: %v", err)
 		}
-		incumbent := strings.Join(incumbentPages, "\n")
+		production := strings.Join(productionPages, "\n")
 
 		doc := gateOpen(t, raw)
 		libPages := libraryPageTexts(t, doc)
 		library := strings.Join(libPages, "\n")
 
 		for _, name := range planted {
-			if !strings.Contains(incumbent, name) {
-				t.Errorf("planted name %q is missing from the INCUMBENT extraction; the fixture or ledongthuc changed underneath the gate", name)
+			if !strings.Contains(production, name) {
+				t.Errorf("planted name %q is missing from the PRODUCTION extraction; the fixture or the line model changed underneath the gate", name)
 			}
 			if !strings.Contains(library, name) {
 				t.Errorf("planted name %q is missing from the LIBRARY extraction; G4 (no extraction regression) fails on the fixture half", name)
@@ -79,25 +80,25 @@ func TestPDFFossGateExtraction(t *testing.T) {
 		}
 	})
 
-	t.Run("extraction/page_shape_matches_the_incumbent", func(t *testing.T) {
+	t.Run("extraction/page_shape_matches_the_line_model", func(t *testing.T) {
 		raw := fixture(t, "pdf_gate_text.pdf")
-		_, incumbentPages, _, err := PDFWithPages(raw)
+		_, productionPages, _, err := PDFWithPages(raw)
 		if err != nil {
-			t.Fatalf("the incumbent extractor failed: %v", err)
+			t.Fatalf("the production extractor failed: %v", err)
 		}
 		doc := gateOpen(t, raw)
-		if got, want := doc.PageCount(), len(incumbentPages); got != want {
-			t.Errorf("library PageCount() = %d, incumbent produced %d pages; the page shape feeds ScanChunks and must not drift", got, want)
+		if got, want := doc.PageCount(), len(productionPages); got != want {
+			t.Errorf("library PageCount() = %d, the production line model produced %d pages; the page shape feeds ScanChunks and must not drift", got, want)
 		}
 		libPages := libraryPageTexts(t, doc)
-		if got, want := len(libPages), len(incumbentPages); got != want {
-			t.Errorf("library ExtractText returned %d page texts, incumbent %d", got, want)
+		if got, want := len(libPages), len(productionPages); got != want {
+			t.Errorf("library ExtractText returned %d page texts, production %d", got, want)
 		}
 	})
 
 	// The D8 measurement's fixture half: how often would RepairPDFText still
 	// change a line of each extractor's output? textlayer.pdf carries the
-	// planted kerning defect ("B R IDDING ULES"), so the incumbent count is
+	// planted kerning defect ("B R IDDING ULES"), so the production count is
 	// known to be nonzero there; what the gate records is the library's count
 	// beside it.
 	t.Run("extraction/spacing_repair_counts_per_extractor", func(t *testing.T) {
@@ -114,19 +115,19 @@ func TestPDFFossGateExtraction(t *testing.T) {
 				return n
 			}
 
-			_, incumbentPages, _, err := PDFWithPages(raw)
+			_, productionPages, _, err := PDFWithPages(raw)
 			if err != nil {
-				t.Fatalf("incumbent extraction of %s: %v", name, err)
+				t.Fatalf("production extraction of %s: %v", name, err)
 			}
-			// PDFWithPages already ran the repair, so the incumbent's count is
-			// measured on the RAW ledongthuc text, the same footing as the
-			// library's.
-			incumbentRaw := rawLedongthucText(t, raw)
+			// PDFWithPages already ran the repair, so the production count is
+			// measured on the line model's PRE-REPAIR text, the same footing
+			// as the library's raw mode.
+			productionRaw := rawProductionText(t, raw)
 			doc := gateOpen(t, raw)
 			libText := strings.Join(libraryPageTexts(t, doc), "\n")
 
-			t.Logf("D8 fixture measurement, %s: lines the repair would change: incumbent(raw)=%d library=%d (post-repair incumbent pages: %d)",
-				name, countRepairs(incumbentRaw), countRepairs(libText), len(incumbentPages))
+			t.Logf("D8 fixture measurement, %s: lines the repair would change: production(raw)=%d library=%d (post-repair production pages: %d)",
+				name, countRepairs(productionRaw), countRepairs(libText), len(productionPages))
 
 			// The gate's assertion: the repair is IDEMPOTENT and harmless over
 			// the library's output (a repair that mangles the new extractor's
@@ -139,7 +140,7 @@ func TestPDFFossGateExtraction(t *testing.T) {
 	})
 
 	// G9's scanned-file half lives beside extraction because the refusal IS
-	// an extraction outcome: the library must agree with the incumbent that
+	// an extraction outcome: the library must agree with the line model that
 	// scanned.pdf has no text layer, so convert.ErrScannedPDF keeps firing
 	// byte-identically when the extractor changes in 13c.
 	t.Run("errors/scanned_pdf_is_detectable_as_textless", func(t *testing.T) {
@@ -153,28 +154,21 @@ func TestPDFFossGateExtraction(t *testing.T) {
 	})
 }
 
-// rawLedongthucText extracts with ledongthuc directly, WITHOUT the repair, so
-// the two extractors' repair counts are measured on the same footing (raw
-// text on both sides). Duplicating the extraction loop here is deliberate:
-// PDFWithPages applies the repair inline, and exporting a no-repair mode from
-// production code for one measurement would be an API with one caller, in a
-// test.
-func rawLedongthucText(t *testing.T, raw []byte) string {
+// rawProductionText derives each page's pipeline text from the line model
+// WITHOUT the spacing repair, so the two extractions' repair counts are
+// measured on the same footing (raw text on both sides). PDFPageText is
+// exactly that derivation, which is why no no-repair mode has to be exported
+// from PDFWithPages for one measurement.
+func rawProductionText(t *testing.T, raw []byte) string {
 	t.Helper()
-	reader, err := pdflib.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	layouts, err := PDFLayouts(raw)
 	if err != nil {
-		t.Fatalf("ledongthuc could not open the fixture: %v", err)
+		t.Fatalf("the production line model could not read the fixture: %v", err)
 	}
 	var out strings.Builder
-	for i := 1; i <= reader.NumPage(); i++ {
-		page := reader.Page(i)
-		if page.V.IsNull() {
-			continue
-		}
-		if text, err := page.GetPlainText(nil); err == nil {
-			out.WriteString(text)
-			out.WriteString("\n")
-		}
+	for _, layout := range layouts {
+		out.WriteString(PDFPageText(layout))
+		out.WriteString("\n")
 	}
 	return out.String()
 }
